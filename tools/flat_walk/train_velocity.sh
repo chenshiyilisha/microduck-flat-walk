@@ -25,6 +25,16 @@
 #   bash tools/train_velocity.sh 4096 12000 myrun   # explicit run name
 #   bash tools/train_velocity.sh --check-only       # preflight only, no GPU run
 #   bash tools/train_velocity.sh --no-check 4096 600 # skip preflight (not advised)
+#
+# Single-variable experiments pass EXTRA_ARGS (word-split, forwarded verbatim to
+# `train`). tyro exposes the reward dict, so a kernel width can be changed
+# WITHOUT touching the live cfg -- which keeps `velocity_cfg_pristine` green:
+#   EXTRA_ARGS="--env.rewards.track-linear-velocity.params.std 0.2" \
+#     bash tools/train_velocity.sh 4096 2000 vel_4096x2000_std004
+# The resolved value is re-parsed through the *same* tyro path before launch and
+# written to runmeta under `rewards_effective`; if EXTRA_ARGS is given and that
+# re-parse fails, the script refuses to start. A declared override is not
+# evidence that it took effect.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -45,6 +55,10 @@ done
 ENVS="${ARGS[0]:-4096}"
 ITERS="${ARGS[1]:-12000}"
 RUN="${ARGS[2]:-vel_${ENVS}x${ITERS}_$(date +%m%d_%H%M)}"
+
+# Forwarded verbatim (word-split) to `train`. Used for single-variable
+# experiments that must not disturb the byte-identical-to-upstream cfg.
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 # ---------------------------------------------------------------- solver ----
 # The flat task ships microduck_rl's original contact budget: iterations=10,
@@ -96,7 +110,7 @@ else
   echo "[--no-check] skipping preflight"
 fi
 
-[ "$CHECK_ONLY" -eq 1 ] && { echo; echo "--check-only: stopping before training"; exit 0; }
+[ "$CHECK_ONLY" -eq 1 ] && CHECK_ONLY_LATCH=1 || CHECK_ONLY_LATCH=0
 
 # ------------------------------------------------------------- run metadata --
 # Anything that could change the meaning of the resulting checkpoint gets frozen
@@ -105,14 +119,17 @@ CFG_SHA=$(sha "$CFG")
 MDP_SHA=$(sha "$MDP")
 if [ -f "$UP_CFG" ] && cmp -s "$UP_CFG" "$CFG"; then PRISTINE=true; else PRISTINE=false; fi
 
-"$PY" - "$RUN" "$ENVS" "$ITERS" "$CFG_SHA" "$MDP_SHA" "$PRISTINE" "$SOLVER_ITERS" "$SOLVER_LS" <<'PYEOF'
+"$PY" - "$RUN" "$ENVS" "$ITERS" "$CFG_SHA" "$MDP_SHA" "$PRISTINE" "$SOLVER_ITERS" "$SOLVER_LS" "$EXTRA_ARGS" <<'PYEOF'
 import json, os, sys, datetime, subprocess
 run, envs, iters, cfg_sha, mdp_sha, pristine, solv, solv_ls = sys.argv[1:9]
+extra = sys.argv[9] if len(sys.argv) > 9 else ""
+TASK = "Mjlab-Velocity-Flat-MicroDuck"
 meta = {
-    "run": run, "task": "Mjlab-Velocity-Flat-MicroDuck",
+    "run": run, "task": TASK,
     "envs": int(envs), "iters": int(iters), "created": datetime.datetime.now().isoformat(timespec="seconds"),
     "cfg_sha256_16": cfg_sha, "mdp_sha256_16": mdp_sha,
     "cfg_byte_identical_to_upstream": pristine == "true",
+    "extra_args": extra,
     "switches": {k: os.environ.get(k, "0") for k in
                  ("MICRODUCK_WARM_START", "MICRODUCK_JOY_PAIR_MIN",
                   "MICRODUCK_JOY_PHASE_RSI", "MICRODUCK_JOY_SYMMETRY")},
@@ -122,6 +139,41 @@ meta = {
 # longer describes what this run actually simulated. Record both, and never let
 # a future reader assume the file was the whole story.
 meta["solver"] = {"cli_iterations": int(solv), "cli_ls_iterations": int(solv_ls)}
+
+# Same question for every EXTRA_ARGS override: the cfg sha says nothing about
+# it, so the only honest answer is to re-parse the *actual* argv through tyro --
+# exactly the path `train` itself takes -- and record the numbers it resolves to.
+# A declared override is not evidence that it took effect.
+meta["rewards_effective"] = {}
+try:
+    import tyro, mjlab, mjlab.tasks  # noqa: F401
+    from mjlab.scripts.train import TrainConfig
+    argv = extra.split()
+    _tc = (tyro.cli(TrainConfig, args=argv, default=TrainConfig.from_task(TASK),
+                    config=mjlab.TYRO_FLAGS) if argv else TrainConfig.from_task(TASK))
+    _ecfg = _tc.env
+    _cmd_max = max(abs(v) for v in _ecfg.commands["twist"].ranges.lin_vel_x)
+    _rw = {}
+    for _k in ("track_linear_velocity", "track_angular_velocity", "action_rate_l2"):
+        _r = _ecfg.rewards[_k]
+        _s = _r.params.get("std") if isinstance(_r.params, dict) else None
+        _rw[_k] = {"weight": _r.weight}
+        if _s is not None:
+            _rw[_k].update({
+                "std": _s, "std_sq": _s * _s,
+                "std_over_cmd_max": (_s / _cmd_max) if _cmd_max else None,
+            })
+    meta["rewards_effective"] = _rw
+    meta["command"] = {"lin_vel_x": list(_ecfg.commands["twist"].ranges.lin_vel_x),
+                       "cmd_max": _cmd_max}
+except BaseException as e:  # noqa: BLE001
+    # tyro raises SystemExit (not Exception) on an unknown flag, so a bare
+    # `except Exception` lets the process die with rc=2 *before* runmeta is
+    # written -- the run is refused, but no evidence is left behind. Catch
+    # BaseException so the refusal is always recorded.
+    meta["rewards_effective"] = {"error": f"{type(e).__name__}: {e}"}
+    if extra.strip():
+        meta["FATAL"] = "EXTRA_ARGS given but could not re-parse it; refusing to launch"
 try:
     import mjlab_microduck.tasks  # noqa: F401
     from mjlab.tasks.registry import load_env_cfg
@@ -157,7 +209,22 @@ os.makedirs("out", exist_ok=True)
 p = f"out/runmeta_{run}.json"
 open(p, "w", encoding="utf-8").write(json.dumps(meta, indent=2, ensure_ascii=False))
 print(f"runmeta -> {p}")
+if meta.get("FATAL"):
+    print(f"FATAL: {meta['FATAL']}", file=sys.stderr)
+    sys.exit(1)
+_re = meta.get("rewards_effective", {})
+if "error" not in _re:
+    for _k, _v in _re.items():
+        print(f"  reward {_k:24s} weight={_v.get('weight')!s:<6} "
+              f"std={_v.get('std')!r:<20} std_sq={_v.get('std_sq')!r:<8} "
+              f"std/cmd_max={_v.get('std_over_cmd_max')}")
 PYEOF
+
+if [ "$CHECK_ONLY_LATCH" -eq 1 ]; then
+  echo
+  echo "--check-only: stopping before training (runmeta above is what WOULD run)"
+  exit 0
+fi
 
 LOG="out/train_${RUN}.log"
 
@@ -170,6 +237,7 @@ echo "start   $(date '+%Y-%m-%d %H:%M:%S')"
 START=$(date +%s)
 
 set +e
+# shellcheck disable=SC2086  # EXTRA_ARGS is intentionally word-split
 .venv-mjlab/Scripts/train.exe "$TASK" \
   --env.scene.num-envs "$ENVS" \
   --env.sim.mujoco.iterations "$SOLVER_ITERS" \
@@ -179,6 +247,7 @@ set +e
   --agent.logger tensorboard \
   --agent.experiment-name microduck_velocity \
   --agent.run-name "$RUN" \
+  $EXTRA_ARGS \
   > "$LOG" 2>&1
 RC=$?
 set -e

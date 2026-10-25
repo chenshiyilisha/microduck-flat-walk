@@ -92,9 +92,23 @@ def freeze_command(cfg, vx: float, vy: float, wz: float, duration: float) -> Non
     cmd.ranges.lin_vel_x = (vx, vx)
     cmd.ranges.lin_vel_y = (vy, vy)
     cmd.ranges.ang_vel_z = (wz, wz)
-    cmd.rel_standing_envs = 0.0
-    cmd.rel_turn_in_place_envs = 0.0
-    cmd.rel_heading_envs = 0.0
+    # EVERY `rel_*` knob is a training-diversity switch: leave one non-zero and a
+    # fraction of the batch is graded on a command it was never given. `rel_forward_envs`
+    # was missed here until a `--cmd-vx 0.0` run tripped `command_frozen_ok`:
+    # velocity_command.py:95-99 clamps forward-env vx to `abs().clamp(min=0.3)`, so
+    # with rel_forward_envs=0.2 a "cmd vx 0.00" run actually graded 5 of 32 envs at
+    # 0.3 m/s. Invisible at cmd 0.4 (0.4 > 0.3), fatal for any sweep below 0.3 --
+    # i.e. exactly the experiment that was about to be run. Swept reflectively rather
+    # than by name so an upstream addition cannot slip through the same way.
+    swept = {}
+    for knob in [k for k in dir(cmd) if k.startswith("rel_") or k == "init_velocity_prob"]:
+        val = getattr(cmd, knob)
+        if isinstance(val, (int, float)):
+            swept[knob] = float(val)
+            setattr(cmd, knob, 0.0)
+    still_on = {k: v for k, v in swept.items() if (getattr(cmd, k) or 0.0) != 0.0} or None
+    if still_on:
+        raise RuntimeError(f"command-diversity knob could not be zeroed: {still_on}")
     # `heading_command` must stay True: the command class raises
     # "ranges.heading is set but heading_command=False" and refuses to build.
     # With `rel_heading_envs = 0` no env is ever a heading env, so `ang_vel_z`
@@ -387,8 +401,14 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     }
 
     official: dict = {}
+    err_env = yaw_err_env = None
     try:
         term = u.command_manager.get_term("twist")
+        # Keep the per-env vector, not only its mean: `metrics[...]` is [N] and is
+        # only ever accumulated (never reset), so at the end of the window each
+        # entry already holds that env's own window average.
+        err_env = term.metrics["error_vel_xy"].detach().clone()
+        yaw_err_env = term.metrics["error_vel_yaw"].detach().clone()
         official["error_vel_xy"] = f(term.metrics["error_vel_xy"].mean())
         official["error_vel_yaw"] = f(term.metrics["error_vel_yaw"].mean())
         official["error_vel_xy_median"] = f(term.metrics["error_vel_xy"].median())
@@ -397,12 +417,77 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
 
     metrics = {k: f(sum(v) / len(v)) for k, v in metric_h.items() if v}
 
+    # The official metric does NOT divide by the number of steps:
+    #   metrics["error_vel_xy"] += ||cmd_xy - v_xy|| / max_command_step   (accumulated)
+    #   max_command_step = resampling_time_range[1] / step_dt
+    # (mjlab/tasks/velocity/mdp/velocity_command.py:61-69.)
+    # So it equals the TRUE window mean only when the evaluation window happens to
+    # be exactly max_command_step long. This task resamples commands over
+    # (3.0, 8.0) s at 50 Hz -> max_command_step = 400 = the 8.0 s window, which is
+    # the only reason 0.21 reads as a velocity in m/s. Run --seconds 4 and the same
+    # policy would score half as bad with nothing about the robot having changed.
+    # Pinning that coincidence down as a gate is the difference between a reading
+    # and a reading whose units are assumptions.
+    rtr = tuple(getattr(env_cfg.commands["twist"], "resampling_time_range", (0.0, 0.0)))
+    max_cmd_step = (rtr[1] / step_dt) if step_dt else None
+    metric_window = {
+        "window_steps": n_steps,
+        "step_dt": step_dt,
+        "resampling_time_range_s": list(rtr),
+        "max_command_step": max_cmd_step,
+        "ratio_window_over_max": (n_steps / max_cmd_step) if max_cmd_step else None,
+        "is_true_mean": bool(max_cmd_step and abs(n_steps - max_cmd_step) <= 1e-6),
+        "note": ("error_vel_xy is a true m/s mean only when is_true_mean is true; "
+                 "otherwise multiply by ratio_window_over_max before comparing."),
+    }
+
+    def _spread(t) -> dict | None:
+        if t is None:
+            return None
+        x = t.detach().float().double().flatten()
+        n_ = int(x.numel())
+        sd = float(x.std(unbiased=True)) if n_ > 1 else None
+        q = torch.quantile(
+            x, torch.tensor([0.1, 0.5, 0.9], dtype=torch.float64, device=x.device)
+        ).tolist()
+        return {
+            "n": n_,
+            "mean": float(x.mean()),
+            "std": sd,
+            "sem": (sd / math.sqrt(n_)) if sd is not None else None,
+            "p10": q[0], "p50": q[1], "p90": q[2],
+            "min": float(x.min()), "max": float(x.max()),
+            "values": [round(float(v), 6) for v in x],
+        }
+
+    # One number per ENV. `sem = std/sqrt(n)` is how far the batch mean above can
+    # wander when the initial conditions are redrawn -- i.e. the repeatability of
+    # the headline number. The step axis is deliberately NOT used as a sample: one
+    # robot walks a single correlated 400-step trajectory, so 400 steps are not
+    # 400 independent observations, and dividing by sqrt(400) would manufacture a
+    # 20x-too-small error bar.
+    per_env = {
+        "note": ("per-env values; sem = std/sqrt(n) over the env axis only, which is "
+                 "the uncertainty of the mean above"),
+        "vx_mean": _spread(vx_mean_t),
+        "error_vel_xy": _spread(err_env),
+        "error_vel_yaw": _spread(yaw_err_env),
+        "dx_body": _spread(dx_body),
+        "abs_dy_body": _spread(dy_body.abs()),
+        "upright": _spread(up_t.mean(dim=0)),
+        "yaw_drift_deg_s": _spread(
+            (yaw_t[-1] - yaw_t[0]).abs() / seconds * 180 / math.pi),
+    }
+
     env.close()
 
     gates = {
         # Measurement integrity first: if these fail, every number below is
         # suspect, so they must not be buried under the behaviour gates.
         "command_frozen_ok": bool(command["max_dev_from_frozen"] <= 1e-3),
+        # Unit gate: error_vel_xy is only a velocity (m/s) while the window equals
+        # max_command_step. See the metric_window block.
+        "metric_window_ok": bool(metric_window["is_true_mean"]),
         "sensor_zero_ok": (None if feet["stance_mm_median"] is None
                            else bool(abs(feet["stance_mm_median"]) <= 3.0)),
         "measurement_consistent": bool(feet["landing_events"] == feet["touchdown_events"]),
@@ -464,6 +549,8 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "heading": heading,
         "stability": stability,
         "feet": feet,
+        "metric_window": metric_window,
+        "per_env": per_env,
         "gates": gates,
         "passed": [k for k, v in gates.items() if v],
         "failed": [k for k, v in gates.items() if v is False],

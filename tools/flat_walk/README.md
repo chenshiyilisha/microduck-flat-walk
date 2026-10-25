@@ -5,8 +5,8 @@
 
 | 文件 | 作用 | 为什么值得留 |
 |---|---|---|
-| `eval_velocity_in_sim.py` | 11 项闸门评估器（含 `command_frozen_ok` 协议自检）（`docs/05-flat-walk.md` §2 的全部数字都由它产出） | 「在走」需要可证伪的判据：前进位移、不侧滑、脚峰、落地交替、不摔 |
-| `train_velocity.sh` | 训练包装：写 `runmeta`（含 **cfg/mdp 字节哈希**）+ 求解器 CLI 覆盖 | `cfg_byte_identical_to_upstream` 是「没偷偷改奖励」的机器可验证证据 |
+| `eval_velocity_in_sim.py` | 11 项闸门评估器（含 `command_frozen_ok` / `metric_window_ok` 两条协议自检）+ **逐 env 分布**（`per_env`）（`docs/05-flat-walk.md` §2 的全部数字都由它产出） | 「在走」需要可证伪的判据：前进位移、不侧滑、脚峰、落地交替、不摔。有些量之间会互相矛盾（同一 ckpt 三次重复里 `|dy|` 的 CV 是 31%），所以窗口均值必须配一份逐 env 分布，否则分不清「策略变了」和「抽样变了」 |
+| `train_velocity.sh` | 训练包装：写 `runmeta`（含 **cfg/mdp 字节哈希** + **`rewards_effective`**）+ 求解器 CLI 覆盖 + **`EXTRA_ARGS` 实验透传** | `cfg_byte_identical_to_upstream` 是「没偷偷改奖励」的机器可验证证据；而 CLI 覆盖又不受哈希保护，所以必须用同一条 tyro 路径**回读解析**实际生效的 `std/std_sq/std_over_cmd_max`——声明式记录不算证据 |
 | `resume_velocity.sh` | 续训包装：**目标绝对轮数**、GPU 双开保护、`DRY_RUN=1` | `--agent.max-iterations` 是**增量**不是总量，手滑一次多跑 10 小时 |
 | `watch_milestones.py` | 里程碑守候：等 `model_N.pt` 落盘 → 同参评测 → 判读 → 可自动停训 | 判停阈值写死在代码里（`verdict()`），比「等我想起来看一眼」可靠 |
 | `record_walk.py` | 无头录像：在训练环境内以固定协议录 mp4（`--distance/--elevation/--azimuth/--yaw-deg` 机位与朝向可钉） | `mjlab play --video` 永远以交互 viewer 循环收尾（`play.py:288-291`），录完不返回；这里复用同一套组件但把循环做成有限步 |
@@ -29,3 +29,12 @@
   （`mjlab/tasks/velocity/velocity_env_cfg.py:209`），世界系固定机位下同一 `--azimuth` 每次拍到的朝向都不同，
   「侧视」不可复现。要训练分布的样子就加 `--random-yaw`。Windows 上 `MUJOCO_GL=glfw`（脚本里默认设好），
   `egl` 不可用；离屏渲染走 `mujoco.Renderer`（`mjlab/viewer/offscreen_renderer.py:57`）。
+- `train_velocity.sh` 的 `EXTRA_ARGS` 是**给单变量实验用的**，例：
+  `EXTRA_ARGS="--env.rewards.track-linear-velocity.params.std 0.2" bash tools/flat_walk/train_velocity.sh 4096 2000 myrun`。
+  它按空格切分后原样透传给 `train`，所以**不要放带空格的值**。走这条路而不是改
+  `site-packages` 里的 cfg，是为了让 `velocity_cfg_pristine`（blocking）保持绿——
+  改文件会逼你 `--no-check`，等于拿掉保护换实验能力。
+- 一个只会在负对照里现形的坑：`tyro` 遇未知参数抛 **`SystemExit(2)`**，它继承 `BaseException`，
+  所以 `except Exception` 抓不到 ⇒ 进程在写 runmeta **之前**就死，发车确实被拒但**一行证据都没留**。
+  这里用 `except BaseException` 才记下 `FATAL` + `SystemExit: 2` 并 exit 1。
+  凡是 try/except 包住 tyro / argparse / 任何内部 `sys.exit()` 的地方，都要先问这一句。
