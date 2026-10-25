@@ -9,6 +9,7 @@
 | `train_velocity.sh` | 训练包装：写 `runmeta`（含 **cfg/mdp 字节哈希**）+ 求解器 CLI 覆盖 | `cfg_byte_identical_to_upstream` 是「没偷偷改奖励」的机器可验证证据 |
 | `resume_velocity.sh` | 续训包装：**目标绝对轮数**、GPU 双开保护、`DRY_RUN=1` | `--agent.max-iterations` 是**增量**不是总量，手滑一次多跑 10 小时 |
 | `watch_milestones.py` | 里程碑守候：等 `model_N.pt` 落盘 → 同参评测 → 判读 → 可自动停训 | 判停阈值写死在代码里（`verdict()`），比「等我想起来看一眼」可靠 |
+| `record_walk.py` | 无头录像：在训练环境内以固定协议录 mp4（`--distance/--elevation/--azimuth/--yaw-deg` 机位与朝向可钉） | `mjlab play --video` 永远以交互 viewer 循环收尾（`play.py:288-291`），录完不返回；这里复用同一套组件但把循环做成有限步 |
 | `patch_issue46.py` | issue #46 三处改法的可回滚补丁（`--check/--apply/--revert`，幂等、带备份） | 当前**未应用**；前进门控复用上游 `_forward_progress_gate`，不是自己推导 |
 
 ## 使用注意
@@ -24,3 +25,7 @@
 - `watch_milestones.py` 要在**训练工作区**里跑（需要 `logs/rsl_rl/microduck_velocity/` 与 `out/`）；
   只 clone 了本仓库时它会直接报「训练产物不在本仓库」并退出，此时用 `eval_velocity_in_sim.py`
   对已入库的 checkpoint 做单次判读即可。
+- `record_walk.py` 默认 `--yaw-deg 0`：`reset_base` 的 `yaw` 是 `(-3.14, 3.14)` 全随机
+  （`mjlab/tasks/velocity/velocity_env_cfg.py:209`），世界系固定机位下同一 `--azimuth` 每次拍到的朝向都不同，
+  「侧视」不可复现。要训练分布的样子就加 `--random-yaw`。Windows 上 `MUJOCO_GL=glfw`（脚本里默认设好），
+  `egl` 不可用；离屏渲染走 `mujoco.Renderer`（`mjlab/viewer/offscreen_renderer.py:57`）。
