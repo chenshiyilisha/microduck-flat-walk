@@ -47,6 +47,11 @@ artifacts/flat_walk/*
 !artifacts/flat_walk/checkpoints/
 !artifacts/flat_walk/checkpoints/model_1250.pt
 !artifacts/flat_walk/checkpoints/model_1250_std004.pt
+# 导出的部署图（794 KB）。`*.onnx` 在全局被忽略，这里单独放行：
+# 它是 docs §13 那条 parity 结论的被测对象，没有它复算不了。
+!artifacts/flat_walk/checkpoints/walk_std004_1250.onnx
+!artifacts/flat_walk/runmeta/
+!artifacts/flat_walk/runmeta/*.json
 !artifacts/flat_walk/videos/
 artifacts/flat_walk/videos/*
 !artifacts/flat_walk/videos/walk_1250_side.mp4

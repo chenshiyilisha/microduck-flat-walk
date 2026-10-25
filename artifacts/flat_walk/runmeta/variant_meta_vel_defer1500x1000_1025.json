@@ -1,0 +1,440 @@
+{
+  "created": "2026-10-25T19:03:24",
+  "run": "vel_defer1500x1000_1025",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "variant": {
+    "defer_from_iter": 1500,
+    "defer_by_iter": 1000,
+    "steps_per_iter": 24,
+    "shift_steps": 24000
+  },
+  "curriculum_before": {
+    "standing_envs": [
+      {
+        "step": 0,
+        "rel_standing_envs": 0.02
+      },
+      {
+        "step": 12000,
+        "rel_standing_envs": 0.05
+      },
+      {
+        "step": 18000,
+        "rel_standing_envs": 0.1
+      },
+      {
+        "step": 24000,
+        "rel_standing_envs": 0.15
+      },
+      {
+        "step": 36000,
+        "rel_standing_envs": 0.2
+      },
+      {
+        "step": 48000,
+        "rel_standing_envs": 0.25
+      }
+    ],
+    "head_pose_range": [
+      {
+        "step": 0,
+        "ranges": [
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.07,
+            0.07
+          ],
+          [
+            -0.015,
+            0.015
+          ]
+        ]
+      },
+      {
+        "step": 12000,
+        "ranges": [
+          [
+            -0.17,
+            0.17
+          ],
+          [
+            -0.17,
+            0.17
+          ],
+          [
+            -0.21,
+            0.21
+          ],
+          [
+            -0.047,
+            0.047
+          ]
+        ]
+      },
+      {
+        "step": 24000,
+        "ranges": [
+          [
+            -0.39,
+            0.39
+          ],
+          [
+            -0.39,
+            0.39
+          ],
+          [
+            -0.49,
+            0.49
+          ],
+          [
+            -0.11,
+            0.11
+          ]
+        ]
+      },
+      {
+        "step": 36000,
+        "ranges": [
+          [
+            -0.72,
+            0.72
+          ],
+          [
+            -0.72,
+            0.72
+          ],
+          [
+            -0.91,
+            0.91
+          ],
+          [
+            -0.2,
+            0.2
+          ]
+        ]
+      },
+      {
+        "step": 48000,
+        "ranges": [
+          [
+            -1.1,
+            1.1
+          ],
+          [
+            -1.1,
+            1.1
+          ],
+          [
+            -1.4,
+            1.4
+          ],
+          [
+            -0.31,
+            0.31
+          ]
+        ]
+      }
+    ],
+    "body_pose_range": [
+      {
+        "step": 0,
+        "ranges": [
+          [
+            -0.005,
+            0.005
+          ],
+          [
+            -0.005,
+            0.005
+          ],
+          [
+            -0.005,
+            0.005
+          ],
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.05,
+            0.05
+          ]
+        ]
+      }
+    ]
+  },
+  "curriculum_after": {
+    "standing_envs": [
+      {
+        "step": 0,
+        "rel_standing_envs": 0.02
+      },
+      {
+        "step": 12000,
+        "rel_standing_envs": 0.05
+      },
+      {
+        "step": 18000,
+        "rel_standing_envs": 0.1
+      },
+      {
+        "step": 24000,
+        "rel_standing_envs": 0.15
+      },
+      {
+        "step": 60000,
+        "rel_standing_envs": 0.2
+      },
+      {
+        "step": 72000,
+        "rel_standing_envs": 0.25
+      }
+    ],
+    "head_pose_range": [
+      {
+        "step": 0,
+        "ranges": [
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.07,
+            0.07
+          ],
+          [
+            -0.015,
+            0.015
+          ]
+        ]
+      },
+      {
+        "step": 12000,
+        "ranges": [
+          [
+            -0.17,
+            0.17
+          ],
+          [
+            -0.17,
+            0.17
+          ],
+          [
+            -0.21,
+            0.21
+          ],
+          [
+            -0.047,
+            0.047
+          ]
+        ]
+      },
+      {
+        "step": 24000,
+        "ranges": [
+          [
+            -0.39,
+            0.39
+          ],
+          [
+            -0.39,
+            0.39
+          ],
+          [
+            -0.49,
+            0.49
+          ],
+          [
+            -0.11,
+            0.11
+          ]
+        ]
+      },
+      {
+        "step": 60000,
+        "ranges": [
+          [
+            -0.72,
+            0.72
+          ],
+          [
+            -0.72,
+            0.72
+          ],
+          [
+            -0.91,
+            0.91
+          ],
+          [
+            -0.2,
+            0.2
+          ]
+        ]
+      },
+      {
+        "step": 72000,
+        "ranges": [
+          [
+            -1.1,
+            1.1
+          ],
+          [
+            -1.1,
+            1.1
+          ],
+          [
+            -1.4,
+            1.4
+          ],
+          [
+            -0.31,
+            0.31
+          ]
+        ]
+      }
+    ],
+    "body_pose_range": [
+      {
+        "step": 0,
+        "ranges": [
+          [
+            -0.005,
+            0.005
+          ],
+          [
+            -0.005,
+            0.005
+          ],
+          [
+            -0.005,
+            0.005
+          ],
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.05,
+            0.05
+          ],
+          [
+            -0.05,
+            0.05
+          ]
+        ]
+      }
+    ]
+  },
+  "curriculum_changed": {
+    "standing_envs": [
+      {
+        "was": 0,
+        "now": 0
+      },
+      {
+        "was": 12000,
+        "now": 12000
+      },
+      {
+        "was": 18000,
+        "now": 18000
+      },
+      {
+        "was": 24000,
+        "now": 24000
+      },
+      {
+        "was": 36000,
+        "now": 60000
+      },
+      {
+        "was": 48000,
+        "now": 72000
+      }
+    ],
+    "head_pose_range": [
+      {
+        "was": 0,
+        "now": 0
+      },
+      {
+        "was": 12000,
+        "now": 12000
+      },
+      {
+        "was": 24000,
+        "now": 24000
+      },
+      {
+        "was": 36000,
+        "now": 60000
+      },
+      {
+        "was": 48000,
+        "now": 72000
+      }
+    ],
+    "body_pose_range": [
+      {
+        "was": 0,
+        "now": 0
+      }
+    ]
+  },
+  "envs": 4096,
+  "iters": 2000,
+  "cfg_sha256_16": "75a0430b814ac749",
+  "mdp_sha256_16": "9f9b77c05d16a1a3",
+  "passthrough_args": [
+    "--env.rewards.track-linear-velocity.params.std",
+    "0.2",
+    "--env.scene.num-envs",
+    "4096",
+    "--env.sim.mujoco.iterations",
+    "100",
+    "--env.sim.mujoco.ls-iterations",
+    "50",
+    "--agent.max-iterations",
+    "2000",
+    "--agent.save-interval",
+    "250",
+    "--agent.logger",
+    "tensorboard",
+    "--agent.experiment-name",
+    "microduck_velocity",
+    "--agent.run-name",
+    "vel_defer1500x1000_1025"
+  ],
+  "rewards_effective": {
+    "track_linear_velocity": {
+      "weight": 2.0,
+      "std": 0.2,
+      "std_sq": 0.04000000000000001,
+      "std_over_cmd_max": 0.5
+    },
+    "track_angular_velocity": {
+      "weight": 2.0,
+      "std": 0.7071067811865476,
+      "std_sq": 0.5000000000000001,
+      "std_over_cmd_max": 1.7677669529663689
+    },
+    "action_rate_l2": {
+      "weight": -0.1
+    }
+  }
+}

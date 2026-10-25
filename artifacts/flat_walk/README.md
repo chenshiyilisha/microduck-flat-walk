@@ -5,13 +5,19 @@
 | 文件 | 是什么 |
 |---|---|
 | `checkpoints/model_1250.pt` | **baseline**（std²=0.10）iter 1250 策略，11/11 闸门通过（4.8 MB） |
-| `checkpoints/model_1250_std004.pt` | **单变量后**（std²=0.04）iter 1250 策略，**当前最好**：cmd 0.4 下 ratio 0.773 / `error_vel_xy` 0.162（4.8 MB，见 `docs/05-flat-walk.md` §10） |
+| `checkpoints/model_1250_std004.pt` | **单变量后**（std²=0.04）iter 1250 策略，**当前交付点**：cmd 0.4 下 ratio **0.811** / `error_vel_xy` **0.159**（当前评估脚本复测；旧脚本记的是 0.773 / 0.162，跨版本不可混用，见 §12.5）（4.8 MB，见 `docs/05-flat-walk.md` §10） |
+| `checkpoints/walk_std004_1250.onnx` | 上面那个 ckpt 的部署图：obs 61 → act 14、opset 18、**静态 batch 1**、normalizer 已烘入。parity `max|onnx−ref|` = 2.65e−06，负对照偏离 5.30（53000× 容差）。见 §13 |
 | `evals/eval_iter1250_clean.json` | baseline 交付档的评估原始输出，含全部闸门布尔值与逐项指标 |
 | `evals/eval_iter6000_clean.json` | baseline 停训档（11 项里 `no_fall` 失败），用来说明「继续训没有更好」 |
 | `evals/eval_curve_clean.json` | baseline 同 run 的 **9 档** checkpoint 同协议曲线（1250 / 1500 / 1750 / 2000 / 2500 / 3000 / 3500 / 4000 / 6000） |
 | `evals/eval_std004_iter1250_cmd*.json` | 单变量实验的**逐工作点**扫描：cmd 0 / 0.10 / 0.12 / 0.15 / 0.18 / 0.20 / 0.30 / 0.40，其中 0.10–0.12 是低速死区、0.15 是边界 |
 | `evals/eval_std004_iter1250_cmd40_rep{2,3}.json` | cmd 0.4 的两次重复，用来证明 24% 的差异不是噪声（三次 CV 1.8%） |
-| `evals/eval_std004_iter1999_cmd*.json` | 同 run 的 iter 1999（ratio 掉回 0.620），用来说明「1500 课程跳档后回退」 |
+| `evals/eval_std004_iter1999_cmd*.json` | 同 run 的 iter 1999（ratio 掉回 0.620）。**注意：这是 checkpoint 级抖动，不是「课程跳档导致」**——那个解释已被 §12 的整跑实验证伪 |
+| `evals/eval_base_it{1250,1999}_cmd40_r{1,2,3}.json` | §12 对照组（std004、原课程表）在 1250 / 1999 的**三次重复**，与下面变体同一版脚本、同一次会话内测定 |
+| `evals/eval_defer_it{1250,1999}_cmd40_r{1,2,3}.json` | §12 变体（课程整表推后 1000 档）：1999 的 ratio 0.684（判据要 0.77），且退化为「步态完好但 7.3% 的 env 摔」 |
+| `evals/eval_base010_it1250_cmd40_r{1,2,3}.json` | std²=0.10 基线在 1250 的**新协议复测**（ratio 0.630），用于和 std004 的 0.811 在同一版脚本下对照 |
+| `evals/onnx_parity_std004_1250.json` | §13 的 parity 报告：输入/输出形状、opset、静态 batch、parity 误差、负对照偏离量、四条闸门 |
+| `runmeta/variant_meta_vel_defer1500x1000_1025.json` | §12 变体的干预记录：`curriculum_before` / `curriculum_after` 逐档对比（**单位是步不是轮**）、cfg/mdp 哈希、`rewards_effective` |
 | `evals/runmeta_vel_4096x12000_1025.json` | baseline 训练契约：envs/iters/PPO 超参/求解器/**cfg 与 mdp 的字节哈希** |
 | `evals/runmeta_vel_4096x2000_std004_1025.json` | 单变量实验契约：除哈希外还有 **`rewards_effective`**（回读解析出的 `std` / `std_sq` / `std_over_cmd_max`）与 `extra_args` |
 | `videos/walk_1250_side.mp4` | baseline 侧视 8 s（azimuth 90 / 俯角 −8° / 1.15 m），看抬脚与落地相位 |

@@ -11,6 +11,7 @@
 | `watch_milestones.py` | 里程碑守候：等 `model_N.pt` 落盘 → 同参评测 → 判读 → 可自动停训 | 判停阈值写死在代码里（`verdict()`），比「等我想起来看一眼」可靠 |
 | `record_walk.py` | 无头录像：在训练环境内以固定协议录 mp4（`--distance/--elevation/--azimuth/--yaw-deg` 机位与朝向可钉） | `mjlab play --video` 永远以交互 viewer 循环收尾（`play.py:288-291`），录完不返回；这里复用同一套组件但把循环做成有限步 |
 | `patch_issue46.py` | issue #46 三处改法的可回滚补丁（`--check/--apply/--revert`，幂等、带备份） | 当前**未应用**；前进门控复用上游 `_forward_progress_gate`，不是自己推导 |
+| `check_onnx_parity.py` | 导出图与权重的 parity 闸门：**用 numpy 从 `actor_state_dict` 独立重建前向**，与 onnxruntime 输出逐元素比，并强制负对照（拆掉归一化）必须偏离 | 上游 `mjlab_microduck.export` 把「normalizer 已烘进图」写在注释里，但源码里 `parity`/`onnxruntime`/`allclose` 出现 **0 次**。而拿 `policy.act_inference()` 当参考也测不出来——normalizer 在同一个模块上，导出路径和参考路径的 bug 会互相抵消。**参考必须独立，否则它在测自己** |
 
 ## 使用注意
 
@@ -38,3 +39,9 @@
   所以 `except Exception` 抓不到 ⇒ 进程在写 runmeta **之前**就死，发车确实被拒但**一行证据都没留**。
   这里用 `except BaseException` 才记下 `FATAL` + `SystemExit: 2` 并 exit 1。
   凡是 try/except 包住 tyro / argparse / 任何内部 `sys.exit()` 的地方，都要先问这一句。
+- `check_onnx_parity.py` 的两个常量是从源码读的，不是猜的：`EmpiricalNormalization.forward`
+  是 `(x − _mean) / (_std + eps)`（除**存储的 std buffer**，不是 `sqrt(_var)`），且
+  `eps` 默认 **1e-2**（`rsl_rl/modules/normalization.py`）。老导出器常见的 1e-5 会让每个输出都偏移，
+  看起来像真不匹配；`--norm-eps` 可覆盖。
+- 导出图带**静态 batch 1**（`get_dummy_inputs` 就是一行，正是控制器每次发的形状）。
+  检查脚本按静态 batch 分块喂，不假设动态轴——否则 ort 报的是 shape 错误，看起来像策略有问题。
