@@ -1,0 +1,161 @@
+{
+  "protocol": "Mjlab-Velocity-Flat-MicroDuck, 32 envs x 8 s, cmd vx 0.4 (frozen), solver 100/50, standing_envs curriculum REMOVED (command_frozen_ok gate enforced)",
+  "run": "2026-10-25_08-10-20_vel_4096x12000_1025",
+  "note": "all rows measured with the same evaluator and the same flags; 1250 is the peak",
+  "rows": [
+    {
+      "iter": 1250,
+      "vx_median": 0.2519,
+      "vx_mean": 0.2522,
+      "error_vel_xy": 0.2117,
+      "dx_body_mean": 1.821,
+      "dx_over_expected": 0.593,
+      "abs_dy_body_median": 0.476,
+      "feet_peak_mm": 15.9,
+      "landings_hz": 1.88,
+      "yaw_drift_deg_s": 3.29,
+      "upright_min": 0.997,
+      "mean_action_acc": 0.0747,
+      "gates_passed": 11,
+      "gates_failed": []
+    },
+    {
+      "iter": 1500,
+      "vx_median": 0.2339,
+      "vx_mean": 0.2436,
+      "error_vel_xy": 0.2229,
+      "dx_body_mean": 1.547,
+      "dx_over_expected": 0.493,
+      "abs_dy_body_median": 0.746,
+      "feet_peak_mm": 17.77,
+      "landings_hz": 1.89,
+      "yaw_drift_deg_s": 5.33,
+      "upright_min": 0.9964,
+      "mean_action_acc": 0.0663,
+      "gates_passed": 11,
+      "gates_failed": []
+    },
+    {
+      "iter": 1750,
+      "vx_median": 0.1905,
+      "vx_mean": 0.1916,
+      "error_vel_xy": 0.2577,
+      "dx_body_mean": 1.364,
+      "dx_over_expected": 0.429,
+      "abs_dy_body_median": 0.441,
+      "feet_peak_mm": 16.35,
+      "landings_hz": 1.72,
+      "yaw_drift_deg_s": 4.54,
+      "upright_min": 0.9974,
+      "mean_action_acc": 0.0649,
+      "gates_passed": 9,
+      "gates_failed": [
+        "tracks_half_command",
+        "error_vel_xy_le_0.25"
+      ]
+    },
+    {
+      "iter": 2000,
+      "vx_median": 0.1825,
+      "vx_mean": 0.1874,
+      "error_vel_xy": 0.2657,
+      "dx_body_mean": 1.288,
+      "dx_over_expected": 0.433,
+      "abs_dy_body_median": 0.433,
+      "feet_peak_mm": 15.21,
+      "landings_hz": 1.77,
+      "yaw_drift_deg_s": 4.73,
+      "upright_min": 0.9971,
+      "mean_action_acc": 0.0687,
+      "gates_passed": 9,
+      "gates_failed": [
+        "tracks_half_command",
+        "error_vel_xy_le_0.25"
+      ]
+    },
+    {
+      "iter": 2500,
+      "vx_median": 0.218,
+      "vx_mean": 0.2177,
+      "error_vel_xy": 0.2449,
+      "dx_body_mean": 1.341,
+      "dx_over_expected": 0.441,
+      "abs_dy_body_median": 0.663,
+      "feet_peak_mm": 16.93,
+      "landings_hz": 1.86,
+      "yaw_drift_deg_s": 6.92,
+      "upright_min": 0.9971,
+      "mean_action_acc": 0.0666,
+      "gates_passed": 11,
+      "gates_failed": []
+    },
+    {
+      "iter": 3000,
+      "vx_median": 0.1979,
+      "vx_mean": 0.2089,
+      "error_vel_xy": 0.2476,
+      "dx_body_mean": 1.449,
+      "dx_over_expected": 0.416,
+      "abs_dy_body_median": 0.498,
+      "feet_peak_mm": 15.47,
+      "landings_hz": 1.87,
+      "yaw_drift_deg_s": 4.27,
+      "upright_min": 0.9968,
+      "mean_action_acc": 0.0604,
+      "gates_passed": 10,
+      "gates_failed": [
+        "tracks_half_command"
+      ]
+    },
+    {
+      "iter": 3500,
+      "vx_median": 0.2185,
+      "vx_mean": 0.2302,
+      "error_vel_xy": 0.23,
+      "dx_body_mean": 1.604,
+      "dx_over_expected": 0.498,
+      "abs_dy_body_median": 0.452,
+      "feet_peak_mm": 16.39,
+      "landings_hz": 1.96,
+      "yaw_drift_deg_s": 3.51,
+      "upright_min": 0.9966,
+      "mean_action_acc": 0.0797,
+      "gates_passed": 11,
+      "gates_failed": []
+    },
+    {
+      "iter": 4000,
+      "vx_median": 0.2201,
+      "vx_mean": 0.2226,
+      "error_vel_xy": 0.2345,
+      "dx_body_mean": 1.536,
+      "dx_over_expected": 0.508,
+      "abs_dy_body_median": 0.333,
+      "feet_peak_mm": 15.86,
+      "landings_hz": 1.75,
+      "yaw_drift_deg_s": 2.8,
+      "upright_min": 0.9969,
+      "mean_action_acc": 0.0691,
+      "gates_passed": 11,
+      "gates_failed": []
+    },
+    {
+      "iter": 6000,
+      "vx_median": 0.2125,
+      "vx_mean": 0.2126,
+      "error_vel_xy": 0.2341,
+      "dx_body_mean": 1.456,
+      "dx_over_expected": 0.474,
+      "abs_dy_body_median": 0.459,
+      "feet_peak_mm": 15.03,
+      "landings_hz": 1.88,
+      "yaw_drift_deg_s": 4.7,
+      "upright_min": 0.9769,
+      "mean_action_acc": 0.0618,
+      "gates_passed": 10,
+      "gates_failed": [
+        "no_fall"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+{
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "checkpoint": "logs/rsl_rl/microduck_velocity/2026-10-25_08-10-20_vel_4096x12000_1025/model_6000.pt",
+  "num_envs": 32,
+  "seconds": 8.0,
+  "device": "cuda:0",
+  "plant": "default",
+  "plant_info": null,
+  "solver": {
+    "before": {
+      "iterations": 10,
+      "ls_iterations": 20,
+      "nconmax": 35
+    },
+    "after": {
+      "iterations": 100,
+      "ls_iterations": 50,
+      "nconmax": 35
+    }
+  },
+  "play_cfg": false,
+  "command": {
+    "vx": 0.4,
+    "vy": 0.0,
+    "wz": 0.0
+  },
+  "command_measured": {
+    "frozen": {
+      "vx": 0.4,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "uniq_cmd_vx": [
+      0.4
+    ],
+    "frac_cmd_zero_vx": 0.0,
+    "frac_off_frozen_1e3": 0.0,
+    "max_dev_from_frozen": 0.0
+  },
+  "curriculum_counter_before_pin": 144024,
+  "dropped_events": [
+    "push_robot"
+  ],
+  "sensors": {
+    "height": "foot_height_scan",
+    "contact": "feet_ground_contact"
+  },
+  "speed": {
+    "cmd_vx": 0.4,
+    "vx_median_of_env_means": 0.21252624690532684,
+    "vx_mean": 0.21264807879924774,
+    "vy_mean": -0.0008661802858114243,
+    "wz_mean": 0.01004024688154459
+  },
+  "official_metrics": {
+    "error_vel_xy": 0.23405630886554718,
+    "error_vel_yaw": 0.2845413088798523,
+    "error_vel_xy_median": 0.23223267495632172
+  },
+  "official_metric_terms": {
+    "mean_action_acc": 0.061770232187118385
+  },
+  "displacement": {
+    "dx_body_mean": 1.4555740356445312,
+    "path_dx_median": 1.7002098560333252,
+    "expected_dx": 3.2,
+    "dx_over_expected": 0.4743572771549225,
+    "abs_dy_body_median": 0.4586048126220703,
+    "dx_world_mean_unused": 0.192063570022583
+  },
+  "heading": {
+    "yaw_drift_deg_s": 4.704469680786133
+  },
+  "stability": {
+    "upright_mean": 0.9976252317428589,
+    "upright_min": 0.9768618941307068,
+    "terminated_frac": 0.03125
+  },
+  "feet": {
+    "landings_per_foot_hz": 1.87890625,
+    "landing_events": 962,
+    "touchdown_events": 962,
+    "simultaneous_frac": 0.051975052803754807,
+    "left_peak_mm_median": 15.64817689359188,
+    "right_peak_mm_median": 15.03063179552555,
+    "both_peak_mm_median": 15.03063179552555,
+    "stance_mm_median": 1.0634660720825195
+  },
+  "gates": {
+    "command_frozen_ok": true,
+    "sensor_zero_ok": true,
+    "measurement_consistent": true,
+    "tracks_half_command": true,
+    "translates_forward": true,
+    "not_sideways": true,
+    "error_vel_xy_le_0.25": true,
+    "no_fall": false,
+    "stays_upright": true,
+    "feet_clear_8mm": true,
+    "steps_alternate": true
+  },
+  "passed": [
+    "command_frozen_ok",
+    "sensor_zero_ok",
+    "measurement_consistent",
+    "tracks_half_command",
+    "translates_forward",
+    "not_sideways",
+    "error_vel_xy_le_0.25",
+    "stays_upright",
+    "feet_clear_8mm",
+    "steps_alternate"
+  ],
+  "failed": [
+    "no_fall"
+  ]
+}

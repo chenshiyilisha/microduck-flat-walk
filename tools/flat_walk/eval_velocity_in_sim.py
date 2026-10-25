@@ -103,6 +103,17 @@ def freeze_command(cfg, vx: float, vy: float, wz: float, duration: float) -> Non
     cmd.ranges.heading = (0.0, 0.0)
     cmd.resampling_time_range = (duration, duration)
 
+    # The `standing_envs` curriculum term rewrites `rel_standing_envs` on EVERY
+    # step from `common_step_counter`, so pinning the counter to 1e9 (which is
+    # what makes the run reproducible) also pins it to the LAST stage -- 0.25 --
+    # silently undoing the 0.0 two lines above. Measured on model_4000: 6 of 16
+    # envs were graded on "stand still" while the run was reported as
+    # "cmd vx 0.4". That dilutes vx_mean by the standing fraction and mixes ~0
+    # error into error_vel_xy, so two checkpoints cannot be compared. Removing
+    # the term is the only fix that survives: setting the cfg value alone is
+    # overwritten again on the next curriculum tick.
+    cfg.curriculum.pop("standing_envs", None)
+
 
 def drop_pushes(cfg) -> list[str]:
     """Remove the push event -- it exists to train robustness, not to be graded."""
@@ -204,6 +215,9 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     dev = u.device
 
     vx_h, vy_h, wz_h, up_h, yaw_h, xy_h = [], [], [], [], [], []
+    # The command is assumed frozen for the whole window; recording it is what
+    # turns that assumption into a measurement (see the `command` block).
+    cmd_h: list[torch.Tensor] = []
     metric_h: dict[str, list[float]] = {}
 
     # Swing bookkeeping, mirroring `mjlab.tasks.velocity.mdp.rewards.feet_swing_height`:
@@ -234,6 +248,7 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
             u.common_step_counter = 10**9
 
             d = robot.data
+            cmd_h.append(u.command_manager.get_term("twist").vel_command_b[:, :2].clone())
             vx_h.append(d.root_link_lin_vel_b[:, 0].clone())
             vy_h.append(d.root_link_lin_vel_b[:, 1].clone())
             wz_h.append(d.root_link_ang_vel_b[:, 2].clone())
@@ -322,6 +337,22 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "dx_world_mean_unused": f(net[:, 0].mean()),
     }
 
+    # Was the command actually the frozen one for every env, every step?
+    # This is a MEASUREMENT of the protocol, not a behaviour metric: a `standing`
+    # or `turn-in-place` curriculum rewriting rel_* behind our back (see
+    # freeze_command) shows up here as a non-zero `frac_cmd_zero` instead of
+    # quietly deflating vx_mean by 25%.
+    cmd_t = torch.stack(cmd_h)                       # [T, N, 2]
+    want = torch.tensor([vx, vy], dtype=cmd_t.dtype, device=cmd_t.device)
+    dev_from_frozen = (cmd_t - want).abs().amax(dim=-1)          # [T, N]
+    command = {
+        "frozen": frozen,
+        "uniq_cmd_vx": sorted({round(float(x), 6) for x in torch.unique(cmd_t[..., 0])}),
+        "frac_cmd_zero_vx": f((cmd_t[..., 0].abs() < 1e-6).float().mean()),
+        "frac_off_frozen_1e3": f((dev_from_frozen > 1e-3).float().mean()),
+        "max_dev_from_frozen": f(dev_from_frozen.max()),
+    }
+
     heading = {
         "yaw_drift_deg_s": f((yaw_t[-1] - yaw_t[0]).abs().median() / seconds * 180 / math.pi),
     }
@@ -371,6 +402,7 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     gates = {
         # Measurement integrity first: if these fail, every number below is
         # suspect, so they must not be buried under the behaviour gates.
+        "command_frozen_ok": bool(command["max_dev_from_frozen"] <= 1e-3),
         "sensor_zero_ok": (None if feet["stance_mm_median"] is None
                            else bool(abs(feet["stance_mm_median"]) <= 3.0)),
         "measurement_consistent": bool(feet["landing_events"] == feet["touchdown_events"]),
@@ -421,6 +453,7 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "solver": solver,
         "play_cfg": play,
         "command": frozen,
+        "command_measured": command,
         "curriculum_counter_before_pin": counter_before,
         "dropped_events": dropped,
         "sensors": {"height": HEIGHT_SENSOR, "contact": CONTACT_SENSOR},
@@ -486,6 +519,12 @@ def main() -> int:
               f"   ncon {sv['before']['nconmax']} -> {sv['after']['nconmax']}")
     print(f"command     vx={a.cmd_vx:+.2f} vy={a.cmd_vy:+.2f} wz={a.cmd_wz:+.2f}   "
           f"{a.num_envs} envs x {a.seconds:.0f}s")
+    cq = r.get("command_measured") or {}
+    if cq:
+        print(f"            measured: uniq vx {cq['uniq_cmd_vx']}  "
+              f"frac cmd==0 {cq['frac_cmd_zero_vx']*100:.1f}%  "
+              f"offfrozen {(cq['frac_off_frozen_1e3']*100):.1f}% of steps  "
+              f"max dev {cq['max_dev_from_frozen']:.4f}")
     print(f"curriculum  pinned 1e9 (was {r['curriculum_counter_before_pin']}); "
           f"dropped events: {r['dropped_events'] or 'none'}")
     print("-" * 66)

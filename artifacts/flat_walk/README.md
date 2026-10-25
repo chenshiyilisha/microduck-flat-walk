@@ -4,7 +4,7 @@
 
 | 文件 | 是什么 |
 |---|---|
-| `checkpoints/model_1250.pt` | iter 1250 策略，10/10 闸门通过（4.8 MB，与 `simple_stairs/checkpoints/` 同规格） |
+| `checkpoints/model_1250.pt` | iter 1250 策略，11/11 闸门通过（4.8 MB，与 `simple_stairs/checkpoints/` 同规格） |
 | `evals/eval_iter1250_v2.json` | 评估原始输出，含全部闸门布尔值与逐项指标 |
 | `evals/runmeta_vel_4096x12000_1025.json` | 训练契约：envs/iters/PPO 超参/求解器/**cfg 与 mdp 的字节哈希** |
 

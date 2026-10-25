@@ -222,8 +222,15 @@ def verdict(cur: dict, base: dict) -> dict:
     b_vx = base["speed"]["vx_median_of_env_means"]
     c_vx = cur["speed"]["vx_median_of_env_means"]
     failed = cur.get("failed") or []
-    err_down = c_err < b_err * 0.97          # >=3% better
-    speed_up = c_vx > b_vx * 1.05 and c_err <= b_err * 1.02   # >=5% faster, err not worse
+    # BOTH axes matter. Judging on error_vel_xy alone is not enough: that metric
+    # is a mean of ||cmd - v|| and a policy that simply walks slower scores
+    # "better" on it (measured: iter 4000 cut error 10% while vx fell 19% and
+    # per-foot landing rate fell 34% -- slower stepping, not better tracking).
+    # So an error improvement only counts if speed is held.
+    speed_kept = c_vx >= b_vx * 0.97
+    err_down = c_err < b_err * 0.97 and speed_kept
+    speed_up = c_vx > b_vx * 1.05 and c_err <= b_err * 1.02
+    trade = c_err < b_err * 0.97 and not speed_kept
     out = {
         "baseline_iter": 1250,
         "baseline_error_vel_xy": round(b_err, 4),
@@ -235,17 +242,26 @@ def verdict(cur: dict, base: dict) -> dict:
         "feet_peak_mm": round(cur["feet"]["both_peak_mm_median"], 2),
         "landings_hz": round(cur["feet"]["landings_per_foot_hz"], 2),
         "gates_failed": failed,
-        "rule": "improved if error_vel_xy < 0.97*baseline OR (vx > 1.05*baseline and error <= 1.02*baseline); any failed gate => flat",
+        "rule": ("improved if (error < 0.97*base AND vx >= 0.97*base) OR "
+                 "(vx > 1.05*base and error <= 1.02*base); "
+                 "error better but vx < 0.97*base => trade (counts as not-improved); "
+                 "any failed gate => flat"),
     }
     if failed:
         out["decision"] = "flat"
         out["reason"] = f"{len(failed)} gate(s) failed: {','.join(failed)}"
     elif err_down:
         out["decision"] = "improved"
-        out["reason"] = f"error_vel_xy {b_err:.4f} -> {c_err:.4f} ({100*(c_err/b_err-1):+.1f}%)"
+        out["reason"] = (f"error_vel_xy {b_err:.4f} -> {c_err:.4f} "
+                         f"({100*(c_err/b_err-1):+.1f}%), vx {b_vx:.4f} -> {c_vx:.4f} "
+                         f"({100*(c_vx/b_vx-1):+.1f}%)")
     elif speed_up:
         out["decision"] = "improved"
         out["reason"] = f"vx {b_vx:.4f} -> {c_vx:.4f} ({100*(c_vx/b_vx-1):+.1f}%), error not worse"
+    elif trade:
+        out["decision"] = "trade"
+        out["reason"] = (f"error down {100*(c_err/b_err-1):+.1f}% but vx down "
+                         f"{100*(c_vx/b_vx-1):+.1f}% -- slower, not better")
     else:
         out["decision"] = "flat"
         out["reason"] = (f"error_vel_xy {b_err:.4f} -> {c_err:.4f} "
@@ -343,7 +359,11 @@ def main() -> int:
                            "milestones": results, "stopped": stopped}, f,
                           indent=2, ensure_ascii=False)
             if i == len(targets) - 1 and args.stop_pid and not stopped:
-                if all(r["decision"] == "flat" for r in results):
+                # `trade` (error better, speed worse) is "not better" for the
+                # purpose of "is it worth the remaining GPU hours", so it counts
+                # alongside `flat`. `improved` and `eval-failed` both keep it
+                # running -- a broken eval must never silently stop training.
+                if all(r["decision"] in ("flat", "trade") for r in results):
                     stop_training(args.stop_pid, fh)
                     stopped = True
                     with open(verdict_path, "w", encoding="utf-8") as f:

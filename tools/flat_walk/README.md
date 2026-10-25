@@ -5,7 +5,7 @@
 
 | 文件 | 作用 | 为什么值得留 |
 |---|---|---|
-| `eval_velocity_in_sim.py` | 10 项闸门评估器（`docs/05-flat-walk.md` §2 的全部数字都由它产出） | 「在走」需要可证伪的判据：前进位移、不侧滑、脚峰、落地交替、不摔 |
+| `eval_velocity_in_sim.py` | 11 项闸门评估器（含 `command_frozen_ok` 协议自检）（`docs/05-flat-walk.md` §2 的全部数字都由它产出） | 「在走」需要可证伪的判据：前进位移、不侧滑、脚峰、落地交替、不摔 |
 | `train_velocity.sh` | 训练包装：写 `runmeta`（含 **cfg/mdp 字节哈希**）+ 求解器 CLI 覆盖 | `cfg_byte_identical_to_upstream` 是「没偷偷改奖励」的机器可验证证据 |
 | `resume_velocity.sh` | 续训包装：**目标绝对轮数**、GPU 双开保护、`DRY_RUN=1` | `--agent.max-iterations` 是**增量**不是总量，手滑一次多跑 10 小时 |
 | `watch_milestones.py` | 里程碑守候：等 `model_N.pt` 落盘 → 同参评测 → 判读 → 可自动停训 | 判停阈值写死在代码里（`verdict()`），比「等我想起来看一眼」可靠 |
