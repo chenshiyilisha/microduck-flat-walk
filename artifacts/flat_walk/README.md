@@ -17,6 +17,10 @@
 
 ## 评估口径（要复现数字必须同参）
 
+> 前提：需要 `Mjlab-Velocity-Flat-MicroDuck` 任务包与对应环境；本仓库的 `third_party/*`
+> 是 private submodule，**外部 clone 拿不到**。所以「可复现」的含义与边界写在
+> `docs/05-flat-walk.md` §7.0，别按「clone 即出数」去理解。
+
 ```bash
 uv run python tools/flat_walk/eval_velocity_in_sim.py \
   --checkpoint artifacts/flat_walk/checkpoints/model_1250.pt \
@@ -41,6 +45,7 @@ uv run python tools/flat_walk/eval_velocity_in_sim.py \
 
 本目录的 `.pt` 与 `.mp4` 是**刻意入库**的：`artifacts/` 默认被 `.gitignore` 排除，
 这里走逐项例外规则（不是目录级白名单，新增文件仍会被挡住）。
-一个 4.8 MB 的 checkpoint + 2.0 MB 的两条片子，换来「clone 即能复现判决、也能直接看到它走」，
-比重下 10 小时训练便宜。
+一个 4.8 MB 的 checkpoint + 2.0 MB 的两条片子，换来两件事：**clone 下来就能看到它走**，
+以及**判决所依据的原始数据都在**（要重算数字仍需任务包与环境，见 §7.0）。
+这比重新烧 10 小时训练便宜得多。
 其余训练产物（每 250 轮一个 ckpt、TensorBoard events、4 MB 日志、调试录屏）不入库。

@@ -161,6 +161,28 @@
 
 ## 7. 复现
 
+### 7.0 先说清「可复现」指的是什么
+
+本仓库的 `third_party/microduck_rl`、`third_party/microduck-playground` 是 **private submodule**
+（`.gitmodules` 指向 `github.com/emwstudio/microduck_rl`，未授权访问返回 404），所以
+「clone → 跑命令 → 出数字」这条路**对外部读者不成立**。本节全部数字产生于
+**`tailong-wu/microduck-mjbatch` 的 `mjlab_microduck` 任务包**（它注册了
+`Mjlab-Velocity-Flat-MicroDuck`），环境：Python 3.13 + `mjlab` + `mujoco_warp 3.7.0.1`
++ `warp-lang 1.12.0`，RTX 4070 Laptop 8 GB。
+
+所以「可复现」在本文的确切含义是：
+
+- **给定同一份任务包与环境**，`artifacts/flat_walk/evals/*.json` 里每个数都能用
+  `tools/flat_walk/eval_velocity_in_sim.py` 逐位算回来（同参：32 envs × 8 s × cmd 0.4 × solver 100/50）；
+- `runmeta` 里的 `cfg_byte_identical_to_upstream: true` 和 cfg/mdp 的字节哈希，
+  是「没有偷偷改奖励」的机器证据；
+- 有 submodule 权限的内部读者：`git clone --recurse-submodules` 后
+  `cd third_party/microduck_rl && uv sync`，本节命令可直接用。
+
+**不成立的说法**是「clone 下来就能跑出这份结果」——缺任务包，也缺环境。
+
+### 7.1 命令
+
 ```bash
 # 从零训练（4096 envs；Windows + .venv-mjlab 的包装脚本见 tools/flat_walk/train_velocity.sh）
 uv run train Mjlab-Velocity-Flat-MicroDuck \
@@ -168,7 +190,7 @@ uv run train Mjlab-Velocity-Flat-MicroDuck \
   --agent.max-iterations 12000 --agent.save-interval 250 \
   --agent.logger tensorboard --agent.experiment-name microduck_velocity
 
-# 判读（10 项闸门；cmd 0.4，与文档里所有数字同参）
+# 判读（11 项闸门，含 command_frozen_ok 协议自检；cmd 0.4，与文档里所有数字同参）
 uv run python tools/flat_walk/eval_velocity_in_sim.py \
   --checkpoint artifacts/flat_walk/checkpoints/model_1250.pt \
   --num-envs 32 --seconds 8 --cmd-vx 0.4 \

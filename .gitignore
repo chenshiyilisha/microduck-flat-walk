@@ -35,7 +35,9 @@ kimi-debug-session_*/
 kimi-debug-session_*.zip
 .DS_Store
 
-# 例外：平地速度跟踪复现（checkpoint 4.8 MB + 评估证据，clone 即能复现判决）
+# 例外：平地速度跟踪（checkpoint 4.8 MB + 评估 JSON + 2 条录像）——
+# 目的是「clone 下来就能看片、且判决所依据的原始数据都在」；
+# 要重算数字仍需任务包与环境，见 docs/05-flat-walk.md §7.0。
 !artifacts/flat_walk/
 artifacts/flat_walk/*
 !artifacts/flat_walk/README.md
