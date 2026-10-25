@@ -781,6 +781,24 @@ MUJOCO_GL=glfw python tools/flat_walk/rehearse_deploy.py \
 `mujoco`——与 §7.0 的可复现边界同一条，工具能支持的说法只是「给定同一任务包与环境，
 输出里的每个数能按 `settings` 复算」。
 
+其余三组（负对照 / 低速 / 零指令），`--infer-policy` 与 `--onnx` 同上省略：
+
+```bash
+# 负对照：同一图、同一命令，换回 XML 位置伺服。P3 由 ctrl 探针判，不看这条的 vx
+... --cmd-vx 0.4 --seconds 8 --condition nominal --no-bam --out out/rehearse_nobam.json
+
+# 低速：必须每档扫 yaw。单机固定初态只等于一个样本，双稳态会被它掩盖（§14.7）
+for c in 0.12 0.15 0.20; do for y in 0 45 90 135 180; do
+  ... --cmd-vx $c --seconds 8 --condition nominal --yaw-deg $y \
+      --out out/rehearse_cmd${c}_yaw${y}.json
+done; done
+
+# 零指令：all-zeros 是 stand 语义（AGENTS.md:265-269），单独跑、单独解读
+... --cmd-vx 0.0 --seconds 8 --condition nominal --out out/rehearse_cmd0_standslot.json
+```
+
+`speed.comparable=false` 的跑（摔过的）不要写进任何速度对比——只写 `fell_at_s`（§14.6）。
+
 ### 14.3 判据先定死，跑完不许改口径
 
 | 判据 | 通过条件 | 含义 |
