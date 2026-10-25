@@ -1,5 +1,30 @@
 # DuckEMW
 
+> **这是什么仓库 / 谁的代码**
+>
+> `chenshiyilisha/microduck-flat-walk` —— [emwstudio/DuckEMW](https://github.com/emwstudio/DuckEMW)
+> （138★）的**衍生工作仓**，内容以「平地速度跟踪（flat-walk）」这一支为主：上游任务的复现、
+> 评估协议的两个纠错、一个单变量实验（奖励核宽）、一个被证伪的负结果、以及 ONNX 交付与
+> 部署彩排两道闸门。全部细节与证据见 `docs/05-flat-walk.md`。
+>
+> **不是我的部分**（本仓库没有改动它们任何一行）：
+> - 训练任务包（环境 / 奖励 / 课程 / 机器人 XML / BAM 执行器）来自
+>   [`tailong-wu/microduck-mjbatch`](https://github.com/tailong-wu/microduck-mjbatch)，
+>   此处以 `third_party/microduck_rl`（**private** submodule）引用 —— 所以「clone 即复现」
+>   是夸大的说法，真实前提写在 `docs/05-flat-walk.md` §7.0。
+> - 部署栈与 `infer_policy.py` 来自
+>   [`pollen-robotics/microduck_rl`](https://github.com/pollen-robotics/microduck_rl)；
+>   机器人本体与 runtime 来自
+>   [`pollen-robotics/microduck`](https://github.com/pollen-robotics/microduck)。
+> - 框架：mjlab / IsaacLab / rsl_rl / MuJoCo / onnxruntime。
+>
+> **是我（chenshiyilisha）的部分**：`tools/flat_walk/` 的七个工具、`docs/05-flat-walk.md`
+> 的分析与结论、`artifacts/flat_walk/` 里的证据与产物。
+> 给上游的 PR 是 [emwstudio/DuckEMW#2](https://github.com/emwstudio/DuckEMW/pull/2) ——
+> 那是**可选出口**，不是这个仓库的前提；合并权在上游账号手里。
+>
+> 仓库保持 **private**：内容含第三方任务包的实验产物与未发布的 checkpoint。
+
 教 MicroDuck（约 800 g、25 cm 双足机器人，14 个 XL330 舵机）挑战五件事：**平地极速冲刺**、**跟着音乐跳 DJ**、**踩篮球杂耍平衡**、**踩高跷（10cm→2m 课程复现）**、**360° 荡秋千（刚性杆全圈）**——RL 训练的运动策略 + 评估/出片管线。
 
 基于 [pollen-robotics/microduck](https://github.com/pollen-robotics/microduck)（机器人本体/runtime）与 [pollen-robotics/microduck_rl](https://github.com/pollen-robotics/microduck_rl)（mjlab/MuJoCo Warp + PPO 训练框架，本仓库以 fork + submodule 方式扩展）。
