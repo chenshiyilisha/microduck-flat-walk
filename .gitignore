@@ -46,7 +46,10 @@ artifacts/flat_walk/*
 !artifacts/flat_walk/evals/*.json
 !artifacts/flat_walk/checkpoints/
 !artifacts/flat_walk/checkpoints/model_1250.pt
+!artifacts/flat_walk/checkpoints/model_1250_std004.pt
 !artifacts/flat_walk/videos/
 artifacts/flat_walk/videos/*
 !artifacts/flat_walk/videos/walk_1250_side.mp4
 !artifacts/flat_walk/videos/walk_1250_34.mp4
+!artifacts/flat_walk/videos/walk_std004_1250_side.mp4
+!artifacts/flat_walk/videos/walk_std004_1250_34.mp4
