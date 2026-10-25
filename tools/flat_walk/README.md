@@ -21,3 +21,6 @@
   注释比代码长——那些注释就是它的主要价值。
 - `watch_milestones.py` 的评测不会打断训练（独立进程）；`--stop-pid` 只在**所有里程碑都判 flat**
   时才会发 `taskkill`，评测崩溃（`eval-failed`）不会误停。
+- `watch_milestones.py` 要在**训练工作区**里跑（需要 `logs/rsl_rl/microduck_velocity/` 与 `out/`）；
+  只 clone 了本仓库时它会直接报「训练产物不在本仓库」并退出，此时用 `eval_velocity_in_sim.py`
+  对已入库的 checkpoint 做单次判读即可。

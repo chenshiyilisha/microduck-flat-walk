@@ -51,8 +51,34 @@ import sys
 import time
 from datetime import datetime
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _find_root(start: str) -> str:
+    """Walk up until we hit the project root.
+
+    The script lives in two places in practice: `<root>/tools/` (single-task
+    workspace, next to .venv-mjlab) and `<root>/tools/flat_walk/` (this repo),
+    so a fixed `dirname(dirname(__file__))` silently points at `tools/` and then
+    every path (`logs/`, `out/`) is wrong. Anchoring on a marker file works for
+    both.
+    """
+    d = os.path.abspath(start)
+    markers = ("pyproject.toml", "AGENTS.md", ".venv-mjlab")
+    for _ in range(8):
+        if any(os.path.exists(os.path.join(d, m)) for m in markers):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return os.path.abspath(start)
+
+
+ROOT = _find_root(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+HERE = os.path.dirname(os.path.abspath(__file__))
+# 与 eval 脚本同目录（两者一起搬运），不要假设它固定在 tools/ 下
+EVAL_SCRIPT = os.path.join(HERE, "eval_velocity_in_sim.py")
 PY = os.path.join(ROOT, ".venv-mjlab", "Scripts", "python.exe")
+if not os.path.exists(PY):  # 用 uv / 系统解释器时回落到当前解释器
+    PY = sys.executable
 EXP = "microduck_velocity"
 RUNS = os.path.join(ROOT, "logs", "rsl_rl", EXP)
 OUT = os.path.join(ROOT, "out")
@@ -73,13 +99,21 @@ def log(msg: str, fh=None) -> None:
 
 
 def newest_run() -> str:
+    if not os.path.isdir(RUNS):
+        sys.exit(f"训练产物不在本仓库：{RUNS} 不存在。\n"
+                 f"  root = {ROOT}\n"
+                 f"  这个脚本要在「有 logs/rsl_rl/{EXP}/」的训练工作区里跑；"
+                 f"仓库里只有 docs 与 tools 时用 --run 也无效，可以直接跑 "
+                 f"eval_velocity_in_sim.py。")
     cands = [
         d for d in os.listdir(RUNS)
         if os.path.isdir(os.path.join(RUNS, d)) and not d.endswith("_smoke")
     ]
     cands.sort(key=lambda d: os.path.getmtime(os.path.join(RUNS, d)))
     if not cands:
-        sys.exit(f"no run dirs under {RUNS}")
+        sys.exit(f"no run dirs under {RUNS}\n"
+                 f"  这就是为什么要有 --run / --targets：路径按 <root>/{os.path.basename(RUNS)} 解析，"
+                 f"root={ROOT}。先确认训练产物在不在这个仓库里。")
     return cands[-1]
 
 
@@ -118,8 +152,14 @@ def latest_iter(log_path: str) -> int:
     return got
 
 
-def wait_for_ckpt(ckpt: str, target: int, log_path: str, poll: int, fh) -> bool:
-    """Block until model_<target>.pt exists AND is not still being written."""
+def wait_for_ckpt(ckpt: str, target: int, log_path: str, poll: int, fh,
+                  status_path: str | None = None) -> bool:
+    """Block until model_<target>.pt exists AND is not still being written.
+
+    The status file is rewritten every poll on purpose: a stale status file that
+    still says "iter 1649" two hours later is indistinguishable from a hung
+    watcher, and this tool exists precisely so nobody has to babysit it.
+    """
     last_size = -1
     while True:
         if os.path.exists(ckpt):
@@ -128,6 +168,11 @@ def wait_for_ckpt(ckpt: str, target: int, log_path: str, poll: int, fh) -> bool:
                 return True
             last_size = size
         it = latest_iter(log_path)
+        if status_path:
+            with open(status_path, "w", encoding="utf-8") as f:
+                json.dump({"stage": "waiting", "target": target, "train_iter": it,
+                           "updated": datetime.now().isoformat(timespec="seconds")},
+                          f, indent=2)
         log(f"waiting for {os.path.basename(ckpt)} (train at iter {it}/{target})", fh)
         time.sleep(poll)
 
@@ -136,7 +181,7 @@ def run_eval(run_dir: str, ckpt: str, out_json: str, num_envs: int, seconds: flo
              cmd_vx: float, solver_iters: int, solver_ls: int, fh) -> dict:
     ckpt_rel = os.path.relpath(ckpt, ROOT).replace("\\", "/")
     cmd = [
-        PY, os.path.join("tools", "eval_velocity_in_sim.py"),
+        PY, EVAL_SCRIPT,
         "--checkpoint", ckpt_rel,
         "--num-envs", str(num_envs),
         "--seconds", str(seconds),
@@ -281,7 +326,7 @@ def main() -> int:
                           "updated": datetime.now().isoformat(timespec="seconds")}
                 with open(status_path, "w", encoding="utf-8") as f:
                     json.dump(status, f, indent=2)
-                if not wait_for_ckpt(ckpt, target, log_path, args.poll, fh):
+                if not wait_for_ckpt(ckpt, target, log_path, args.poll, fh, status_path):
                     return 1
                 with open(status_path, "w", encoding="utf-8") as f:
                     json.dump({"stage": "evaluating", "target": target,
