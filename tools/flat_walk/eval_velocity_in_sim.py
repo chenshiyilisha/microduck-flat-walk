@@ -242,6 +242,14 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     # so the two feet must be selected separately or left/right merge silently.
     landing_peaks: list[list[torch.Tensor]] = [[], []]
     stance_heights: list[list[torch.Tensor]] = [[], []]
+    # Air-time bookkeeping -- the same quantity `feet_air_time` scores: seconds
+    # since the foot last touched the ground, sampled at each touchdown.
+    # That reward is a step function (`threshold_min < t < threshold_max`), so
+    # the raw distribution is what decides whether a command region earns the
+    # term at all. Without it, "the policy stopped lifting its feet" and "the
+    # window moved past the gait" look identical from the outside.
+    swing_t = torch.zeros((num_envs, len(FEET)), device=dev)
+    air_samples: list[list[torch.Tensor]] = [[], []]
     touchdowns = torch.zeros((num_envs, len(FEET)), device=dev)
     simultaneous = torch.zeros((), device=dev)  # steps where both feet land together
     fell = torch.zeros(num_envs, dtype=torch.bool, device=dev)
@@ -282,8 +290,16 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
                     sel = first_contact[:, j]
                     if bool(sel.any()):
                         landing_peaks[j].append(peaks[sel, j].clone())
+                        # Read *before* the clock is advanced: at this step the
+                        # foot has just landed, so `swing_t` still holds the
+                        # time it spent airborne.
+                        air_samples[j].append(swing_t[sel, j].clone())
                 touchdowns += first_contact.float()
                 simultaneous += first_contact.all(dim=1).float().sum()
+            # Advance the air clock: touching resets it, airborne accumulates.
+            swing_t = torch.where(
+                found > 0, torch.zeros_like(swing_t), swing_t + step_dt
+            )
             # Bare-contact height is the sensor's zero: it must read ~0. If it does
             # not, every "peak" below is offset by the same amount and the 8 mm
             # gate is measuring the wrong thing.
@@ -389,8 +405,40 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     stance_l = torch.cat(stance_heights[0]).median() if stance_heights[0] else None
     stance_r = torch.cat(stance_heights[1]).median() if stance_heights[1] else None
     env_seconds = num_envs * seconds
+    # Air-time distribution + the share that lands inside `feet_air_time`'s
+    # window. The window is read from the live cfg rather than assumed, because
+    # this task overrides mjlab's default [0.05, 0.5] with [0.125, 0.3]
+    # (microduck_velocity_env_cfg.py:333-336) -- and that tightening is exactly
+    # what a slow gait can fall out of.
+    air_win = (0.125, 0.300)
+    try:
+        _p = u.cfg.rewards["air_time"].params
+        air_win = (
+            float(_p.get("threshold_min", air_win[0])),
+            float(_p.get("threshold_max", air_win[1])),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    air_all = (
+        torch.cat([torch.cat(s) for s in air_samples if s]) if any(air_samples) else None
+    )
+    air_stats = None
+    if air_all is not None and air_all.numel() > 0:
+        air_stats = {
+            "n_samples": int(air_all.numel()),
+            "p25_s": f(air_all.quantile(0.25)),
+            "median_s": f(air_all.median()),
+            "p75_s": f(air_all.quantile(0.75)),
+            "max_s": f(air_all.max()),
+            "frac_in_reward_window": f(
+                ((air_all > air_win[0]) & (air_all < air_win[1])).float().mean()
+            ),
+            "window_s": [air_win[0], air_win[1]],
+            "gain_if_in_window": "1 per airborne foot (weight in cfg.rewards.air_time)",
+        }
     feet = {
         "landings_per_foot_hz": f(touchdowns.sum() / (2 * env_seconds)),
+        "air_time": air_stats,
         "landing_events": n_land,
         "touchdown_events": int(touchdowns.sum()),
         "simultaneous_frac": f(simultaneous / max(int(touchdowns.sum()), 1)),

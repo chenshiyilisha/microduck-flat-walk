@@ -1,0 +1,293 @@
+{
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "checkpoint": "logs/rsl_rl/microduck_velocity/2026-10-25_16-18-43_vel_4096x2000_std004_1025/model_1250.pt",
+  "num_envs": 8,
+  "seconds": 4.0,
+  "device": "cuda:0",
+  "plant": "default",
+  "plant_info": null,
+  "solver": {
+    "before": {
+      "iterations": 10,
+      "ls_iterations": 20,
+      "nconmax": 35
+    },
+    "after": {
+      "iterations": 100,
+      "ls_iterations": 50,
+      "nconmax": 35
+    }
+  },
+  "play_cfg": false,
+  "command": {
+    "vx": 0.4,
+    "vy": 0.0,
+    "wz": 0.0
+  },
+  "command_measured": {
+    "frozen": {
+      "vx": 0.4,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "uniq_cmd_vx": [
+      0.4
+    ],
+    "frac_cmd_zero_vx": 0.0,
+    "frac_off_frozen_1e3": 0.0,
+    "max_dev_from_frozen": 0.0
+  },
+  "curriculum_counter_before_pin": 30024,
+  "dropped_events": [
+    "push_robot"
+  ],
+  "sensors": {
+    "height": "foot_height_scan",
+    "contact": "feet_ground_contact"
+  },
+  "speed": {
+    "cmd_vx": 0.4,
+    "vx_median_of_env_means": 0.3144306540489197,
+    "vx_mean": 0.3155066967010498,
+    "vy_mean": -0.012688854709267616,
+    "wz_mean": -0.042374029755592346
+  },
+  "official_metrics": {
+    "error_vel_xy": 0.15928427875041962,
+    "error_vel_yaw": 0.3110200762748718,
+    "error_vel_xy_median": 0.15295836329460144
+  },
+  "official_metric_terms": {
+    "mean_action_acc": 0.07707681673578919
+  },
+  "displacement": {
+    "dx_body_mean": 1.2076895236968994,
+    "path_dx_median": 1.2577227354049683,
+    "expected_dx": 1.6,
+    "dx_over_expected": 0.7349522113800049,
+    "abs_dy_body_median": 0.27228713035583496,
+    "dx_world_mean_unused": -0.3107888400554657
+  },
+  "heading": {
+    "yaw_drift_deg_s": 5.618031978607178
+  },
+  "stability": {
+    "upright_mean": 0.9985076189041138,
+    "upright_min": 0.9954594373703003,
+    "terminated_frac": 0.0
+  },
+  "feet": {
+    "landings_per_foot_hz": 2.15625,
+    "air_time": {
+      "n_samples": 138,
+      "p25_s": 0.19999997317790985,
+      "median_s": 0.21999996900558472,
+      "p75_s": 0.23999996483325958,
+      "max_s": 0.2799999713897705,
+      "frac_in_reward_window": 0.7898550629615784,
+      "window_s": [
+        0.125,
+        0.3
+      ],
+      "gain_if_in_window": "1 per airborne foot (weight in cfg.rewards.air_time)"
+    },
+    "landing_events": 138,
+    "touchdown_events": 138,
+    "simultaneous_frac": 0.08695652335882187,
+    "left_peak_mm_median": 18.213307484984398,
+    "right_peak_mm_median": 20.40286734700203,
+    "both_peak_mm_median": 18.213307484984398,
+    "stance_mm_median": 1.1269599199295044
+  },
+  "metric_window": {
+    "window_steps": 200,
+    "step_dt": 0.02,
+    "resampling_time_range_s": [
+      4.0,
+      4.0
+    ],
+    "max_command_step": 200.0,
+    "ratio_window_over_max": 1.0,
+    "is_true_mean": true,
+    "note": "error_vel_xy is a true m/s mean only when is_true_mean is true; otherwise multiply by ratio_window_over_max before comparing."
+  },
+  "per_env": {
+    "note": "per-env values; sem = std/sqrt(n) over the env axis only, which is the uncertainty of the mean above",
+    "vx_mean": {
+      "n": 8,
+      "mean": 0.3155067004263401,
+      "std": 0.02908135122996048,
+      "sem": 0.0102818103303864,
+      "p10": 0.28144641816616056,
+      "p50": 0.32190340757369995,
+      "p90": 0.3421114146709442,
+      "min": 0.2720019221305847,
+      "max": 0.35814324021339417,
+      "values": [
+        0.295651,
+        0.285494,
+        0.314431,
+        0.329376,
+        0.358143,
+        0.272002,
+        0.333716,
+        0.335241
+      ]
+    },
+    "error_vel_xy": {
+      "n": 8,
+      "mean": 0.15928427688777447,
+      "std": 0.012754665303465376,
+      "sem": 0.004509455163922571,
+      "p10": 0.1482476532459259,
+      "p50": 0.15476571768522263,
+      "p90": 0.17785788625478743,
+      "min": 0.14798054099082947,
+      "max": 0.17979112267494202,
+      "values": [
+        0.16229,
+        0.179791,
+        0.156573,
+        0.147981,
+        0.14929,
+        0.177029,
+        0.148362,
+        0.152958
+      ]
+    },
+    "error_vel_yaw": {
+      "n": 8,
+      "mean": 0.31102005764842033,
+      "std": 0.06271289722529995,
+      "sem": 0.022172357447932306,
+      "p10": 0.25375154316425325,
+      "p50": 0.2985667586326599,
+      "p90": 0.37864333391189575,
+      "min": 0.24906191229820251,
+      "max": 0.44403472542762756,
+      "values": [
+        0.249062,
+        0.311887,
+        0.255761,
+        0.444035,
+        0.279664,
+        0.292127,
+        0.305007,
+        0.350618
+      ]
+    },
+    "dx_body": {
+      "n": 8,
+      "mean": 1.2076895833015442,
+      "std": 0.12229477726704485,
+      "sem": 0.04323773315461292,
+      "p10": 1.078240990638733,
+      "p50": 1.183668076992035,
+      "p90": 1.3425691246986389,
+      "min": 1.0609291791915894,
+      "max": 1.4258334636688232,
+      "values": [
+        1.175924,
+        1.060929,
+        1.138292,
+        1.191413,
+        1.425833,
+        1.08566,
+        1.276581,
+        1.306884
+      ]
+    },
+    "abs_dy_body": {
+      "n": 8,
+      "mean": 0.29453143663704395,
+      "std": 0.16789836282537599,
+      "sem": 0.05936103545197135,
+      "p10": 0.1109399363398552,
+      "p50": 0.3128610700368881,
+      "p90": 0.4851051479578018,
+      "min": 0.06507457792758942,
+      "max": 0.4952215552330017,
+      "values": [
+        0.140829,
+        0.418038,
+        0.48077,
+        0.495222,
+        0.130597,
+        0.065075,
+        0.353435,
+        0.272287
+      ]
+    },
+    "upright": {
+      "n": 8,
+      "mean": 0.9985075891017914,
+      "std": 0.000483177554243438,
+      "sem": 0.00017082906256133293,
+      "p10": 0.997877436876297,
+      "p50": 0.998652458190918,
+      "p90": 0.998934543132782,
+      "min": 0.9977389574050903,
+      "max": 0.9991248846054077,
+      "values": [
+        0.998853,
+        0.999125,
+        0.998279,
+        0.997739,
+        0.998762,
+        0.998543,
+        0.997937,
+        0.998823
+      ]
+    },
+    "yaw_drift_deg_s": {
+      "n": 8,
+      "mean": 5.661128222942352,
+      "std": 4.054433061784152,
+      "sem": 1.4334585559272552,
+      "p10": 1.3564345479011537,
+      "p50": 5.728277921676636,
+      "p90": 10.32809190750122,
+      "min": 1.0342742204666138,
+      "max": 12.27640151977539,
+      "values": [
+        1.919054,
+        5.838524,
+        9.493102,
+        12.276402,
+        1.034274,
+        1.494503,
+        7.615135,
+        5.618032
+      ]
+    }
+  },
+  "gates": {
+    "command_frozen_ok": true,
+    "metric_window_ok": true,
+    "sensor_zero_ok": true,
+    "measurement_consistent": true,
+    "tracks_half_command": true,
+    "translates_forward": true,
+    "not_sideways": true,
+    "error_vel_xy_le_0.25": true,
+    "no_fall": true,
+    "stays_upright": true,
+    "feet_clear_8mm": true,
+    "steps_alternate": true
+  },
+  "passed": [
+    "command_frozen_ok",
+    "metric_window_ok",
+    "sensor_zero_ok",
+    "measurement_consistent",
+    "tracks_half_command",
+    "translates_forward",
+    "not_sideways",
+    "error_vel_xy_le_0.25",
+    "no_fall",
+    "stays_upright",
+    "feet_clear_8mm",
+    "steps_alternate"
+  ],
+  "failed": []
+}
