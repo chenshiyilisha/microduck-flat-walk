@@ -1,0 +1,101 @@
+{
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "checkpoint": "logs/rsl_rl/microduck_velocity/2026-10-25_08-10-20_vel_4096x12000_1025/model_1250.pt",
+  "num_envs": 32,
+  "seconds": 8.0,
+  "device": "cuda:0",
+  "plant": "default",
+  "plant_info": null,
+  "solver": {
+    "before": {
+      "iterations": 10,
+      "ls_iterations": 20,
+      "nconmax": 35
+    },
+    "after": {
+      "iterations": 100,
+      "ls_iterations": 50,
+      "nconmax": 35
+    }
+  },
+  "play_cfg": false,
+  "command": {
+    "vx": 0.4,
+    "vy": 0.0,
+    "wz": 0.0
+  },
+  "curriculum_counter_before_pin": 30024,
+  "dropped_events": [
+    "push_robot"
+  ],
+  "sensors": {
+    "height": "foot_height_scan",
+    "contact": "feet_ground_contact"
+  },
+  "speed": {
+    "cmd_vx": 0.4,
+    "vx_median_of_env_means": 0.2577410340309143,
+    "vx_mean": 0.2297864407300949,
+    "vy_mean": 0.01619669236242771,
+    "wz_mean": -0.01952402852475643
+  },
+  "official_metrics": {
+    "error_vel_xy": 0.1939886510372162,
+    "error_vel_yaw": 0.31076669692993164,
+    "error_vel_xy_median": 0.1919422745704651
+  },
+  "official_metric_terms": {
+    "mean_action_acc": 0.08756442825309932
+  },
+  "displacement": {
+    "dx_body_mean": 1.5747573375701904,
+    "path_dx_median": 2.0619282722473145,
+    "expected_dx": 3.2,
+    "dx_over_expected": 0.5491400361061096,
+    "abs_dy_body_median": 0.5302283763885498,
+    "dx_world_mean_unused": 0.020450565963983536
+  },
+  "heading": {
+    "yaw_drift_deg_s": 4.549497127532959
+  },
+  "stability": {
+    "upright_mean": 0.9980019330978394,
+    "upright_min": 0.9961422681808472,
+    "terminated_frac": 0.0
+  },
+  "feet": {
+    "landings_per_foot_hz": 2.126953125,
+    "landing_events": 1089,
+    "touchdown_events": 1089,
+    "simultaneous_frac": 0.0514233224093914,
+    "left_peak_mm_median": 15.260588377714157,
+    "right_peak_mm_median": 15.810377895832062,
+    "both_peak_mm_median": 15.260588377714157,
+    "stance_mm_median": 0.7003825157880783
+  },
+  "gates": {
+    "sensor_zero_ok": true,
+    "measurement_consistent": true,
+    "tracks_half_command": true,
+    "translates_forward": true,
+    "not_sideways": true,
+    "error_vel_xy_le_0.25": true,
+    "no_fall": true,
+    "stays_upright": true,
+    "feet_clear_8mm": true,
+    "steps_alternate": true
+  },
+  "passed": [
+    "sensor_zero_ok",
+    "measurement_consistent",
+    "tracks_half_command",
+    "translates_forward",
+    "not_sideways",
+    "error_vel_xy_le_0.25",
+    "no_fall",
+    "stays_upright",
+    "feet_clear_8mm",
+    "steps_alternate"
+  ],
+  "failed": []
+}

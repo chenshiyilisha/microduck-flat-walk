@@ -93,6 +93,25 @@
 - 训练管线：`autodl/run_tug.sh` + `watch_tug_*.sh`（AutoDL 4090D 冒烟→快试→正式，自动导出拉回）。
 - 纯仿真结果，抱箍未上真机。
 
+## 平地速度跟踪（2026-10-25，flat-walk 基线）
+
+上游默认任务 `Mjlab-Velocity-Flat-MicroDuck` 原样复现——**奖励与环境零改动**（cfg / mdp 的字节哈希与上游一致，写在 runmeta 里），4096 envs 从零训练，**iter 1250** 即得 10 项闸门全过的行走策略。这一节的主要用途是**标定参照系**：后面所有「走得好不好」的判断都拿它当尺子。
+
+| 指标（32 envs × 8 s，cmd vx 0.4） | 数值 |
+|---|---|
+| vx 中位 | **0.2577 m/s**（指令的 65%）——出厂 `alpha_walking` 同指令只有 0.164 |
+| 官方 `error_vel_xy` | **0.194**（同任务公开的 5000–6000 轮水平是 0.42–0.43） |
+| 沿自身朝向净位移 | **+1.575 m**（期望 3.2，ratio 0.55） |
+| 脚峰 / 落地 | **15.3 / 15.8 mm**（目标 20）/ **2.13 Hz** 每脚，同时落地 5.1% |
+| 终止率 / upright | **0.00%** / 0.998 |
+| 成本 | 本地 4070 8 GB，3.2 s/iter × 10.6 h，**¥0** |
+
+- **三条标定结论**：① cmd 0.4 下 0.15–0.26 m/s 是正常范围（出厂策略也够不到 0.4，0.4 不是及格线）；② `error_vel_xy ≈ 0.42` 不是任务固有天花板，是配方问题；③ 平地脚峰参照是 **14–20 mm**（上游 target 20 mm，而原地抬腿的关节限位天花板只有 25.3 mm），`simple_stairs` 里的 **66.6 mm 是爬楼梯策略的值，不能当平地参照**。
+- **负结果留档**：求解器 10/20 → 100/50 **不改善抬脚**（脚峰 2.11/3.25 → 1.82/3.05 mm，冒烟尺度噪声），只作抗 NaN 保险；别重复试。
+- **issue #46 三处改法**已写成可回滚补丁（`tools/flat_walk/patch_issue46.py`）但**刻意保持未应用**：1250 轮已过闸，在好策略上动奖励风险大于收益。
+- 产物 `artifacts/flat_walk/`（checkpoint + 评估 JSON + runmeta）、方法 `docs/05-flat-walk.md`、工具 `tools/flat_walk/`（10 闸门评估器 / 训练与续训包装 / 里程碑判停）。
+- 纯仿真结果，未上真机。
+
 ## 仓库结构
 
 ```
@@ -107,7 +126,9 @@
 │   ├── timeline.py            # 节拍 → 编舞时间线（支持 --map 显式编舞）
 │   └── songs/                 # beats/timeline（音频因版权不入库）
 ├── autodl/                    # setup.sh（一键环境）+ run_stilt_curriculum.sh（高跷 37 级课程）
-├── docs/                      # playbook 提炼、设计笔记、训练日志（舞蹈 v1-v11 + 极速 + 喙砸 + 篮球 + 高跷）
+├── tools/flat_walk/           # 平地速度跟踪：10 闸门评估器、训练/续训包装、里程碑判停、issue#46 可回滚补丁
+├── artifacts/                 # 产物（默认不入库；simple_stairs / flat_walk 的 ckpt 与评估 JSON 例外入库）
+├── docs/                      # playbook 提炼、设计笔记、训练日志（舞蹈 v1-v11 + 极速 + 喙砸 + 篮球 + 高跷 + 平地）
 └── AGENTS.md                  # 项目铁律（上游同步/修改必重训/成本纪律/验证纪律）
 ```
 
@@ -164,6 +185,14 @@ uv run python scripts/sprint_show.py --policy sprint.onnx   # 成片输出到 ar
 uv run python scripts/stage_show.py --policy dance.onnx \
     --timeline ../../dance/songs/<歌>.timeline.json \
     --ducks 12 --formation army --camera cinematic --record show.mp4 --width 1920 --height 1080
+
+# 8. 平地速度跟踪（上游默认任务；判读用 10 项闸门，不看训练指标）
+uv run train Mjlab-Velocity-Flat-MicroDuck --env.scene.num-envs 4096 \
+    --env.sim.mujoco.iterations 100 --env.sim.mujoco.ls-iterations 50 \
+    --agent.max-iterations 12000 --agent.save-interval 250
+uv run python tools/flat_walk/eval_velocity_in_sim.py \
+    --checkpoint artifacts/flat_walk/checkpoints/model_1250.pt \
+    --num-envs 32 --seconds 8 --cmd-vx 0.4 --solver-iters 100 --solver-ls 50 --out out/eval.json
 ```
 
 ## 成本实录（AutoDL 4090D ¥1.88/h）
@@ -173,8 +202,10 @@ uv run python scripts/stage_show.py --policy dance.onnx \
 - 篮球项目：HF 快照下载 + 冒烟 + 500 轮续训 + 3 档 × 3 seed 验收电池 + 5 次渲染，约 **¥5**
 - 高跷项目：37 级课程 4.5h + 8 里程碑门禁评估，约 **¥8.5**（4K 出片为本地 CPU，零租金）
 - 秋千 360 项目：v1–v3 配方迭代（2000 轮快试）+ 4000 轮正式 + 逐 seed 4K 扫描/出片，约 **¥12**
+- 平地速度跟踪：**本地 4070 8 GB，没有云租金**，4096 envs × 12000 迭代约 10.6 h，**¥0**（只烧电）
 
-详见 `docs/03-training-log.md`（两项目全程逐轮记录）。`artifacts/`（checkpoint、ONNX、评估 JSON、成片）体积大不入库。
+详见 `docs/03-training-log.md`（两项目全程逐轮记录）。`artifacts/` 默认不入库（`.gitignore` 排除 checkpoint / ONNX / 成片），
+只对 `simple_stairs`、`stilts_repro`、`swing360_v3`、`flat_walk` 做**逐项例外**——入库的都是「复现判决必需的小体积证据」。
 
 ## 致谢
 

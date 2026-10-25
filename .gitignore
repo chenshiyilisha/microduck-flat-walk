@@ -34,3 +34,13 @@ artifacts/swing360_v3/*
 kimi-debug-session_*/
 kimi-debug-session_*.zip
 .DS_Store
+
+# 例外：平地速度跟踪复现（checkpoint 4.8 MB + 评估证据，clone 即能复现判决）
+!artifacts/flat_walk/
+artifacts/flat_walk/*
+!artifacts/flat_walk/README.md
+!artifacts/flat_walk/JOURNEY.md
+!artifacts/flat_walk/evals/
+!artifacts/flat_walk/evals/*.json
+!artifacts/flat_walk/checkpoints/
+!artifacts/flat_walk/checkpoints/model_1250.pt
