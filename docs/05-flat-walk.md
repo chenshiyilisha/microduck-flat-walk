@@ -41,7 +41,7 @@
 | vx / vy / wz 均值 | 0.2522 / 0.0199 / 0.0319 |
 | 官方 `error_vel_xy` | **0.212**（median 0.210） |
 | 沿自身朝向净位移 `dx_body` | **+1.821 m**（期望 3.2 m，ratio 0.59） |
-| 横向漂移 `|dy_body|` 中位 | 0.476 m |
+| 横向漂移 `abs(dy_body)` 中位 | 0.476 m |
 | 航向漂移 | 3.29 °/s |
 | 脚峰（L / R 中位） | **15.90 / 17.20 mm**（目标 20 mm） |
 | 落地频率 / 同时落地 | **1.88 Hz/脚** / 4.0% |
@@ -212,7 +212,8 @@ python tools/flat_walk/watch_milestones.py --targets 4000,6000 --stop-pid <训�
 
 - **已完成**：iter 1250 策略（`artifacts/flat_walk/checkpoints/model_1250.pt`）+ 11/11 闸门证据；
   9 档 checkpoint 的同协议曲线（§2b），确认 **1250 是峰值**；
-  单变量配方（std² 0.04，§10）+ **部署图与 parity 闸门**（§13）。
+  单变量配方（std² 0.04，§10）+ **部署图与 parity 闸门**（§13）+
+  **部署彩排工具与七条判据**（§14，`evals/rehearse_*.json` 待重跑入库）。
 - **已停止**：run 在 iter 6000 后人为停止（原计划 12000）。依据是曲线——4000 比 1250 慢 13%、
   误差高 10%，6000 再跌一个 `no_fall` 闸门；继续跑 5800 轮（约 5.3 h）没有证据支持会回升。
   ckpt 全部保留（`model_0 … model_6000`），`tools/flat_walk/resume_velocity.sh` 可随时从
@@ -220,7 +221,9 @@ python tools/flat_walk/watch_milestones.py --targets 4000,6000 --stop-pid <训�
 - **已关闭的方向**：把「iter 1250 之后退化」归因于课程跳档——§12 用一次整跑证伪。
   课程不再作为杠杆；iter 1999 的掉点按上游口径是 checkpoint 级抖动，用扫点处置。
 - **未做**：真机（本仓库约定：暂无实体机器人）。ONNX 本身已导出并通过 parity（§13），
-  但「图与权重等价」不等于「真机跑得好」。
+  彩排也证明部署栈能工作（§14），但「图与权重等价」+「栈活着」都不等于「真机跑得好」。
+  上游 `scripts/testbench_sim2real.py` 是缺口最小的一步：同一 ONNX 在 sim(BAM) 与真机
+  XL330 上跑同一角度序列做对比，只需一个电机 + 一个 USB 口。
 - **验收结论**见 §9——**11/11 闸门是及格线，不是优秀线**，别把前者当后者。
 
 ### 下一步候选（按性价比排）
@@ -502,7 +505,7 @@ weight 是 **3.0**，而且它是**唯一正向激励抬脚**的项：
 | 项 | weight | 方向 |
 |---|---|---|
 | `air_time` | **+3.0** | 奖励：滞空落在窗口内 |
-| `foot_clearance` | **−2.0** | 惩罚：`|h − 0.02| × ‖v_foot,xy‖`（`rewards.py:256-259`）|
+| `foot_clearance` | **−2.0** | 惩罚：`abs(h − 0.02)` × ‖v_foot,xy‖（`rewards.py:256-259`）|
 | `foot_swing_height` | **−0.25** | 惩罚：偏离目标高度 |
 
 低速时滞空 **0.040 s < 0.125 s** ⇒ 这项 3.0 权重 **97% 归零**。
@@ -677,7 +680,7 @@ normalizer 必须烘进图里，否则模拟器照旧（Python 里已经归一�
 ### 13.2 `check_onnx_parity.py`：用独立实现当参考
 
 ```
-python tools/check_onnx_parity.py --checkpoint model_1250.pt --onnx walk.onnx
+python tools/flat_walk/check_onnx_parity.py --checkpoint model_1250.pt --onnx walk.onnx
 ```
 
 关键设计：**参考前向不复用 rsl_rl 的 `forward`**，而是从 `actor_state_dict` 的裸张量
@@ -703,7 +706,7 @@ normalizer 就在同一个模块上——**导出路径的 bug 和参考路径�
 | 输入 / 输出 | `obs` (1, 61) float32 → `actions` (1, 14) |
 | opset | 18 |
 | batch 维 | **静态 1**（`get_dummy_inputs` 就是一行，正是控制器每次发的形状） |
-| parity `max|onnx − ref|` | **2.65e−06**（容差 1e−4，float32 精度量级） |
+| parity `max abs(onnx − ref)` | **2.65e−06**（容差 1e−4，float32 精度量级） |
 | 负对照（拆掉归一化） | **5.30**，即输出量程的 91%，是容差的 **53000 倍** |
 | 闸门 | `single_output` / `input_shape_ok` / `parity_ok` / `control_detects_missing_normalizer` 全过 |
 
@@ -722,3 +725,186 @@ normalizer 就在同一个模块上——**导出路径的 bug 和参考路径�
 - 交付链现在是：`model_1250.pt` → `walk_std004_1250.onnx` → parity 闸门 → （缺）真机。
 - 静态 batch 1 意味着这个图**只能发单条 obs**；要批量推理得自己 unsqueeze 循环，
   这不是缺陷，是导出时的 dummy 输入决定的。
+
+## 14. 部署彩排：执行器栈能不能工作（数字不可与评估横比）
+
+parity 只回答了「图是不是同一套数学」。它**没有闭环**、也**没有跑执行器模型**，
+所以它答不了「这个图在部署栈上还站得住吗」。这一节是那一环的工具与判据。
+
+⚠️ 本节给出的数**不能**与 §2 / §10 / §12 的 0.312 / 0.1592 放同一张表——两个仪器（§14.5）。
+
+### 14.1 官方链是四步，parity 只覆盖第一步
+
+`microduck_rl/AGENTS.md:21` 给的是：
+
+```
+uv run scripts/export.py ...                       # 1. checkpoint -> onnx
+uv run scripts/infer_policy.py --walking out.onnx  # 2. CPU MuJoCo *deployment rehearsal*
+uv run publish                                     # 3. 上传策略集
+robotctl policy load ...                           # 4. 上机
+```
+
+第二步就是**彩排**。`tests/test_infer_policy_bam.py` 的 docstring 把它的定位写死了：
+
+> infer_policy.py drives the CPU MuJoCo rehearsal with the SAME BAM M6 actuator the policies
+> are trained against in warp ... These tests **lock the two halves together**.
+
+它逐项断言 `BAM_MOTOR_NAME/MODEL/KP_FW/VIN_RANGE/VIN_DROP_GAIN_RANGE/VIN_MIN/MAX_CURRENT`
+与训练 cfg 相等，装配层面断言 `forcerange == 7.4·kt/R`、`dof_armature == get_extra_inertia()`、
+`ctrl` 就是力矩、每步重写 `dof_frictionloss`。**但它一个字都没断言轨迹、速度、是否摔倒。**
+锁住的是执行器，不是动力学数值。这与 §13.1 是同一个模式的第二个实例：**结构有测试，
+行为没有**。
+
+### 14.2 `rehearse_deploy.py`：只换外层循环，不重写栈
+
+`infer_policy.py` 的两个「不能直接用」：`import termios, tty`（Windows 没有），
+以及末尾必然进 viewer + 键盘循环（`NativeMujocoViewer(...).run()`），**没有 headless 开关**。
+
+所以这个工具的做法是**加载上游模块，复用它的全部实现**——
+`load_bam_model` / `load_mujoco_with_bam` / `PolicyInference.get_observations/infer/apply_action`
+——只把最外层换成「固定条件进、JSON 出」的循环。`termios`/`tty` 用两个惰性 stub 塞进
+`sys.modules`（彩排路径不碰它们）。
+
+**为什么不自己重写一份**：重写就是第二个意见，而两个独立实现一致并不能证明「发出去的那份」
+对——同一个理由见 §13.2。复用上游才让它是一次**测量**而不是一次复述。
+
+```bash
+MUJOCO_GL=glfw python tools/flat_walk/rehearse_deploy.py \
+  --onnx artifacts/flat_walk/checkpoints/walk_std004_1250.onnx \
+  --infer-policy /path/to/microduck_rl/scripts/infer_policy.py \
+  --cmd-vx 0.4 --seconds 8 --sweep --out out/rehearse_1250_sweep.json
+```
+
+六个条件是训练 DR 的采样点：`nominal`(7.4 V, sag 0.1) / `low_batt`(6.5 V, sag 0.2) /
+`high_batt`(8.2 V, sag 0) / `train_lag{3,4,6}`（训练同款执行器延迟）。
+前提三件不在本仓库：上游 `infer_policy.py`、`mjlab_microduck` 任务包（含 scene XML）、
+`mujoco`——与 §7.0 的可复现边界同一条，工具能支持的说法只是「给定同一任务包与环境，
+输出里的每个数能按 `settings` 复算」。
+
+### 14.3 判据先定死，跑完不许改口径
+
+| 判据 | 通过条件 | 含义 |
+|---|---|---|
+| **P1 站得住** | `nominal` 与 `high_batt` 都 `fell=n` 且 `dx > 2.0 m` | 部署栈能工作 |
+| **P2 电压下限** | `low_batt` 摔倒与否**如实记录**，不设预期 | 决定部署 vin 下限 |
+| **P3 执行器路径** | `max abs(ctrl − (default_pose + action·scale))`：BAM **> 1e-3**、`--no-bam` **< 1e-9** | 证明 BAM 真的接在控制路径上 |
+| **P4 形状** | `obs_dim == 61`、`nu == 14`、执行器顺序 == `DEFAULT_POSE` 顺序 | 已在工具自检期逐项验过 |
+| **P5 延迟维** | **不作结论，只记录** | 见 §14.6 末：彩排的延迟路径与训练不是同一件事 |
+| **P6 覆盖窗口** | `window.valid_s >= 0.75 × seconds` | 摔了的跑窗口不足，速度不可引用 |
+| **P7 低速维** | **不作结论，只记录** | 见 §14.7：单机在低速只给一个样本，且方向与 0.4 相反 |
+
+**P3 改过一次，改法本身就是教训。** 原来的 P3 是「`--no-bam` 与 BAM 的 vx/tilt 明显不同」。
+实测 BAM 0.4626 / 9.1° vs no-BAM 0.4145 / 5.9°——**vx 只差 10%，落在条件之间的散布里**，
+既没有阈值，也不能「为了正确的理由失败」。改成量纲判据是因为去读了那一行源码：
+
+```python
+# infer_policy.PolicyInference.set_position_targets
+if self.bam_ctrl is not None:
+    self.bam_ctrl.q_target[:] = target_positions   # BAM: update() 写的是力矩
+else:
+    self.data.ctrl[:] = target_positions           # legacy: ctrl 逐位就是目标角
+```
+
+⇒ `max|data.ctrl − target|` 是天然的二值量，实测 **BAM 0.407 / no-BAM 0.000e+00**，
+阈值 1e-3 有 400 倍裕度。`--no-bam` 的 vx/tilt 差异照旧记录，但它回答的是另一个问题
+（「同一策略换一套被控对象会怎样」），不是「BAM 接上没有」。
+
+### 14.4 工具自检期读数（JSON 尚未入库，以重跑为准）
+
+以下数字来自**工具自检**（同一脚本、`walk_std004_1250.onnx`、cmd 0.4、8 s、单机）。
+它们的作用是证明这个仪器**能测出差异**，正文表等 `evals/rehearse_*.json` 入库后替换。
+
+| 条件 | vx (m/s) | dx (m) | 摔倒时刻 | 摔倒时 tilt | 说明 |
+|---|---|---|---|---|---|
+| `nominal` | 0.4632 | 3.545 | — | max 9.1° | P1 通过 |
+| `high_batt` | 0.4526 | 3.485 | — | — | P1 通过 |
+| `low_batt` | **n/a** | — | 2.64 s | 71.87° | 见 §14.6：摔了就不能引速度 |
+| `train_lag3` | **n/a** | — | 1.88 s | 81.54° | P5：不作结论 |
+| `train_lag4` | **n/a** | — | 1.36 s | 72.26° | 同上 |
+| `train_lag6` | **n/a** | — | 0.84 s | 73.32° | 同上，延迟越大摔得越早 |
+| `nominal + --no-bam` | 0.4145 | 2.794 | — | 5.9° | 负对照；P3 由 ctrl 探针判 |
+
+P3 探针：BAM **0.407** / no-BAM **0.000e+00**（阈值 1e-3）。P4：`obs_dim 61`、`nu 14`、
+执行器顺序逐项 == `DEFAULT_POSE`（left_hip_yaw … right_ankle）。
+
+### 14.5 三个「不可比」的出处
+
+1. **官方只说这是 rehearsal，没说数字可比。** `AGENTS.md:21` 的括注是
+   「CPU MuJoCo deployment rehearsal (BAM M6 actuators as in training; `--no-bam` = XML PD)」；
+   `AGENTS.md:265-269` 说它的用途是「rehearse ... **before touching the robot**，
+   用正确的命令槽（a posture flag lives in the twist vx slot; feeding all-zeros means
+   stand）」。⇒ 资料把它定位成**接口与命令槽验证**，不是性能测量。
+2. **执行器一致有测试锁，性能一致没有**（§14.1）。
+3. **训练有 3–6 步执行器延迟，彩排默认没有**：
+   `microduck_constants.py` 的 `_BAM_ACTUATOR_KWARGS` 是 `delay_min_lag=3, delay_max_lag=6`
+   （50 Hz ⇒ 60–120 ms），而 `infer_policy.py --delay` 默认关闭、
+   `tests/test_infer_policy_bam.py` 也没把 delay 纳入断言。⇒ 「nominal」在这里比训练**更轻**，
+   不是「等于训练」。
+
+再加两条仪器差异，写进输出的 `training_parity` 块里：CPU MuJoCo（Newton/implicitfast）vs
+训练侧 warp/MJX；本仓库 scene 用 XML 的 `self_collision_only` 类，而训练是
+`collisions=(FULL_COLLISION,)`；摩擦在训练侧由 `FrictionDRBamActuatorCfg` 逐 env 随机，
+这里是 XML 固定值。
+
+**方向也不一致**：无延迟彩排 vx 0.463，32-env 评估 0.312，彩排快 49%。这不是标定偏移，
+是两台仪器。与 §12.5「跨版本评估脚本不可混用」是同一条纪律的延伸——**只在同一仪器内部纵比**
+（BAM vs no-BAM、高压 vs 低压）。
+
+### 14.6 两个读数坑，都会让「摔倒的跑」报出一个好数字
+
+**坑一：摔倒后继续跑，把「躺在地上」算进速度。** 训练侧 `cfg.terminations` 是四条
+（`time_out`(True) / `fell_over`(False, `bad_orientation`, `limit_angle=1.2217304763960306`
+rad = **70.0000°**) / `out_of_terrain_bounds`(True) / `nan_state`(False)），也就是**摔倒即
+episode 结束并 reset**。脚本原来只在 NaN 时 break ⇒ `low_batt` 2.64 s 摔倒后继续躺跑 5.4 s，
+报出 `vx=0.4627 / ratio 1.157`，与没摔的 `nominal`（0.4626）几乎一样。
+**两个数不可能同时成立**——这就是它的破绽。修法：`TRUNCATE_AT_FALL=True`，触发那步即 break
+且触发样本不记入。
+
+**坑二：截断之后仍有存活偏差。** 截断后 `low_batt` 变成 **0.5389 > nominal 0.4632**，
+因为剩下的窗口恰好是它跑得最好的那一段——活下来的时间越短，均值越乐观。
+⇒ **摔倒的跑，vx 一个数都不能引用**。现在直接输出 `vx=n/a(fell)`、`speed.comparable=false`
+并附原因，表里只允许出现 `fell_at_s`。
+
+两个配套修正：`FALL_TILT_DEG` 从拍的 60° 改成训练值 **70°**（两者实现是同一个量
+`degrees(acos(−g_z))`，阈值照抄不调）；新增 `window.tilt_at_fall_deg` 记录**触发那一步**的值
+——因为触发样本不进 `tilt_hist`，只报 `max_tilt_deg` 会显示 66–67°，看起来像「判据没到就判摔」。
+`max` 和「触发值」不是同一个东西，这是「派生量要单独验一遍」的又一例。
+
+**延迟维为什么只记不作结论**：实测延迟 3/4/6 步 ⇒ 摔在 1.88 / 1.36 / 0.84 s，单调；
+但训练侧在同样 3–6 lag 下几乎不摔（评估终止率 0–7.3%）。⇒ 彩排的延迟路径与训练不是同一件事
+（最可能是 `last_action` 观测的语义不同：训练时策略看到的是延迟后的自身动作，
+彩排记录的是延迟前的）。这是**工具缺口**，不是策略结论。
+
+### 14.7 单机在低速区只给一个样本——而这件事本身就是结论
+
+`cmd=0.15` 扫五个初始朝向（`--yaw-deg 0/45/90/135/180`，训练 `reset_base` 的 yaw 是
+`(-π, π)` 全随机，固定初态等于只抽一支），**五个全部站着不动**：vx −0.0000、
+dx +0.008…−0.008 m、max tilt 3.3°。
+
+而 32-env 评估侧同一 ckpt、同一 `cmd=0.15` 是 **ratio 0.533、`frac站` 0.06**。
+**这两组不可能同时成立**——不是「抽到了站的那一支」，是彩排在低速稳定收敛到「站」。
+与 `cmd=0.4` 的方向**相反**（彩排 0.463 vs 评估 0.312，快 49%），所以这不是整体标定偏移，
+而是低速区行为不同。最可能的解释：彩排单机、确定性初态、无摩擦随机化、无延迟；
+评估侧 32 台带 3–6 lag 与摩擦 DR，扰动会把一部分 env 推过死区边界——与 §11
+「死区是行为选择、不是噪声」一致。
+
+⇒ 低速段只能回答「单个确定性初态下站不站得住」，**不能**回答「部署下限是多少」。
+后者只有 32-env 扫描能答，已有的答案是 **0.15 m/s**（§10.3）。
+
+顺带一个假 FAIL：`moves_forward` 闸门在 `cmd<0.2` 时必然红，但那里的 `dx≈0` 是策略的正确
+行为，不是 obs 布局坏了。已改成 `cmd < 0.2` 记 `not_applicable`。
+**闸门也要分「策略行为」与「接线错误」**，否则低速扫描每次都是红的一片。
+
+另外 `cmd = 0` **不是**「走得很慢」：`AGENTS.md:265-269` 明说 all-zeros 是 stand 语义
+（posture flag 占 twist 的 vx 槽），它是一个独立命令模式，要单独解读、不与低速点并列。
+
+### 14.8 结论与遗留
+
+- **彩排能做、且做完了工具**：`tools/flat_walk/rehearse_deploy.py`，七条判据里 P1/P2/P3/P4/P6
+  可判定，P5/P7 明确定为「只记录」。这就是「判据可判定」的意思——不是所有维度都该有结论。
+- **能声明的**：部署栈（BAM M6 + XL330 电压模型 + 50 Hz 环）在 nominal / high_batt 下站得住
+  且向前走；BAM 确实在控制路径上；obs/动作形状与训练契约一致。
+- **不能声明的**：跑得多快（两台仪器）、低速下限（单机样本不足）、延迟鲁棒性（路径不一致）。
+- **遗留**：① `evals/rehearse_*.json` 未入库，正文 §14.4 的数字需重跑后替换；
+  ② 真机仍缺（仓库约定暂无实体机器人）；③ 上游 `testbench_sim2real.py` 是更便宜的下一步
+  ——同一 ONNX 在 sim(BAM) 与真机 XL330 上跑同一角度序列做对比，只需**一个电机 + 一个 USB 口**。

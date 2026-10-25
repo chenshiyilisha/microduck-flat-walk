@@ -6,7 +6,7 @@
 |---|---|
 | `checkpoints/model_1250.pt` | **baseline**（std²=0.10）iter 1250 策略，11/11 闸门通过（4.8 MB） |
 | `checkpoints/model_1250_std004.pt` | **单变量后**（std²=0.04）iter 1250 策略，**当前交付点**：cmd 0.4 下 ratio **0.811** / `error_vel_xy` **0.159**（当前评估脚本复测；旧脚本记的是 0.773 / 0.162，跨版本不可混用，见 §12.5）（4.8 MB，见 `docs/05-flat-walk.md` §10） |
-| `checkpoints/walk_std004_1250.onnx` | 上面那个 ckpt 的部署图：obs 61 → act 14、opset 18、**静态 batch 1**、normalizer 已烘入。parity `max|onnx−ref|` = 2.65e−06，负对照偏离 5.30（53000× 容差）。见 §13 |
+| `checkpoints/walk_std004_1250.onnx` | 上面那个 ckpt 的部署图：obs 61 → act 14、opset 18、**静态 batch 1**、normalizer 已烘入。parity `max abs(onnx−ref)` = 2.65e−06，负对照偏离 5.30（53000× 容差）。见 §13 |
 | `evals/eval_iter1250_clean.json` | baseline 交付档的评估原始输出，含全部闸门布尔值与逐项指标 |
 | `evals/eval_iter6000_clean.json` | baseline 停训档（11 项里 `no_fall` 失败），用来说明「继续训没有更好」 |
 | `evals/eval_curve_clean.json` | baseline 同 run 的 **9 档** checkpoint 同协议曲线（1250 / 1500 / 1750 / 2000 / 2500 / 3000 / 3500 / 4000 / 6000） |
