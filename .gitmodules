@@ -1,6 +1,8 @@
 [submodule "third_party/microduck_rl"]
 	path = third_party/microduck_rl
-	url = https://github.com/emwstudio/microduck_rl
+	url = https://github.com/pollen-robotics/microduck_rl
+	branch = develop
 [submodule "third_party/microduck-playground"]
 	path = third_party/microduck-playground
-	url = https://github.com/emwstudio/microduck-playground
+	url = https://github.com/Vottivott/microduck-playground
+	branch = main

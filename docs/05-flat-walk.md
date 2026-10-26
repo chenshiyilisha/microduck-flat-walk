@@ -171,12 +171,40 @@
 
 ### 7.0 先说清「可复现」指的是什么
 
-本仓库的 `third_party/microduck_rl`、`third_party/microduck-playground` 是 **private submodule**
-（`.gitmodules` 指向 `github.com/emwstudio/microduck_rl`，未授权访问返回 404），所以
-「clone → 跑命令 → 出数字」这条路**对外部读者不成立**。本节全部数字产生于
-**`tailong-wu/microduck-mjbatch` 的 `mjlab_microduck` 任务包**（它注册了
-`Mjlab-Velocity-Flat-MicroDuck`），环境：Python 3.13 + `mjlab` + `mujoco_warp 3.7.0.1`
-+ `warp-lang 1.12.0`，RTX 4070 Laptop 8 GB。
+_（2026-10-26 修订：本节最初把任务包归为 `tailong-wu/microduck-mjbatch`——**归因错误**。
+那个仓是纯 CPU 的 mjbatch 实现，依赖里没有 mjlab，从未参与本节任何训练。实际任务包来自
+**官方** `pollen-robotics/microduck_rl`（2645★，Apache-2.0，public）的 `develop` 快照，
+训练入口见 `microduck-software/tools/train_velocity.sh`，其注释写明
+"upstream-native task: its cfg is byte-identical to `.upstream/microduck_rl-develop/...`"。）_
+
+本仓库 `third_party/` 下两条 submodule 的 URL 继承自上游 DuckEMW，原指向
+`github.com/emwstudio/microduck_rl` 与 `github.com/emwstudio/microduck-playground`
+（**均 404**：私有或已删），外部读者拿不到内容。**这是上游指针的问题，不是官方私有化**——
+两个 public 原仓都存在：`pollen-robotics/microduck_rl`（任务包本体）与
+`Vottivott/microduck-playground`（Hannes von Essen 的可复现实验仓，running 配方出处）。
+`.gitmodules` 已改指 public 原仓，gitlink pin 到
+`microduck_rl@b02fdea`、`microduck-playground@f010ef1`。
+
+#### 快照核对（2026-10-26，方法与结果）
+
+训练所用的任务包是官方 `develop` 的**解压快照 + 纯追加补丁**，不是纯官方。核对方法：
+取 `b02fdea` 的完整 tree（254 个 blob），对本地快照每个文件重算 git blob sha1 逐一比对。
+
+| 结果 | 数量 | 明细 |
+|---|---|---|
+| 逐字节相同 | **249** | 含 `microduck_velocity_env_cfg.py`（velocity cfg 与官方零差异） |
+| 纯追加补丁 | 5 | `mdp.py` +380（Patch 1-2 NaN 防护、Patch 4 导出元数据、Patch 5 WARM_START 默认关、joy 函数群）；`export.py` +56（joy 元数据）；`microduck_constants.py` +42（`pd_actuators`，joy 用）；`tasks/__init__.py` +10（joy 注册）；`symmetry.py` +18/−1（唯一被改的「1 行」是一个行内注释换成维度防御检查） |
+| 快照新增文件 | 2 | `microduck_joy_env_cfg.py`、`tests/test_joy_cfg.py`（joy 专用，velocity 不引用） |
+| 快照多余垃圾 | 7 | `__pycache__`、`.pytest_cache`、`mdp.py.pre-sync` 备份（不入库） |
+
+补丁由 `microduck-software/tools/patch_*.py` 系列（本项目自写，append-only）重放，
+路径绑定那份解压快照。**对 velocity 训练数值实际生效的只有 Patch 1/2**（RewardManager /
+PPO 的 NaN 防护）——即本文所有数字 = 官方 cfg + 这两条 NaN 防护 + 官方 PPO；
+其余补丁与 velocity 任务无关。
+
+本节全部数字产生于官方 `microduck_rl` 快照注册的 `Mjlab-Velocity-Flat-MicroDuck` 任务包，
+环境：Python 3.12 + `mjlab 1.3.0` + `mujoco_warp 3.7.0.1` + `warp-lang 1.12.0`，
+RTX 4070 Laptop 8 GB。
 
 所以「可复现」在本文的确切含义是：
 
@@ -184,7 +212,7 @@
   `tools/flat_walk/eval_velocity_in_sim.py` 逐位算回来（同参：32 envs × 8 s × cmd 0.4 × solver 100/50）；
 - `runmeta` 里的 `cfg_byte_identical_to_upstream: true` 和 cfg/mdp 的字节哈希，
   是「没有偷偷改奖励」的机器证据；
-- 有 submodule 权限的内部读者：`git clone --recurse-submodules` 后
+- **公开读者**：`git clone --recurse-submodules`（submodule 已指 public 原仓）后
   `cd third_party/microduck_rl && uv sync`，本节命令可直接用。
 
 **不成立的说法**是「clone 下来就能跑出这份结果」——缺任务包，也缺环境。

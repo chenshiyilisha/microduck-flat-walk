@@ -8,15 +8,29 @@
 > 部署彩排两道闸门。全部细节与证据见 `docs/05-flat-walk.md`。
 >
 > **不是我的部分**（本仓库没有改动它们任何一行）：
-> - 训练任务包（环境 / 奖励 / 课程 / 机器人 XML / BAM 执行器）来自
->   [`tailong-wu/microduck-mjbatch`](https://github.com/tailong-wu/microduck-mjbatch)，
->   此处以 `third_party/microduck_rl`（**private** submodule）引用 —— 所以「clone 即复现」
->   是夸大的说法，真实前提写在 `docs/05-flat-walk.md` §7.0。
-> - 部署栈与 `infer_policy.py` 来自
->   [`pollen-robotics/microduck_rl`](https://github.com/pollen-robotics/microduck_rl)；
+> - **训练任务包**（环境 / 奖励 / 课程 / 机器人 XML / BAM 执行器）来自**官方**
+>   [`pollen-robotics/microduck_rl`](https://github.com/pollen-robotics/microduck_rl)
+>   （2645★，Apache-2.0，默认分支 `develop`）。`Mjlab-Velocity-Flat-MicroDuck` 的 cfg
+>   与官方 `develop` HEAD **`b02fdea`**（2026-10-12）的 cfg **字节相同**
+>   （`tools/flat_walk/train_velocity.sh` 启动前强制指纹校验；254 个文件逐一按 git blob sha
+>   比对，249 个逐字节相同，详见 `docs/05-flat-walk.md` §7.0 的核对记录）。
+> - 部署栈与 `infer_policy.py` 同样来自官方 `pollen-robotics/microduck_rl`；
 >   机器人本体与 runtime 来自
 >   [`pollen-robotics/microduck`](https://github.com/pollen-robotics/microduck)。
-> - 框架：mjlab / IsaacLab / rsl_rl / MuJoCo / onnxruntime。
+> - 框架：mjlab / rsl_rl / MuJoCo / onnxruntime。
+>
+> **非官方、已标注的第三方指针**（继承自上游 DuckEMW 的 `.gitmodules`，现已改指 public 原仓）：
+> 原指针 `emwstudio/microduck_rl` 与 `emwstudio/microduck-playground` 均 **404（私有/已删）**，
+> 曾导致「外部 clone 拿不到任务包」。现已改为官方/上游原仓并 pin 到具体 commit：
+> `third_party/microduck_rl` → `pollen-robotics/microduck_rl@b02fdea`，
+> `third_party/microduck-playground` → [`Vottivott/microduck-playground`](https://github.com/Vottivott/microduck-playground)@`f010ef1`
+> （Hannes von Essen，73★，Apache-2.0，running 配方的出处）。
+>
+> **本仓库自加的补丁（非官方，明示清单）**：训练所用的本地快照在官方 `b02fdea` 之上
+> 打了**纯追加**补丁（append-only，5 个文件 +388 行，由 `tools/patch_*.py` 系列重放），
+> 其中对 velocity 训练数值**实际生效**的只有 Patch 1/2（RewardManager / PPO 的 NaN 防护）；
+> Patch 4 只改 ONNX 导出元数据，Patch 5 默认关闭，其余为 joy（音乐舞蹈）任务专用、
+> velocity 任务不引用。逐文件清单见 §7.0。
 >
 > **是我（chenshiyilisha）的部分**：`tools/flat_walk/` 的七个工具、`docs/05-flat-walk.md`
 > 的分析与结论、`artifacts/flat_walk/` 里的证据与产物。
