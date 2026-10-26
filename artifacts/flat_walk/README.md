@@ -17,6 +17,10 @@
 | `evals/eval_defer_it{1250,1999}_cmd40_r{1,2,3}.json` | §12 变体（课程整表推后 1000 档）：1999 的 ratio 0.684（判据要 0.77），且退化为「步态完好但 7.3% 的 env 摔」 |
 | `evals/eval_base010_it1250_cmd40_r{1,2,3}.json` | std²=0.10 基线在 1250 的**新协议复测**（ratio 0.630），用于和 std004 的 0.811 在同一版脚本下对照 |
 | `evals/onnx_parity_std004_1250.json` | §13 的 parity 报告：输入/输出形状、opset、静态 batch、parity 误差、负对照偏离量、四条闸门 |
+| `evals/rehearse_1250_sweep.json` | §14.4 六条件正式彩排（cmd 0.4 × 8 s）：nominal/high_batt 站得住，low_batt 2.64 s 摔（P2），train_lag{3,4,6} 摔（P5 只记录） |
+| `evals/rehearse_nobam.json` | §14.4 负对照（XML PD）：P3 探针 `max\|ctrl−target\|` = 0.000e+00（BAM 侧 0.407） |
+| `evals/rehearse_cmd{0.12,0.15,0.20}_yaw{0,45,90,135,180}.json` | §14.4 低速扫描（P7 只记录）：0.12/0.15 全站、0.20 全走（vx≈0.136） |
+| `evals/rehearse_cmd0_standslot.json` | 零指令 stand 槽：vx −0.0001、tilt 1.4°，8 s 不动 |
 | `runmeta/variant_meta_vel_defer1500x1000_1025.json` | §12 变体的干预记录：`curriculum_before` / `curriculum_after` 逐档对比（**单位是步不是轮**）、cfg/mdp 哈希、`rewards_effective` |
 | `evals/runmeta_vel_4096x12000_1025.json` | baseline 训练契约：envs/iters/PPO 超参/求解器/**cfg 与 mdp 的字节哈希** |
 | `evals/runmeta_vel_4096x2000_std004_1025.json` | 单变量实验契约：除哈希外还有 **`rewards_effective`**（回读解析出的 `std` / `std_sq` / `std_over_cmd_max`）与 `extra_args` |
