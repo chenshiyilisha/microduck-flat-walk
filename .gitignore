@@ -58,3 +58,6 @@ artifacts/flat_walk/videos/*
 !artifacts/flat_walk/videos/walk_1250_34.mp4
 !artifacts/flat_walk/videos/walk_std004_1250_side.mp4
 !artifacts/flat_walk/videos/walk_std004_1250_34.mp4
+
+# replay_all.py 的 site-packages 骨架（只是同步副本，不是真装包）
+.venv-mjlab/

@@ -27,10 +27,11 @@
 > （Hannes von Essen，73★，Apache-2.0，running 配方的出处）。
 >
 > **本仓库自加的补丁（非官方，明示清单）**：训练所用的本地快照在官方 `b02fdea` 之上
-> 打了**纯追加**补丁（append-only，5 个文件 +388 行，由 `tools/patch_*.py` 系列重放），
-> 其中对 velocity 训练数值**实际生效**的只有 Patch 1/2（RewardManager / PPO 的 NaN 防护）；
-> Patch 4 只改 ONNX 导出元数据，Patch 5 默认关闭，其余为 joy（音乐舞蹈）任务专用、
-> velocity 任务不引用。逐文件清单见 §7.0。
+> 打了**纯追加**补丁（append-only），**全部是 joy（音乐舞蹈）任务专用——velocity 任务
+> 引用的官方代码零改动**（官方 `mdp.py` 自带的 NaN 防护 Patch 1-2 是上游自己的，
+> 不是我们加的）。补丁由 `tools/upstream_patches/replay_all.py` 一条命令重放，
+> 254/256 文件与训练快照逐字节一致，唯二残差是 joy 的一个已丢失工具（见
+> `tools/upstream_patches/README.md`）。逐文件清单见 §7.0。
 >
 > **是我（chenshiyilisha）的部分**：`tools/flat_walk/` 的七个工具、`docs/05-flat-walk.md`
 > 的分析与结论、`artifacts/flat_walk/` 里的证据与产物。

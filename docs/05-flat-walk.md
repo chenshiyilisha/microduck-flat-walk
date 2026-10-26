@@ -193,14 +193,20 @@ _（2026-10-26 修订：本节最初把任务包归为 `tailong-wu/microduck-mjb
 | 结果 | 数量 | 明细 |
 |---|---|---|
 | 逐字节相同 | **249** | 含 `microduck_velocity_env_cfg.py`（velocity cfg 与官方零差异） |
-| 纯追加补丁 | 5 | `mdp.py` +380（Patch 1-2 NaN 防护、Patch 4 导出元数据、Patch 5 WARM_START 默认关、joy 函数群）；`export.py` +56（joy 元数据）；`microduck_constants.py` +42（`pd_actuators`，joy 用）；`tasks/__init__.py` +10（joy 注册）；`symmetry.py` +18/−1（唯一被改的「1 行」是一个行内注释换成维度防御检查） |
+| 纯追加补丁 | 5 | `mdp.py` +380（**全部为 joy 函数群**）；`export.py` +56（joy 导出元数据）；`microduck_constants.py` +42（`pd_actuators` PD 执行器，joy 用）；`tasks/__init__.py` +10（joy 注册）；`symmetry.py` +18/−1（唯一被改的「1 行」是一个行内注释换成维度防御检查） |
 | 快照新增文件 | 2 | `microduck_joy_env_cfg.py`、`tests/test_joy_cfg.py`（joy 专用，velocity 不引用） |
 | 快照多余垃圾 | 7 | `__pycache__`、`.pytest_cache`、`mdp.py.pre-sync` 备份（不入库） |
 
-补丁由 `microduck-software/tools/patch_*.py` 系列（本项目自写，append-only）重放，
-路径绑定那份解压快照。**对 velocity 训练数值实际生效的只有 Patch 1/2**（RewardManager /
-PPO 的 NaN 防护）——即本文所有数字 = 官方 cfg + 这两条 NaN 防护 + 官方 PPO；
-其余补丁与 velocity 任务无关。
+⚠️ **修正（2026-10-26 第二次核对）**：最初把 mdp.py 头部的 NaN 防护（`Patch 1-2`）、
+导出元数据（`Patch 4`）、WARM_START（`Patch 5`）当成我们打的补丁——**错，它们是官方
+`b02fdea` 自带的**（官方 `mdp.py:25` 起就有）。即 **velocity 任务的官方代码零自加补丁**；
+5 个文件的追加全部是 joy 专用，velocity 任务一行都不引用。
+
+补丁重放已闭环为一条命令：`tools/upstream_patches/replay_all.py`（11 个工具 + 15 KB 的
+`rc_joy.patch` 输入入库；前置自检 submodule 在 `b02fdea`；末尾按快照实测的 EOL 表归一
+行尾并打印 velocity 关键文件 sha1）。重放验证：**254/256 文件与训练快照逐字节一致**；
+唯二残差（`mdp.py`、`microduck_joy_env_cfg.py` 的 joy 段）来自已丢失的
+`tools/patch_joy_foot_peak.py`，效果只存在于 joy 任务，velocity 路线不受影响。
 
 本节全部数字产生于官方 `microduck_rl` 快照注册的 `Mjlab-Velocity-Flat-MicroDuck` 任务包，
 环境：Python 3.12 + `mjlab 1.3.0` + `mujoco_warp 3.7.0.1` + `warp-lang 1.12.0`，
