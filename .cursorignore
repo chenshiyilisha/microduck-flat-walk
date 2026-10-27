@@ -1,0 +1,26 @@
+# Keep Cursor index on project docs/tools — skip bulky mirrors & run artifacts.
+
+# Venvs
+**/.venv/
+**/.venv-*/
+
+# Training outputs & weights
+**/logs/
+**/out/
+**/wandb/
+**/*.pt
+**/*.onnx
+**/MUJOCO_LOG.TXT
+**/__pycache__/
+
+# Upstream / third-party trees (reference via path when needed)
+.upstream/
+microduck-software/.upstream/
+
+# Local IDE / WorkBuddy state
+.codebuddy/
+.workbuddy/
+
+# Chat dumps (memory/ stays indexable)
+workbuddy-history/*
+!workbuddy-history/memory/

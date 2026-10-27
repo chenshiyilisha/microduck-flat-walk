@@ -1,21 +1,19 @@
-# 音频文件（版权）不入库，只提交 beats.json / timeline.json
+# Merged .gitignore: DuckEMW/flat-walk exceptions + HD1910 WorkBuddy ignores
+
+# --- flat-walk / DuckEMW (from main) ---
 dance/songs/*.mp3
 dance/songs/*.wav
 dance/songs/*.flac
 dance/songs/*.ogg
 dance/songs/*.m4a
 
-# 训练产物
 *.onnx
 *.pt
 logs/
 videos/
 __pycache__/
 
-# 验证产物（视频/CSV 体积大，不入库）
 artifacts/
-
-# 例外：高跷复现的评估数据/课程日志（小文件，随视频文案开源）
 !artifacts/
 artifacts/*
 !artifacts/stilts_repro/
@@ -24,20 +22,14 @@ artifacts/stilts_repro/*
 !artifacts/stilts_repro/completed.tsv
 !artifacts/stilts_repro/curriculum_status.log
 
-# 例外：秋千 360 成片遥测（小文件，随视频文案开源）
 !artifacts/swing360_v3/
 artifacts/swing360_v3/*
 !artifacts/swing360_v3/swing360_4k_7turns_metrics.json
 !artifacts/swing360_v3/swing360_v3_60s.json
 
-# 调试会话导出
 kimi-debug-session_*/
 kimi-debug-session_*.zip
-.DS_Store
 
-# 例外：平地速度跟踪（checkpoint 4.8 MB + 评估 JSON + 2 条录像）——
-# 目的是「clone 下来就能看片、且判决所依据的原始数据都在」；
-# 要重算数字仍需任务包与环境，见 docs/05-flat-walk.md §7.0。
 !artifacts/flat_walk/
 artifacts/flat_walk/*
 !artifacts/flat_walk/README.md
@@ -47,8 +39,6 @@ artifacts/flat_walk/*
 !artifacts/flat_walk/checkpoints/
 !artifacts/flat_walk/checkpoints/model_1250.pt
 !artifacts/flat_walk/checkpoints/model_1250_std004.pt
-# 导出的部署图（794 KB）。`*.onnx` 在全局被忽略，这里单独放行：
-# 它是 docs §13 那条 parity 结论的被测对象，没有它复算不了。
 !artifacts/flat_walk/checkpoints/walk_std004_1250.onnx
 !artifacts/flat_walk/runmeta/
 !artifacts/flat_walk/runmeta/*.json
@@ -59,5 +49,50 @@ artifacts/flat_walk/videos/*
 !artifacts/flat_walk/videos/walk_std004_1250_side.mp4
 !artifacts/flat_walk/videos/walk_std004_1250_34.mp4
 
-# replay_all.py 的 site-packages 骨架（只是同步副本，不是真装包）
 .venv-mjlab/
+
+# --- HD1910 WorkBuddy (from hd1910) ---
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.venv-*/
+**/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+**/logs/
+**/out/
+**/wandb/
+**/*.pt
+**/*.onnx
+**/MUJOCO_LOG.TXT
+
+.upstream/
+microduck-software/.upstream/
+
+microduck-hf/
+microduck-software/repo/
+microduck-software/bin/
+tooling/
+cursor.cmd
+
+.cursor/
+.codebuddy/
+.workbuddy/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+.DS_Store
+Thumbs.db
+*~
+
+.env
+.env.*
+!.env.example
+**/credentials.json
+
+workbuddy-history/*
+!workbuddy-history/memory/
+!workbuddy-history/memory/**
