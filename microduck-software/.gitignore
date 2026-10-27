@@ -1,0 +1,24 @@
+# Local to microduck-software (also covered by workspace root .gitignore)
+
+.venv/
+.venv-*/
+.upstream/
+repo/
+bin/
+
+logs/
+out/
+wandb/
+*.pt
+*.onnx
+MUJOCO_LOG.TXT
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.env
+.env.*
+!.env.example

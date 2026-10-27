@@ -1,0 +1,52 @@
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.venv-*/
+**/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Training / sim artifacts
+**/logs/
+**/out/
+**/wandb/
+**/*.pt
+**/*.onnx
+**/MUJOCO_LOG.TXT
+
+# Local upstream mirrors (clone from remotes; do not commit)
+.upstream/
+microduck-software/.upstream/
+
+# Nested / bulky locals (own remotes or installers — not this tree)
+microduck-hf/
+microduck-software/repo/
+microduck-software/bin/
+tooling/
+cursor.cmd
+
+# IDE / WorkBuddy local
+.cursor/
+.codebuddy/
+.workbuddy/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# OS junk
+.DS_Store
+Thumbs.db
+*~
+
+# Secrets
+.env
+.env.*
+!.env.example
+**/credentials.json
+
+# Huge chat transcript dumps at history root (keep memory/)
+workbuddy-history/*
+!workbuddy-history/memory/
+!workbuddy-history/memory/**

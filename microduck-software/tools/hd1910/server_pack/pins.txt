@@ -1,0 +1,25 @@
+# HD1910 / mjlab train stack pins — Windows Server + RTX 4070 Ti
+# Source of truth: local .venv-mjlab (2026-10) + tools/install_mjlab_stack.sh
+# Do NOT zip-copy .venv-mjlab between machines.
+
+python=3.12
+torch=2.9.1+cu128
+torch_index=https://download.pytorch.org/whl/cu128
+mjlab=1.3.0
+mujoco=3.7.0
+mujoco-warp=3.7.0.1
+warp-lang=1.12.0
+better-actuator-models=1.0.1@editable:.upstream/bam-62bd8ce12154340be97e06f7f41a0ca8f116d967
+mjlab-microduck=0.1.0@:.upstream/microduck_rl-develop
+rsl-rl-lib=5.0.1
+onnxruntime>=1.24.4
+
+# Runtime (Windows)
+MUJOCO_GL=glfw
+gpu_ids=[0]
+# NEVER export CUDA_VISIBLE_DEVICES=  (empty → CPU)
+
+# Envs guidance
+# 8GB (local 4070): sweet spot 4096; 8192 thrash — do not use
+# 12GB (4070 Ti desktop): start 4096; try 6144–8192 only after smoke
+default_envs=4096
