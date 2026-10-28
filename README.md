@@ -17,10 +17,8 @@
 | **花钱 / 阶段 0 BOM** | [`docs/hardware/microduck-采购清单.md`](docs/hardware/microduck-采购清单.md) **§7** |
 | **算力刻度** | [`docs/active/microduck-RL_duck教学仓对照.md`](docs/active/microduck-RL_duck教学仓对照.md) |
 | **BAM 参数对照** | [`microduck-software/tools/hd1910/bam_param_compare.md`](microduck-software/tools/hd1910/bam_param_compare.md) |
-| **日记忆** | [`workbuddy-history/memory/2026-10-26.md`](workbuddy-history/memory/2026-10-26.md) |
-| **10-27 裁决纪要** | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md)（IMU/组装机/场景/XGO） |
-| **2026-10-27 裁决纪要** | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md)（台架/IMU/场景/kissqy↔XGO） |
-| **10-27 裁决纪要**（场景/IMU/XGO/StandUp） | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md) |
+| **日记忆** | [`workbuddy-history/memory/2026-10-28.md`](workbuddy-history/memory/2026-10-28.md) |
+| **10-27 裁决纪要** | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md)（台架/IMU/组装机/场景/StandUp/kissqy↔XGO） |
 
 ### ⚠️ 切 plant（新克隆 / 新机器 / 挪过目录必做，10 秒）
 
@@ -108,6 +106,6 @@ StandUp（可选）：`tools/hd1910/smoke_standup.sh` → `explore_standup.sh`�
 
 ## 5. 本仓还保留的 XL330 / DuckEMW 交付（旁线）
 
-main 合并了原先 flat-walk 交付树：docs/05-flat-walk.md、	ools/flat_walk/、rtifacts/flat_walk/、	hird_party/ 等。  
+main 合并了原先 flat-walk 交付树：[`docs/05-flat-walk.md`](docs/05-flat-walk.md)、`tools/flat_walk/`、`artifacts/flat_walk/`、`third_party/`。  
 那是 **XL330 平地速度跟踪** 档案；**现行施工以 HD-1910 为主**（见上文）。旁线入口：[docs/sideline/](docs/sideline/)。
 
