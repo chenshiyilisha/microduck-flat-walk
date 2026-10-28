@@ -56,15 +56,21 @@ powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1
 
 ## 3. 冒烟通过后开训
 
+**bootstrap 冒烟仍是 Velocity**（验 GPU/`cuda:0`）。平地走已有 `model_5999` 时，下一场景用 **StandUp**：
+
 ```powershell
 # 禁止： set CUDA_VISIBLE_DEVICES=   （空串 → CPU）
 $env:MUJOCO_GL = "glfw"
-$env:ENVS = "4096"; $env:ITERS = "2000"
-& "C:\Program Files\Git\bin\bash.exe" tools/hd1910/explore_train.sh
-# 续训：
-& "C:\Program Files\Git\bin\bash.exe" tools/hd1910/resume_train.sh
+# 1) StandUp 冒烟
+& "C:\Program Files\Git\bin\bash.exe" tools/hd1910/smoke_standup.sh
+# 2) 4070 Ti 探索（trick：1024×1000；勿用 velocity 5999 续）
+$env:ENVS = "1024"; $env:ITERS = "1000"
+& "C:\Program Files\Git\bin\bash.exe" tools/hd1910/explore_standup.sh
+# 曲线像样后再正式：
+# $env:ENVS="4096"; $env:ITERS="4000"; bash tools/hd1910/explore_standup.sh
 ```
 
+仍训 Velocity 时：`explore_train.sh` / `resume_train.sh`。  
 若用了 `-SkipSmoke`，先手动：`bash tools/hd1910/smoke_train.sh`。  
 ckpt / ONNX 用 `robocopy` 拉回本机做 eval / parity / 彩排即可。
 

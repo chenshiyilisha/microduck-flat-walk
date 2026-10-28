@@ -23,3 +23,7 @@ gpu_ids=[0]
 # 8GB (local 4070): sweet spot 4096; 8192 thrash — do not use
 # 12GB (4070 Ti desktop): start 4096; try 6144–8192 only after smoke
 default_envs=4096
+# StandUp (fall recovery): explore 1024 first; formal 4096
+# task=Mjlab-StandUp-Flat-MicroDuck  experiment=microduck_standup_hd1910
+standup_explore_envs=1024
+standup_explore_iters=1000

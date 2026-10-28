@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # SPDX-License-Identifier: Apache-2.0
-"""Stage-0 URT-1 / HD-1910 bench skeleton (gates 0.1 / 0.2 / 0.4).
+"""Stage-0 URT-2 / URT-1 / HD-1910 bench skeleton (gates 0.1 / 0.2 / 0.4).
 
 Sources
 -------
@@ -8,7 +8,10 @@ Sources
 * ``docs/hardware/microduck-采购清单.md`` §7.6
 * ``tools/hd1910/stage0_software_prep.md``
 
-Hardware: Feetech **URT-1** (not U2D2) + one HD-1910 + current-limited supply.
+Hardware: Feetech **URT-2 (preferred) or URT-1** (not U2D2) + one HD-1910 on
+**TTL**. External supply feeds the **servo V/G** directly; share GND with the
+adapter; leave URT **V1 empty** (do not backfeed 7.4 V into USB). See
+`.upstream/r_踩坑记录.md` and `stage0_software_prep.md`.
 Software intent: short STS script **or** FD continuous R/W — **do not** write a
 robotd / bus daemon here (方案 §5 / 阶段C §6).
 
@@ -123,7 +126,7 @@ def try_open_live(port: str, baud: int = BAUD_1M) -> StsBus:
         )
     raise SystemExit(
         f"no Feetech Python STS SDK importable (tried scservo_sdk / STservo_sdk). "
-        f"Use Feetech FD on URT-1 ({port} @ {baud}) for stage-0, then optionally "
+        f"Use Feetech FD on URT-2/URT-1 ({port} @ {baud}) for stage-0, then optionally "
         f"pip-install the official SMS/STS port and wire it in try_open_live(). "
         f"Skeleton only — see stage0_software_prep.md."
     )
@@ -136,7 +139,7 @@ def gate_01_ping(bus: StsBus, servo_id: int) -> GateResult:
         ok=ok,
         detail=(
             f"ping id={servo_id} @ {BAUD_1M} — "
-            + ("ok" if ok else "no reply (check URT-1 / power / ID)")
+            + ("ok" if ok else "no reply (check URT-2/URT-1 TTL / power / ID)")
         ),
         metrics={"servo_id": servo_id, "baud": BAUD_1M},
     )
@@ -210,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="no serial — print plan + synthetic pass (default if --port omitted)",
     )
-    ap.add_argument("--port", default=None, help="URT-1 serial port, e.g. COM5")
+    ap.add_argument("--port", default=None, help="URT-2/URT-1 serial port, e.g. COM5")
     ap.add_argument("--id", type=int, default=1, help="servo ID (default 1)")
     ap.add_argument("--samples", type=int, default=100, help="txn samples for gate 0.2")
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="write JSON report")
@@ -242,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         "gates": [asdict(r) for r in results],
         "all_pass": all(r.ok for r in results),
         "note": (
-            "dry_run is checklist-only; live pass requires URT-1 + HD-1910. "
+            "dry_run is checklist-only; live pass requires URT-2/URT-1 + HD-1910. "
             "Gate 0.3 (kt/R) is out of scope here — see bam_param_compare.md."
         ),
     }
