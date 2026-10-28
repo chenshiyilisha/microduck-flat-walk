@@ -18,6 +18,9 @@
 | **算力刻度** | [`docs/active/microduck-RL_duck教学仓对照.md`](docs/active/microduck-RL_duck教学仓对照.md) |
 | **BAM 参数对照** | [`microduck-software/tools/hd1910/bam_param_compare.md`](microduck-software/tools/hd1910/bam_param_compare.md) |
 | **日记忆** | [`workbuddy-history/memory/2026-10-26.md`](workbuddy-history/memory/2026-10-26.md) |
+| **10-27 裁决纪要** | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md)（IMU/组装机/场景/XGO） |
+| **2026-10-27 裁决纪要** | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md)（台架/IMU/场景/kissqy↔XGO） |
+| **10-27 裁决纪要**（场景/IMU/XGO/StandUp） | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md) |
 
 ### 训练命令
 
@@ -28,6 +31,9 @@ cd microduck-software
 ENVS=4096 ITERS=2000 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/explore_train.sh
 # 续训（默认 4096→6000；本机勿用 8192）：
 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/resume_train.sh
+# StandUp（可选；从零训，勿续 5999）：
+"D:/Program Files/Git/bin/bash.exe" tools/hd1910/smoke_standup.sh
+ENVS=1024 ITERS=1000 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/explore_standup.sh
 # ONNX parity / 阶段0软件入口：
 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/parity_smoke.sh
 # 见 tools/hd1910/stage0_software_prep.md
@@ -36,7 +42,8 @@ ENVS=4096 ITERS=2000 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/explore_tr
 ```
 
 工具说明：[`microduck-software/tools/hd1910/README.md`](microduck-software/tools/hd1910/README.md)。  
-Windows 训练机打包（4070 Ti，勿拷 venv）：[`microduck-software/tools/hd1910/server_pack/README.md`](microduck-software/tools/hd1910/server_pack/README.md)。
+Windows 训练机打包（4070 Ti，勿拷 venv）：[`microduck-software/tools/hd1910/server_pack/README.md`](microduck-software/tools/hd1910/server_pack/README.md)。  
+StandUp（可选）：`tools/hd1910/smoke_standup.sh` → `explore_standup.sh`（默认 1024×1000）。
 
 ---
 
@@ -59,7 +66,7 @@ Windows 训练机打包（4070 Ti，勿拷 venv）：[`microduck-software/tools/
 
 - 植物 live：**OpenMicroDuck m5**；BAM pin：`bam-62bd8ce`  
 - 续训 **≈6000 完成**：P-walk ratio≈**0.76**；ONNX `out/hd1910_resume_4096_to6000_1027_it5999.onnx` + parity ✅  
-- 下一步：**阶段 0 下单**（URT-1 + HD1910×1 + 电源）
+- 下一步：**阶段 0 下单**（URT-2 优先 / URT-1 + HD1910×1 + 电源；勿 U2D2）
 
 细节：[`docs/active/microduck-HD1910软件方案.md`](docs/active/microduck-HD1910软件方案.md) 头顶进度表。
 

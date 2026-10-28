@@ -48,7 +48,7 @@
 
 | 步 | 动作 | 闸门 |
 |---|---|---|
-| 0.1 | HD-1910 ×1 + **URT-1**（不是 U2D2）+ 限流电源 | ping / 改 ID / 1 Mbps |
+| 0.1 | HD-1910 ×1 + **URT-2（优先）/ URT-1**（不是 U2D2；接 TTL；**外电→舵机 V/G，URT 的 V1 空着**）+ 限流电源或电池+保险 | ping / 改 ID / 1 Mbps |
 | 0.2 | 50 Hz 连续读写 | **事务 ≤5 ms**；0 CRC |
 | 0.3 | 辨识 kt/R（OpenMicroDuck 摆锤脚本可复用） | 与 m5 / 飞特 m6 对照表比对（`../../microduck-software/tools/hd1910/bam_param_compare.md`） |
 | 0.4 | 确认固件 P（reg 50）= **32**（训练 `kp_fw`） | 与 BAM 一致 |
@@ -79,7 +79,7 @@
 | C-prep-6 | 续训脚本 | ✅ `tools/hd1910/resume_train.sh`（默认接到 6000） |
 | C-prep-7 | 阶段 0 / 镜像软件入口 | ✅ `tools/hd1910/stage0_software_prep.md`（FD、表征 JSON、kissqy R1/V167 链接） |
 | C-prep-8 | HD1910 部署彩排入口 | ✅ `tools/hd1910/rehearse_hd1910.py` / `.sh`（m5 / kp 32；跑 sweep 写 `out/rehearse_hd1910_*.json`） |
-| C-prep-9 | URT-1 台架脚本骨架 | ✅ `tools/hd1910/urt1_bench.py`（`--dry-run`；live 待 SDK/FD） |
+| C-prep-9 | URT-2/URT-1 台架脚本骨架 | ✅ `tools/hd1910/urt1_bench.py`（`--dry-run`；live 待 SDK/FD） |
 | C-prep-10 | kissqy 上板导入勾选清单 | ✅ `tools/hd1910/deploy_import_checklist.md`（镜像/方向/P=32/缩放 0.9·0.5·0.7） |
 
 ---

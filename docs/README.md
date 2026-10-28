@@ -2,7 +2,7 @@
 
 | 文件夹 | 内容 |
 |---|---|
-| [`active/`](active/) | **现行主线**：HD1910 方案、阶段 C、RL_duck、对照地图、奖励评测 |
+| [`active/`](active/) | **现行主线**：HD1910 方案、阶段 C、RL_duck、对照地图、奖励评测、[`.upstream` 摘录核对](active/microduck-upstream摘录核对.md)、[**2026-10-27 裁决与场景纪要**](active/microduck-2026-10-27裁决与场景纪要.md) |
 | [`hardware/`](hardware/) | 采购清单 §7、HAT BOM |
 | [`sideline/`](sideline/) | joy / XL330 交付旁线（不挡 HD1910） |
 | [`archive/`](archive/) | 过时选型（S288 / HL-2915 / XL330 硬件草案等） |

@@ -4,7 +4,10 @@
 `../archive/microduck-国内自制方案.md` 已证伪段）。本文只定**软件怎么拼**，不重复 BOM。
 
 **工作区入口**：[根目录 `README.md`](../../README.md)（文档地图 + 命令）。  
-**真机清单**：[阶段 C](microduck-HD1910阶段C软件清单.md)。**工具**：[tools/hd1910](../../microduck-software/tools/hd1910/README.md)。
+**真机清单**：[阶段 C](microduck-HD1910阶段C软件清单.md)。**工具**：[tools/hd1910](../../microduck-software/tools/hd1910/README.md)。  
+**主线执行计划**：[§8](#8-主线执行计划2026-10-28-定hd1910-为唯一主线)（2026-10-28 定：HD1910 唯一主线、偏航为首要缺口）。  
+**10-27 纪要**（IMU / 组装机 / 场景 / kissqy·XGO）：[microduck-2026-10-27裁决与场景纪要.md](microduck-2026-10-27裁决与场景纪要.md)。  
+**2026-10-27 裁决纪要**（场景 / IMU / 组装机 / kissqy↔XGO）：[microduck-2026-10-27裁决与场景纪要.md](microduck-2026-10-27裁决与场景纪要.md)。
 
 ### 当前进度（滚动）
 
@@ -20,7 +23,7 @@
 | 飞特 m6 | JSON+别名就绪；**勿整包装** ftservo-bam；长训仍主 **m5** |
 | ONNX + parity（5999） | ✅ `out/hd1910_resume_4096_to6000_1027_it5999.onnx`；parity max\|Δ\|≈**2.5e−6** |
 | 彩排（5999） | 名义/低电/高电 **过**；`train_lag3/4/6` 仍挂（与 1999 同类；CPU MuJoCo±delay 非训练同仪） |
-| 下一步 | **人：阶段 0 下单**；软件侧当前交付物可用；暂不必要再长训 / 换 m6 |
+| 下一步 | **人：阶段 0 下单**；Velocity 不必再长训。可选新场景 **StandUp**（`tools/hd1910/explore_standup.sh`，4070 Ti：先 1024×1000） |
 
 ---
 
@@ -175,7 +178,7 @@ bash tools/hd1910/smoke_train.sh
 清单正文：`microduck-HD1910阶段C软件清单.md`（2026-10-26 并行起草）。
 
 1. 部署侧跟 kissqy V167 / fanhao 镜像（不自写 robotd）——入口与许可已写入清单 §1  
-2. 阶段 0 台架：URT-1 + 1 颗，事务 ≤5 ms，复核 kt/R——闸门见清单 §3；软件骨架 `tools/hd1910/urt1_bench.py`（`--dry-run`）；待硬件  
+2. 阶段 0 台架：**URT-2（优先）或 URT-1** + 1 颗（**勿用 U2D2**），事务 ≤5 ms，复核 kt/R——闸门见清单 §3 / `stage0_software_prep.md`。HD-1910 接 **TTL**；**外电直供舵机 V/G，URT 只共地+信号，勿灌 V1**（出处：`.upstream/r_踩坑记录.md`）  
 3. ONNX export + parity ✅；部署彩排入口 `tools/hd1910/rehearse_hd1910.py`（m5 / kp_fw=32）  
 4. 有整机后再做 sim2real；仿真结论不得单独宣称「真机已会走」
 
@@ -224,3 +227,144 @@ bash tools/hd1910/smoke_train.sh
 
 *依据：本仓 `tools/plant.py` / `bam_actuators.py` / OpenMicroDuck 表征 JSON；
 qiaosiyi、kissqy、fanhao、ftservo-bam、LuwuDynamics 公开 README；检索日 2026-10-26。*
+
+---
+
+# 8. 主线执行计划（2026-10-28 定：HD1910 为唯一主线）
+
+## 8.0 今天读到的现状（以实测读数为准，勿再翻旧结论）
+
+依据：`microduck-software/out/eval_hd1910_resume_4096_to6000_1027/vx040.json`
+（ckpt `logs/.../microduck_velocity_hd1910/2026-10-27_08-37-16_hd1910_resume_4096_to6000_1027/model_5999.pt`，
+32 env × 8 s，cmd 0.4，solver 100/50）
+
+| 读数 | HD1910 `model_5999` | XL330 `walk_std004_1250`（冻结档案，仅参照） |
+|---|---|---|
+| vx mean / ratio | 0.2989 / **0.747** | 0.3158 / 0.79–0.81 |
+| 摔倒率 / upright min | 0.0% / 0.9953 | 0.0% / 0.9940 |
+| `error_vel_xy` | 0.2016 | 0.1590 |
+| **`error_vel_yaw`** | **1.164 rad/s** ⇦ 差 3.4× | 0.342 |
+| 净位移比 `dx_over_expected` | **0.359** | 0.662 |
+| `abs_dy_body_median` | **0.899 m** | 0.784 m |
+| 闸门 | 11 PASS，`not_sideways` ❌ | 12 PASS |
+
+**主干结论（≠ 旧结论）**：HD1910 上不需要「为了会走路」去重训 —— 它已经在走。
+**真缺口不是前进速度，是它在往旁边漂**：体坐标 vx 达标 0.75，但净位移只有 0.36×，
+8 s 横移 0.90 m，偏航误差是 XL330 那版的 3.4 倍。
+
+> 纠错备案：2026-10-28 上午曾据「换 plant ⇒ 必重训」推断 HD1910 需要重训，
+> 那是漏读本文 §0 进度表的错话。HD1910 已于 10-26/27 完成 4096×2000 + 续训至 6000。
+
+**范围裁定**：XL330 系（`artifacts/flat_walk/`，含 `walk_std004_1250.onnx`）**冻结为档案**，
+只能作跨 plant 参照，不作目标值、不可热插拔到 HD1910。两条线的数字**不许横比**，
+比也只能说「不同任务的参照」（参照 `.workbuddy/memory/MEMORY.md` §8）。
+
+## 8.1 为什么现在不急着长训
+
+两项输入还没到位，先别把 GPU 投进去：
+
+| 阻塞项 | 现状 | 影响 |
+|---|---|---|
+| **舵机参数不是实测** | `m5.json` = OpenMicroDuck 社区拟合（**vin 5 V** 标定）；`ftservo_official_m6.json` = 飞特官方（**vin 7.4**）；两者 R 差 21%、kt 差 18%（对照表 `tools/hd1910/bam_param_compare.md`） | 我们用电是 **2S 7.4 V** ⇒ 回填前**默认倾向官方 m6**；现在投长训有可能等于烧给一套错参数 |
+| **A/B 已经做过且无效** | `tools/hd1910/ab_train.sh` 1024×500 两条腿**都 100% fall**（500 轮判不了植物） | ⛔ **别重复这个实验**；要 A/B 就 ≥2000 轮，或干脆等实测 |
+
+结论：**先用本地 4070 做几乎免费的诊断（P2），把 GPU 花在实测参数落地之后的那一次重训上。**
+
+## 8.2 阶段表
+
+### P0 · 采购与上电（人，≈¥245–324）
+
+- 采购：`docs/hardware/路线B-HD1910-今日下单清单.md`（今天只买阶段 0 五项）
+- SOP：`microduck-software/tools/hd1910/stage0_software_prep.md`
+- **G0 闸门**：ping 通 → 拉到 1 Mbps → **50 Hz 事务 ≤5 ms 且 0 CRC** →
+  **打开出厂默认关闭的过流/过压保护** → 额定 0.36 N·m 连续 60 s 外壳 <60 ℃ → 确认 **reg50 P=32**
+- 不过就换货，别买齐 15 颗
+
+### P1 · 真机辨识 → 回填（本机，半天）
+
+- 量 kt / R / 死区 / 齿隙 / 空载与堵转电流（`tools/hd1910/urt1_bench.py`）
+- 产出 `tools/bam_params/hd1910/hd1910_measured_<date>.json`，用 `apply_to_live.py` 装成新 plant
+- **G1 闸门**：kt/R 落在 m5 与官方 m6 之间（偏离 >20% 先查接线与标定，不信单点）；
+  plant 记录（`out/plant_*.json`）写出该 json 的 sha256
+
+### P2 · 修偏航（首要缺口：先诊断，再烧 GPU）本机 4070，纯评估，¥0
+
+**状态：G2 已达一半（2026-10-28 实测，¥0，本机 4070）。**
+
+对象 `model_5999.pt`（HD1910）；cmd 0.4 / 32 env / 8 s / solver 100/50；**seed 11·22·33 三次重复**。
+产物 `artifacts/flat_walk/evals/p2_yaw/hd1910_5999_vx040_s{11,22,33}.json`。
+
+| | seed 11 | 22 | 33 |
+|---|---|---|---|
+| vx / ratio | 0.303 / 0.76 | 0.306 / 0.77 | 0.294 / 0.74 |
+| error_vel_yaw (rad/s) | 1.18 | 1.20 | 1.21 |
+| **signed yaw drift (deg/s)** | **+2.52** | **−1.99** | **−1.08** |
+| frac 同号 / frac>0 | 0.53 / 0.53 | 0.47 / 0.53 | 0.53 / 0.47 |
+| signed dy (m) | −0.27 | +0.17 | −0.21 |
+| dx 比（净沿初始航向） | 0.21 | 0.13 | 0.19 |
+| path_dx / 摔率 / upmin | 2.44 / 0% / .9955 | 2.47 / 0% / .9958 | 2.28 / 0% / .9958 |
+
+**① 头号假设 symmetry 被证伪。** 三次符号翻转、均值 −0.18 deg/s、同号率 0.51 ≈ 抛硬币
+⇒ **不是左右结构性不对称**，启用 symmetry 增强治不了这个缺口（不必为它动 GPU）。
+排除方式是**看符号而不是看大小**：脚本原先把 yaw drift 取了 `.abs()`，符号被抹，答不了这题。
+
+**② 真机理 = 航向随机游走。** 它能走（path_dx 2.3–2.5 m、体坐标 vx 0.75），但航向无反馈地扩散
+（|drift| 中位 13–17 deg/s，极值 ±43），净沿初始航向的位移只剩 **13–21%**。
+定量支持（96 env）：`sin(dpsi)/dpsi` 预测 vs 实测 **corr +0.55**、量级同阶（预测 1.04 vs 实测 0.70；
+单一匀速转弯模型偏乐观，真实是游走轨迹）。
+
+**③ 为什么它根本没有"保持航向"这门本事 —— 查源码，不是推测：**
+`microduck_velocity_env_cfg.py:643` 明写 **`command.rel_heading_envs = 0.0`** ⇒ 训练中**零个** env
+练过航向闭环，wz 全程开环采样自 `(-1.0, 1.0)`。
+⚠️ **别照抄 mjlab 官方默认的 0.3**：通用文档不等于本任务（这条差点是第 4 次「拿通用资料套自家 cfg」）。
+
+**④ 副作用 —— 本仿真栈不可逐位复现，已证实并有官方依据：**
+同 seed ⇒ **初始条件逐位相同**（yaw0 = 38.8096 / −110.9149 / −12.9005 三次一致），
+但只推 **20 步空动作** yaw 就在第 4 位漂了（−111.5129 vs −111.5186）。
+依据 `mjlab/docs/faq.md`：*"MuJoCo Warp does not yet guarantee determinism… tracked in
+mujoco_warp#562"*；MuJoCo 官方 FAQ 给的出路是 **`wp.set_device("cpu")`**。
+⇒ **"再跑一遍验证"不算验证**，独立性只能来自 N 次重复 + sem（本轮即按此做）。
+
+**参考尺度**：ANYmal（Science Robotics, arXiv:1901.08652）实测 yaw rate error **0.174 rad/s**，
+我们 1.2 ⇒ 差 7 倍（跨任务粗对标，只当量级参照）。
+
+次选假设（`TURN_IN_PLACE_FRACTION = 0.15` 对软伺服不够）**暂不需要**：turn-in-place 只加样本，
+而 ① 已证明问题不是样本偏向一侧，是**没有反馈**。真要治，候选是给训练加 `rel_heading_envs > 0`
+（让部分 env 用航向误差经 P 控制器生成 wz）—— 这属 **task 改动 ⇒ 按纪律必须重训**。
+- **G2 闸门**：主因已判明 ✅ ⇒ 可进 P3；但 P3 之前先做 P1（见下），否则会训在参数未实测的植物上。
+
+### P3 · 一次正式重训（改代码 ⇒ 按 AGENTS.md §2 从零）
+
+- 本机探索档 **1024×2000**（⛔ 8192 已证伪：8 GB 上 ~100 s/iter、显存顶满）
+- 上云仅 **4090D ¥1.88/h**：先 64×5 冒烟，**开工前报预计时长×单价征得同意**
+- **G3 闸门**（3 次重复取中位，不看单次）：32env×8s cmd 0.4 下 `no_fall` ✅、
+  `not_sideways` ✅（判据 `|dy| ≤ 0.5×|dx_body|`）、ratio ≥0.75（具体值待 P2 出数后钉）
+
+### P4 · 交付链重做
+
+export → ONNX → parity（**负对照必须严重偏离**，照抄 §13）→ 彩排六条件。
+文件名带上 plant 标签；⛔ 作废 `walk_std004_1250.onnx`（XL330，勿再引用）。
+
+### P5 · 阶段 3 自动跟随（偏航修好后才有意义）
+
+跑 `tools/flat_walk/eval_tracking.py`（已带 plant 指纹 + 基线健康闸门），回答
+`resampling_time_range [3.0, 8.0] s` 那条；再扫 cmd 0.15–0.4 找 **HD1910 自己的低速地板**
+（XL330 那条 0.15 m/s 下限**不适用**，属跨 plant 引用，重测）。
+
+## 8.3 本轮新加的三条纪律
+
+| # | 纪律 | 起因 |
+|---|---|---|
+| 1 | **每次读数必带 plant 指纹** | cfg/mdp sha 盖不到 `_BAM_ACTUATOR_KWARGS`（传递闭包），换 plant 时它们照样全绿。已落地 `tools/flat_walk/plant_id.py`，两个评估脚本都写 `plant_fingerprint` |
+| 2 | **跨 plant 数字不横比** | 同一 ckpt 同命令：xl330 vx 0.318/摔 0% ↔ hd1910 vx 0.109/摔 100%（10-28 实测 A/B）。说「变差」是错的，是任务变了 |
+| 3 | **位移类读数必须 ≥3 次重复才判决** | `abs_dy_body_median` CV 31.4%；`not_sideways` 用的是单次 `|dy| vs 0.5×|dx|` |
+| 4 | **验证靠 N 次重复 + sem，不靠"再跑一遍"** | MJWarp 不确定性（mujoco_warp#562，官方 FAQ 确认）：同 seed 只保证**初始条件**一致，20 步后就在第 4 位发散。⇒ 复跑取同值不成立；需要确定性时另有官方出路 `wp.set_device("cpu")` |
+
+## 8.4 待你定的两件事
+
+1. **阶段 0 是否今天就下单**（清单已就绪，≈¥245–324）—— P1 的实测参数卡在它后面
+2. ~~P2 是否启用 symmetry 试跑~~ —— **已作废**：P2 实测三次符号翻转、同号率 0.51 ⇒ 假设证伪，不用再问
+3. **P3 要不要顺带加 `rel_heading_envs > 0`**（教会它保持航向）？属 task 改动 ⇒ 必重训；
+   建议与 P1 实测参数一并进同一次 P3，只烧一次算力
+4. 是否接受「验证靠 N 次重复 + sem，而不是复跑取同值」？（MJWarp 不确定性限制；
+   若确实需要确定性读数，可选 `--device cpu` + `wp.set_device("cpu")` 那条官方出路，代价是速度）
