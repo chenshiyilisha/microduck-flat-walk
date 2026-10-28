@@ -8,13 +8,14 @@ _2026-10-26 压缩。只留仍有效的结论；翻案过程见 `2026-10-25.md`/
 **遇事先查资料，再改代码 / 下结论。** 卡住、选型、判负结果、定下一步时，先搜上游
 `AGENTS.md` / `docs/*_policy.md`、社区复刻仓、BAM/规格书与既有 `microduck-*.md`；
 没有一手出处就不动。用户反复强调；违反这条比写错代码更糟。
+⚠️ **查到的是"通用文档"时必须回源码核对**：mjlab 默认 `rel_heading_envs=0.3`，
+microduck 任务是 `0.0`（10-28 差一点照抄通用默认值下结论）。
 
-**工作区入口**：仓库根目录 `README.md`；文档在 `docs/`（`active` / `hardware` / `sideline` / `archive` / `reference`）。  
+**工作区入口**：仓库根目录 `README.md`；文档在 `docs/`（`active` / `hardware` / `sideline` / `archive` / `reference`）。
 现行方案：`docs/active/microduck-HD1910软件方案.md`。
 
 **正式训练用 GPU（`cuda:0`）**；Windows 上 `MUJOCO_GL=glfw`（勿设 `egl`）。
-CPU 只做探针/导出/无卡对照，不把主训默默掉到 CPU。mjlab 设备由 `--gpu-ids '[0]'`
-决定；空 `CUDA_VISIBLE_DEVICES=` 会逼 CPU。HD1910 植物冒烟已过：`hd1910_smoke_1026_gpu2`。
+CPU 只做探针/导出/无卡对照。mjlab 设备由 `--gpu-ids '[0]'` 决定；空 `CUDA_VISIBLE_DEVICES=` 会逼 CPU。
 
 **读数与算术上下界矛盾 ⇒ 错的一定是读数**（曾读出 0.174 < 下界 0.233，追出 25% env 被课程偷改）。
 找不到两个互相矛盾的来源就判不了真假；验证问「这个量动没动、量级对不对」，不问「结果对不对」。
@@ -135,3 +136,52 @@ max|Δ|=2.65e-06。产物 `walk_std004_1250.onnx`。
 `docs/*_policy.md`。raw 404 ≠ 文件不存在（走 contents API base64）。AGENTS.md:161-167 核宽
 （「tight std taxed walking so hard the policy stood still」= 死区预言）；`:183-188` 冷门命令要显式
 bucket；`velstand_policy.md:68-69` 发车前先做 reward check。
+
+## 13. plant 是一等坐标（2026-10-28 破案）
+
+- **每一次读数必须带 plant 指纹。** 训练时记录的 cfg sha / mdp sha 只覆盖那两个文件本身，
+  **盖不到它的传递闭包**：velocity cfg 从 `microduck_constants.MICRODUCK_WALK_ROBOT_CFG` 拿
+  `actuators`，而它由 `_BAM_ACTUATOR_KWARGS` 构造 ⇒ 改 plant 时两个 sha 照样「一切正常」。
+  这是 §2「配置冻结必须可测量」第三次发作（`standing_envs`、`rel_forward_envs` 之后）。
+- **同 ckpt 同命令 cmd 0.4/32env/8s/solver 100-50 的实测 A/B**：
+  xl330(kp_fw 200) vx **0.318 / 摔 0% / 12 闸门全绿** ↔ hd1910(kp_fw 32) vx **0.109 / 摔 100%**
+  （ symmetries aacc 0.08→0.41，5× 挣扎）。**换 plant = 换ıcı任务，必须重训**，不是"策略变差"。
+- 工具 `tools/flat_walk/plant_id.py`（+ 执行副本），`eval_velocity_in_sim.py` / `eval_tracking.py`
+  已接入 `plant_fingerprint`；名字/meta/这个员的用法见 `tools/hd1910/apply_to_live.py --check`。
+- ⚠️ `apply_to_live.py --plant xl330` 恢复时会 `unlink` 注册模块，**沙箱里被回收站钩子挡**
+  （`SHFileOperationW 失败: 0x78`）⇒ 手工 `cp .xl330.bak` + 删 `*.pyc` 更可靠。
+- ⚠️ 已安装的 plant 把 **绝对路径** 写进了 site-packages（`E:/WorkBuddyData/.../bam_params/hd1910/m5.json`）
+  ⇒ 工作区换路径即失效，且不会报错（夏令时会 fallback？实际会 hard fail，务必留意）。
+- HD1910 参数**不是实测**：`m5.json`=OpenMicroDuck 社区拟合（vin 5 V 标定），
+  `ftservo_official_m6.json`=飞特官方；对照见 `tools/hd1910/bam_param_compare.md`。
+  ⇒ **花得起就先让阶段 0 的实测（kt/R/死区/齿隙）回填**，再重训一次，别训两遍。
+- **`walk_std004_1250` 及全部数字/ONNX 属 XL330 plant，对 HD1910 无效**（已陈述，勿再引用
+  它的 0.78–0.81 ratio 当作新硬件的预期）。**但 HD1910 不是「还没训」**——它有自己的一条线，
+  已跑到 `model_5999.pt`（4096×2000→续训 6000）：cmd 0.4 ratio **0.747**、不摔、
+  **`error_vel_yaw` 1.164（XL330 的 3.4×）、净位移比 0.359、`|dy|` 0.899 m、`not_sideways` ❌**
+  ⇒ **缺口是偏航/横移不是前进速度**。断言"必须重训"前先看 HD1910 那份文档 §0 进度表。
+
+## 14. 这台仿真不可逐位复现（2026-10-28 实测 + 官方依据）
+
+- **三大繁衍方式：同 seed 只保证初始条件一致，不保证轨迹一致。** 实测 seed=1 两次
+  `yaw0` 逐位相同（38.8096 / −110.9149 / −12.9005），但只推 **20 步空动作** yaw 就在第 4 位漂了
+  （−111.5129 vs −111.5186）。⇒ **"再跑一遍验证"不算验证**；独立性只能靠 **N 次重复 + sem**。
+- 依据非推测：`mjlab/docs/faq.md`「MuJoCo Warp does not yet guarantee determinism…
+  tracked in mujoco_warp#562」；MuJoCo 官方 FAQ 给的出路是 **`wp.set_device("cpu")`**。
+- ⛔ 写工具小坑：argparse 的 `help` 字符串里**不能写 `%`**（被当格式化符 → ValueError）。
+
+## 15. 偏航缺口的确切形态（2026-10-28 P2，三次重复实测）
+
+- **symmetry 假设已证伪**：三次符号翻转（+2.52 / −1.99 / −1.08 deg/s，均值 −0.18），
+  同号率 0.51 ≈ 抛硬币 ⇒ 不是左右结构性不对称，**不必为它启用 symmetry 重训**。
+  排除靠**符号**不靠大小；脚本原先 `yaw_drift` 取了 `.abs()` 答不了这题。
+- **真机理 = 航向随机游走**：能走（path_dx 2.3–2.5 m、体坐标 vx 0.75），航向无反馈扩散
+  （|drift| 中位 13–17 deg/s，极值 ±43），净沿初始航向位移只剩 **13–21%**。
+  定量支持（96 env）：`sin(dψ)/dψ` 预测 vs 实测 **corr +0.55**、量级同阶（1.04 vs 0.70）。
+- **根子在任务定义**：`microduck_velocity_env_cfg.py:643` `rel_heading_envs = 0.0`
+  ⇒ 训练中零个 env 练过航向闭环，wz 全程开环采样自 (−1,1)。要治就加 `rel_heading_envs > 0`
+  （**task 改动 ⇒ 必重训**），建议与实测参数回填合并进同一次 P3。
+- **参照尺度**：ANYmal（Science Robotics, arXiv:1901.08652）yaw rate error **0.174 rad/s**，
+  我们 1.2 ⇒ 差 7 倍（跨任务粗对标，只当量级）。
+- 工具已补：`eval_velocity_in_sim.py` 加 `--seed`（默认 None，不动归档口径）+ signed yaw drift
+  （角度 unwrap / sem / frac_same_sign）+ signed `dy_body`；原 `.abs()` 字段保留兼容。
