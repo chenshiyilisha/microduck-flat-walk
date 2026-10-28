@@ -150,6 +150,11 @@ bucket；`velstand_policy.md:68-69` 发车前先做 reward check。
   已接入 `plant_fingerprint`；名字/meta/这个员的用法见 `tools/hd1910/apply_to_live.py --check`。
 - ⚠️ `apply_to_live.py --plant xl330` 恢复时会 `unlink` 注册模块，**沙箱里被回收站钩子挡**
   （`SHFileOperationW 失败: 0x78`）⇒ 手工 `cp .xl330.bak` + 删 `*.pyc` 更可靠。
+- **`server_pack/bootstrap.ps1` 本来就跑 `--plant hd1910`**（当时漏看过一遍）⇒ 4070 Ti 服务器无需额外文档。
+- **clone / 新机器第一件事 = `apply_to_live.py --plant hd1910` + `--check`**（期望 `detected=hd1910 /
+  kp_fw=32.0 / register=True / gate_ok=True`）。官方装的默认是 XL330 ⇒ 不切就训＝另一个 robot。
+  已写进根 `README.md`、`tools/hd1910/README.md`、`stage0_software_prep.md` §1 行 0 + §1.5，
+  记录模板加 `sim_plant` 字段。**新机器排 checklist 时此项排第 0 位。**
 - ⚠️ 已安装的 plant 把 **绝对路径** 写进了 site-packages（`E:/WorkBuddyData/.../bam_params/hd1910/m5.json`）
   ⇒ 工作区换路径即失效，且不会报错（夏令时会 fallback？实际会 hard fail，务必留意）。
 - HD1910 参数**不是实测**：`m5.json`=OpenMicroDuck 社区拟合（vin 5 V 标定），

@@ -21,10 +21,41 @@
 
 | # | 动作 | 到哪拿 |
 |---|---|---|
+| **0** | **把仿真 plant 切到 HD1910**（两分钟） | 本文 §1.5。**不切＝后面测回来的参数拿去跟 XL330 的仿真比，全错** |
 | 1 | 装 **FD 调试软件**（Windows，解压即用免安装） | 原始出处 **gitee.com/ftservo/fddebug**；镜像 `fanhao375/microduck-replica` 仓库内 `tools/飞特/FD1.9.8.5(250729).7z`（MIT，带 sha256）；备用 `feetech.cn/software.html`（另有 macOS 版与 Web Serial 的 Servo Web） |
 | 2 | 准备 CH340 驱动（**只是备用**） | URT-2 是 **CH343**，Win10/11 自带驱动；老款 URT-1 才要 CH340（`wch.cn`）。设备管理器出现 `USB-Enhanced-SERIAL CH343 (COMx)` 就不用管 |
 | 3 | 跑一遍骨架 dry-run | `.venv-mjlab/Scripts/python.exe tools/hd1910/urt1_bench.py --dry-run` |
 | 4 | 收藏 kissqy 镜像入口 | 见本文末尾「部署镜像入口（有板再刷）」 |
+
+---
+
+## 1.5 先把仿真侧切到 HD1910（拿到螺丝刀之前）
+
+真机测回来的 kt / R / 齿隙要回填给仿真，**仿真必须是 HD1910 那一台**
+（`kp_fw=32` 而非 XL330 的 `200`）——否则对比的是两个物种。
+
+```bash
+cd microduck-software
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --check
+```
+
+| 期望项 | 值 |
+|---|---|
+| `detected` | `hd1910` |
+| `kp_fw` | `32.0` |
+| `register` | `True` |
+| `gate_ok` | `True` |
+
+三条坑：
+
+1. **路径被烤进 site-packages**：live 常量里写的是**本机绝对路径**（含盘符）。换机器 / 挪工作区 /
+   拷别人的 venv 后，在**新位置重跑**上面两条；旧注册文件指向不存在的路径，import 会直接报错。
+2. **别在别的训练还跑着时热换 plant**（Python 现场常量，会把正在跑的任务也换成别的机器人）。
+3. 回 XL330 用 `--plant xl330`；Windows 上报回收站/权限错时，手工 `cp microduck_constants.py.xl330.bak`
+   覆盖同名文件 + 删 `__pycache__/` 里对应 `.pyc`。
+
+**评测 JSON 都带 `plant_fingerprint`**，不是 `hd1910` 的数字别往 §7 记录模板里填。
 
 ---
 
@@ -165,6 +196,7 @@ ID 200 是 `imu_to_dxl` 板，固件写死，不在这里配。
   "date": "YYYY-MM-DD",
   "servo": "HD-1910-C001",
   "adapter": "URT-2 (CH343, COMx)",
+  "sim_plant": {"fingerprint_name": null, "kp_fw": null},
   "supply_V": 7.4, "current_limit_A": 2.0,
   "fd_version": "1.9.8.5",
   "id_set": 1,
@@ -181,7 +213,9 @@ ID 200 是 `imu_to_dxl` 板，固件写死，不在这里配。
 }
 ```
 
-写进 `out/`（脚本自动生成）+ 当天日记忆。**sim2real 结论必须带：植物指纹（m5）+ 镜像版本 + P/D。**
+写进 `out/`（脚本自动生成）+ 当天日记忆。**sim2real 结论必须带：植物指纹 + 镜像版本 + P/D。**
+植物指纹的判据是评测 JSON 里的 `plant_fingerprint.name == "hd1910"`（且 `kwargs.kp_fw == 32.0`）；
+写成 `unknown` / `xl330` 的记录作废。
 
 ---
 

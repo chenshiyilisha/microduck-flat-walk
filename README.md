@@ -22,6 +22,31 @@
 | **2026-10-27 裁决纪要** | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md)（台架/IMU/场景/kissqy↔XGO） |
 | **10-27 裁决纪要**（场景/IMU/XGO/StandUp） | [`docs/active/microduck-2026-10-27裁决与场景纪要.md`](docs/active/microduck-2026-10-27裁决与场景纪要.md) |
 
+### ⚠️ 切 plant（新克隆 / 新机器 / 挪过目录必做，10 秒）
+
+`mjlab_microduck` 装好默认是 **XL330**（`kp_fw=200`）；本仓所有数字属于 **HD1910 m5（`kp_fw=32`）**。
+**不切就训＝在另一个机器人上跑**，loss 照降、曲线照好看，产物全部作废。
+
+```bash
+cd microduck-software
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --check
+# 期望：detected=hd1910  kp_fw=32.0  register=True  gate_ok=True
+```
+
+实测量级（同一个 ckpt，cmd 0.4 / 32 env / 8 s）：XL330 vx **0.318**、摔倒 **0%** ↔ HD1910 vx **0.109**、摔倒 **100%**。
+
+四条坑：
+
+1. **路径被烤进 site-packages**：live 文件里写的是**本机绝对路径**（含盘符）。拷别人的 venv、挪工作区、
+   从 junction/symlink 另一侧进入 ⇒ 在**新位置重跑上面两条**，否则 `import` 直接炸（不静默，但报错没有指向性）。
+2. **别在另一个训练还跑着时热换 plant** —— 换的是 Python 现场常量，正在跑的任务被偷偷换机器人。
+3. **每次评测回读**：`eval_*.py` 的 JSON 里带 `plant_fingerprint`，写着 `unknown` / `xl330` 的数字直接丢。
+4. 回 XL330：`--plant xl330`。Windows 上若报回收站/权限错（`SHFileOperationW 0x78`），手工覆盖
+   `microduck_constants.py.xl330.bak` 并删掉 `__pycache__/` 里同名 `.pyc`。
+
+---
+
 ### 训练命令
 
 ```bash

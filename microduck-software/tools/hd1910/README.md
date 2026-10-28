@@ -2,6 +2,24 @@
 
 Implements `docs/active/microduck-HD1910软件方案.md` §3.
 
+**新环境 / 新克隆 / 挪过目录，第一件事（其他的往后排）：**
+
+```bash
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --check
+# 期望：detected=hd1910  kp_fw=32.0  register=True  gate_ok=True
+```
+
+不切＝在 XL330（`kp_fw=200`）上训练：loss 照降、曲线照好看，产物对 HD1910 无效
+（同一个 ckpt 实测 vx **0.318** / 摔倒 0% ↔ **0.109** / 摔倒 100%）。
+每次评测记得回读 JSON 里的 `plant_fingerprint.name`。
+
+⚠️ `apply` 会把**本机绝对路径**写进 site-packages：换机器 / 挪工作区后必须在**新位置**重跑上面两条。
+⚠️ `--plant xl330` 恢复若报回收站/权限错（`SHFileOperationW 0x78`），手工 `cp microduck_constants.py.xl330.bak`
+覆盖同名文件 + 删 `__pycache__/` 里对应 `.pyc`。
+
+---
+
 | File | Role |
 |---|---|
 | `plant_spec.py` | Numbers + provenance (OpenMicroDuck m5 / XL330 official) |
