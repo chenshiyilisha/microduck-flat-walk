@@ -51,7 +51,20 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import torch  # noqa: E402
 
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
 from eval_joy_in_sim import PLANT_CHOICES, swap_plant  # noqa: E402
+
+try:
+    from plant_id import fingerprint as _plant_fingerprint, one_line as _plant_one_line
+except Exception as _e:  # never let the stamp take the measurement down
+    def _plant_fingerprint():
+        return {"name": "unknown", "error": f"plant_id unavailable: {_e!r}"}
+
+    def _plant_one_line():
+        return "plant=UNKNOWN (plant_id import failed)"
 
 TASK_DEFAULT = "Mjlab-Velocity-Flat-MicroDuck"
 
@@ -183,7 +196,7 @@ def _read_metrics(u) -> dict[str, float]:
 
 
 def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
-        solver_iters=None, solver_ls=None, solver_ncon=None):
+        solver_iters=None, solver_ls=None, solver_ncon=None, seed=None):
     from dataclasses import asdict
 
     from mjlab.envs import ManagerBasedRlEnv
@@ -197,6 +210,22 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     env_cfg = load_env_cfg(task_id, play=play)
     agent_cfg = load_rl_cfg(task_id)
     env_cfg.scene.num_envs = num_envs
+    # None = the pre-P2 behaviour (random seed), so archived readings stay
+    # comparable.
+    # What a seed does and does NOT buy here, measured 2026-10-28 on 8 envs:
+    #   * same seed twice -> IDENTICAL initial conditions
+    #     (yaw0 = 38.8096 / -110.9149 / -12.9005 ... bit for bit), so the seed is
+    #     genuinely plumbed through cfg.seed -> seed_rng -> torch/numpy/random/wp;
+    #   * but after only 20 zero-action steps yaw already differs in the 4th
+    #     decimal (-111.5129 vs -111.5186). mjlab ships the warning itself --
+    #     utils/random.py: "Note: MuJoCo Warp is not fully deterministic yet"
+    #     (mujoco_warp#562). A policy-driven contact-rich rollout amplifies that
+    #     over hundreds of steps.
+    # So a seed pins the STARTING POINT, never the trajectory: no single reading
+    # on this stack is bit-reproducible, and "rerun it to double-check" cannot be
+    # used as verification. Independence has to come from N repeats + sem.
+    if seed is not None:
+        env_cfg.seed = int(seed)
 
     frozen = {"vx": vx, "vy": vy, "wz": wz}
     freeze_command(env_cfg, vx, vy, wz, seconds)
@@ -363,6 +392,12 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "dx_over_expected": (f((dx_body / (vx * seconds)).median())
                              if vx != 0 else None),
         "abs_dy_body_median": f(dy_body.abs().median()),
+        # Signed lateral drift: a bug/assymmetry shows up as a NON-ZERO MEAN here,
+        # while `abs_dy_body_median` stays large either way. Same unwrap logic does
+        # not apply (this is metres, not an angle) -- no wrapping possible.
+        "dy_body_mean": f(dy_body.mean()),
+        "dy_body_median": f(dy_body.median()),
+        "dy_body_sem": f(dy_body.std(unbiased=False) / max(dy_body.numel(), 1) ** 0.5),
         # kept for the record only -- never judge on this one (see above)
         "dx_world_mean_unused": f(net[:, 0].mean()),
     }
@@ -383,8 +418,23 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "max_dev_from_frozen": f(dev_from_frozen.max()),
     }
 
+    # P2 (2026-10-28): the sign of the drift is the whole question -- "does the
+    # robot systematically veer one way" is invisible once you take .abs(). Both
+    # `heading` below and `per_env` keep the UNSIGNED number for continuity with
+    # every archived reading, and add SIGNED variants next to it.
+    _drift = (yaw_t[-1] - yaw_t[0]) / seconds * 180 / math.pi   # [N], deg/s
+    # Unwrap: yaw comes from euler_xyz and can cross +-pi, which would fake a
+    # huge signed value and flip its sign. Work modulo 360 deg instead.
+    _drift = (_drift + 180.0) % 360.0 - 180.0
+    _sign_agree = (torch.sign(_drift) == torch.sign(_drift.mean())) & (_drift.abs() > 1e-9)
     heading = {
-        "yaw_drift_deg_s": f((yaw_t[-1] - yaw_t[0]).abs().median() / seconds * 180 / math.pi),
+        "yaw_drift_deg_s": f(_drift.abs().median()),
+        "yaw_drift_signed_deg_s_mean": f(_drift.mean()),
+        "yaw_drift_signed_deg_s_median": f(_drift.median()),
+        "yaw_drift_signed_deg_s_sem": f(_drift.std(unbiased=False) / max(_drift.numel(), 1) ** 0.5),
+        # 1.0 = every env veered the same way (systematic / left-right asymmetric);
+        # ~0.5 = coin flip (random, i.e. sample noise or undiagnosed).
+        "frac_same_sign": f(_sign_agree.float().mean()),
     }
 
     stability = {
@@ -522,6 +572,8 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "error_vel_yaw": _spread(yaw_err_env),
         "dx_body": _spread(dx_body),
         "abs_dy_body": _spread(dy_body.abs()),
+        "dy_body_signed": _spread(dy_body),
+        "yaw_drift_signed_deg_s": _spread(_drift),
         "upright": _spread(up_t.mean(dim=0)),
         "yaw_drift_deg_s": _spread(
             (yaw_t[-1] - yaw_t[0]).abs() / seconds * 180 / math.pi),
@@ -583,6 +635,13 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "device": device,
         "plant": plant,
         "plant_info": plant_info,
+        # Recorded, not assumed: with seed=None the run is not reproducible, so a
+        # reading that later has to be re-checked cannot be re-checked.
+        "seed": seed,
+        # Which physical plant produced this reading. cfg/mdp hashes do NOT cover
+        # it (the actuator lives one import deeper, in microduck_constants), and
+        # it moves vx from 0.316/0%-falls to 0.109/100%-falls. Never omit this.
+        "plant_fingerprint": _plant_fingerprint(),
         "solver": solver,
         "play_cfg": play,
         "command": frozen,
@@ -626,11 +685,16 @@ def main() -> int:
                     help="build the play cfg (drops some training-only terms)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--json-only", action="store_true")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="env rng seed; None keeps the archived random-seed "
+                         "behaviour. Three different seeds = three independent "
+                         "repeats (needed for quantities whose single-run CV is "
+                         "of order tens of percent).")
     a = ap.parse_args()
 
     r = run(a.task, a.checkpoint, a.num_envs, a.seconds, a.device,
             a.cmd_vx, a.cmd_vy, a.cmd_wz, a.plant, a.play,
-            a.solver_iters, a.solver_ls, a.solver_ncon)
+            a.solver_iters, a.solver_ls, a.solver_ncon, a.seed)
 
     if a.out:
         p = Path(a.out)
@@ -647,6 +711,7 @@ def main() -> int:
     print()
     print("=" * 66)
     print(f"checkpoint  {Path(a.checkpoint).name}   plant={a.plant}   play={a.play}")
+    print(f"plant       {_plant_one_line()}")
     sv = r.get("solver") or {}
     if sv and sv.get("before") != sv.get("after"):
         print(f"solver      iters {sv['before']['iterations']} -> {sv['after']['iterations']}"
