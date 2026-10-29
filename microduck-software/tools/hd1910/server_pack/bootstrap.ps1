@@ -16,13 +16,23 @@
 .PARAMETER SkipSmoke
   Skip the post-install 64x5 GPU smoke (default: run smoke_train.sh).
 
+.PARAMETER Plant
+  Which plant to leave live. Default hd1910_kp5 (= P3 training target:
+  official m6 params + official STS3215 control law + kp_fw=5).
+  Use hd1910 to reproduce the archived m5/kp_fw=32 numbers instead.
+
 .EXAMPLE
   cd D:\train\microduck-software
   powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1
+
+.EXAMPLE
+  # reproduce archived readings instead of the P3 target
+  powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1 -Plant hd1910
 #>
 param(
   [switch]$SkipHostTools,
-  [switch]$SkipSmoke
+  [switch]$SkipSmoke,
+  [string]$Plant = "hd1910_kp5"
 )
 
 $ErrorActionPreference = "Stop"
@@ -230,6 +240,8 @@ Require-Path $BamDir "transfer bam-62bd8ce tree (see make_transfer.ps1)"
 Require-Path $RlDir "transfer microduck_rl-develop"
 Require-Path (Join-Path $Root "tools\hd1910\apply_to_live.py") "transfer tools\hd1910"
 Require-Path (Join-Path $Root "tools\bam_params\hd1910\m5.json") "transfer tools\bam_params"
+# The default plant's params file must be in the pack, else step 7 exits non-zero.
+Require-Path (Join-Path $Root "tools\bam_params\hd1910\official_m6_stslaw.json") "transfer tools\bam_params (P3 target params)"
 
 & nvidia-smi | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "nvidia-smi failed — install Game Ready / Studio driver first (bootstrap does not install GPU drivers)" }
@@ -270,9 +282,12 @@ Write-Host "== 5) mjlab-microduck (local tree, no-deps) =="
 Write-Host "== 6) Windows MUJOCO_GL=glfw patch =="
 & $Py (Join-Path $PSScriptRoot "patch_mjlab_win_gl.py")
 
-Write-Host "== 7) plant hd1910 m5 =="
-& $Py tools\hd1910\apply_to_live.py --plant hd1910
-& $Py tools\hd1910\apply_to_live.py --check
+Write-Host "== 7) plant '$Plant' =="
+& $Py tools\hd1910\apply_to_live.py --plant $Plant
+if ($LASTEXITCODE -ne 0) {
+  throw "plant '$Plant' did not pass its gate (exit $LASTEXITCODE). Available: hd1910_kp5 | hd1910 | hd1910_ftservo_m6 | xl330"
+}
+& $Py tools\hd1910\apply_to_live.py --check | Out-Host
 
 Write-Host "== 8) versions =="
 & $Py -c @"

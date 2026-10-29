@@ -47,7 +47,8 @@ powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1
 #   -SkipSmoke       只装环境、不跑 64×5 冒烟
 ```
 
-脚本会：缺则 **先装 winget** → 再装 **Python 3.12 + Git** → 建 `.venv-mjlab` → `torch==2.9.1`（cu128）→ mjlab 栈 → **editable bam-62bd8ce**（勿整包装 ftservo-bam）→ 装 microduck 任务包 → **补丁 `train.py` 在 win32 用 glfw** → `apply_to_live --plant hd1910` → **默认跑 `smoke_train.sh`**（须 log 含 `device=cuda:0`）。
+脚本会：缺则 **先装 winget** → 再装 **Python 3.12 + Git** → 建 `.venv-mjlab` → `torch==2.9.1`（cu128）→ mjlab 栈 → **editable bam-62bd8ce**（勿整包装 ftservo-bam）→ 装 microduck 任务包 → **补丁 `train.py` 在 win32 用 glfw** → `apply_to_live --plant hd1910_kp5`（默认，**P3 目标**；要复现旧数字加 `-Plant hd1910`）→ **默认跑 `smoke_train.sh`**（须 log 含 `device=cuda:0`）。
+植物闸门不过会直接 `throw` 中断引导，不会带着错植物继续装。
 
 国内可设：`$env:PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"`（torch 仍走官方 cu128 索引）。  
 **不把 winget/Python/Git 二进制打进 zip**；运行时从微软/GitHub 拉官方包。
@@ -80,8 +81,10 @@ ckpt / ONNX 用 `robocopy` 拉回本机做 eval / parity / 彩排即可。
 
 1. **`MUJOCO_GL=glfw`**（Windows 上 `egl` 非法）  
 2. **`--gpu-ids '[0]'`** → `cuda:0`；勿空 `CUDA_VISIBLE_DEVICES`  
-3. BAM pin = **`bam-62bd8ce…`**；禁止陆吾 `1910_m6.json` 当主植物  
-4. 植物 live = OpenMicroDuck **m5 / kp_fw=32**（除非明确做 A/B）  
+3. BAM pin = **`bam-62bd8ce…`**；⚠️ 陆吾 `1910_m6.json` 的问题**不是**名字（旧的说法是误判），
+   而是它写了 `max_velocity:100`（≈5730°/s）把官方 5.2155 rad/s 的内部限速悄悄拆掉了
+4. 植物 live **默认 `hd1910_kp5`** = P3 训练目标（官方 m6 参数 + 官方 STS3215 控制律 + `kp_fw=5`）。
+   要复现已归档数字用 `-Plant hd1910`（m5 / `kp_fw=32`）—— 二者不是同一台机器，别混读
 5. 契约仍是 **obs 61 / act 14 / 50 Hz**
 
 版本钉扎：[`pins.txt`](pins.txt)。  
