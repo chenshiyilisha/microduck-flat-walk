@@ -15,6 +15,12 @@ FTSERVO_M6_JSON = (
     ROOT / "tools" / "bam_params" / "hd1910" / "ftservo_official_m6.json"
 ).resolve()
 FTSERVO_BAM_ROOT = (ROOT / ".upstream" / "ftservo-bam").resolve()
+# Derived in this repo from ftservo_official_m6.json: identical Feetech ID numbers, but
+# "actuator" points at the *official* control law so the servo regains its internal
+# speed cap. See 方案 §3 / probe_plant_law.py for what each key resolves to.
+OFFICIAL_M6_STSLAW_JSON = (
+    ROOT / "tools" / "bam_params" / "hd1910" / "official_m6_stslaw.json"
+).resolve()
 CHAR_JSON = (
     ROOT / ".upstream" / "j_hd1910_calibration_params_hd1910_characterization.json"
 ).resolve()
@@ -54,7 +60,9 @@ HD1910_OPENMICRODUCK_M5 = {
         if CHAR_JSON.exists()
         else None,
         "note": "kt=0.692 R=3.75 @5V bench; vin raised to 2S band; kp_fw=32 (reg 50)",
-        "forbidden": "tools not using Luwu 1910_m6.json (actuator mislabeled sts3215)",
+        # Superseded by HD1910_OFFICIAL_M6_KP5 for training; kept for reproducing
+        # the archived HD1910 numbers, which were all measured under kp_fw=32.
+        "forbidden": None,
     },
 }
 
@@ -78,7 +86,49 @@ HD1910_FTSERVO_OFFICIAL_M6 = {
             "kt≈0.564 R≈2.97 @7.4V official ID; local copy sets actuator=HD1910 "
             "(upstream JSON says hd1910, table key is HD1910)"
         ),
-        "forbidden": "Luwu 1910_m6.json (actuator mislabeled sts3215)",
+        # 2026-10-29 纠正：BAM bam/actuators.py 的注册表里 Feetech 唯一合法键就是
+        # "sts3215"，"hd1910"/"HD1910" 是本仓自己注册的。旧的「陆吾 m6 因 actuator
+        # 误标 sts3215 而禁用」属误判。陆吾那份的真正问题是写了
+        # max_velocity=100 rad/s，把官方 5.22 rad/s 的内部限速覆盖了（不是名字问题）。
+        "forbidden": None,
+    },
+}
+
+# ★ P3 target plant (2026-10-29 裁决): align with kissqy's proven train+deploy contract.
+HD1910_OFFICIAL_M6_KP5 = {
+    "id": "hd1910_official_m6_kp5",
+    "json_path": str(OFFICIAL_M6_STSLAW_JSON).replace("\\", "/"),
+    "model": "m6",
+    "kp_fw": 5.0,
+    "vin_range": (6.5, 8.2),
+    "vin_drop_gain_range": (0.0, 0.2),
+    "vin_min": 6.0,
+    "delay_min_lag": 3,
+    "delay_max_lag": 6,
+    "provenance": {
+        "why": (
+            "32 is Feetech's *factory* ROM P (bam/feetech/actuator.py default, and the "
+            "read-only bench readout P/D/I=32/40/0 on all 15 units); the value actually "
+            "in force during train AND deploy is 5. train at 32 / deploy at 5 would be "
+            "another plant mismatch (cf. the XL330<->HD1910 incident)."
+        ),
+        "kp_fw_source": (
+            "kissqy config-diff: 12/12 tasks use kp_fw=5.0 for HD1910; V164/V167 deploy "
+            "contract writes P=5/D=0; community bench settled on P3..P5/D0."
+        ),
+        "params_source": str(OFFICIAL_M6_STSLAW_JSON.relative_to(ROOT)).replace(
+            "\\", "/"
+        ),
+        "law_source": (
+            "actuator=\"sts3215\" -> bam official STS3215Actuator: internal target speed "
+            "cap 3400*2pi/4096=5.2155 rad/s, max_pwm=0.97, error_gain=0.166, vin=7.4."
+        ),
+        "note": (
+            "derived from ftservo_official_m6.json by changing actuator only; the two keys "
+            "max_velocity / error_gain_ratio are deliberately absent so the official "
+            "defaults survive (load_parameters_from_dict overwrites any matching name)."
+        ),
+        "verify": "tools/hd1910/probe_plant_law.py --json <this> --kp-fw 5",
     },
 }
 
@@ -129,6 +179,18 @@ def kwargs_block(plant: str) -> str:
     delay_min_lag={s["delay_min_lag"]},
     delay_max_lag={s["delay_max_lag"]},
 )'''
+    if plant in ("hd1910_kp5", "hd1910_official_m6_kp5", "p3"):
+        s = HD1910_OFFICIAL_M6_KP5
+        return f'''_BAM_ACTUATOR_KWARGS = dict(
+    json_path=r"{s["json_path"]}",
+    target_names_expr=(r"{TARGET_NAMES}",),
+    kp_fw={s["kp_fw"]},  # firmware P in force at runtime (reg 50); 32 is the factory ROM default
+    vin_range={s["vin_range"]},
+    vin_drop_gain_range={s["vin_drop_gain_range"]},
+    vin_min={s["vin_min"]},
+    delay_min_lag={s["delay_min_lag"]},
+    delay_max_lag={s["delay_max_lag"]},
+)'''
     if plant == "xl330":
         s = XL330_OFFICIAL_M6
         return f'''_BAM_ACTUATOR_KWARGS = dict(
@@ -143,7 +205,7 @@ def kwargs_block(plant: str) -> str:
     delay_max_lag={s["delay_max_lag"]},
 )'''
     raise ValueError(
-        f"unknown plant: {plant!r} (want hd1910|hd1910_ftservo_m6|xl330)"
+        "unknown plant: %r (want hd1910|hd1910_ftservo_m6|hd1910_kp5|xl330)" % (plant,)
     )
 
 

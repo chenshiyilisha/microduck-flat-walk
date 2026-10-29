@@ -29,9 +29,11 @@ from plant_spec import (  # noqa: E402
     BACKUP,
     FTSERVO_M6_JSON,
     HD1910_FTSERVO_OFFICIAL_M6,
+    HD1910_OFFICIAL_M6_KP5,
     HD1910_OPENMICRODUCK_M5,
     LIVE_CONSTANTS,
     M5_JSON,
+    OFFICIAL_M6_STSLAW_JSON,
     REGISTER_DST,
     REGISTER_IMPORT,
     REGISTER_SRC,
@@ -43,6 +45,10 @@ PLANT_ALIASES = {
     "hd1910": "hd1910",
     "hd1910_ftservo_m6": "hd1910_ftservo_m6",
     "ftservo_m6": "hd1910_ftservo_m6",
+    # P3 target — aligned with kissqy's train+deploy contract (kp_fw=5 + official law).
+    "hd1910_kp5": "hd1910_kp5",
+    "hd1910_official_m6_kp5": "hd1910_kp5",
+    "p3": "hd1910_kp5",
     "xl330": "xl330",
 }
 
@@ -142,6 +148,8 @@ def apply(plant: str) -> dict:
         raise SystemExit(f"missing HD1910 params: {M5_JSON}")
     if plant == "hd1910_ftservo_m6" and not FTSERVO_M6_JSON.exists():
         raise SystemExit(f"missing Feetech official m6: {FTSERVO_M6_JSON}")
+    if plant == "hd1910_kp5" and not OFFICIAL_M6_STSLAW_JSON.exists():
+        raise SystemExit(f"missing derived params: {OFFICIAL_M6_STSLAW_JSON}")
     _ensure_backup()
     text = LIVE_CONSTANTS.read_text(encoding="utf-8")
 
@@ -155,6 +163,11 @@ def apply(plant: str) -> dict:
         text = _set_register_import(text, True)
         text = _replace_kwargs(text, "hd1910_ftservo_m6")
         plant_id = HD1910_FTSERVO_OFFICIAL_M6["id"]
+    elif plant == "hd1910_kp5":
+        _install_register()
+        text = _set_register_import(text, True)
+        text = _replace_kwargs(text, "hd1910_kp5")
+        plant_id = HD1910_OFFICIAL_M6_KP5["id"]
     elif plant == "xl330":
         _remove_register()
         # Prefer pristine backup if present (full file restore is safer).
@@ -190,11 +203,19 @@ def _readback(expected_id: str | None = None) -> dict:
     is_ftservo_m6 = (
         "json_path" in block and "ftservo_official_m6.json" in block.replace("\\", "/")
     )
-    is_hd = is_m5 or is_ftservo_m6 or (
-        "json_path" in block and "hd1910" in block.lower()
+    is_official_m6_stslaw = (
+        "json_path" in block and "official_m6_stslaw.json" in block.replace("\\", "/")
+    )
+    is_hd = (
+        is_official_m6_stslaw
+        or is_ftservo_m6
+        or "json_path" in block
+        and "hd1910" in block.lower()
     )
     is_xl = 'motor_name="xl330"' in block or "motor_name='xl330'" in block
-    if is_ftservo_m6:
+    if is_official_m6_stslaw:
+        detected = "hd1910_kp5"
+    elif is_ftservo_m6:
         detected = "hd1910_ftservo_m6"
     elif is_m5 or is_hd:
         detected = "hd1910"
@@ -219,6 +240,10 @@ def _readback(expected_id: str | None = None) -> dict:
         "m5_sha16": _sha16(M5_JSON) if M5_JSON.exists() else None,
         "ftservo_m6_exists": FTSERVO_M6_JSON.exists(),
         "ftservo_m6_sha16": _sha16(FTSERVO_M6_JSON) if FTSERVO_M6_JSON.exists() else None,
+        "official_m6_stslaw_exists": OFFICIAL_M6_STSLAW_JSON.exists(),
+        "official_m6_stslaw_sha16": (
+            _sha16(OFFICIAL_M6_STSLAW_JSON) if OFFICIAL_M6_STSLAW_JSON.exists() else None
+        ),
     }
     if expected_id == HD1910_OPENMICRODUCK_M5["id"]:
         out["gate_ok"] = (
@@ -231,6 +256,16 @@ def _readback(expected_id: str | None = None) -> dict:
             and has_reg
             and FTSERVO_M6_JSON.exists()
         )
+    elif expected_id == HD1910_OFFICIAL_M6_KP5["id"]:
+        out["gate_ok"] = (
+            detected == "hd1910_kp5"
+            and kp == 5.0
+            # Note: this plant does NOT need our registered actuator name — the JSON
+            # asks for "sts3215", which bam ships. The register stays installed only
+            # so switching back to m5 / ftservo_m6 keeps working.
+            and has_reg
+            and OFFICIAL_M6_STSLAW_JSON.exists()
+        )
     elif expected_id == XL330_OFFICIAL_M6["id"]:
         out["gate_ok"] = is_xl and kp == 200.0 and not has_reg
     else:
@@ -242,7 +277,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--plant",
-        choices=("hd1910", "hd1910_ftservo_m6", "ftservo_m6", "xl330"),
+        choices=(
+            "hd1910",
+            "hd1910_ftservo_m6",
+            "ftservo_m6",
+            "hd1910_kp5",
+            "hd1910_official_m6_kp5",
+            "p3",
+            "xl330",
+        ),
         default=None,
     )
     ap.add_argument("--check", action="store_true", help="read back only")
@@ -252,7 +295,7 @@ def main() -> int:
         raise SystemExit("use either --check or --plant, not both")
     if not a.check and not a.plant:
         raise SystemExit(
-            "need --plant hd1910|hd1910_ftservo_m6|xl330 or --check"
+            "need --plant hd1910|hd1910_ftservo_m6|hd1910_kp5|xl330 or --check"
         )
 
     if a.plant:

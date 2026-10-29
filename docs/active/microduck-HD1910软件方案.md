@@ -138,14 +138,32 @@ microduck-software/
 > 产生 `duty=0.3` 需要的位置误差 **P=32 → 3.3°**，**P=5 → 21.1°**，P=3 → 35.2°。
 > 即 P=5 的腿在物理上「很软」，策略必须在这种软动态里学行走。
 >
-> #### 结论与 P3 前置决策
+> #### ✅ 已裁决（2026-10-29）：**P3 用 `kp_fw=5`，并同时换到官方控制律**
 >
 > 32 与 5 不是「紧一点/松一点」的偏好，是**两种不同物理特性的机器**。本仓现有全部 HD1910
 > 数字（`§13` A/B 的 vx0.109/摔 100%、`model_5999` 的 vx0.2989 与 `error_vel_yaw`1.164、
-> m5/m6 A/B 的 `terminated_frac=1.0`）**都是在 P=32 这个植物下测的**。
+> m5/m6 A/B 的 `terminated_frac=1.0`）**都是在 P=32 这个植物下测的**，换 kp 后全部作废需重训。
 >
-> **推荐：P3 改 `kp_fw=5`**（对齐 kissqy 训练/部署合同，且社区真机实测过更稳）。
-> 反向选项（保持 32、部署时自己在 SRAM 写 P=32）**没有任何社区路线走过**，且已知实机 P 大会颤。
+> **目标植物 = `hd1910_kp5`**（`tools/bam_params/hd1910/official_m6_stslaw.json`），三条均有出处：
+>
+> | 层 | 取什么 | 出处 |
+> |---|---|---|
+> | 参数（kt/R/摩擦） | 飞特官方 HD1910 ID @7.4V、m6 | 上游 `ftservo-bam`，与 2S 电压匹配 |
+> | **控制律** | **官方 `STS3215Actuator`** | 只把 json 的 `actuator` 改为 `"sts3215"`，即继承官方限速 5.2155 rad/s、`max_pwm=0.97`、`error_gain=0.166` |
+> | `kp_fw` | **5.0** | kissqy config-diff 12/12 task + V164/V167 部署合同 + 社区实机结论 |
+>
+> **关键实现细节**：`Model.load_parameters_from_dict`（BAM `model.py:229-239`）会把 json 里
+> **同名键覆盖类 `initialize()` 设的值**。所以 json **刻意不写** `max_velocity` 与
+> `error_gain_ratio` —— 写了就拿不到官方限速。这正是陆吾那份的问题：它写了
+> `max_velocity: 100`（≈5730°/s），把官方 5.22 rad/s 的限速**悄悄拆掉了**。
+>
+> 验证手段（不要靠读 json 猜）：`.venv-mjlab/Scripts/python.exe tools/hd1910/probe_plant_law.py
+> --json <params.json> --kp-fw 5`，它打印实际生效的 `law_class` / `kp` / `max_velocity` / `max_pwm`。
+>
+> **执行顺序（不要提前烧 GPU）**：阶段 0 台架实测 → 用真机 kt/R/死区/齿隙回填 json → **一次**重训。
+> 若决定同时治偏航（`rel_heading_envs > 0`），合并进同一次重训。
+>
+> 反向选项（保持 32、部署时自己在 SRAM 写 P=32）**没有任何社区路线走过**，且已知实机 P 大会颤，已否决。
 >
 > #### 同时发现两个同样重要的差异（一并入 P3）
 >
@@ -165,8 +183,15 @@ microduck-software/
 
 ```bash
 cd microduck-software
-# 切到 HD1910 植物（写 live + 留 .xl330.bak）
+# 复现已归档数字 → m5 + kp_fw=32
 .venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910
+# P3 正式重训目标 → 官方 m6 + 官方控制律 + kp_fw=5
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910_kp5
+# 回 XL330（走 microduck_constants.py.xl330.bak 恢复路线）
+.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant xl330
+
+# 开关本身的回归自检（含负对照：改坏 kp 后闸门必须变红，最后还原现场）
+.venv-mjlab/Scripts/python.exe tools/hd1910/selftest_plant_switch.py
 
 # 冒烟：64 env × 5 iter —— **必须 GPU**（cuda:0）；Windows 固定 MUJOCO_GL=glfw（勿 egl）
 bash tools/hd1910/smoke_train.sh
