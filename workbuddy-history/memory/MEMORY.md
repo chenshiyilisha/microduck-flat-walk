@@ -190,3 +190,41 @@ bucket；`velstand_policy.md:68-69` 发车前先做 reward check。
   我们 1.2 ⇒ 差 7 倍（跨任务粗对标，只当量级）。
 - 工具已补：`eval_velocity_in_sim.py` 加 `--seed`（默认 None，不动归档口径）+ signed yaw drift
   （角度 unwrap / sem / frac_same_sign）+ signed `dy_body`；原 `.abs()` 字段保留兼容。
+
+## 16. ⚠️ `kp_fw=32` 待验证（2026-10-29 提出，P3 前必须拍板）
+
+追一篇公众号盘点文时顺手核出来的，**不要当成已成立的事实，只是强嫌疑**：
+
+| 来源 | 内容 |
+|---|---|
+| `.upstream/kissqy-2026-10/microduck-hd1910_training-console_data_official-studio-config-diff.json` | 同一份 diff 里 XL330 配 `kp_fw=200.0`、**HD1910 配 `kp_fw=5.0`**（多任务重复） |
+| `.upstream/replica-2026-10/docs_HD1910-20261011-kissqy-walk上机实测.md` | kissqy walk 模型训练 `kp_fw=5`；运行写 SRAM 50/51 = **P5/D20**，退出"恢复原值 **32/40**" |
+| `microduck-upstream摘录核对.md:27` | 陆吾 M6 基线也是 `kp_fw=5`（早已标「与本仓 m5/kp32 不同」） |
+
+合理解释（未证实）：**32 是舵机 ROM 默认 P**（stage0 闸门 0.4 量的就是它），
+**5 是策略跑起来时实际生效的 P**。若成立 ⇒ 我们按 P=32 训练、按 P=5 部署，
+是 §13「plant 失配」的又一个实例。
+**下一步**：先追 32 的出处（谁写的、指 ROM 默认还是训练值），再定 P3 用 `kp_fw=5` 重训
+还是运行时改 P=32（无社区路线这么做）。已写进 `docs/active/microduck-HD1910软件方案.md` §3。
+
+**附：同一份文档里的实机参照（`replica-2026-10/docs_HD1910-20261011-...`）**
+- kissqy 模型放 fanhao 机器上：**能迈腿但没走出连续步态**（13 次试跑），原因在他们自己的
+  Python 运行器/供电/过热，**不是模型** ⇒ 真机行走仍未解决，别对外宣称我们更好/也别过度悲观。
+- 三条可直接用的实机工程数据：**① 15 颗一起走动时自报电流相加 ≈26 A**（印证我们「两块
+  NP-F550 并联 + 15 A 慢断」的整机供电方案）；**② 7.4 V 供电走路时舵机端跌到 6.5 V 触发保护，
+  供电抬到 ~8.0 V 才稳**（粗短线+大电容；XT30 别用细线）；**③ 主板 84–87℃ 降频 → 周期
+  中位 25 ms（≈40 Hz）而非 50 Hz**，网页服务常驻占满一核 ⇒ 部署前先解决散热。
+- **手法**：手托机身测行走策略必然失败（模型无节拍输入，靠身体晃动+IMU 反馈）⇒ 必须落地虚护。
+
+## 17. 社区第三轮（2026-10-29）：新收两个 Apache-2.0 仓库
+
+公众号盘点只当**索引**用，仓库全部过 API 验过。新且干净的只有 jyg9 两家：
+- `jyg9/microduck-community-kit`（24★，Apache-2.0，昨天还在动）：`imu_to_dxl`/`banana_pcb`/`dxl_hub`
+  三块板的 KiCad+`production/`、GD32F303CC 固件（含 double-slot `upgrade.py`）、
+  **`software/hls_servo_debugger`（Flask+pyserial 浏览器端飞特 HLS 调试器，能按 10–14/20–24/30–34
+  批量编 ID）** ⇒ 是我们阶段 0 依赖 Windows 版 FD exe 的**跨平台备选**，
+  也是 `urt1_bench.py` 缺的协议层现成参考。
+- `jyg9/microduck_ft1910`（0★，自述不完善）：官方 `microduck` 源码 + 飞特总线补丁（基于 0.16.0）
+  ⇒ 真机那天 kissqy 闭源包走不通时的 **Apache-2.0 自编译退路**（只登记不投入）。
+- `7757/fanduck`（78★，**无 LICENSE**，10-03 停更）⇒ 只读，不许抄进本仓。
+- 详细清单在 `docs/reference/microduck-社区参考2026-10.md` 第三轮小节。
