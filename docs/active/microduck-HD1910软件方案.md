@@ -109,20 +109,57 @@ microduck-software/
 
 质量 +3 g×15、齿隙 XML：**二期**（对照 qiaosiyi），冒烟不阻塞。
 
-> ⚠️ **`kp_fw=32` 是待验证数字，P3 重训前必须拍板**（2026-10-29 提出）
+> ### ✅ `kp_fw=32` 已查明出处（2026-10-29 结案）：它是**出厂默认值**，不是运行值
 >
-> 三条独立来源都说 HD1910 的**训练侧** `kp_fw` 不是 32：
+> **32 的确切出处 = BAM 官方 `STS3215Actuator` 的构造默认值**。源码（Apache-2.0，
+> `.upstream/bam-62bd8ce.../bam/feetech/actuator.py`）：
+> `super().__init__(testbench_class, vin=7.4, kp=32, error_gain=0.166, max_pwm=0.97)`。
+> 本仓 `tools/bam_actuators.py` 的 `HD1910Actuator` 当初照抄了这个 32。
+>
+> 四条来源交叉证实「32 = 出厂未干预值」：
 >
 > | 来源 | 内容 |
 > |---|---|
-> | `.upstream/kissqy-2026-10/..._data_official-studio-config-diff.json` | 同一份 diff 里 XL330 配 `kp_fw=200.0`、**HD1910 配 `kp_fw=5.0`**（多任务重复出现） |
-> | `.upstream/replica-2026-10/docs_HD1910-20261011-kissqy-walk上机实测.md` | kissqy walk 模型 `训练 BAM 执行器 kp_fw = 5`；运行时往 SRAM 50/51 写 **P5/D20**，退出时"恢复原值 **32/40**" |
-> | `microduck-upstream摘录核对.md:27` | 陆吾 M6 基线也是 `kp_fw=5`，已标"与本仓 m5/kp32 不同；勿混" |
+> | BAM 官方源码 | `STS3215Actuator` 默认 `kp=32`（Feetech 舵机的固件默认 P） |
+> | 真机只读体检（`replica` 上机实测 §97） | 15/15 颗 EEPROM 与 SRAM 的 **P/D/I 都是 32/40/0** |
+> | kissqy 运行器表格 | 写 SRAM 50/51 = **P5/D20**，结束**恢复原值 32/40** |
+> | 社区踩坑记录 | 「HD-1910 出厂 EEPROM 是 **P32 / D40 / I0**」 |
 >
-> 合理解释：**32 是舵机 ROM 里存的默认 P**（stage0 闸门 0.4 量的就是它），**5 才是策略执行时实际生效的 P**。
-> 若成立，我们这一整条 HD1910 线是"按 P=32 训练、按 P=5 部署"，属 §13 那种植株失配。
-> **下一步**：先把 32 的出处追出来（谁说的、那句话指 ROM 默认还是训练值），确认后再决定
-> P3 是用 `kp_fw=5` 重训，还是把运行时改成写 P=32（目前无社区路线这么做）。
+> 而**训练侧 + 部署侧实际生效的是另一组值**（相差 6.4~10 倍）：
+>
+> | 来源 | 值 |
+> |---|---|
+> | kissqy config diff（12 个 task 全一致） | studio 侧 HD1910：`kp_fw=5.0` + `hd1910_m6.json` |
+> | kissqy 部署（V164「部署合同」、V167） | HOME 上力写 **P=5 / D=0 / 转矩 1000** |
+> | 社区实机调参结论 | 「P 越大越晃：P5 晃 56°/s、P3 晃 30°/s」，现用 **P3 / D0 / 转矩 700** |
+>
+> 物理含义（BAM 控制律 `duty = err · kp · error_gain`，`error_gain≈0.163`、`err` 单位为 rad；
+> 单位链路见 Open Duck Mini 辨识文档 `ε_f = ε·4096/2π`、`λ = Kp·Kg·ε`）：
+> 产生 `duty=0.3` 需要的位置误差 **P=32 → 3.3°**，**P=5 → 21.1°**，P=3 → 35.2°。
+> 即 P=5 的腿在物理上「很软」，策略必须在这种软动态里学行走。
+>
+> #### 结论与 P3 前置决策
+>
+> 32 与 5 不是「紧一点/松一点」的偏好，是**两种不同物理特性的机器**。本仓现有全部 HD1910
+> 数字（`§13` A/B 的 vx0.109/摔 100%、`model_5999` 的 vx0.2989 与 `error_vel_yaw`1.164、
+> m5/m6 A/B 的 `terminated_frac=1.0`）**都是在 P=32 这个植物下测的**。
+>
+> **推荐：P3 改 `kp_fw=5`**（对齐 kissqy 训练/部署合同，且社区真机实测过更稳）。
+> 反向选项（保持 32、部署时自己在 SRAM 写 P=32）**没有任何社区路线走过**，且已知实机 P 大会颤。
+>
+> #### 同时发现两个同样重要的差异（一并入 P3）
+>
+> 1. **控制律不同**。官方 `STS3215Actuator` 有 `q_target_smooth` 内部限速
+>    （`default_max_velocity = 3400·2π/4096 = 5.22 rad/s ≈ 299°/s`）且 `max_pwm=0.97`；
+>    本仓自写 `HD1910Actuator` **完全没有限速**、`max_pwm=1.0`、多了 `max_current` 限幅。
+>    ⇒ 我们的仿真舵机能「瞬移」，真机会按梯形规划走，是独立的 sim2real 缺口。
+> 2. **模型阶数**。kissqy 用 `hd1910_m6.json`（m6），本仓用 `m5.json`。本地已有陆吾
+>    `1910_m6.json`（`.upstream/l_1910_m6.json`，`actuator:"sts3215"`、`max_velocity:100`、
+>    `error_gain_ratio:1.3217`、`command_delay:0.006`）。
+>    ⚠️ 既往判定「陆吾 m6 因 `actuator` 误标 sts3215 而禁用」**是误判**：BAM 的 `actuators`
+>    注册表里 Feetech 唯一合法键就是 `sts3215`，反倒是本仓的两个 plant 名是**自己注册**的。
+> 3. ⚠️ **10-26 那次 m5 vs m6 A/B 无效**：两者均在 kp=32 下 `terminated_frac=1.0`（全摔），
+>    当时记的「差不多」实为「两个都废」，不构成对照。
 
 命令（实现见 `tools/hd1910/`）：
 
