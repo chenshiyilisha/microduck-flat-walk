@@ -417,6 +417,74 @@ mujoco_warp#562"*；MuJoCo 官方 FAQ 给的出路是 **`wp.set_device("cpu")`**
 - **G3 闸门**（3 次重复取中位，不看单次）：32env×8s cmd 0.4 下 `no_fall` ✅、
   `not_sideways` ✅（判据 `|dy| ≤ 0.5×|dx_body|`）、ratio ≥0.75（具体值待 P2 出数后钉）
 
+#### P3 附 · heading 闭环（治偏航，建议与 P3 合并为**同一次**重训）
+
+**机制**（`mjlab/tasks/velocity/mdp/velocity_command.py`）
+
+```python
+_resample_command():                              # 每个窗口 3–8 s 一次
+    heading_target[ids] = U(-pi, pi)              # :81
+    is_heading_env[ids] = U(0,1) <= rel_heading_envs   # :83
+_update_command():                                # 每一步
+    heading_error = wrap_to_pi(heading_target - heading_w)          # :118
+    vel_command_b[ids, 2] = clip(stiffness * heading_error,         # :119-123
+                                 *ranges.ang_vel_z)
+```
+
+即 heading env 的 `cmd[2]` 不再是窗口内的随机常值，而是**每步重算的比例控制器**。
+命令槽位仍是那个三维 `vel_command_b` ⇒ **观测/动作契约不变**（obs 61 / act 14 / 50 Hz），
+导出的 ONNX 可直接用；评估脚本本来就把所有 `rel_*` 反射清零，读数不受训练侧设置影响。
+
+**必须回读对象，不能读源码**：`heading_command` 在 `microduck_velocity_env_cfg.py` 里
+**一次都不出现**（靠基类继承、再经 `VelocityCommandCommandOnlyCfg(**vars(cmd))` 重建），
+grep 源码会以为这个字段不存在。实际回读：
+
+| 字段 | live 值 | 结论 |
+|---|---|---|
+| `heading_command` | **True** | 开关在 |
+| `heading_control_stiffness` | **0.5** | 增益在 |
+| `ranges.heading` | **(-π, π)** | 目标范围在，非 None |
+| `rel_heading_envs` | **0.0** | **唯一被关的那个** |
+
+⇒ 打开它**只需改这一个数字**，不需要同时补 `heading_command` / `ranges.heading`。
+`--rel-heading-envs` 值超过 ±2 rad 时 cmd[2] 饱和（`ang_vel_z` 上界 1.0 / 刚度 0.5 = 2.0 rad）。
+
+**改法**（落在 `microduck-software/tools/train_heading_variant.py`）
+
+跟 `train_velocity_variant.py` 同一套路：`Parse TrainConfig → in-process 改 live cfg →
+回读 before/after → 记录 meta → launch_training`，**site-packages 一行不动**，
+`check_velocity_ready.py` 的 pristine 检查继续有效。已加三道护栏：
+- 改完比较 requested vs effective，不一致直接退出（声明了没生效 = 这类 bug 的全部由来）
+- 反射扫**所有** curriculum term 的 stage table，确认没有第二个写者在训练中偷改它
+  （`standing_envs` 就是这么偷过一次）⇒ 实测 **写者唯一**
+- 拒绝概率量越界（`-0.1` / `1.5` / `stiffness=0` 三组负对照全部变红）
+
+**代价：`rel_*` 是独立伯努利，不是互斥分类**
+
+heading env 可能同时是 forward env。`_resample_command` 给它 ω=0，`_update_command` 随后
+**每步覆盖**。期望重叠 `rel_heading_envs × rel_forward_envs`（0.30×0.20 = **6%**）。
+探针实测（`rel_heading=0.5, rel_forward=0.5`, 32 env）：重叠 env 的 `max|ω| = 1.0`，
+未重叠的 forward env `max|ω| = 0.0` —— 干净的对照。
+vx 那半不受影响（`clamp(≥0.3)` 保留），所以 forward 桶"防低速摸鱼"的作用还在。
+真要互斥得改 `mdp.py`，被 `mdp_patch_contained` 挡着 ⇒ **接受并记录，不掩盖**。
+
+**已验证**（`tools/hd1910/probe_heading_loop.py`，CPU 8 env、90 步、无 policy、几秒）
+
+| 判据 | control | variant |
+|---|---|---|
+| `cmd[2]` 与闭式 `clip(k·wrap(target-heading))` 逐位相符 | `1.737`（1.7e6× 容差） | **0.000e+00** |
+| 每步 `Δcmd[2]` 与 `Δheading` 反号 | — | **441/441 步一致** |
+
+⚠️ 判据踩过一次坑：原先用 `corr(heading_w, cmd[2]) < -0.9`，结果 -0.24 FAIL。
+原因是 base 被驱动转了 6.26 rad > π，`wrap_to_pi` 把关系折成三角波，
+**全局相关系数天然拉低** ⇒ 换成局部符号一致性（只在未饱和且真移动的步上要求反号）。
+**机制没错，是判据的数学形式假设错了。**
+
+**待定：`--rel-heading-envs` 取多少** —— 不预设。mjlab 通用默认 0.3
+（`velocity_env_cfg.py:182`）**不能照抄**（本仓 §0 已在同类处踩过一次）；
+上游 AGENTS.md:186 只给原则「稀有的重要命令区需要显式 bucket」，`rel_turn_in_place_envs`
+因此是 0.15。⇒ **P3 当日小档 sweep 决定，别现在拍脑袋。**
+
 ### P4 · 交付链重做
 
 export → ONNX → parity（**负对照必须严重偏离**，照抄 §13）→ 彩排六条件。
@@ -441,7 +509,10 @@ export → ONNX → parity（**负对照必须严重偏离**，照抄 §13）→
 
 1. **阶段 0 是否今天就下单**（清单已就绪，≈¥245–324）—— P1 的实测参数卡在它后面
 2. ~~P2 是否启用 symmetry 试跑~~ —— **已作废**：P2 实测三次符号翻转、同号率 0.51 ⇒ 假设证伪，不用再问
-3. **P3 要不要顺带加 `rel_heading_envs > 0`**（教会它保持航向）？属 task 改动 ⇒ 必重训；
-   建议与 P1 实测参数一并进同一次 P3，只烧一次算力
+3. ~~P3 要不要顺带加 `rel_heading_envs > 0`~~ —— **问题变了**：工具与机制验证已就绪
+   （`tools/train_heading_variant.py` + `tools/hd1910/probe_heading_loop.py`，8/8 PASS），
+   **不再问"要不要加"，只剩"取多少"**。建议 P3 开训当天用探索档小 sweep（如 0.15 / 0.30）
+   由数据决定，而不是现在拍脑袋。仍须与 P3 合并为**同一次**重训（属 task 改动 ⇒ 必重训）。
+   详见上面的「P3 附」
 4. 是否接受「验证靠 N 次重复 + sem，而不是复跑取同值」？（MJWarp 不确定性限制；
    若确实需要确定性读数，可选 `--device cpu` + `wp.set_device("cpu")` 那条官方出路，代价是速度）

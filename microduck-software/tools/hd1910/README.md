@@ -30,6 +30,40 @@ Implements `docs/active/microduck-HD1910软件方案.md` §3.
 
 ---
 
+## ⚠️ 两个与植物无关的通用陷阱（都不是 plant 问题，别查错方向）
+
+| 症状 | 真因 | 修法 |
+|---|---|---|
+| 训练在打印完 `device=cuda:0` 和 `[BamActuator]` 横幅之后炸，报 wandb `ValidationError … start_method Extra inputs are not permitted` | 这个 venv 的默认 logger 是**坏的**：`rsl_rl/utils/wandb_utils.py:46` 构造 `wandb.Settings(start_method="thread")`，已装的 wandb 不再接受这个键 | **任何训练都要显式传 `--agent.logger tensorboard`**（`tools/train_velocity.sh:243` 也是为此） |
+| 改了命令侧的效果没出现 | tyro 能覆盖的大多是 reward 项的 dict，**curriculum 的 stage table 是 `list[dict]`，tyro 根本不暴露成 flag** | 用 `tools/train_velocity_variant.py`（stage 表）或 `tools/../tools/train_heading_variant.py`（command 字段）在进程内改 live cfg |
+| `hd1910_kp5` / `actuator: sts3215` 在 reset 炸 `AttributeError: q_target_smooth` | 上游 `STS3215Actuator` 只在 `load_log()` 里建该字段；mjlab 不走那条路 | `.venv-mjlab/Scripts/python.exe tools/hd1910/patch_sts3215_q_target_smooth.py`（改 editable bam；`.upstream` 不进 git） |
+
+## heading 闭环（治偏航）— `probe_heading_loop.py`
+
+偏航的根子是 `microduck_velocity_env_cfg.py:643` 的 `rel_heading_envs = 0.0`
+（训练中零个 env 练过航向闭环）。**其余部件都已就位**，必须回读对象才知道
+（`heading_command` 在源码里一次都不出现）：
+
+```
+heading_command=True   heading_control_stiffness=0.5   ranges.heading=(-pi, pi)
+rel_heading_envs=0.0   <-- 唯一被关的那个
+```
+
+改的完整依据、代价（`rel_*` 是独立伯努利，与 forward 桶重叠 0.30×0.20=6%）与
+sweep 建议见 [`docs/active/microduck-HD1910软件方案.md` §8.2「P3 附」](../../../docs/active/microduck-HD1910软件方案.md)。
+
+机制验证（**先跑它、再谈重训**，CPU 几秒、不需要 policy）：
+
+```bash
+MUJOCO_GL=glfw .venv-mjlab/Scripts/python.exe tools/hd1910/probe_heading_loop.py
+# 期望：8/8 PASS；cmd[2] 与闭式逐位相符 0.000e+00，负对照 1.737
+```
+
+改的上层开关在同级的 `../tools/train_heading_variant.py`（同样三道护栏，
+不改 site-packages）。
+
+---
+
 | File | Role |
 |---|---|
 | `plant_spec.py` | Numbers + provenance for **4** plants (m5/kp32, Feetech m6, **`hd1910_kp5` = P3 target**, XL330) |
