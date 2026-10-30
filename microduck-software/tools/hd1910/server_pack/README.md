@@ -4,7 +4,7 @@
 拷一份 ~50 MB 的可复现安装包，在服务器上用 `bootstrap.ps1` 重装。
 
 出处：本机成功栈 `torch 2.9.1+cu128` + `mjlab 1.3.0` + editable `bam-62bd8ce…`；  
-Windows 渲染 `MUJOCO_GL=glfw`（见 `tools/hd1910/smoke_train.sh`、`MEMORY.md`）。
+Windows 渲染 `MUJOCO_GL=glfw`（见 `tools/hd1910/smoke_heading.sh`、`MEMORY.md`）。
 
 ---
 
@@ -47,7 +47,7 @@ powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1
 #   -SkipSmoke       只装环境、不跑 64×5 冒烟
 ```
 
-脚本会：缺则 **先装 winget** → 再装 **Python 3.12 + Git** → 建 `.venv-mjlab` → `torch==2.9.1`（cu128）→ mjlab 栈 → **editable bam-62bd8ce**（勿整包装 ftservo-bam）→ 装 microduck 任务包 → **补丁 `train.py` 在 win32 用 glfw** → `apply_to_live --plant hd1910_kp5`（默认，**P3 目标**；要复现旧数字加 `-Plant hd1910`）→ **默认跑 `smoke_train.sh`**（须 log 含 `device=cuda:0`）。
+脚本会：缺则 **先装 winget** → 再装 **Python 3.12 + Git** → 建 `.venv-mjlab` → `torch==2.9.1`（cu128）→ mjlab 栈 → **editable bam-62bd8ce**（勿整包装 ftservo-bam）→ 装 microduck 任务包 → **补丁 `train.py` 在 win32 用 glfw** → `apply_to_live --plant hd1910_kp5`（默认，**P3 目标**；要复现旧数字加 `-Plant hd1910`）→ **默认跑 `smoke_heading.sh`**（P3 植物 + heading readback 双闸门；须 log 含 `device=cuda:0`；加 `-SmokeTrain` 退回 `smoke_train.sh`）。
 植物闸门不过会直接 `throw` 中断引导，不会带着错植物继续装。
 
 国内可设：`$env:PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"`（torch 仍走官方 cu128 索引）。  
@@ -71,8 +71,8 @@ $env:ENVS = "1024"; $env:ITERS = "1000"
 # $env:ENVS="4096"; $env:ITERS="4000"; bash tools/hd1910/explore_standup.sh
 ```
 
-仍训 Velocity 时：`explore_train.sh` / `resume_train.sh`。  
-若用了 `-SkipSmoke`，先手动：`bash tools/hd1910/smoke_train.sh`。  
+仍训 Velocity 时：**P3+heading 用 `explore_heading.sh`**（默认 4096×2000，`REL_HEADING=0.30`）；复现旧 m5/kp32 数字用 `explore_train.sh` / `resume_train.sh`。  
+若用了 `-SkipSmoke`，先手动：`bash tools/hd1910/smoke_heading.sh`。  
 ckpt / ONNX 用 `robocopy` 拉回本机做 eval / parity / 彩排即可。
 
 ---

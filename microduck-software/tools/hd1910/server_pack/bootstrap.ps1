@@ -14,7 +14,13 @@
   Do not install winget / Python / Git (fail if already missing).
 
 .PARAMETER SkipSmoke
-  Skip the post-install 64x5 GPU smoke (default: run smoke_train.sh).
+  Skip the post-install 64x5 GPU smoke (default: run smoke_heading.sh,
+  which also verifies the P3 plant + heading-closed-loop readback gate).
+
+.PARAMETER SmokeTrain
+  Use smoke_train.sh (m5/kp32 control) instead of smoke_heading.sh for the
+  post-install smoke. Default is smoke_heading.sh since the P3 retrain runs
+  with --rel-heading-envs and must exercise that path on first smoke.
 
 .PARAMETER Plant
   Which plant to leave live. Default hd1910_kp5 (= P3 training target:
@@ -32,6 +38,7 @@
 param(
   [switch]$SkipHostTools,
   [switch]$SkipSmoke,
+  [switch]$SmokeTrain,
   [string]$Plant = "hd1910_kp5"
 )
 
@@ -303,19 +310,23 @@ Write-Host "Bootstrap OK."
 if ($SkipSmoke) {
   Write-Host "SkipSmoke set — run manually:"
   Write-Host "  `$env:MUJOCO_GL='glfw'"
-  Write-Host "  & `"$Bash`" tools/hd1910/smoke_train.sh"
+  Write-Host "  & `"$Bash`" tools/hd1910/smoke_heading.sh   (or smoke_train.sh for m5/kp32 control)"
 } else {
   Write-Host "== 9) GPU smoke (64 envs x 5 iters) =="
   if ($env:CUDA_VISIBLE_DEVICES -eq "") {
     Remove-Item Env:CUDA_VISIBLE_DEVICES -ErrorAction SilentlyContinue
   }
   $env:MUJOCO_GL = "glfw"
-  & $Bash tools/hd1910/smoke_train.sh
+  $SmokeScript = "tools/hd1910/smoke_train.sh"
+  if (-not $SmokeTrain) { $SmokeScript = "tools/hd1910/smoke_heading.sh" }
+  Write-Host "smoke: $SmokeScript"
+  & $Bash $SmokeScript
   if ($LASTEXITCODE -ne 0) {
-    throw "smoke_train.sh failed (exit $LASTEXITCODE). Check out/train_hd1910_smoke_*.log for device=cuda:0"
+    throw "$SmokeScript failed (exit $LASTEXITCODE). Check out/train_*_smoke_*.log for device=cuda:0"
   }
   Write-Host "Smoke OK (device=cuda:0 gate passed)."
 }
 
-Write-Host "Next train: ENVS=4096 ITERS=2000 & `"$Bash`" tools/hd1910/explore_train.sh"
+Write-Host "Next train (P3 + heading closed loop):"
+Write-Host "  REL_HEADING=0.30 ENVS=4096 ITERS=2000 & `"$Bash`" tools/hd1910/explore_heading.sh"
 Write-Host "4070 Ti (12GB): try ENVS=6144 after smoke; 8192 optional."

@@ -72,7 +72,8 @@ $ReadmeTop = @"
 2. Install: NVIDIA driver, Python 3.12, Git for Windows.
 3. ``cd microduck-software``
 4. ``powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1``
-5. Smoke: Git Bash → ``tools/hd1910/smoke_train.sh`` (must log ``device=cuda:0``).
+5. Smoke: automatic at end of bootstrap (smoke_heading.sh — verifies P3 plant +
+   heading readback). Manual: Git Bash → ``tools/hd1910/smoke_heading.sh``.
 
 Do NOT copy a donor ``.venv-mjlab``. See ``tools\hd1910\server_pack\README.md``.
 "@
