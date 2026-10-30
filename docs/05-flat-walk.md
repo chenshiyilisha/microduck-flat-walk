@@ -310,6 +310,12 @@ python tools/flat_walk/watch_milestones.py --targets 4000,6000 --stop-pid <训�
 **注意**：`yaw_drift_deg_s` 是端点差、不是速率，引用时要写「8 s 端点偏 26°」，
 不能写成「漂移 3.29 °/s」——后者会被读成恒定的角速度，那不是实测的形状。
 
+> **2026-10-30 指针**：XL330 线已不推进；本节的两个候选方向在 HD1910 线上的对应解法
+> 已定——给训练加 heading 闭环（`rel_heading_envs > 0`，每步重算 `cmd[2]` 比例控制器），
+> 工具与机制验证就绪、取值 0.30 已定稿，且与 P3 植物切换合并为**同一次**重训。
+> 完整依据见 `docs/active/microduck-HD1910软件方案.md` §P3 附；
+> 仪器：`microduck-software/tools/hd1910/probe_heading_loop.py`、`train_heading_variant.py`。
+
 ### 9.2 判「没达到」之后，瓶颈在哪
 
 后 4750 轮（1250 → 6000）没有一档回到 1250。所以「按 0.4 走」差的那 37% 不是轮数问题。
