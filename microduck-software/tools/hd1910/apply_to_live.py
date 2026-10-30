@@ -100,25 +100,48 @@ def _install_register() -> None:
         raise SystemExit(f"missing register source: {REGISTER_SRC}")
     REGISTER_DST.parent.mkdir(parents=True, exist_ok=True)
     # Thin wrapper so site-packages does not need tools/ on sys.path.
+    # Use a runtime-relative path (parents[4] from site-packages lands on the
+    # repo root) instead of baking the absolute install-time path.
     REGISTER_DST.write_text(
         "# Auto-installed by tools/hd1910/apply_to_live.py — do not edit.\n"
         "# Registers Feetech HD1910 with bam.actuators before load_model(json_path).\n"
-        f"import importlib.util\n"
-        f"from pathlib import Path\n"
-        f"_src = Path(r\"{REGISTER_SRC}\")\n"
-        f"_spec = importlib.util.spec_from_file_location(\"bam_actuators_hd1910\", _src)\n"
-        f"_mod = importlib.util.module_from_spec(_spec)\n"
-        f"assert _spec.loader is not None\n"
-        f"_spec.loader.exec_module(_mod)\n",
+        "import importlib.util\n"
+        "from pathlib import Path\n"
+        "_src = Path(__file__).resolve().parents[4] / 'tools' / 'bam_actuators.py'\n"
+        "_spec = importlib.util.spec_from_file_location('bam_actuators_hd1910', _src)\n"
+        "_mod = importlib.util.module_from_spec(_spec)\n"
+        "assert _spec.loader is not None\n"
+        "_spec.loader.exec_module(_mod)\n",
         encoding="utf-8",
     )
     print(f"register {REGISTER_DST}")
 
 
 def _remove_register() -> None:
-    if REGISTER_DST.exists():
+    if not REGISTER_DST.exists():
+        return
+    # On this machine the Windows recycle-bin hook intercepts unlink (SHFileOperationW
+    # 0x78), so fall back to overwriting with a no-op stub rather than leaving a
+    # stale register that would still try to exec the source module.
+    try:
         REGISTER_DST.unlink()
         print(f"removed  {REGISTER_DST}")
+    except OSError as e:
+        REGISTER_DST.write_text(
+            "# Neutralised by apply_to_live.py — unlink was blocked on this host.\n"
+            "# The register is a no-op so the import does not fail.\n",
+            encoding="utf-8",
+        )
+        print(f"neutralised  {REGISTER_DST}  (unlink blocked: {type(e).__name__})")
+    # Also clear the compiled bytecode so Python does not load the old module
+    # from __pycache__ after the source is gone.
+    pycache = REGISTER_DST.parent / "__pycache__"
+    if pycache.is_dir():
+        for pc in pycache.glob(REGISTER_DST.stem + ".*.pyc"):
+            try:
+                pc.unlink()
+            except OSError:
+                pass
 
 
 def _replace_kwargs(text: str, plant: str) -> str:

@@ -155,8 +155,9 @@ def kwargs_block(plant: str) -> str:
     """Python source for `_BAM_ACTUATOR_KWARGS = dict(...)`."""
     if plant == "hd1910":
         s = HD1910_OPENMICRODUCK_M5
+        _fname = M5_JSON.name
         return f'''_BAM_ACTUATOR_KWARGS = dict(
-    json_path=r"{s["json_path"]}",
+    json_path=str(Path(__file__).resolve().parents[5] / "tools" / "bam_params" / "hd1910" / "{_fname}"),
     target_names_expr=(r"{TARGET_NAMES}",),
     kp_fw={s["kp_fw"]},  # HD1910 firmware P (reg 50); NOT xl330's 200
     vin_range={s["vin_range"]},
@@ -167,10 +168,9 @@ def kwargs_block(plant: str) -> str:
 )'''
     if plant in ("hd1910_ftservo_m6", "ftservo_m6"):
         s = HD1910_FTSERVO_OFFICIAL_M6
-        # json_path to local copy (actuator=HD1910). Prefer this over motor_name so
-        # A/B does not depend on which bam package params/ tree is active.
+        _fname = FTSERVO_M6_JSON.name
         return f'''_BAM_ACTUATOR_KWARGS = dict(
-    json_path=r"{s["json_path"]}",
+    json_path=str(Path(__file__).resolve().parents[5] / "tools" / "bam_params" / "hd1910" / "{_fname}"),
     target_names_expr=(r"{TARGET_NAMES}",),
     kp_fw={s["kp_fw"]},  # HD1910 firmware P (reg 50); Feetech official ID @7.4V
     vin_range={s["vin_range"]},
@@ -181,8 +181,9 @@ def kwargs_block(plant: str) -> str:
 )'''
     if plant in ("hd1910_kp5", "hd1910_official_m6_kp5", "p3"):
         s = HD1910_OFFICIAL_M6_KP5
+        _fname = OFFICIAL_M6_STSLAW_JSON.name
         return f'''_BAM_ACTUATOR_KWARGS = dict(
-    json_path=r"{s["json_path"]}",
+    json_path=str(Path(__file__).resolve().parents[5] / "tools" / "bam_params" / "hd1910" / "{_fname}"),
     target_names_expr=(r"{TARGET_NAMES}",),
     kp_fw={s["kp_fw"]},  # firmware P in force at runtime (reg 50); 32 is the factory ROM default
     vin_range={s["vin_range"]},

@@ -104,10 +104,27 @@ Picking a value for --rel-heading-envs
 --------------------------------------
 Deliberately left with no default other than the cfg's 0.0 (control). mjlab's
 *generic* default is 0.3 (`velocity_env_cfg.py:182`) and silently inheriting it
-into this task has bitten before. The snapshots below are sweepable rather than
-pre-decided; upstream's own rule (AGENTS.md:186) is only that rare-but-important
+into this task has bitten before.
+
+**Sweep recommendation (2026-10-30, CPU probe `probe_heading_loop.py`):**
+
+| `rel_heading_envs` | heading envs (16-env probe) | training-time overlap | probe |
+|---|---|---|---|
+| 0.15 | 2 (12.5%) | 3% (0.15×0.2) | 8/8 PASS |
+| 0.30 | 6 (37.5%) | 6% (0.30×0.2) | 8/8 PASS |
+| 0.50 | 8 (50%) | 10% (0.50×0.2) | 8/8 PASS |
+
+All three pass at machine precision (formula err = 0.000e+00, sign agree = 1.0).
+The overlap cost scales linearly with the knob: at 0.15 it costs 3% of envs, at
+0.50 it costs 10%. Upstream's own rule (AGENTS.md:186) is that rare-but-important
 command regions need an explicit bucket, which is why `rel_turn_in_place_envs`
-exists at 0.15. Sweep it and let the sweep decide.
+exists at 0.15. **Recommendation: start with 0.30** — it matches mjlab's generic
+default (so the comparison against upstream is clean), gives ~37% of envs a
+closed-loop heading target, and the 6% overlap is manageable. If the yaw error
+does not drop enough, escalate to 0.50. If training diverges, drop to 0.15.
+
+The overlap at training time uses the real `rel_forward_envs=0.2` (read off the
+live cfg), not the probe's exaggerated 0.5.
 """
 
 from __future__ import annotations
