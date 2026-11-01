@@ -213,6 +213,12 @@ URT-2 S       →  舵机 Signal(1)
 
 ⚠️ **FD 与探针互斥占用串口**，开一个必须先完全关另一个。
 
+⚠️ **`hd1910_readonly.py` 是第三方逐字节副本，许可未明确声明**（不是 Apache-2.0 ——
+上游根 LICENSE 按路径分配，Apache 一栏只覆盖 `scripts/` 与 `tools/`，
+`rl-series/scripts/` 没写）。出处、sha256、查证顺序与再分发注意事项见
+**`tools/hd1910/servo_probe/ATTRIBUTION.md`**。**不要改它** —— 改动落在调用方
+（`hd1910_ident.py` / `wobble_check.py` / `hd1910_snapshot.py`）。
+
 ⚠️ 笔记本 USB 口可能只有 4.7 V，经板子压降到 4.5 V 上下——HD-1910 从 4 V 起工作，
 通信不受影响。判据：**FD 里读电压寄存器 62（0.1 V/LSB），读到 4.5–5.0 就是 USB 档，
 读到 7.4 说明外电接上了**。
