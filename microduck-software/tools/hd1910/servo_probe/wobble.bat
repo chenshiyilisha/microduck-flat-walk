@@ -1,28 +1,38 @@
 @echo off
+rem NOTE: this .bat must stay pure ASCII. cmd.exe decodes .bat files with the
+rem system ANSI codepage (GBK on this box), so UTF-8 Chinese lines get mangled
+rem into "not a command" errors. All Chinese text lives in the Python script.
 chcp 65001 >nul
 cd /d "%~dp0\..\..\.."
 
 set SID=%1
 if "%SID%"=="" set SID=1
 
-echo.
-echo ============================================================
-echo   摇晃法验收  ID %SID%  (COM3)
-echo   (可带参数: wobble.bat 10   默认 ID 1)
-echo ------------------------------------------------------------
-echo   1) 静止 3 秒   -- 别碰
-echo   2) 按回车      -- 然后来回扳输出轴几度，共 12 秒
-echo   3) 按回车      -- 松手，看是否回稳
-echo.
-echo   扳起来会觉得紧、越扳越紧 = P=32 的 PD 在抵抗，是正确行为
-echo ============================================================
-echo.
-
-.venv-mjlab\Scripts\python.exe tools\hd1910\servo_probe\wobble_check.py run --port COM3 --id %SID% --settle 3 --wobble 12 --release 4 --json out\wobble_id%SID%.json
+if not exist ".venv-mjlab\Scripts\python.exe" (
+  echo ERROR: venv python not found at .venv-mjlab\Scripts\python.exe
+  echo        cd target = %CD%
+  pause
+  exit /b 1
+)
 
 echo.
-echo ============================================================
-echo   结束。存档: out\wobble_id%SID%.json
-echo   全部 PASS 才给它写 ID
-echo ============================================================
+echo ==========================================================
+echo   wobble check   ID %SID%   on COM3
+echo   usage: wobble.bat [id]      ^(default id=1^)
+echo ----------------------------------------------------------
+echo   1^) keep still  3s  - do NOT touch
+echo   2^) press ENTER     - then rock the shaft back/forth 12s
+echo   3^) press ENTER     - release, watch it settle 4s
+echo.
+echo   It will fight back ^(P=32 PD loop^). That is correct.
+echo ==========================================================
+echo.
+
+".venv-mjlab\Scripts\python.exe" tools\hd1910\servo_probe\wobble_check.py run --port COM3 --id %SID% --settle 3 --wobble 12 --release 4 --json out\wobble_id%SID%.json
+
+echo.
+echo ==========================================================
+echo   done.  saved: out\wobble_id%SID%.json
+echo   Only write an ID if every gate PASSED.
+echo ==========================================================
 pause
