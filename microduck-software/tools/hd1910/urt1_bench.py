@@ -49,9 +49,16 @@ REG_ID = 5
 REG_BAUD = 6
 REG_TORQUE_ENABLE = 40
 REG_GOAL_CURRENT = 44  # mA units on STS; training power budget uses ~3.25 A cap
-REG_P = 50  # firmware P — must equal training kp_fw=32
+REG_P = 50  # runtime P gain (RAM); EEPROM copy is reg 21, applied at power-on
 BAUD_1M = 1_000_000
-KP_FW_TARGET = 32
+
+# P3 裁决（2026-10-29）：32 是出厂 ROM 默认，真正跑的是 5。
+# duty = err * kp * error_gain；duty=0.3 时 P=32 → 3.3°、P=5 → 21.1°
+# ⇒ 32 与 5 是两种物理特性的机器，不能只改一边。
+# 本机实测（2026-11-01，出厂 ID 1）：reg21=32、reg50=32 —— 还没改。
+# 所以闸门 0.4 在真机写 P 之前会 **正确地** 报 FAIL；这不是 bug，是提醒。
+KP_FW_TARGET = 5
+KP_FW_FACTORY_ROM = 32
 TXN_BUDGET_MS = 5.0  # gate 0.2: one sync txn @ 1 Mbps
 HZ_TARGET = 50.0
 
@@ -103,32 +110,99 @@ class DryRunBus:
         self._closed = True
 
 
+class SerialStsBus:
+    """URT-2 / URT-1 真串口后端：飞特 SCS v1 半双工帧。
+
+    帧格式不自己推 —— 直接复用 ``tools/hd1910/servo_probe/hd1910_readonly.py``
+    （PING inst=1 / READ inst=2；地址表出自 whatled 台架指南 §6 + kissqy hd1910.rs）。
+    WRITE inst=0x03、params=[addr, data...]、应答无参数，出自
+    ``microduck-replica/rl-series/scripts/hl2915_bench.py:156-159``
+    —— 帧同族可抄，**寄存器表不可抄**（HL-2915 与 HD-1910 地址不同）。
+    """
+
+    _INST_WRITE = 0x03
+
+    def __init__(self, port: str, baud: int = BAUD_1M) -> None:
+        import importlib.util
+
+        import serial
+
+        src = (
+            pathlib.Path(__file__).resolve().parent / "servo_probe" / "hd1910_readonly.py"
+        )
+        if not src.exists():
+            raise SystemExit(f"missing protocol impl: {src}")
+        spec = importlib.util.spec_from_file_location("hd1910_ro", src)
+        assert spec is not None and spec.loader is not None
+        self._ro = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self._ro)
+        self._ser = serial.Serial(
+            port, baud, bytesize=8, parity="N", stopbits=1, timeout=0.05
+        )
+
+    def ping(self, servo_id: int) -> bool:
+        return bool(self._ro.ping(self._ser, servo_id))
+
+    def read_u8(self, servo_id: int, reg: int) -> int:
+        raw = self._ro.query(self._ser, servo_id, reg, 1)
+        if raw is None:
+            raise OSError(f"no reply: READ reg {reg} from id {servo_id}")
+        return int(raw[0])
+
+    def write_u8(self, servo_id: int, reg: int, value: int) -> None:
+        self._write(servo_id, reg, bytes([value & 0xFF]))
+
+    def _write(self, servo_id: int, reg: int, data: bytes) -> None:
+        """WRITE 后等一帧应答（write 应答无参数 = 共 6 字节）。"""
+        ser = self._ser
+        ser.reset_input_buffer()
+        ser.write(self._ro.frame(servo_id, self._INST_WRITE, bytes([reg]) + data))
+        ser.flush()
+        deadline = time.monotonic() + 0.1
+        buf = b""
+        while time.monotonic() < deadline:
+            n = ser.in_waiting
+            if n:
+                buf += ser.read(n)
+            if len(buf) >= 6:
+                break
+            time.sleep(0.0005)
+        if len(buf) < 6 or buf[0] != 0xFF or buf[1] != 0xFF or buf[2] != servo_id:
+            raise OSError(
+                f"no reply: WRITE reg {reg} to id {servo_id} (buf={buf.hex()!r})"
+            )
+
+    def close(self) -> None:
+        self._ser.close()
+
+
 def try_open_live(port: str, baud: int = BAUD_1M) -> StsBus:
-    """Attempt a real STS backend; raise SystemExit with FD fallback if absent."""
-    # Prefer community / Feetech Python ports if the user installed one.
-    for mod_name, cls_hint in (
-        ("scservo_sdk", "sms_sts"),
-        ("STservo_sdk", "sms_sts"),
-    ):
+    """Open a real backend on ``port``.
+
+    首选 ``SerialStsBus``：pyserial + 仓库内现成帧实现，装了 pyserial 就能跑，
+    不需要 vendor 飞特 SDK。pyserial 缺失时才退回「用 FD 手工过闸」的提示。
+    """
+    try:
+        import serial  # noqa: F401 — 只为探测可用性
+    except ImportError:
+        pass
+    else:
+        return SerialStsBus(port, baud)
+
+    for mod_name in ("scservo_sdk", "STservo_sdk"):
         try:
-            mod = __import__(mod_name)
+            __import__(mod_name)
         except ImportError:
             continue
-        # Soft probe only — exact API varies by package version.
-        port_handler = getattr(mod, "PortHandler", None)
-        packet_handler = getattr(mod, "sms_sts", None) or getattr(mod, "sms", None)
-        if port_handler is None:
-            continue
         raise SystemExit(
-            f"found {mod_name} but live adapter is not wired yet — finish gates "
-            f"0.1–0.4 in Feetech FD on {port} @ {baud}, or extend try_open_live() "
-            f"with PortHandler + {cls_hint}. Do not invent a robotd here."
+            f"found {mod_name} but this tool has no adapter for it — "
+            f"`pip install pyserial` and rerun (SerialStsBus path), or finish "
+            f"gates 0.1–0.4 in Feetech FD on {port} @ {baud}. "
+            f"Do not invent a robotd here."
         )
     raise SystemExit(
-        f"no Feetech Python STS SDK importable (tried scservo_sdk / STservo_sdk). "
-        f"Use Feetech FD on URT-2/URT-1 ({port} @ {baud}) for stage-0, then optionally "
-        f"pip-install the official SMS/STS port and wire it in try_open_live(). "
-        f"Skeleton only — see stage0_software_prep.md."
+        f"no serial backend: `pip install pyserial` (that gives SerialStsBus). "
+        f"Otherwise finish stage-0 in Feetech FD on URT-2/URT-1 ({port} @ {baud})."
     )
 
 
@@ -187,22 +261,40 @@ def gate_02_txn(bus: StsBus, servo_id: int, samples: int = 100) -> GateResult:
     )
 
 
-def gate_04_kp(bus: StsBus, servo_id: int) -> GateResult:
-    p = int(bus.read_u8(servo_id, REG_P))
-    ok = p == KP_FW_TARGET
+def gate_04_kp(bus: StsBus, servo_id: int, target: int = KP_FW_TARGET) -> GateResult:
+    try:
+        p = int(bus.read_u8(servo_id, REG_P))
+    except Exception as exc:  # noqa: BLE001 — 舵机不在总线上是很常见的情况
+        # 15 颗巡检时少接一颗不能让整个工具崩掉。
+        return GateResult(
+            gate=f"0.4_firmware_P_eq_{target}",
+            ok=False,
+            detail=f"cannot read reg {REG_P} from id {servo_id}: {exc}",
+            metrics={"reg": REG_P, "P": None, "kp_fw_target": target},
+        )
+    ok = p == target
+    hint = ""
+    if not ok and p == KP_FW_FACTORY_ROM:
+        hint = (
+            f" — 实测是出厂 ROM 默认 {KP_FW_FACTORY_ROM}，真机尚未对齐 P3。"
+            f" 部署前须把 reg {REG_P} 写成 {target}（RAM 增益，掉电回落 reg21="
+            f"{KP_FW_FACTORY_ROM} ⇒ 每次上电都要写，或把 EEPROM reg21 一并改掉）"
+        )
     return GateResult(
-        gate="0.4_firmware_P_eq_32",
+        gate=f"0.4_firmware_P_eq_{target}",
         ok=ok,
-        detail=f"reg {REG_P} P={p} (want {KP_FW_TARGET} = training kp_fw)",
-        metrics={"reg": REG_P, "P": p, "kp_fw_target": KP_FW_TARGET},
+        detail=f"reg {REG_P} P={p} (want {target} = training kp_fw){hint}",
+        metrics={"reg": REG_P, "P": p, "kp_fw_target": target},
     )
 
 
-def run_gates(bus: StsBus, servo_id: int, samples: int) -> list[GateResult]:
+def run_gates(
+    bus: StsBus, servo_id: int, samples: int, kp_target: int = KP_FW_TARGET
+) -> list[GateResult]:
     return [
         gate_01_ping(bus, servo_id),
         gate_02_txn(bus, servo_id, samples=samples),
-        gate_04_kp(bus, servo_id),
+        gate_04_kp(bus, servo_id, target=kp_target),
     ]
 
 
@@ -216,6 +308,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", default=None, help="URT-2/URT-1 serial port, e.g. COM5")
     ap.add_argument("--id", type=int, default=1, help="servo ID (default 1)")
     ap.add_argument("--samples", type=int, default=100, help="txn samples for gate 0.2")
+    ap.add_argument(
+        "--kp-target",
+        type=int,
+        default=KP_FW_TARGET,
+        help=f"expected runtime P in reg {REG_P} (default {KP_FW_TARGET} = P3)",
+    )
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="write JSON report")
     args = ap.parse_args(argv)
 
@@ -228,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
         mode = "live"
 
     try:
-        results = run_gates(bus, args.id, args.samples)
+        results = run_gates(bus, args.id, args.samples, kp_target=args.kp_target)
     finally:
         bus.close()
 
@@ -237,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         "mode": mode,
         "port": args.port,
         "servo_id": args.id,
+        "kp_target": args.kp_target,
         "refs": [
             "docs/active/microduck-HD1910阶段C软件清单.md §3",
             "docs/hardware/microduck-采购清单.md §7.6",
