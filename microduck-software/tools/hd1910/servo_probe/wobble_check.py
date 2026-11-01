@@ -16,9 +16,21 @@ why: 官方台架指南（whatled HD1910 Task-008/010）的摇晃法是目视法
            且必须**同时出现过上升段和下降段**（否则只是单向漂移，不是跟手）
 3. release 松手期：判「回稳」。跨度应 <= SPAN_IDLE
 
-只读：本脚本**不写任何寄存器**。所以扳动时会感到 PD 抵抗（P=32 较硬，越扳越紧），
-这是正确行为，也顺带验证了闭环。USB 5V 档靠板上 500 mA 过流保护顶着 ⇒
-脚本实时监控电流 raw，超过 --warn-cur 只告警不中止（中止会打断测试，交由人判断）。
+★ 必须先卸力，否则扳不动
+--------------------------
+官方 Task-008 原文：「摇晃法用"扳关节看位置"验证反馈链路，**不需要给扭矩**」。
+reg40=1（扭矩开着）时 PD 在维持位置，堵转扭矩 1.47 N·m 作用在 4.95 mm 输出轴上
+⇒ **人手直接捏轴根本扳不动**（2026-11-01 实测：用户反馈"扳不动"）。
+所以本脚本在 settle 之前写 reg40=0 卸力，测试结束写回原值（默认 --unload 开启）。
+
+⚠️ 与另一条实测结论并存，别混淆：
+  - reg40=0 **能卸力**（对外力不抵抗）⇒ 摇晃法可以扳动。
+  - reg40=0 **不能阻止"写 goal 触发的运动"**（写 goal 后 0.4 s 内照样走到位）。
+  两者不矛盾：写 goal 会临时重新使能扭矩，运动完又卸力。
+  ⇒ 因此"停下"靠写 goal=当前位置，不靠关扭矩；而"扳得动"靠关扭矩。
+
+USB 5V 档靠板上 500 mA 过流保护顶着 ⇒ 脚本实时监控电流 raw，超过 --warn-cur
+只告警不中止（中止会打断测试，交由人判断）。
 
 用法
 ----
@@ -38,11 +50,56 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hd1910_readonly import frame, query, ping, signed_mag  # noqa: E402
 
 REG_POS = 56
+REG_TORQUE = 40         # 扭矩开关：1=使能（PD 维持位置），0=卸力
 TELEM_LEN = 15          # 56..70
 HZ = 20.0
 SPAN_IDLE = 2           # 静止期允许的位置跨度（计数）
 SPAN_MOVE = 20          # 扳动期最小跨度（计数）；20 计数 ≈ 1.76 deg
 CUR_WARN_RAW = 70       # 约 455 mA @6.5 mA/unit（换算待实物标定，只作量级）
+
+
+def write_u8(ser, sid: int, addr: int, val: int) -> bool:
+    """WRITE inst=0x03, params=[addr, data], 应答无参数。
+
+    出处：``microduck-replica rl-series/scripts/hl2915_bench.py:156-159``
+    （帧同族可抄，寄存器表不可抄）。与 ``hd1910_ident.Bus.write_u8`` 同实现。
+    """
+    ser.reset_input_buffer()
+    ser.write(frame(sid, 0x03, bytes([addr, val & 0xFF])))
+    ser.flush()
+    deadline = time.time() + 0.05
+    buf = b""
+    while time.time() < deadline:
+        n = ser.in_waiting
+        if n:
+            buf += ser.read(n)
+        if len(buf) >= 6:
+            break
+        time.sleep(0.001)
+    return any(buf[i:i + 3] == b"\xff\xff" + bytes([sid])
+               for i in range(max(1, len(buf) - 2)))
+
+
+def read_u8(ser, sid: int, addr: int):
+    r = query(ser, sid, addr, 1)
+    return r[0] if r else None
+
+
+def unload(ser, sid: int) -> tuple[bool, int | None]:
+    """写 reg40=0 卸力，返回 (是否生效, 原值)。原值用于测后恢复。"""
+    orig = read_u8(ser, sid, REG_TORQUE)
+    if orig is None:
+        print(f"✗ 读 reg{REG_TORQUE} 失败，无法安全卸力")
+        return False, None
+    if orig == 0:
+        return True, 0
+    write_u8(ser, sid, REG_TORQUE, 0)
+    time.sleep(0.1)
+    back = read_u8(ser, sid, REG_TORQUE)
+    ok = back == 0
+    print(f"  卸力 reg{REG_TORQUE}: {orig} -> {back}"
+          f"  {'✔ 已卸力，轴应能轻松扳动' if ok else '✗ 写入未生效，别硬扳'}")
+    return ok, orig
 
 
 def telemetry(ser, sid: int) -> dict | None:
@@ -164,6 +221,14 @@ def cmd_run(ser, sid: int, a) -> int:
           f" 目标 {t['goal']} 电压 {t['volt']} V 温度 {t['temp']} ℃ 电流 raw {t['cur_raw']}")
     print()
 
+    unloaded, torque_orig = False, None
+    if a.unload:
+        unloaded, torque_orig = unload(ser, sid)
+        if not unloaded:
+            print("⚠️ 未卸力 —— PD 仍在维持位置（堵转 1.47 N·m），很可能扳不动。")
+            print("   仍继续采集，但结果大概率不通过。可 Ctrl-C 后排查 reg40。")
+    print()
+
     print("阶段 1/3 · 静止基线 —— 手不要碰舵机")
     settle = sample(ser, sid, a.settle, "settle", a.warn_cur)
     print(f"    跨度 {settle['span']} 计数，丢包 {settle['lost']}")
@@ -176,10 +241,22 @@ def cmd_run(ser, sid: int, a) -> int:
           f"上 {wobble['up']} / 下 {wobble['down']}，电流峰值 raw {wobble['cur_peak']}")
     print()
 
-    _wait("阶段 3/3 · 松手 —— 把手拿开，看是否回稳。准备好了按回车 ...", a.countdown)
+    _wait("阶段 3/3 · 松手 —— 把手拿开，看位置是否停住不动。准备好了按回车 ...",
+          a.countdown)
     release = sample(ser, sid, a.release, "release", a.warn_cur)
     print(f"    跨度 {release['span']} 计数，丢包 {release['lost']}")
     print()
+
+    # 恢复扭矩：若扳动期间位置被改变，PD 会把它拉回目标位置 —— 先提示再写。
+    if a.unload and torque_orig:
+        print(f"恢复扭矩 reg{REG_TORQUE}: 0 -> {torque_orig}"
+              f"（PD 会把轴拉回目标 {t['goal']}，属正常）")
+        write_u8(ser, sid, REG_TORQUE, torque_orig)
+        time.sleep(0.1)
+        back = read_u8(ser, sid, REG_TORQUE)
+        print(f"  读回 reg{REG_TORQUE} = {back}"
+              f"  {'✔' if back == torque_orig else '✗ 与期望不符，请复查'}")
+        print()
 
     phases = {"settle": settle, "wobble": wobble, "release": release}
     checks = judge(phases)
@@ -198,6 +275,8 @@ def cmd_run(ser, sid: int, a) -> int:
             "servo_id": sid,
             "thresholds": {"span_idle": SPAN_IDLE, "span_move": SPAN_MOVE,
                            "warn_cur_raw": a.warn_cur, "hz": HZ},
+            "unloaded": unloaded,                 # 摇晃法必须在卸力状态下做
+            "torque_reg_orig": torque_orig,       # reg40 原值，测后已写回
             "start": t,
             "phases": phases,
             "checks": checks,
@@ -261,6 +340,9 @@ def main(argv=None) -> int:
     ap.add_argument("--release", type=float, default=4.0, help="松手回稳秒数")
     ap.add_argument("--warn-cur", type=int, default=CUR_WARN_RAW,
                     help="电流 raw 告警线（约 6.5 mA/unit，换算待标定）")
+    ap.add_argument("--no-unload", dest="unload", action="store_false",
+                    help="不卸力直接测（默认会写 reg40=0 卸力；开着扭矩时"
+                         "1.47 N·m 堵转扭矩作用在 4.95 mm 轴上，人手扳不动）")
     ap.add_argument("--countdown", type=float, default=3.0,
                     help="无 stdin 时改用倒计时的秒数")
     ap.add_argument("--json", default=None, help="结果存档路径")

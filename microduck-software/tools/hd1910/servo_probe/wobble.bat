@@ -24,7 +24,9 @@ echo   1^) keep still  3s  - do NOT touch
 echo   2^) press ENTER     - then rock the shaft back/forth 12s
 echo   3^) press ENTER     - release, watch it settle 4s
 echo.
-echo   It will fight back ^(P=32 PD loop^). That is correct.
+echo   Torque is released automatically ^(reg40=0^) before sampling,
+echo   so the shaft should turn freely. If it still won't budge,
+echo   fit a servo horn for leverage.
 echo ==========================================================
 echo.
 
