@@ -30,7 +30,7 @@
 
 | | 内容 |
 |---|---|
-| **in** | `tools/hd1910/` 全部；主线依赖的 `tools/`：`eval_velocity_in_sim`、`eval_tracking`、`plant_id`、`check_velocity_ready`、`export_onnx`、`check_onnx_parity`、`make_manifest`、`record_walk`、`train_velocity_variant`、`train_heading_variant`、`watch_milestones`、`make_train_dashboard`、`convert_ckpt_stdtype`、`rehearse_deploy`、`bam_actuators`、`bam_api` |
+| **in** | `tools/hd1910/` 全部；主线依赖的 `tools/`：`eval_velocity_in_sim`、`eval_tracking`、`plant_id`、`check_velocity_ready`、`export_onnx`、`check_onnx_parity`、`make_manifest`、`record_walk`、`train_velocity_variant`、`train_heading_variant`、`watch_milestones`、`make_train_dashboard`、`convert_ckpt_stdtype`、`rehearse_deploy`、`bam_actuators` |
 | **out（保留遗留）** | `repo/` 的 `train_ppo/train_official/train_robust`；依赖它们的 `robustness`、`envelope`、`ab_compare`、`eval_policy`、`deploy_sim`、`plant.py`、大多数 `probe_*`、`patch_joy_*`；joy 侧线全套（`eval_joy_in_sim`、`probe_joy_*`、`trace_joy_foot_phase` 等） |
 
 ---
