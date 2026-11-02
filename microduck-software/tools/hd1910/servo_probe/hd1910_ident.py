@@ -51,6 +51,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hd1910_readonly import frame, query, ping, signed_mag  # noqa: E402
 
+# 仓库根（tools/hd1910/servo_probe 上溯三层）。默认把录制数据落到 out/steps/，
+# 免得跑一次就在仓库根留一个 CSV。
+ROOT = Path(__file__).resolve().parents[3]
+REC_DIR = ROOT / "out" / "steps"
+
 try:
     import serial
 except ImportError:
@@ -278,22 +283,62 @@ def _disarm(bus: Bus, sid: int) -> None:
         bus.write_u16(sid, REG_GOAL, pos)
 
 
+def _write_gains(bus: Bus, sid: int, kp, kd):
+    """写 RAM 增益（reg50/51）并**回读确认生效**。
+
+    为什么要回读：写 reg50 不改 EEPROM reg21，而读 reg21 拿到的仍是旧值。
+    只看写入返回码 = 只看"我发了"，看不到"它认了"。
+    """
+    if kp is not None:
+        bus.write_u8(sid, REG_P_RAM, kp)
+    if kd is not None:
+        bus.write_u8(sid, REG_D_RAM, kd)
+    time.sleep(0.05)
+    got_p = bus.read_u8(sid, REG_P_RAM)
+    got_d = bus.read_u8(sid, REG_D_RAM)
+    return got_p, got_d
+
+
 def cmd_step(bus: Bus, sid: int, args):
-    """PD 阶跃录制：50 Hz 录"目标-实际"→ CSV + 指标。kt/R/齿隙之外的形状数据出在这里。"""
+    """PD 阶跃录制：50 Hz 录"目标-实际"→ CSV + 指标。kt/R/齿隙之外的形状数据出在这里。
+
+    ★ 有效增益在 **RAM reg50/51**，不是 EEPROM reg21/22。掉电回落 EEPROM。
+      本命令的 `--kp/--kd` 改的是 RAM，测完恢复原 RAM 值（不动 EEPROM）。
+    """
     start = bus.read_u16(sid, REG_POS)
-    kp0 = bus.read_u8(sid, REG_P_GAIN)
-    kd0 = bus.read_u8(sid, REG_D_GAIN)
-    if start is None or kp0 is None:
+    # 有效值读 RAM；EEPROM 只作对照（两者不等时容易误读"当前 P 是多少"）
+    kp_ram = bus.read_u8(sid, REG_P_RAM)
+    kd_ram = bus.read_u8(sid, REG_D_RAM)
+    kp_ee = bus.read_u8(sid, REG_P_GAIN)
+    kd_ee = bus.read_u8(sid, REG_D_GAIN)
+    if start is None or kp_ram is None:
         sys.exit("读不到位置/增益，先跑 telem 确认通信")
     if args.dry_run:
         sys.exit("--dry-run 不碰硬件，用 `selftest` 子命令验证指标")
-    print(f"起始 {start}  当前 P={kp0} D={kd0}（P3 部署值 P={KP_FW_P3}）")
-    if kp0 != KP_FW_P3:
-        print(f"⚠️ 真机 P={kp0}，P3 仿真用 kp_fw={KP_FW_P3} —— 两边不对齐时，"
-              f"这份阶跃形状不能代表部署后的行为。要对齐就写 reg50={KP_FW_P3}。")
+
+    target_p = args.kp if args.kp is not None else kp_ram
+    target_d = args.kd if args.kd is not None else kd_ram
+    if args.kp is not None and args.kd is None:
+        # BAM 官方 STS3215 控制律是纯 P（无 D）。要把真机对齐仿真，
+        # 只写 P 而留着 D=40 会多出一份 sim 里不存在的阻尼。
+        target_d = 0
+        print(f"⚠️ 给了 --kp 未给 --kd ⇒ 按 BAM 纯 P 律把 D 归零（否则多出仿真没有的阻尼项）")
+
+    print(f"起始 {start}  RAM P={kp_ram} D={kd_ram}｜EEPROM P={kp_ee} D={kd_ee}")
+    if kp_ram != kp_ee:
+        print(f"  ↳ RAM≠EEPROM：当前生效的是 RAM（{kp_ram}/{kd_ram}），"
+              f"掉电会回落到 EEPROM（{kp_ee}/{kd_ee}）")
+    if target_p != KP_FW_P3:
+        print(f"⚠️ 本次阶跃 P={target_p}，P3 仿真 kp_fw={KP_FW_P3} —— "
+              f"两边不对齐时这份形状不代表部署后行为。")
+    if target_d != 0:
+        print(f"⚠️ 本次 D={target_d}。BAM 官方 STS3215 律无 D 项，"
+              f"部署契约是 D=0；D≠0 的曲线不能直接跟 sim 比。")
 
     up, back = start + args.steps, start
-    path = unique_path(args.csv or f"hd1910_step_id{sid}_kp{kp0}_kd{kd0}.csv")
+    REC_DIR.mkdir(parents=True, exist_ok=True)
+    path = unique_path(args.csv or str(
+        REC_DIR / f"step_id{sid}_kp{target_p}_kd{target_d}.csv"))
     f = open(path, "w", newline="", buffering=1)   # 行缓冲：Ctrl-C 不丢已采的点
     writer = csv.writer(f)
     writer.writerow(["phase", "t_ms", "target", "pos", "speed", "load",
@@ -302,33 +347,92 @@ def cmd_step(bus: Bus, sid: int, args):
     print(f"录制 → {path}：静置 {args.pre}s → {start}→{up}→{back}，"
           f"每段 {args.hold}s，50 Hz。Ctrl-C 中止，数据照常落盘。")
     try:
+        # ① 先把 goal 钉在当前位置：切增益的瞬间若 goal 还停在上一轮残留值，
+        #    新增益会立刻把它拽过去 —— 那是"没测就动了"。
+        bus.write_u16(sid, REG_GOAL, start)
+        time.sleep(0.2)
+        # ② 切增益并回读（只认回读，不认写入返回码）
+        got_p, got_d = _write_gains(bus, sid, target_p, target_d)
+        if (got_p, got_d) != (target_p, target_d):
+            print(f"✗ 增益未生效：写入 ({target_p},{target_d}) → 回读 ({got_p},{got_d})")
+            sys.exit("增益回读不符，拒测（否则这份数据标错增益）")
+        print(f"✔ 增益生效 RAM P={got_p} D={got_d}（回读确认）")
         _arm(bus, sid, args)
         for phase, target, secs in (("pre", start, args.pre),
                                     ("up", up, args.hold),
                                     ("back", back, args.hold)):
             if phase != "pre":
                 bus.write_u16(sid, REG_GOAL, target)
-            t0 = time.monotonic()
-            while time.monotonic() - t0 < secs:
+            # ⚠️ 必须 perf_counter：Windows 上 time.monotonic() 分辨率 15.6 ms，
+            #    50 Hz（20 ms）采样会出现"同一毫秒几十个样本"，时间轴直接作废。
+            t0 = time.perf_counter()
+            dt_s = 1.0 / args.rate
+            next_t = t0
+            while True:
+                now = time.perf_counter()
+                if now - t0 >= secs:
+                    break
                 t = telemetry(bus, sid)
-                t_ms = int((time.monotonic() - t0) * 1000)
+                t_ms = int((time.perf_counter() - t0) * 1000)
                 if t is None:
                     miss += 1
                     writer.writerow([phase, t_ms, target, "", "", "", "", "", "", ""])
-                    continue
-                writer.writerow([phase, t_ms, target, t["pos"], t["speed"], t["load"],
-                                 f"{t['volt']:.1f}", t["temp"], t["cur_raw"],
-                                 f"{t['cur_ma']:.0f}"])
-                rows.append((phase, t_ms, target, t["pos"], t["speed"],
-                             t["load"], t["cur_ma"]))
-                time.sleep(max(0.0, 0.02 - (time.monotonic() - t0)))
+                else:
+                    writer.writerow([phase, t_ms, target, t["pos"], t["speed"], t["load"],
+                                     f"{t['volt']:.1f}", t["temp"], t["cur_raw"],
+                                     f"{t['cur_ma']:.0f}"])
+                    rows.append((phase, t_ms, target, t["pos"], t["speed"],
+                                 t["load"], t["cur_ma"]))
+                # 绝对节拍：按"下一个应采时刻"睡，不按"已用时间"减 ——
+                # 后者在 elapsed>dt 之后恒为 0，会变成无节拍空转。
+                next_t += dt_s
+                slack = next_t - time.perf_counter()
+                if slack > 0:
+                    time.sleep(slack)
+                else:
+                    next_t = time.perf_counter()   # 落后了就从现在重新起拍
     except KeyboardInterrupt:
         print("\n手动中止")
     finally:
         _disarm(bus, sid)
+        # 恢复原 RAM 增益（不动 EEPROM）。恢复也要回读 —— 否则"以为恢复了"。
+        if args.kp is not None or args.kd is not None:
+            try:
+                rp, rd = _write_gains(bus, sid, kp_ram, kd_ram)
+                ok = (rp, rd) == (kp_ram, kd_ram)
+                print(f"{'✔' if ok else '✗'} 增益恢复 RAM P={rp} D={rd}"
+                      f"（原 {kp_ram}/{kd_ram}）")
+            except Exception as e:                       # 串口已断也要把话说完
+                print(f"✗ 增益恢复失败：{e}  ⚠️ 现在 RAM P/D 可能仍是 "
+                      f"{target_p}/{target_d}，断电或重跑一次 step 修回")
         f.close()
     print(f"有效样本 {len(rows)}，丢包 {miss}"
           + ("  ⚠️ 有丢包，曲线可能有洞，先查共地/线长" if miss else ""))
+    # 时间轴自检：采样率是否达到标称，否则整条曲线的形状都不可信
+    dts = []
+    for ph in ("pre", "up", "back"):
+        ts = [r[1] for r in rows if r[0] == ph]
+        dts += [b - a for a, b in zip(ts, ts[1:]) if b > a]
+    if dts:
+        dts_sorted = sorted(dts)
+        p50 = dts_sorted[len(dts_sorted) // 2]
+        print(f"采样间隔 p50={p50}ms（标称 {1000/args.rate:.0f}ms）、"
+              f"max={dts_sorted[-1]}ms、重复时间戳 {dts.count(0)}")
+        if p50 > 1.5 * 1000 / args.rate:
+            print("  ⚠️ 达不到标称采样率：阶跃上升沿可能被漏掉，先降 --rate 或查串口卡顿")
+    # 速度字段交叉校验：位置差反算 vs 遥测 speed。两个来源不一致 ⇒ 单位不是 步/s。
+    for phase, target in (("up", up), ("back", back)):
+        seg = [(r[1], r[3]) for r in rows if r[0] == phase]
+        v_pos = 0.0
+        for (t1, p1), (t2, p2) in zip(seg, seg[1:]):
+            if t2 > t1:
+                v_pos = max(v_pos, abs(p2 - p1) * 1000.0 / (t2 - t1))
+        v_rep = max((abs(r[4]) for r in rows if r[0] == phase), default=0)
+        if v_pos > 0 and v_rep > 0:
+            print(f"{phase}: 位置差分峰速 {v_pos:.0f} 步/s ↔ 遥测 speed={v_rep}"
+                  f"（差 {v_pos / v_rep:.1f}×）" +
+                  ("  ⇒ speed 字段不是 步/s，勿直接当速度用"
+                   if v_pos / v_rep > 1.5 or v_pos / v_rep < 0.67 else "  ✓ 两个来源一致"))
     for phase, target in (("up", up), ("back", back)):
         m = step_metrics(rows, phase, target, DEAD_ZONE_GUARD + 2)
         if m is None:
@@ -472,6 +576,7 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--steps", type=int, default=200, help="step 阶跃幅度（步）")
     ap.add_argument("--hold", type=float, default=2.0, help="step 每段保持秒数")
+    ap.add_argument("--rate", type=float, default=50.0, help="step 采样率 Hz（默认 50）")
     ap.add_argument("--pre", type=float, default=1.0, help="step 静置秒数")
     ap.add_argument("--csv", default=None)
     ap.add_argument("--max-step", type=int, default=20, help="deadzone 最大探测步")
@@ -481,6 +586,10 @@ def main() -> int:
     ap.add_argument("--torque-limit", type=int, default=500, help="reg48（1000=100%）")
     ap.add_argument("--new-id", type=int, default=None,
                     help="set-id：新总线 ID（0-253）")
+    ap.add_argument("--kp", type=int, default=None,
+                    help="step：临时写 reg50（RAM P），测完恢复原值；不动 EEPROM reg21")
+    ap.add_argument("--kd", type=int, default=None,
+                    help="step：临时写 reg51（RAM D）。只给 --kp 时自动置 0（BAM 纯 P 律）")
     args = ap.parse_args()
 
     if args.cmd == "selftest":
