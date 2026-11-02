@@ -1142,3 +1142,57 @@ BAM 同频点滞后 58.5 / 75.7 / 86.4 / 100.4°，隐含延迟 **162→140→12
 
 **kp_fw=8 是目前唯一三边都支持的改值**（台架 gain +43% / jerk 仅 +15% / 整机 vx +23.8%）。
 但换 P8 = 换植物 ⇒ **必须伴随一次重训**，不能只改部署时的寄存器就指望同一个策略变好。
+
+## 17. heading 奖励：2500 轮判决为「零效果」+ 一个配置 bug
+
+### 17.1 判决实验（n=8，禁止单样本 —— 见 §16.4 的教训）
+
+model_2499（跑完 1750→2499）对 model_2000，各 8 个初始 yaw，
+p3 plant / kp_fw 5 / vin 7.4 / cmd vx 0.4 / 8 s / heading 闭环：
+
+| | \|Δyaw\| mean | sem | range | vx |
+|---|---|---|---|---|
+| model_2000 | 88.2° | 19.7 | 9–169 | 0.0973 |
+| model_2499 | 88.3° | 19.0 | 14–162 | 0.1038 |
+
+**Δ = +0.0°（t = −0.00）。750 轮 heading 训练对部署偏航毫无作用。**
+vx 涨 6.7% 说明策略确实变了（两份 ONNX 不同），只是没往 heading 方向变。
+
+⇒ **`error_vel_yaw`（训练标量，70% env 是随机角速度指令）不是部署指标**，
+两者可以背离；部署指标只能是 heading 闭环下的 |Δyaw|（n≥8）。
+
+### 17.2 直接原因：设计的最后一段权重从未生效
+
+`mjlab_microduck/tasks/mdp.py:3601` 用严格大于：
+
+```python
+for stage in weight_stages:
+    if env.common_step_counter > stage["step"]:
+        term_cfg.weight = stage["weight"]
+```
+
+而 `--heading-stage-iters 0,1000,1750,2500` 最后一段 mark = 2500×24 = **60000**，
+2500 轮训练的最终 counter 正好也是 60000 ⇒ `60000 > 60000` 为假 ⇒
+**tracking 3.0 / hold 0.0 这一段从没被应用**（只因 §17.3 的偏移在末轮摸到 1 轮）。
+
+- 训练脚本原校验 `stage_iters[3] > absolute_total` 漏判等号，已改 `>=` 并写清算术
+  （负对照：`0,10,20,30` + 30 轮 → 退出码 1，且在碰 GPU 之前）。
+- **判据：课程最后一段的 mark 必须严格小于总轮数**（2500 轮应配 `0,1000,1750,2100`）。
+
+### 17.3 附带发现：每次 resume 会重跑一次边界迭代
+
+| run | counter − (iter+1)×24 |
+|---|---|
+| 从 0 起的原始 run（model_0…1750） | 全部 **+0** |
+| 从 model_1750 续训的 run（1750/2000/2250/2499） | 全部 **+24** |
+
+rsl_rl `load()` 恢复 `current_learning_iteration = it`，`learn()` 接着跑 `range(it, …)`，
+边界那一轮被重跑 ⇒ counter 每次 resume 永久多 `num_steps_per_env` 步。
+原闸门 `counter == (iter+1)*nse` 因此拒绝一切二级续训；已改为允许整数轮 drift（≤2）并打印，
+同时新增从 `params/env.yaml` 回读 weight_stages、报告本次 launch 实际会跑的 tracking 权重。
+
+### 17.4 下一步
+
+续训到 3000（501 轮）让 **tracking 3.0 / hold 0.0 真正跑满**——这是当前配方里
+唯一从未被执行过的分支。若 n=8 的 |Δyaw| 仍无改善，则这两个奖励项本身是死路，
+需要改配方（而不是加轮数）。
