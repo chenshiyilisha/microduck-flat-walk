@@ -7,7 +7,10 @@ repo/
 bin/
 
 logs/
-out/
+# out/ is build output, EXCEPT the bench measurements -- those are evidence
+# (a sine CSV is the only record of a hardware run) and must stay in VCS.
+out/*
+!out/sine/
 wandb/
 *.pt
 *.onnx
