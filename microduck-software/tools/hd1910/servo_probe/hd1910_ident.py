@@ -44,6 +44,7 @@
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 import time
@@ -195,11 +196,33 @@ def step_metrics(rows, phase, target, tol):
         if all(abs(p - target) <= tol for _, _, _, p, _, _, _ in pts[i:]):
             settle_ms = pts[i][1]
             break
+    # Peak speed from POSITION DIFFERENCES, in 步/s — NOT from the telemetry `speed`
+    # field. That field has its own unit: measured ratio (position diff) / (field)
+    # = 51.5..63x, median ~54, i.e. 1 unit ~= 53 步/s ~= 4.7 deg/s. Printing it as
+    # 步/s overstated peak speed by ~54x for two days before anyone checked.
+    #
+    # p95 rather than max: the largest single sample-to-sample difference is noise
+    # (measured +-20% spread across repeats, and it lands near the physical cap),
+    # so max alone is not a usable number. Both are returned; read p95.
+    vs = []
+    for a, b in zip(pts, pts[1:]):
+        t1, p1, t2, p2 = a[1], a[3], b[1], b[3]
+        if t2 > t1:
+            vs.append(abs(p2 - p1) * 1000.0 / (t2 - t1))
+    vs.sort()
+    if vs:
+        idx = min(len(vs) - 1, max(0, math.ceil(0.95 * len(vs)) - 1))
+        v_p95, v_max = vs[idx], vs[-1]
+    else:
+        v_p95 = v_max = 0.0
     return {
         "err": err,
         "over_pct": 100.0 * over_steps / abs(travel),
         "settle_ms": settle_ms,
-        "vmax": max(abs(v) for _, _, _, _, v, _, _ in pts),
+        "v_p95_steps": v_p95,
+        "v_p95_deg_s": v_p95 * 360.0 / STEPS_PER_REV,
+        "v_max_steps": v_max,
+        "speed_field_peak_raw": max(abs(v) for _, _, _, _, v, _, _ in pts),
         "imax": max(c for _, _, _, _, _, _, c in pts),
         "load_max": max(l for _, _, _, _, _, l, _ in pts),
     }
@@ -301,6 +324,21 @@ def _write_gains(bus: Bus, sid: int, kp, kd):
     return got_p, got_d
 
 
+def write_step_json(path, armed: dict, phases: dict, extra: dict) -> None:
+    """Persist one step run's metrics next to its CSV.
+
+    The reg46 A/B needs this: comparing runs by eye off the printed line is how
+    the first A/B ended up attributing a reg41 change to reg46. Both the
+    requested and the READ-BACK register values go in, because a requested 4095
+    can come back truncated and "I sent it" is not "it took".
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(
+        {"armed": armed, "protocol": extra, "phases": phases},
+        indent=1, ensure_ascii=False), encoding="utf-8")
+
+
 def cmd_step(bus: Bus, sid: int, args):
     """PD 阶跃录制：50 Hz 录"目标-实际"→ CSV + 指标。kt/R/齿隙之外的形状数据出在这里。
 
@@ -366,6 +404,19 @@ def cmd_step(bus: Bus, sid: int, args):
             sys.exit("增益回读不符，拒测（否则这份数据标错增益）")
         print(f"✔ 增益生效 RAM P={got_p} D={got_d}（回读确认）")
         _arm(bus, sid, args)
+        # 回读限速/限流：写进去了不等于它认了（reg46 有固件上限，4095 会被截断）。
+        # A/B 若只记请求值就会把"我发了"当"它生效了"，这正是 reg46 那次 A/B
+        # 需要重做的原因之一。
+        armed = {
+            "reg46_speed_req": args.speed,
+            "reg46_speed_rb": bus.read_u16(sid, REG_SPEED),
+            "reg41_accel_req": args.accel,
+            "reg41_accel_rb": bus.read_u8(sid, REG_ACCEL),
+            "reg48_torque_req": args.torque_limit,
+            "reg48_torque_rb": bus.read_u16(sid, REG_TORQUE_LIMIT),
+            "kp_ram": got_p,
+            "kd_ram": got_d,
+        }
         for phase, target, secs in (("pre", start, args.pre),
                                     ("up", up, args.hold),
                                     ("back", back, args.hold)):
@@ -456,16 +507,25 @@ def cmd_step(bus: Bus, sid: int, args):
                   f"（差 {v_pos / v_rep:.1f}×）" +
                   ("  ⇒ speed 字段不是 步/s，勿直接当速度用"
                    if v_pos / v_rep > 1.5 or v_pos / v_rep < 0.67 else "  ✓ 两个来源一致"))
+    phases = {}
     for phase, target in (("up", up), ("back", back)):
         m = step_metrics(rows, phase, target, DEAD_ZONE_GUARD + 2)
         if m is None:
             print(f"{phase}: 样本不足或行程太小，跳过")
             continue
+        phases[phase] = m
         settle = (f"{m['settle_ms']}ms" if m["settle_ms"] is not None
                   else f">{args.hold * 1000:.0f}ms 未整定")
         print(f"{phase}: 稳态误差 {m['err']:+.1f} 步 | 超调 {m['over_pct']:.1f}% | "
-              f"整定 {settle} | 峰速 {m['vmax']:.0f} 步/s | 峰值电流 {m['imax']:.0f}mA")
+              f"整定 {settle} | 峰速 p95 {m['v_p95_steps']:.0f} 步/s "
+              f"({m['v_p95_deg_s']:.0f} °/s，单点 max {m['v_max_steps']:.0f} 步/s，噪声大) | "
+              f"峰值电流 {m['imax']:.0f}mA")
     print(f"CSV → {path}")
+    if args.json:
+        write_step_json(args.json, armed, phases,
+                        {"steps": args.steps, "hold_s": args.hold, "rate": args.rate,
+                         "csv": str(path), "start_pos": start})
+        print(f"JSON → {args.json}")
 
 
 def cmd_deadzone(bus: Bus, sid: int, args):
@@ -1111,11 +1171,29 @@ def cmd_selftest(_bus, _sid, args):
     print(f"  偏置 −40 步 → gain={m7['gain']:.3f} dc_err={m7['dc_err_steps']:+.1f} 步  "
           f"{'ok' if ok7 else 'FAIL'}")
 
+    print("=== 峰速口径：必须由位置差分算，不能由遥测 speed 字段算 ===")
+    # 真机 speed 字段的单位不是 步/s（实测 1 unit ≈ 53 步/s）。把它按 1/54 缩放后
+    # 重算，峰速必须**完全不变**——因为新口径只读位置。这正是旧口径（直接拿字段
+    # 当 步/s 打印，高估 54×）踩的坑；负对照保证它不会以另一种形式回来。
+    rows_v = synth_step(2000, 2200, 3.0, zeta=0.35)
+    mv = step_metrics(rows_v, "up", 2200, 5)
+    rows_v54 = [(r[0], r[1], r[2], r[3], r[4] / 54.0, r[5], r[6]) for r in rows_v]
+    mv54 = step_metrics(rows_v54, "up", 2200, 5)
+    ok_v = (
+        abs(mv["v_p95_steps"] - mv54["v_p95_steps"]) < 1e-6
+        and abs(mv54["speed_field_peak_raw"] * 54.0 - mv["speed_field_peak_raw"]) < 1e-6
+        and mv["v_p95_steps"] > 0.0
+    )
+    print(f"  位置差分峰速 p95 = {mv['v_p95_steps']:.1f} 步/s "
+          f"({mv['v_p95_deg_s']:.0f} °/s)"
+          f"；speed 字段 ÷54 后仍 = {mv54['v_p95_steps']:.1f} 步/s  "
+          f"{'ok' if ok_v else 'FAIL'}")
+
     print("=== 负对照：样本不足应返回 None 而不是崩 ===")
     ok8 = sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89) is None
     print(f"  5 样本 → {sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89)}")
 
-    allok = ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok6b and ok7 and ok8
+    allok = ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok6b and ok7 and ok8 and ok_v
     print(f"\nselftest: {'ALL PASSED' if allok else 'FAILED'}")
     return 0 if allok else 1
 
@@ -1141,7 +1219,10 @@ def main() -> int:
     ap.add_argument("--approach", type=int, default=100, help="backlash 趋近距离")
     ap.add_argument("--speed", type=int, default=300, help="reg46 目标速度（步/s）")
     ap.add_argument("--accel", type=int, default=10, help="reg41 加速度（×100 步/s²）")
-    ap.add_argument("--torque-limit", type=int, default=500, help="reg48（1000=100%）")
+    # ⚠️ help 字符串里不能出现裸 `%`：argparse 会对它做 %-format，
+    # 于是 --help 整个崩在 _expand_help（这里曾经写成 "1000=100%"，帮助页打不出来）。
+    ap.add_argument("--torque-limit", type=int, default=500,
+                    help="reg48 扭矩上限（1000 = 满量程）")
     ap.add_argument("--new-id", type=int, default=None,
                     help="set-id：新总线 ID（0-253）")
     ap.add_argument("--kp", type=int, default=None,
@@ -1161,6 +1242,9 @@ def main() -> int:
                          "三角波，测出来是限速不是 P ⇒ sine 默认把它拉到最大")
     ap.add_argument("--sine-accel", type=int, default=254,
                     help="sine：reg41 加速度上限，同理解限速")
+    ap.add_argument("--json", default=None, metavar="PATH",
+                    help="step：把指标（含 reg46/41/48 的请求值与**回读值**）写成 JSON。"
+                         "A/B 靠它对比，别再靠肉眼读打印行")
     ap.add_argument("--kp-list", default="5,8,12,16,24,32",
                     help="psweep：要扫的 RAM P 列表（逗号分隔）。P3 部署值是 5，"
                          "实测带宽不足；本扫描找『带宽够且不颤』的档位")

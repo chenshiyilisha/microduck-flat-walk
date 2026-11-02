@@ -438,15 +438,39 @@ def run_one(mod, scene, args, cond_name, cond):
     else:
         ctrl_path_ok = True          # delay>0 shifts the target; not probed on those runs
 
+    # Sign gate: a policy that tracks +vx must move forward. This is the one check that
+    # cannot be passed by a broken obs layout, because a wrong layout usually produces a
+    # plausible-looking but wrong action -- and then dz/dx would not follow the command.
+    #
+    # WHICH quantity is "forward" depends on whether the heading loop is turning the
+    # robot. Net displacement along the INITIAL heading (dx) is right for an open-loop
+    # run -- a wrong obs layout cannot fake it. But under --heading-target-deg with a
+    # large initial heading error the path is a curve, so dx can be negative while the
+    # robot is plainly walking forward. Measured: 15 of 32 runs at 8 start yaws had
+    # dx_body as low as -0.57 m with vx_mean_steady 0.07-0.11 (all positive). Those
+    # FAILs were reported as run failures for two days before anyone checked.
+    # Past 30 deg of initial heading error, gate on the body-frame steady velocity
+    # instead; dx stays in the report either way.
+    yaw0_err_rad = (
+        _wrap_to_pi(heading_target - math.radians(yaw0_deg))
+        if heading_target is not None
+        else None
+    )
+    heading_turns = (
+        yaw0_err_rad is not None and abs(yaw0_err_rad) > math.radians(30.0)
+    )
+    if args.cmd_vx < 0.2:
+        forward_gate = True
+    elif heading_turns:
+        forward_gate = vx_mean > 0.02
+    else:
+        forward_gate = dx > 0.02
     gates = {
         "obs_dim_61": obs_dim == 61,
         "actuators_14": nu == 14,
         "no_nan": nan_at is None,
         "stayed_upright": fell_at is None,
-        # Sign gate: a policy that tracks +vx must move forward. This is the one check that
-        # cannot be passed by a broken obs layout, because a wrong layout usually produces a
-        # plausible-looking but wrong action -- and then dz/dx would not follow the command.
-        "moves_forward": (dx > 0.02) if args.cmd_vx >= 0.2 else True,
+        "moves_forward": forward_gate,
         "covered_window": valid_s >= 0.75 * args.seconds,
         "ctrl_path_matches_flag": ctrl_path_ok,
     }
@@ -518,8 +542,12 @@ def run_one(mod, scene, args, cond_name, cond):
             "yaw_drift_deg_s": (
                 st.mean([abs(yaw_hist[i] - yaw_hist[i-1]) for i in range(1, len(yaw_hist))])
                 / control_dt if len(yaw_hist) > 1 else None),
-            "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but "
-                    "dx_world<0, check yaw_delta (~±180 = turned around).",
+            "note": ("moves_forward gates on vx_mean_steady, not dx_body: the heading "
+                     "loop turns the robot, so net displacement along the INITIAL "
+                     "heading can be negative while it walks forward"
+                     if heading_turns else
+                     "moves_forward uses dx_body (initial heading). If vx_body>0 but "
+                     "dx_world<0, check yaw_delta (~±180 = turned around)."),
         },
         "stability": {
             "fell_at_s": fell_at,
@@ -537,6 +565,12 @@ def run_one(mod, scene, args, cond_name, cond):
             "p95_abs_max": float(np.percentile(act_hist, 95)) if args.track_action and act_hist else None,
         },
         "gates": gates,
+        # Which quantity the sign gate actually tested -- a reader comparing two
+        # reports needs to know, because the two are not interchangeable.
+        "forward_gate_basis": (
+            "not_applicable(cmd<0.2)" if args.cmd_vx < 0.2
+            else ("vx_mean_steady" if heading_turns else "dx_body")
+        ),
         "not_applicable": not_applicable,
         "failed": [k for k, v in gates.items() if not v and k not in not_applicable],
     }
