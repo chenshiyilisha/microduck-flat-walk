@@ -506,6 +506,13 @@ def main() -> int:
     pre.add_argument("--heading-stage-iters", default="0,1000,1750,2500",
                      help="four iteration marks for the two-phase heading curriculum "
                           "(upstream's swizzle uses 0/1000/1750/2500).")
+    pre.add_argument("--resume-offset", type=int, default=None,
+                     help="absolute iterations already completed before this launch "
+                          "(a resumed run). The heading curriculum is compared against "
+                          "env.common_step_counter, which MjlabOnPolicyRunner.load "
+                          "restores from the checkpoint, so stage marks stay ABSOLUTE "
+                          "while --agent.max-iterations is an INCREMENT on resume. "
+                          "Set this to the checkpoint's iter or the two disagree.")
     pre.add_argument("--task", default=DEFAULT_TASK)
     pre.add_argument("--dry-run", action="store_true")
     known, passthrough = pre.parse_known_args()
@@ -532,6 +539,23 @@ def main() -> int:
 
     cmd = args.env.commands["twist"]
     before = read_heading_state(args.env)
+
+    # Declarative only: --resume-offset feeds this script's stage validation, it does
+    # NOT reach the trainer. The real curriculum state comes from env.common_step_counter,
+    # which MjlabOnPolicyRunner.load restores out of infos["env_state"]. Requiring it
+    # alongside --agent.resume just keeps the validation honest -- a resume with
+    # offset 0 (or a wrong one) makes the stage-bound check compare against the wrong
+    # end point and can wave a bad schedule through.
+    resume_offset = 0 if known.resume_offset is None else int(known.resume_offset)
+    if resume_offset < 0:
+        raise SystemExit(f"--resume-offset must be >= 0 (got {resume_offset})")
+    if getattr(args.agent, "resume", False) and known.resume_offset is None:
+        raise SystemExit(
+            "--agent.resume is set but --resume-offset was not given. Pass the "
+            "checkpoint's iteration as --resume-offset so the heading stage check uses "
+            "the run's absolute end point (rsl_rl adds max_iterations to the loaded "
+            "iteration). Explicit 0 is accepted, for a checkpoint at iteration 0."
+        )
 
     if not before["heading_command"]:
         raise SystemExit(
@@ -606,10 +630,19 @@ def main() -> int:
             raise SystemExit(f"--heading-stage-iters must be non-decreasing: {stage_iters}")
         if stage_iters[0] != 0:
             raise SystemExit(f"the first stage must start at iteration 0: {stage_iters}")
-        if stage_iters[3] > int(args.agent.max_iterations):
+        # Stage marks are absolute iteration numbers because the curriculum reads
+        # env.common_step_counter, which a resume restores from the checkpoint.
+        # --agent.max-iterations, however, is what rsl_rl adds to the loaded
+        # iteration (learn(): total_it = start_it + num_learning_iterations), so on
+        # a resumed launch it is an INCREMENT. Comparing the two without the offset
+        # rejects every resume out of hand -- and worse, silently accepting a
+        # mismatched pair would run the tracking phase at the wrong time.
+        absolute_total = resume_offset + int(args.agent.max_iterations)
+        if stage_iters[3] > absolute_total:
             raise SystemExit(
-                f"the last heading stage ({stage_iters[3]}) is past "
-                f"max_iterations ({args.agent.max_iterations}); the run would end "
+                f"the last heading stage ({stage_iters[3]}) is past the absolute end of "
+                f"this run ({absolute_total} = resume_offset {resume_offset} + "
+                f"max_iterations {args.agent.max_iterations}); the run would end "
                 "before the tracking phase starts."
             )
         heading_rewards = add_heading_reward_curriculum(
@@ -712,6 +745,8 @@ def main() -> int:
         "plant": plant_fingerprint(),
         "envs": int(args.env.scene.num_envs),
         "iters": int(args.agent.max_iterations),
+        "resume_offset": resume_offset,
+        "iters_absolute": resume_offset + int(args.agent.max_iterations),
         # These files are NOT modified by this script; hashes let a future reader
         # tell an unmodified install from a patched one.
         "cfg_sha256_16": _sha16(live / "microduck_velocity_env_cfg.py"),
