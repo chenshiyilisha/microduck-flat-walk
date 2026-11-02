@@ -78,7 +78,7 @@ MUJOCO_GL=glfw .venv-mjlab/Scripts/python.exe tools/hd1910/probe_heading_loop.py
 | `resume_standup.sh` | StandUp 同配方续训（须 `LOAD_RUN`/`LOAD_CKPT`） |
 | `parity_smoke.sh` | ONNX↔ckpt parity（C-prep-4） |
 | `rehearse_hd1910.py` / `.sh` | 部署彩排：BAM **m5 / kp_fw=32**（patch `infer_policy`，不改上游文件） |
-| `urt1_bench.py` | 阶段 0 URT-2/URT-1 台架骨架（`--dry-run`；有口再 `--port`） |
+| `sts_bench.py` | 阶段 0 URT-2/URT-1 台架骨架（`--dry-run`；有口再 `--port`） |
 | `deploy_import_checklist.md` | kissqy 上板勾选：镜像 / 方向 / P=32 / 部署缩放 |
 | `ab_train.sh` | Phase B A/B m5 vs Feetech m6 |
 | `bam_param_compare.md` | kt/R table: m5 / official m6 / Luwu ban |
@@ -113,7 +113,7 @@ ENVS=4096 ITERS=2000 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/explore_tr
 # quick: ARGS='--condition nominal --seconds 4' bash tools/hd1910/rehearse_hd1910.sh
 
 # stage-0 URT-2/URT-1 skeleton (no hardware)
-.venv-mjlab/Scripts/python.exe tools/hd1910/urt1_bench.py --dry-run
+.venv-mjlab/Scripts/python.exe tools/hd1910/sts_bench.py --dry-run
 
 # StandUp / fall recovery (new task — from zero; not resume of velocity 5999)
 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/smoke_standup.sh

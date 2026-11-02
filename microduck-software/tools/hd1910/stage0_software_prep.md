@@ -40,7 +40,7 @@
 | **0** | **把仿真 plant 切到 HD1910**（两分钟） | 本文 §1.5。**不切＝后面测回来的参数拿去跟 XL330 的仿真比，全错** |
 | 1 | 装 **FD 调试软件**（Windows，解压即用免安装） | 原始出处 **gitee.com/ftservo/fddebug**；镜像 `fanhao375/microduck-replica` 仓库内 `tools/飞特/FD1.9.8.5(250729).7z`（MIT，带 sha256）；备用 `feetech.cn/software.html`（另有 macOS 版与 Web Serial 的 Servo Web） |
 | 2 | 准备 CH340 驱动（**只是备用**） | URT-2 是 **CH343**，Win10/11 自带驱动；老款 URT-1 才要 CH340（`wch.cn`）。设备管理器出现 `USB-Enhanced-SERIAL CH343 (COMx)` 就不用管 |
-| 3 | 跑一遍骨架 dry-run | `.venv-mjlab/Scripts/python.exe tools/hd1910/urt1_bench.py --dry-run` |
+| 3 | 跑一遍骨架 dry-run | `.venv-mjlab/Scripts/python.exe tools/hd1910/sts_bench.py --dry-run` |
 | 4 | 收藏 kissqy 镜像入口 | 见本文末尾「部署镜像入口（有板再刷）」 |
 
 ---
@@ -333,15 +333,15 @@ kissqy `hd1910.rs` 的注释写明三条，**一条都不能省**：
 | # | 判据 | 怎么做 | 参照 |
 |---|---|---|---|
 | 0.1 | ping 通 / ID 改得动 / **1 Mbps** | FD 第 4–7 步 | — |
-| 0.2 | **50 Hz 事务 ≤5 ms、0 CRC** | `urt1_bench.py --port COMx --id 1` 或 FD 连续读写 | fanhao 实测：整机 15 颗同步读 **4.8 ms @7.2 V**，0 超时 0 校验错；单机应更快 |
+| 0.2 | **50 Hz 事务 ≤5 ms、0 CRC** | `sts_bench.py --port COMx --id 1` 或 FD 连续读写 | fanhao 实测：整机 15 颗同步读 **4.8 ms @7.2 V**，0 超时 0 校验错；单机应更快 |
 | 0.3 | **kt / R / 死区 / 齿隙 / 最高速** | 见下节 | 与 `bam_param_compare.md` 对照 |
 | 0.4 | **温升**：额定 **0.36 N·m**（不是堵转 1.47）@7.4 V 连续 60 s，外壳 **<60 ℃** | 外电直供、限流 2 A | 过热保护 80 ℃ 是兜底，不是目标 |
 | 0.5 | **固件 P（reg 50）出厂读 32**（对版证据）；**P3 要求运行时写 5** | FD 读寄存器 50 记出厂值；装机/部署时按 P3 改写 5，断电重启再读确认 | 出厂 32 = BAM `STS3215Actuator` 默认（真机 15/15 实测 P32/D40/I0）；运行时 5 = kissqy/社区实测，见 §1.5 的 P3 更新 |
 
-寄存器（SMS/STS 内存表，与 `urt1_bench.py` 常量一致）：`ID=5`、`波特率=6`、`扭矩使能=40`、
+寄存器（SMS/STS 内存表，与 `sts_bench.py` 常量一致）：`ID=5`、`波特率=6`、`扭矩使能=40`、
 `目标电流=44`、`P=50`；波特率索引 **0 = 1 Mbps**。
 
-`urt1_bench.py` 目前**不内嵌 FTServo SDK**：live 需要你先 `pip` 装官方 SMS/STS 端口再接到
+`sts_bench.py` 目前**不内嵌 FTServo SDK**：live 需要你先 `pip` 装官方 SMS/STS 端口再接到
 `try_open_live()`，否则**先用 FD 过闸**（不要在这里自写 daemon，方案 §5 / 阶段C §6 禁止）。
 
 ---
@@ -389,7 +389,7 @@ kissqy `hd1910.rs` 的注释写明三条，**一条都不能省**：
     "0.5_reg50_P": null
   },
   "verdict": "pass | fail(换货)",
-  "note": "urt1_bench 输出见 out/urt1_bench_stage0.json"
+  "note": "sts_bench 输出见 out/sts_bench_stage0.json"
 }
 ```
 

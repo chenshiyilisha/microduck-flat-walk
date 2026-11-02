@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DEFAULT_OUT = ROOT / "out" / "urt1_bench_stage0.json"
+DEFAULT_OUT = ROOT / "out" / "sts_bench_stage0.json"
 
 # Feetech SMS/STS register map (public FD / manual; confirmed by community
 # HD1910 fits — see 采购清单 §7 / OpenMicroDuck characterization).
@@ -331,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         bus.close()
 
     payload = {
-        "tool": "urt1_bench",
+        "tool": "sts_bench",
         "mode": mode,
         "port": args.port,
         "servo_id": args.id,
