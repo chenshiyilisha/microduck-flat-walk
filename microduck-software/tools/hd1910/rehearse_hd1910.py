@@ -54,8 +54,76 @@ from plant_spec import (  # noqa: E402
     HD1910_OPENMICRODUCK_M5,
 )
 
-DEFAULT_ONNX = ROOT / "out" / "onnx_p3head030_it1600.onnx"
-DEFAULT_OUT = ROOT / "out" / "rehearse_p3head030_it1600.json"
+#: rsl_rl writes one directory per run: logs/rsl_rl/<task>/<timestamp>_<name>/,
+#: each holding model_*.pt and (since the exporter hook) a same-named .onnx.
+RUNS_ROOT = ROOT / "logs" / "rsl_rl"
+
+
+def resolve_latest_onnx(runs_root: pathlib.Path = RUNS_ROOT) -> pathlib.Path:
+    """Newest exported policy under the training log tree.
+
+    This wrapper used to hardcode ``out/onnx_p3head030_it1600.onnx``, so a
+    rehearsal run on the day after a fresh checkpoint silently judged a stale
+    policy -- twice. Resolve by mtime instead, and print what was picked.
+    """
+    cands = sorted(
+        (p for p in runs_root.rglob("*.onnx") if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not cands:
+        raise SystemExit(
+            f"no exported ONNX under {runs_root} (train first, or pass --onnx)"
+        )
+    return cands[-1]
+
+
+def _onnx_companion(onnx: pathlib.Path) -> tuple[pathlib.Path | None, int]:
+    """Newest sibling checkpoint + its iteration, for the staleness check."""
+    ckpts = [p for p in onnx.parent.glob("model_*.pt") if p.is_file()]
+    if not ckpts:
+        return None, -1
+    newest = max(ckpts, key=lambda p: p.stat().st_mtime)
+    try:
+        return newest, int(newest.stem.split("_")[1])
+    except (IndexError, ValueError):
+        return newest, -1
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    try:
+        return argv[argv.index(flag) + 1]
+    except (ValueError, IndexError):
+        return None
+
+
+def _rel(p: pathlib.Path) -> str:
+    """Path relative to the repo when possible -- user-supplied ones may be outside."""
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
+def _report_onnx(onnx: pathlib.Path, out_path: pathlib.Path) -> None:
+    """Say which policy is being judged -- silence here is how the wrong ckpt wins."""
+    import datetime as _dt
+
+    mtime = _dt.datetime.fromtimestamp(onnx.stat().st_mtime)
+    print(f"onnx: {_rel(onnx)}  ({onnx.stat().st_size / 1e3:.0f} kB, "
+          f"{mtime:%m-%d %H:%M})")
+    print(f"out : {_rel(out_path)}")
+    ckpt, it = _onnx_companion(onnx)
+    if ckpt is None:
+        print("  (no sibling model_*.pt -- provenance of this ONNX is unknown)")
+        return
+    print(f"  companion checkpoint: {ckpt.name}  (iter {it})")
+    lag = ckpt.stat().st_mtime - onnx.stat().st_mtime
+    if lag > 5:
+        print(f"  ⚠️  onnx is {lag:.0f}s older than {ckpt.name} -- it may not match "
+              f"that checkpoint; re-export before trusting the numbers")
+    if _dt.datetime.now().timestamp() - onnx.stat().st_mtime < 120:
+        print("  ⚠️  this file was written <2 min ago -- a live training run may "
+              "still be overwriting it")
 
 #: Pristine copy of rehearse_deploy's parity note. _publish_parity() rewrites
 #: rd.TRAINING_PARITY, so it must always build from this, never from rd's current
@@ -193,16 +261,19 @@ def _inject_defaults(argv: list[str], kp_fw: float) -> list[str]:
     """Ensure --onnx / --kp-fw / --out exist; leave user overrides alone."""
     out = list(argv)
     if "--onnx" not in out:
-        if not DEFAULT_ONNX.is_file():
-            raise SystemExit(
-                f"default ONNX missing: {DEFAULT_ONNX} (pass --onnx explicitly)"
-            )
-        out = ["--onnx", str(DEFAULT_ONNX), *out]
+        onnx = resolve_latest_onnx()
+        out = ["--onnx", str(onnx), *out]
+    else:
+        onnx = pathlib.Path(_flag_value(out, "--onnx") or "")
     if "--kp-fw" not in out:
         # rehearse_deploy hardcodes 200 when kp_fw is None — always pin the plant's P.
         out = ["--kp-fw", str(kp_fw), *out]
     if "--out" not in out:
-        out = ["--out", str(DEFAULT_OUT), *out]
+        # Name the report after the run, not after some long-gone iteration --
+        # a file called *it1600.json holding iter-2500 numbers is a trap.
+        tag = onnx.parent.name or onnx.stem or "unknown"
+        out = ["--out", str(ROOT / "out" / f"rehearse_{tag}.json"), *out]
+    _report_onnx(onnx, pathlib.Path(_flag_value(out, "--out") or ""))
     return out
 
 
@@ -218,13 +289,17 @@ def main(argv: list[str] | None = None) -> int:
     known, rest = pre.parse_known_args(argv)
 
     if known.help:
+        try:
+            newest = str(resolve_latest_onnx().relative_to(ROOT))
+        except SystemExit:
+            newest = "(none found -- pass --onnx)"
         print(
             "HD1910 wrapper defaults:\n"
             f"  --plant : {known.plant}   (p3={HD1910_OFFICIAL_M6_KP5['id']}, "
             f"m5={HD1910_OPENMICRODUCK_M5['id']}, "
             f"ftservo={HD1910_FTSERVO_OFFICIAL_M6['id']})\n"
-            f"  --onnx  : {DEFAULT_ONNX}\n"
-            f"  --out   : {DEFAULT_OUT}\n"
+            f"  --onnx  : newest under logs/rsl_rl/  ->  {newest}\n"
+            f"  --out   : out/rehearse_<run-dir>.json  (derived from the ONNX)\n"
             "\nForwarded to rehearse_deploy (pass any of its flags):\n"
         )
         return rd.main(["--help"])
