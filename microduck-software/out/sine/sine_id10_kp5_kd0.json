@@ -1,0 +1,74 @@
+{
+  "servo_id": 10,
+  "kp": 5,
+  "kd": 0,
+  "amp_deg": 16.9,
+  "rate_hz": 50.0,
+  "speed_reg46": 4095,
+  "accel_reg41": 254,
+  "torque_limit": 500,
+  "center": 2647,
+  "voltage_v": [
+    3.9,
+    4.5
+  ],
+  "csv": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\out\\sine\\sine_id10_kp5_kd0.csv",
+  "freqs": [
+    {
+      "freq_hz": 1.0,
+      "amp_goal_deg": 16.889876508700407,
+      "amp_pos_deg": 11.472844576181888,
+      "gain": 0.6792734434897694,
+      "loss_pct": 32.07265565102306,
+      "lag_deg": 65.35808087346616,
+      "lag_ms": 181.55022464851712,
+      "dc_err_steps": -0.45804165908566574,
+      "rms_track_err_deg": 11.298054563110002,
+      "rms_resid_deg": 0.0974531610675561,
+      "n_pts": 250,
+      "cur_ma_peak": 247.0
+    },
+    {
+      "freq_hz": 1.5,
+      "amp_goal_deg": 16.87464525960119,
+      "amp_pos_deg": 8.5355832391181,
+      "gain": 0.5058229733310451,
+      "loss_pct": 49.417702666895494,
+      "lag_deg": 90.73406887478751,
+      "lag_ms": 168.0260534718287,
+      "dc_err_steps": -0.37497055131598245,
+      "rms_track_err_deg": 13.461498187709562,
+      "rms_resid_deg": 0.09647358479852841,
+      "n_pts": 166,
+      "cur_ma_peak": 286.0
+    },
+    {
+      "freq_hz": 1.89,
+      "amp_goal_deg": 16.869394927690017,
+      "amp_pos_deg": 7.306479203924608,
+      "gain": 0.4331204074149392,
+      "loss_pct": 56.68795925850608,
+      "lag_deg": 115.95206785268891,
+      "lag_ms": 170.4175012532171,
+      "dc_err_steps": -0.5411573742571818,
+      "rms_track_err_deg": 14.949615344941446,
+      "rms_resid_deg": 0.11924775789602787,
+      "n_pts": 132,
+      "cur_ma_peak": 351.0
+    },
+    {
+      "freq_hz": 2.5,
+      "amp_goal_deg": 16.876307633313495,
+      "amp_pos_deg": 4.210371165440168,
+      "gain": 0.2494841440984981,
+      "loss_pct": 75.0515855901502,
+      "lag_deg": -126.690093569727,
+      "lag_ms": -140.76677063303,
+      "dc_err_steps": -0.524442314341286,
+      "rms_track_err_deg": 14.060779813113449,
+      "rms_resid_deg": 1.4609992791398565,
+      "n_pts": 99,
+      "cur_ma_peak": 383.5
+    }
+  ]
+}

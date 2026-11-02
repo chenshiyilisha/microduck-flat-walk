@@ -1,0 +1,46 @@
+{
+  "servo_id": 10,
+  "kp": 16,
+  "kd": 0,
+  "amp_deg": 16.9,
+  "rate_hz": 50.0,
+  "speed_reg46": 4095,
+  "accel_reg41": 254,
+  "torque_limit": 500,
+  "center": 2599,
+  "voltage_v": [
+    3.7,
+    4.5
+  ],
+  "csv": "out\\sine\\sweepA_kp16_a16.9.csv",
+  "freqs": [
+    {
+      "freq_hz": 1.0,
+      "amp_goal_deg": 16.888927534297896,
+      "amp_pos_deg": 16.25165848584068,
+      "gain": 0.962267050577187,
+      "loss_pct": 3.7732949422813022,
+      "lag_deg": 33.508157266306974,
+      "lag_ms": 93.07821462863049,
+      "dc_err_steps": -0.3543520033326786,
+      "rms_track_err_deg": 6.773764167485026,
+      "rms_resid_deg": 0.25715166034841036,
+      "n_pts": 250,
+      "cur_ma_peak": 409.5
+    },
+    {
+      "freq_hz": 1.89,
+      "amp_goal_deg": 16.87615130735728,
+      "amp_pos_deg": 11.982605464117839,
+      "gain": 0.7100318814334128,
+      "loss_pct": 28.996811856658724,
+      "lag_deg": 102.82951563493108,
+      "lag_ms": 151.13097535998102,
+      "dc_err_steps": -13.822418608518547,
+      "rms_track_err_deg": 16.17371137845132,
+      "rms_resid_deg": 0.9765474727695459,
+      "n_pts": 132,
+      "cur_ma_peak": 812.5
+    }
+  ]
+}

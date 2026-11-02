@@ -1,0 +1,32 @@
+{
+  "servo_id": 10,
+  "kp": 32,
+  "kd": 0,
+  "amp_deg": 8.5,
+  "rate_hz": 50.0,
+  "speed_reg46": 4095,
+  "accel_reg41": 254,
+  "torque_limit": 500,
+  "center": 2598,
+  "voltage_v": [
+    3.8,
+    4.5
+  ],
+  "csv": "out\\sine\\sweepA_kp32_a8.5.csv",
+  "freqs": [
+    {
+      "freq_hz": 1.89,
+      "amp_goal_deg": 8.522873120181808,
+      "amp_pos_deg": 8.45041286204287,
+      "gain": 0.9914981418686903,
+      "loss_pct": 0.8501858131309659,
+      "lag_deg": 42.90420414030975,
+      "lag_ms": 63.05732530909722,
+      "dc_err_steps": -0.4467809643074361,
+      "rms_track_err_deg": 4.390261153390237,
+      "rms_resid_deg": 0.18804101337812837,
+      "n_pts": 132,
+      "cur_ma_peak": 533.0
+    }
+  ]
+}
