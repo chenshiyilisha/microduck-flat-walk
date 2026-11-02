@@ -111,6 +111,10 @@ def row(r: dict, ckpt: Path, vx: float, wz: float) -> dict:
     mw = r.get("metric_window") or {}
     fp = r.get("plant_fingerprint") or {}
     gates = r.get("gates") or {}
+    # Added 2026-11-02: achieved joint amplitude, for comparing against the plant's
+    # own ceiling. Absent in readings taken before the instrument existed -> None,
+    # which prints as n/a rather than 0 (a zero would read as "the legs are frozen").
+    jo = r.get("joints") or {}
     failed = sorted(k for k, v in gates.items() if v is False)
     vx_med = sp.get("vx_median_of_env_means")
     return {
@@ -127,6 +131,9 @@ def row(r: dict, ckpt: Path, vx: float, wz: float) -> dict:
         "window_ok": mw.get("is_true_mean"),
         "gates_failed": ",".join(failed),
         "plant": fp.get("name") or fp.get("detected"),
+        "amp_deg": jo.get("amp_deg_median_max"),
+        "amp_joint": jo.get("amp_deg_median_max_joint"),
+        "peak_dq": jo.get("peak_vel_rad_s_max"),
     }
 
 
@@ -136,14 +143,17 @@ def fmt(x, nd=3):
 
 def show(rows: list[dict]) -> None:
     print()
-    hdr = ("ckpt", "cmd", "vx", "ratio", "err_xy", "err_yaw", "fall%", "upr_min", "failed gates")
+    hdr = ("ckpt", "cmd", "vx", "ratio", "err_xy", "err_yaw", "fall%", "upr_min",
+           "amp°", "dq", "failed gates")
     print("| " + " | ".join(hdr) + " |")
     print("|" + "|".join(["---"] * len(hdr)) + "|")
     for r in rows:
-        print("| {} | {:.2f} | {} | {} | {} | {} | {} | {} | {} |".format(
+        print("| {} | {:.2f} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
             r["ckpt"], r["cmd_vx"], fmt(r["vx_median"]), fmt(r["ratio"], 2),
             fmt(r["err_xy"]), fmt(r["err_yaw"]), fmt(r["fall_pct"], 1),
-            fmt(r["upright_min"], 4), r["gates_failed"] or "-"))
+            fmt(r["upright_min"], 4),
+            fmt(r["amp_deg"], 1), fmt(r["peak_dq"], 2),
+            r["gates_failed"] or "-"))
     print()
 
 

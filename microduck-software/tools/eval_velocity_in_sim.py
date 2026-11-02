@@ -283,6 +283,20 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     simultaneous = torch.zeros((), device=dev)  # steps where both feet land together
     fell = torch.zeros(num_envs, dtype=torch.bool, device=dev)
 
+    # Joint-space instrumentation (added 2026-11-02, additive -- it changes no
+    # existing number). Rationale: this actuator plant is a low-pass at the gait
+    # frequency (tools/hd1910/probe_kp5_bandwidth.py: gain 0.61-0.67 and 70 deg of
+    # lag at 1.89 Hz for kp_fw=5, against ~1.0/20 deg for kp=32). So "the policy
+    # walks slowly" and "the plant cannot deliver the amplitude the policy asks
+    # for" are indistinguishable unless the *achieved* joint amplitude is
+    # recorded. Per-joint running min/max; reset on episode boundaries, otherwise
+    # the teleport back to the spawn pose counts as amplitude.
+    joint_names = list(getattr(robot, "joint_names", []))
+    jp_lo: torch.Tensor | None = None
+    jp_hi: torch.Tensor | None = None
+    jv_peak: torch.Tensor | None = None
+    ever_reset = torch.zeros(num_envs, dtype=torch.bool, device=dev)
+
     def f(x):
         return float(x)
 
@@ -299,6 +313,19 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
             u.common_step_counter = 10**9
 
             d = robot.data
+            jp = d.joint_pos
+            if jp_lo is None:
+                jp_lo, jp_hi = jp.clone(), jp.clone()
+                jv_peak = torch.zeros_like(jp)
+            if bool(dones.any()):
+                ever_reset |= dones.bool()
+                keep_m = dones.bool().unsqueeze(-1)
+                jp_lo = torch.where(keep_m, jp, jp_lo)
+                jp_hi = torch.where(keep_m, jp, jp_hi)
+                jv_peak = torch.where(keep_m, torch.zeros_like(jv_peak), jv_peak)
+            jp_lo = torch.minimum(jp_lo, jp)
+            jp_hi = torch.maximum(jp_hi, jp)
+            jv_peak = torch.maximum(jv_peak, torch.abs(d.joint_vel))
             cmd_h.append(u.command_manager.get_term("twist").vel_command_b[:, :2].clone())
             vx_h.append(d.root_link_lin_vel_b[:, 0].clone())
             vy_h.append(d.root_link_lin_vel_b[:, 1].clone())
@@ -579,6 +606,52 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
             (yaw_t[-1] - yaw_t[0]).abs() / seconds * 180 / math.pi),
     }
 
+    # Joint amplitude / peak speed. Only envs that never reset contribute: an env
+    # that fell and respawned has a min/max spanning two different episodes.
+    # The absolute numbers are in degrees of ACHIEVED joint motion, i.e. after the
+    # actuator's own attenuation -- compare against the plant's amplitude ceiling
+    # (tools/hd1910/probe_kp5_bandwidth.py), not against a position command.
+    joints = None
+    try:
+        if jp_lo is not None:
+            survivors = ~ever_reset
+            n_used = int(survivors.sum())
+            if n_used >= 1:
+                amp_deg = (jp_hi - jp_lo)[survivors] * (180.0 / math.pi)
+                vel = jv_peak[survivors]
+                n_j = int(amp_deg.shape[-1])
+                names = (
+                    joint_names if len(joint_names) == n_j
+                    else [f"j{i}" for i in range(n_j)]
+                )
+                med = amp_deg.median(dim=0).values
+                p90 = torch.quantile(amp_deg, 0.9, dim=0)
+                vmax = vel.max(dim=0).values
+                rows = [
+                    {
+                        "joint": names[i],
+                        "amp_deg_median": float(med[i]),
+                        "amp_deg_p90": float(p90[i]),
+                        "peak_vel_rad_s": float(vmax[i]),
+                    }
+                    for i in range(n_j)
+                ]
+                top = max(rows, key=lambda r: r["amp_deg_median"])
+                fastest = max(rows, key=lambda r: r["peak_vel_rad_s"])
+                joints = {
+                    "note": ("achieved joint motion over the window, envs that never "
+                             "reset only; amp = p2p of running min/max, vel = max |dq|"),
+                    "n_envs_used": n_used,
+                    "n_envs_reset": int(num_envs - n_used),
+                    "per_joint": rows,
+                    "amp_deg_median_max": top["amp_deg_median"],
+                    "amp_deg_median_max_joint": top["joint"],
+                    "peak_vel_rad_s_max": fastest["peak_vel_rad_s"],
+                    "peak_vel_rad_s_max_joint": fastest["joint"],
+                }
+    except Exception as e:  # noqa: BLE001  -- instrumentation must not take the reading down
+        joints = {"error": f"{type(e).__name__}: {e}"}
+
     env.close()
 
     gates = {
@@ -656,6 +729,7 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         "heading": heading,
         "stability": stability,
         "feet": feet,
+        "joints": joints,
         "metric_window": metric_window,
         "per_env": per_env,
         "gates": gates,
