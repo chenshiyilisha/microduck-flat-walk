@@ -67,11 +67,16 @@ artifacts/flat_walk/videos/*
 .ruff_cache/
 
 **/logs/
-# out/ is build output, EXCEPT out/sine -- those CSVs are the only record of
-# hardware runs. `**/out/` (whole-directory) silently defeated the nested
-# `!out/sine/` rule, so every bench file had to be force-added by hand.
+# out/ is build output, EXCEPT the measurement evidence:
+#   out/sine/        bench sine CSVs (hardware record)
+#   out/kpsweep_hdg/ whole-robot kp_fw A/B rehearsals
+#   out/plant*.json  BAM free-shaft plant sweeps
+# `**/out/` (whole-directory) silently defeated the nested `!out/sine/` rule,
+# so every bench file had to be force-added by hand.
 **/out/*
 !**/out/sine/
+!**/out/kpsweep_hdg/
+!**/out/plant*.json
 **/wandb/
 **/*.pt
 **/*.onnx

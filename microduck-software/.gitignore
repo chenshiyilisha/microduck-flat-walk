@@ -11,6 +11,8 @@ logs/
 # (a sine CSV is the only record of a hardware run) and must stay in VCS.
 out/*
 !out/sine/
+!out/kpsweep_hdg/
+!out/plant*.json
 wandb/
 *.pt
 *.onnx
