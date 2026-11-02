@@ -6,6 +6,8 @@
 
 > 本文档**只评估，不施工**。结论与分阶段计划在这里；执行到哪一步由用户定。
 
+> **已定的执行计划见** [microduck-HD1910工具整合计划.md](microduck-HD1910工具整合计划.md)：新项目、分步、每步有产物+门禁。
+
 ---
 
 ## 0. 一页结论
@@ -79,6 +81,10 @@ from eval_joy_in_sim import PLANT_CHOICES, swap_plant   # eval_velocity_in_sim.p
 | **契约** | **耦合**：换 velocity 的植物会顺带改 standup，反之亦然。将来若只改 WALK（做 velocity 专属植物实验），`--plant bam` 会静默把 standup 的植物塞进 velocity 评估，而**没有任何指纹会报警** |
 
 **评估结论**：整合时必须把 `swap_plant` 从侧线**提取到主线共享库**，让 eval 不再 import 侧线代码。但接缝的正确定性是「**植物作用域没有按任务隔离**」，不是「合并两套模型」——后者会把人引向错误修法。真正的修法是给 `PlantContext` 加**任务级 scope**（`velocity` / `standup` 各自独立），并让 `apply_to_live` 必须显式指定作用到哪个任务（§2.6）。
+
+> **⚠️ 2026-11-02 修正（实施后回看）**：上面这个「任务级 scope」修法**做不出来**。`microduck_constants.py:163` 只有一个 `_BAM_ACTUATOR_KWARGS`，`:176` 只有一个 `actuators` 对象，`:235`(WALK) 与 `:245`(standup) **引用同一个对象** ⇒ 想让两任务不同植物，必须编辑 `:245` 一行，那是改上游文件、不是纯新增。
+> 执行计划 [0.0-#1](microduck-HD1910工具整合计划.md) 因此改为 **A 方案：承认单植物 + 每任务期望值对账**（`check` 打印「实际 / velocity 期望 / standup 期望」，不一致即红）。物理隔离要另走双 venv 或改上游一行，见计划 §0.3 后备表。
+> 本节结论的**定性**（作用域未隔离、静默连带）仍然成立，变的是修法。
 
 ### 2.3 双 venv 并存
 
