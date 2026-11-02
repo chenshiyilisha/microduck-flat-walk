@@ -38,6 +38,7 @@ from plant_spec import (  # noqa: E402
     REGISTER_IMPORT,
     REGISTER_SRC,
     XL330_OFFICIAL_M6,
+    HD1910_OFFICIAL_M6_KP8,
     kwargs_block,
 )
 
@@ -49,6 +50,10 @@ PLANT_ALIASES = {
     "hd1910_kp5": "hd1910_kp5",
     "hd1910_official_m6_kp5": "hd1910_kp5",
     "p3": "hd1910_kp5",
+    # P8 — identical to P3 except reg 50 (bench sweet spot, 2026-11-02).
+    "hd1910_kp8": "hd1910_kp8",
+    "hd1910_official_m6_kp8": "hd1910_kp8",
+    "p8": "hd1910_kp8",
     "xl330": "xl330",
 }
 
@@ -191,6 +196,11 @@ def apply(plant: str) -> dict:
         text = _set_register_import(text, True)
         text = _replace_kwargs(text, "hd1910_kp5")
         plant_id = HD1910_OFFICIAL_M6_KP5["id"]
+    elif plant == "hd1910_kp8":
+        _install_register()
+        text = _set_register_import(text, True)
+        text = _replace_kwargs(text, "hd1910_kp8")
+        plant_id = HD1910_OFFICIAL_M6_KP8["id"]
     elif plant == "xl330":
         _remove_register()
         # Prefer pristine backup if present (full file restore is safer).
@@ -236,8 +246,17 @@ def _readback(expected_id: str | None = None) -> dict:
         and "hd1910" in block.lower()
     )
     is_xl = 'motor_name="xl330"' in block or "motor_name='xl330'" in block
+    # kp first: official_m6_stslaw.json is shared by the P5 and P8 plants, so the
+    # JSON name alone cannot tell them apart -- only reg 50 can.
+    kp = None
+    km = re.search(r"kp_fw\s*=\s*([0-9.]+)", block)
+    if km:
+        kp = float(km.group(1))
     if is_official_m6_stslaw:
-        detected = "hd1910_kp5"
+        detected = {
+            5.0: "hd1910_kp5",
+            8.0: "hd1910_kp8",
+        }.get(kp, f"hd1910_official_m6_kp{kp}")
     elif is_ftservo_m6:
         detected = "hd1910_ftservo_m6"
     elif is_m5 or is_hd:
@@ -246,10 +265,6 @@ def _readback(expected_id: str | None = None) -> dict:
         detected = "xl330"
     else:
         detected = "unknown"
-    kp = None
-    km = re.search(r"kp_fw\s*=\s*([0-9.]+)", block)
-    if km:
-        kp = float(km.group(1))
     out = {
         "live": str(LIVE_CONSTANTS),
         "sha16": _sha16(LIVE_CONSTANTS),
@@ -289,6 +304,13 @@ def _readback(expected_id: str | None = None) -> dict:
             and has_reg
             and OFFICIAL_M6_STSLAW_JSON.exists()
         )
+    elif expected_id == HD1910_OFFICIAL_M6_KP8["id"]:
+        out["gate_ok"] = (
+            detected == "hd1910_kp8"
+            and kp == 8.0
+            and has_reg
+            and OFFICIAL_M6_STSLAW_JSON.exists()
+        )
     elif expected_id == XL330_OFFICIAL_M6["id"]:
         out["gate_ok"] = is_xl and kp == 200.0 and not has_reg
     else:
@@ -307,6 +329,9 @@ def main() -> int:
             "hd1910_kp5",
             "hd1910_official_m6_kp5",
             "p3",
+            "hd1910_kp8",
+            "hd1910_official_m6_kp8",
+            "p8",
             "xl330",
         ),
         default=None,
@@ -318,7 +343,7 @@ def main() -> int:
         raise SystemExit("use either --check or --plant, not both")
     if not a.check and not a.plant:
         raise SystemExit(
-            "need --plant hd1910|hd1910_ftservo_m6|hd1910_kp5|xl330 or --check"
+            "need --plant hd1910|hd1910_ftservo_m6|hd1910_kp5|hd1910_kp8|xl330 or --check"
         )
 
     if a.plant:

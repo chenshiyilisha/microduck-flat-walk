@@ -12,8 +12,12 @@ logs/
 out/*
 !out/sine/
 !out/kpsweep_hdg/
+!out/kpsweep2999/
 !out/hdg2000/
 !out/hdg2499/
+!out/hdg2999/
+!out/hdg2999x/
+!out/hdg030_ctrl/
 !out/rehearse_*.json
 !out/plantP_*.json
 !out/plantFreq_*.json

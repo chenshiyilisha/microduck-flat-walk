@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# HD1910 velocity explore on GPU **with heading closed loop** (P3 retrain).
+# HD1910 velocity explore on GPU **with heading closed loop** (P3/P8 retrain).
 #
 # P3 target plant is hd1910_kp5 (kp_fw=5.0), so the old explore_train.sh gate
 # (detected=hd1910 / kp_fw=32.0) will fail after the P3 switch. This script is
 # the P3-era replacement: P3 plant gate + train_heading_variant.py
 # (--rel-heading-envs) so the heading knob actually executes in the run.
 #
+# PLANT=p8 runs the same recipe on the bench sweet-spot plant (kp_fw=8.0, same
+# params JSON and control law). The gate below is derived from PLANT so the two
+# cannot be confused -- training on one plant and believing it was the other is
+# the XL330<->HD1910 incident all over again.
+#
 # Default 4096x2000 per RL_duck throughput note. The heading retrain must be
 # **one** run that merges P3 plant + rel_heading_envs>0 (task change => retrain).
 #
-# Override: ENVS=8192 ITERS=6000 REL_HEADING=0.50 bash tools/hd1910/explore_heading.sh [run_name]
+# Override: PLANT=p8 ENVS=8192 ITERS=6000 REL_HEADING=0.50 bash tools/hd1910/explore_heading.sh [run_name]
 #
 # PIN_ARATE=<w> (default: unset) additionally pins the action_rate_l2 penalty at a
 # constant weight: the staged ramp -0.1/.../-1.0 is replaced by one stage at <w>.
@@ -24,9 +29,15 @@ ITERS="${ITERS:-2000}"
 SAVE="${SAVE:-100}"
 REL_HEADING="${REL_HEADING:-0.30}"
 PIN_ARATE="${PIN_ARATE:-}"
+PLANT="${PLANT:-p3}"
+case "$PLANT" in
+  p3) PLANT_ID=hd1910_official_m6_kp5; DET_EXPECT=hd1910_kp5; KP_EXPECT=5.0 ;;
+  p8) PLANT_ID=hd1910_official_m6_kp8; DET_EXPECT=hd1910_kp8; KP_EXPECT=8.0 ;;
+  *)  echo "PLANT must be p3 or p8 (got '$PLANT')" >&2; exit 2 ;;
+esac
 AR_TAG=""
 if [ -n "$PIN_ARATE" ]; then AR_TAG="_ar${PIN_ARATE}"; fi
-RUN="${1:-hd1910_kp5_head_${REL_HEADING}${AR_TAG}_${ENVS}x${ITERS}_$(date +%m%d_%H%M)}"
+RUN="${1:-${PLANT}head_${REL_HEADING}${AR_TAG}_${ENVS}x${ITERS}_$(date +%m%d_%H%M)}"
 TASK=Mjlab-Velocity-Flat-MicroDuck
 
 export MUJOCO_GL=glfw
@@ -35,11 +46,12 @@ if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
 fi
 
 echo "== GPU / GL =="
+echo "plant=$PLANT ($PLANT_ID, expect detected=$DET_EXPECT kp_fw=$KP_EXPECT)"
 echo "rel_heading=$REL_HEADING"
 echo "pin_action_rate=${PIN_ARATE:-<unchanged ramp>}"
 "$PY" -c "import torch; assert torch.cuda.is_available(); print('cuda', torch.cuda.get_device_name(0))"
 "$PY" tools/hd1910/apply_to_live.py --check
-DET=$("$PY" -c "import json,subprocess,sys; d=json.loads(subprocess.check_output([sys.executable,'tools/hd1910/apply_to_live.py','--check','--json'])); print(d['detected']); raise SystemExit(0 if d.get('detected')=='hd1910_kp5' and d.get('kp_fw')==5.0 else 1)")
+DET=$("$PY" -c "import json,subprocess,sys; d=json.loads(subprocess.check_output([sys.executable,'tools/hd1910/apply_to_live.py','--check','--json'])); print(d['detected']); raise SystemExit(0 if d.get('detected')=='$DET_EXPECT' and d.get('kp_fw')==$KP_EXPECT else 1)")
 echo "detected $DET"
 
 mkdir -p out
@@ -49,14 +61,14 @@ import json, hashlib, pathlib
 p=pathlib.Path('tools/bam_params/hd1910/official_m6_stslaw.json')
 meta={
   'run': '$RUN', 'task': '$TASK',
-  'plant': 'hd1910_official_m6_kp5', 'kp_fw': 5.0,
+  'plant': '$PLANT_ID', 'kp_fw': $KP_EXPECT,
   'device': 'cuda:0', 'gpu_ids': [0], 'mujoco_gl': 'glfw',
   'official_m6_stslaw_sha256_16': hashlib.sha256(p.read_bytes()).hexdigest()[:16],
   'rel_heading_envs': $REL_HEADING,
   'pin_action_rate_weight': ('${PIN_ARATE}' or None),
   'expected_heading_x_forward_overlap': $REL_HEADING * 0.20,
   'envs': $ENVS, 'iters': $ITERS,
-  'ref': 'P3 plant + heading closed loop (P2 yaw gap fix)',
+  'ref': '$PLANT plant ($PLANT_ID) + heading closed loop (yaw gap fix)',
 }
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
 print('runmeta -> out/runmeta_${RUN}.json')

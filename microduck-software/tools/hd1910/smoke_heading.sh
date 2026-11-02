@@ -4,10 +4,12 @@
 # Same shape as tools/hd1910/smoke_train.sh but drives the heading variant
 # (train_heading_variant.py --rel-heading-envs <v>) instead of train.exe, so
 # the run really executes the modified command loop. Plant gate is P3
-# (hd1910_kp5 / kp_fw=5.0), not the m5/kp32 gate smoke_train.sh checks.
+# (hd1910_kp5 / kp_fw=5.0) by default, not the m5/kp32 gate smoke_train.sh
+# checks; PLANT=p8 switches it to the bench sweet-spot plant.
 #
 # Env overrides:
 #   REL_HEADING=0.30 bash tools/hd1910/smoke_heading.sh [run_name]
+#   PLANT=p8 REL_HEADING=0.30 bash tools/hd1910/smoke_heading.sh [run_name]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 PY=.venv-mjlab/Scripts/python.exe
@@ -15,6 +17,12 @@ RUN="${1:-head_smoke_$(date +%m%d_%H%M)}"
 TASK=Mjlab-Velocity-Flat-MicroDuck
 REL_HEADING="${REL_HEADING:-0.30}"
 DEVICE="${MICRODUCK_DEVICE:-cuda:0}"
+PLANT="${PLANT:-p3}"
+case "$PLANT" in
+  p3) PLANT_ID=hd1910_official_m6_kp5; DET_EXPECT=hd1910_kp5; KP_EXPECT=5.0 ;;
+  p8) PLANT_ID=hd1910_official_m6_kp8; DET_EXPECT=hd1910_kp8; KP_EXPECT=8.0 ;;
+  *)  echo "PLANT must be p3 or p8 (got '$PLANT')" >&2; exit 2 ;;
+esac
 
 # Official Windows path used by every successful velocity run in this repo.
 export MUJOCO_GL=glfw
@@ -27,9 +35,9 @@ echo "== GPU / GL =="
 echo "MUJOCO_GL=$MUJOCO_GL  device=$DEVICE  rel_heading=$REL_HEADING  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>}"
 "$PY" -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; print('cuda', torch.cuda.get_device_name(0))"
 
-echo "== plant check (P3: hd1910_kp5 / kp_fw=5.0) =="
+echo "== plant check ($PLANT: $DET_EXPECT / kp_fw=$KP_EXPECT) =="
 "$PY" tools/hd1910/apply_to_live.py --check
-DET=$("$PY" -c "import json,subprocess,sys; d=json.loads(subprocess.check_output([sys.executable,'tools/hd1910/apply_to_live.py','--check','--json'])); print(d['detected']); raise SystemExit(0 if d.get('detected')=='hd1910_kp5' and d.get('kp_fw')==5.0 else 1)")
+DET=$("$PY" -c "import json,subprocess,sys; d=json.loads(subprocess.check_output([sys.executable,'tools/hd1910/apply_to_live.py','--check','--json'])); print(d['detected']); raise SystemExit(0 if d.get('detected')=='$DET_EXPECT' and d.get('kp_fw')==$KP_EXPECT else 1)")
 echo "detected $DET"
 
 mkdir -p out
@@ -40,8 +48,8 @@ p=pathlib.Path('tools/bam_params/hd1910/official_m6_stslaw.json')
 meta={
   'run': '$RUN',
   'task': '$TASK',
-  'plant': 'hd1910_official_m6_kp5',
-  'kp_fw': 5.0,
+  'plant': '$PLANT_ID',
+  'kp_fw': $KP_EXPECT,
   'device': '$DEVICE',
   'gpu_ids': [0],
   'mujoco_gl': '$MUJOCO_GL',

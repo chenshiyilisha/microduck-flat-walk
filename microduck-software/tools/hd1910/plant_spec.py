@@ -132,6 +132,34 @@ HD1910_OFFICIAL_M6_KP5 = {
     },
 }
 
+# Same params JSON + same official STS3215 control law as P3, ONLY the firmware P
+# differs (reg 50). Added 2026-11-02 after the bench P sweep (memory §23).
+#
+# ⚠️ Read the caveat before trusting anything trained here: BAM reproduces the
+# bench gain to +0.8% at P5 but +5.4% at P8 (+32% at P32), and its phase is a
+# first-order lag where the bench is ~170 ms of *pure* delay — so the sim gets
+# more optimistic the higher P goes. A P8 policy's own sim numbers are therefore
+# the weakest evidence we have, and the P5 line stays the reference.
+HD1910_OFFICIAL_M6_KP8 = {
+    **HD1910_OFFICIAL_M6_KP5,
+    "id": "hd1910_official_m6_kp8",
+    "kp_fw": 8.0,
+    "provenance": {
+        **HD1910_OFFICIAL_M6_KP5["provenance"],
+        "why_kp8": (
+            "bench P sweep at 4.5 V: gain 0.435(P5) -> 0.623(P8) (+43%), jerk +15%, "
+            "current +27%; P12/P16 gain still rises but the whole-machine numbers do "
+            "not follow, so 8 is the top of the sweet spot, not 16."
+        ),
+        "caveat": (
+            "BAM gain error vs bench: +0.8%@P5, +5.4%@P8, +31.6%@P32; BAM phase is a "
+            "bounded first-order lag while the bench carries ~170 ms of pure delay, so "
+            "the sim's P8 point is optimistic — see docs/05-flat-walk §23."
+        ),
+        "verify": "tools/hd1910/probe_plant_law.py --json <this> --kp-fw 8",
+    },
+}
+
 # Upstream official defaults (byte-identical to microduck_rl-develop).
 XL330_OFFICIAL_M6 = {
     "id": "xl330_official_m6",
@@ -186,6 +214,19 @@ def kwargs_block(plant: str) -> str:
     json_path=str(Path(__file__).resolve().parents[5] / "tools" / "bam_params" / "hd1910" / "{_fname}"),
     target_names_expr=(r"{TARGET_NAMES}",),
     kp_fw={s["kp_fw"]},  # firmware P in force at runtime (reg 50); 32 is the factory ROM default
+    vin_range={s["vin_range"]},
+    vin_drop_gain_range={s["vin_drop_gain_range"]},
+    vin_min={s["vin_min"]},
+    delay_min_lag={s["delay_min_lag"]},
+    delay_max_lag={s["delay_max_lag"]},
+)'''
+    if plant in ("hd1910_kp8", "hd1910_official_m6_kp8", "p8"):
+        s = HD1910_OFFICIAL_M6_KP8
+        _fname = OFFICIAL_M6_STSLAW_JSON.name
+        return f'''_BAM_ACTUATOR_KWARGS = dict(
+    json_path=str(Path(__file__).resolve().parents[5] / "tools" / "bam_params" / "hd1910" / "{_fname}"),
+    target_names_expr=(r"{TARGET_NAMES}",),
+    kp_fw={s["kp_fw"]},  # bench sweet spot; differs from P3 ONLY in this number
     vin_range={s["vin_range"]},
     vin_drop_gain_range={s["vin_drop_gain_range"]},
     vin_min={s["vin_min"]},

@@ -1,0 +1,147 @@
+{
+  "tool": "rehearse_deploy",
+  "onnx": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\logs\\rsl_rl\\microduck_velocity_hd1910\\2026-11-02_20-23-39_p3head_rw_4096x2500_resume1750_resume2499\\2026-11-02_20-23-39_p3head_rw_4096x2500_resume1750_resume2499.onnx",
+  "infer_policy": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.upstream\\microduck_rl-develop\\scripts\\infer_policy.py",
+  "scene": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck\\scene.xml",
+  "training_parity": {
+    "same": [
+      "HD1910 plant 'p3' = hd1910_official_m6_kp5 (json=official_m6_stslaw.json, kp_fw=5, model=m6, target_names_expr excludes passive_*) \u2014 patched via rehearse_hd1910.py",
+      "obs layout 61D: ang_vel3 + proj_grav3 + joint_pos14 + joint_vel14 + last_action14 + twist3 + head4 + body6 (verified against the live cfg term order)",
+      "joint_pos action scale 1.0 (cfg.actions['joint_pos'].scale)",
+      "DEFAULT_POSE == HOME_FRAME.STAND2 (verified elementwise; actuator order == DEFAULT_POSE order)",
+      "control 50 Hz = decimation 4 x timestep 0.005; MuJoCo solver iterations 100/50",
+      "use_projected_gravity=True (USE_PROJECTED_GRAVITY=True in the task cfg)"
+    ],
+    "differs": [
+      "actuator delay 3-6 x 5 ms = 15-30 ms in training (physics steps), vs 0 by default here; rehearsal --delay is counted in 20 ms CONTROL steps, so only delay=1 (20 ms) lands inside the training band \u2014 delay>=2 is a stress number, not a verdict",
+      "CPU MuJoCo (Newton/implicitfast + stiff friction constraints) vs warp/MJX at train time -> same model, different solver numerics",
+      "training uses collisions=(FULL_COLLISION,): every geom pair collides; the CPU scene keeps the XML's `self_collision_only` class for the leg shells",
+      "friction DR (FrictionDRBamActuatorCfg) is per-env at train time; here it is the fixed XML value (MuJoCo default sliding mu=1.0)",
+      "one robot, deterministic initial state (yaw=0) vs 32 envs with reset_base yaw in (-pi, pi)",
+      "no push_by_setting_velocity events here; the eval script drops them too",
+      "plant is hd1910_official_m6_kp5 (kp_fw=5), not XL330 m6 (kp_fw=200); infer_policy.py itself is unchanged"
+    ]
+  },
+  "protocol": {
+    "note": "single robot, deterministic initial state -> NOT comparable with the 32-env eval_velocity_in_sim.py numbers (different instrument).",
+    "fall_criterion": "tilt > 70 deg == training fell_over (bad_orientation, limit_angle=1.2217304764 rad). Height does not trigger a fall.",
+    "truncate_at_fall": true,
+    "truncate_reason": "training terminates the episode on fell_over and resets, so no post-fall state enters its statistics; rolling through a fall fabricates a velocity for a robot that is on the floor.",
+    "window": "speed/displacement cover valid_s seconds = min(requested, fell_at)",
+    "steady_window": "last 75% of the VALID control steps"
+  },
+  "runs": [
+    {
+      "condition": "low_batt",
+      "settings": {
+        "vin": 6.5,
+        "vin_drop_gain": 0.2,
+        "delay": 0,
+        "kp_fw": 5.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "delay_ms": 0.0,
+        "delay_train_band_ms": [
+          15.0,
+          30.0
+        ],
+        "start_height": 0.125,
+        "yaw_deg": 0.0,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "window": {
+        "requested_s": 8.0,
+        "valid_s": 8.0,
+        "truncated_by_fall": false,
+        "control_steps": 400,
+        "tilt_at_fall_deg": null,
+        "z_at_fall": null
+      },
+      "speed": {
+        "vx_mean_steady": 0.10425992075353861,
+        "vx_p50_steady": 0.10613970085978508,
+        "ratio_vs_cmd": 0.2606498018838465,
+        "vx_first_second": 0.05779470512177795,
+        "comparable": true,
+        "note": null
+      },
+      "displacement": {
+        "dx_body": 0.7600801562821365,
+        "dy_body": 0.1016265306347564,
+        "dx_world": 0.7600801562821365,
+        "dy_world": 0.1016265306347564
+      },
+      "heading": {
+        "yaw0_deg": 0.0,
+        "yaw_end_deg": 1.5796614626772059,
+        "yaw_delta_deg": 1.579661462677194,
+        "heading_closed_loop": true,
+        "heading_target_deg": 0.0,
+        "heading_gain": 0.5,
+        "heading_max_ang_vel": 1.0,
+        "heading_error_final_deg": -1.5796614626772094,
+        "yaw_drift_deg_s": 22.716430022737562,
+        "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but dx_world<0, check yaw_delta (~\u00b1180 = turned around)."
+      },
+      "stability": {
+        "fell_at_s": null,
+        "fell": false,
+        "fall_criterion": "tilt > 70 deg (== training fell_over limit_angle 1.2217304764 rad)",
+        "nan_at_s": null,
+        "min_height": 0.11366865970648127,
+        "final_height": 0.11717842140500309,
+        "max_tilt_deg": 5.622704129452426,
+        "mean_abs_tilt_deg": 3.0192637498637866
+      },
+      "ctrl_path": {
+        "probed": true,
+        "max_abs_ctrl_minus_target": 0.7004319138991191,
+        "ctrl_max_abs": 0.1698116369711711,
+        "bam_flag": true
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": true,
+        "moves_forward": true,
+        "covered_window": true,
+        "ctrl_path_matches_flag": true,
+        "heading_converged": true
+      },
+      "not_applicable": [],
+      "failed": []
+    }
+  ],
+  "all_gates_pass": true
+}

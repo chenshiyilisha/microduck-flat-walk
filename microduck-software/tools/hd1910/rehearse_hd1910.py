@@ -17,14 +17,19 @@ default rather than a fixed preset:
 * a hardcoded preset silently keeps working after the live plant changes, and
   the rehearsal numbers then describe a robot nobody trained on.
 
-Pass ``--plant p3|m5|ftservo`` only to rehearse a plant you are NOT live on, and
+Pass ``--plant p3|p8|m5|ftservo`` only to rehearse a plant you are NOT live on, and
 read the echoed ``plant:`` line + the ``settings.plant`` block in the JSON back.
 
 Presets (``tools/hd1910/plant_spec.py``)::
 
     p3      hd1910_official_m6_kp5   official STS3215 law, kp_fw=5   <- ruled target
+    p8      hd1910_official_m6_kp8   same law + same JSON, kp_fw=8   <- bench sweet spot
     m5      hd1910_openmicroduck_m5  local m5.json,        kp_fw=32
     ftservo hd1910_ftservo_official_m6  official params,   kp_fw=32
+
+``p3`` and ``p8`` share one params JSON, so ``--plant p8`` and ``--plant p3 --kp-fw 8``
+are the same plant. Prefer ``--plant p8``: it keeps the preset's P in the report even
+if you forget ``--kp-fw``.
 
 Usage (from ``microduck-software/``)::
 
@@ -51,6 +56,7 @@ import rehearse_deploy as rd  # noqa: E402
 from plant_spec import (  # noqa: E402
     HD1910_FTSERVO_OFFICIAL_M6,
     HD1910_OFFICIAL_M6_KP5,
+    HD1910_OFFICIAL_M6_KP8,
     HD1910_OPENMICRODUCK_M5,
 )
 
@@ -59,12 +65,25 @@ from plant_spec import (  # noqa: E402
 RUNS_ROOT = ROOT / "logs" / "rsl_rl"
 
 
+#: Checkpoints at or below this iteration are not a trained policy: a run killed
+#: in its first minute leaves ``model_0.pt`` + an ONNX behind, and a 5-iteration
+#: smoke leaves ``model_4.pt``. Both are *newer* than last night's real
+#: checkpoint, so mtime ordering happily serves an untrained graph as "the latest
+#: policy" -- the exact failure mode mtime resolution was introduced to avoid.
+MIN_TRAINED_ITER = 50
+
+
 def resolve_latest_onnx(runs_root: pathlib.Path = RUNS_ROOT) -> pathlib.Path:
-    """Newest exported policy under the training log tree.
+    """Newest *trained* exported policy under the training log tree.
 
     This wrapper used to hardcode ``out/onnx_p3head030_it1600.onnx``, so a
     rehearsal run on the day after a fresh checkpoint silently judged a stale
     policy -- twice. Resolve by mtime instead, and print what was picked.
+
+    mtime alone is still not safe: an aborted run or a smoke exports its ONNX
+    before anything has been learned. Candidates whose newest companion
+    checkpoint is at or below ``MIN_TRAINED_ITER`` are therefore skipped (and
+    named), falling back to the newest of them only if nothing else exists.
     """
     cands = sorted(
         (p for p in runs_root.rglob("*.onnx") if p.is_file()),
@@ -74,6 +93,16 @@ def resolve_latest_onnx(runs_root: pathlib.Path = RUNS_ROOT) -> pathlib.Path:
         raise SystemExit(
             f"no exported ONNX under {runs_root} (train first, or pass --onnx)"
         )
+    untrained = []
+    for p in reversed(cands):
+        _, it = _onnx_companion(p)
+        if it >= MIN_TRAINED_ITER:
+            return p
+        untrained.append((p, it))
+    print(f"⚠️  every ONNX under {runs_root} is at iteration < {MIN_TRAINED_ITER} "
+          f"(smoke / aborted run); using the newest anyway:")
+    for p, it in untrained[:5]:
+        print(f"    iter {it:>5}  {_rel(p)}")
     return cands[-1]
 
 
@@ -136,6 +165,8 @@ _BASE_PARITY = {
 #: ``--plant`` value -> preset. "live" is resolved through apply_to_live._readback.
 PLANTS = {
     "p3": HD1910_OFFICIAL_M6_KP5,
+    # Same JSON + same control law as p3; only reg 50 differs (bench sweet spot).
+    "p8": HD1910_OFFICIAL_M6_KP8,
     "m5": HD1910_OPENMICRODUCK_M5,
     "ftservo": HD1910_FTSERVO_OFFICIAL_M6,
 }
@@ -143,6 +174,7 @@ PLANTS = {
 #: ``detected`` string in microduck_constants.py -> preset key.
 DETECTED_TO_PRESET = {
     "hd1910_kp5": "p3",
+    "hd1910_kp8": "p8",
     "hd1910": "m5",
     "hd1910_ftservo_m6": "ftservo",
 }
@@ -217,19 +249,26 @@ def _load_upstream_hd1910(path: pathlib.Path):
 rd.load_upstream = _load_upstream_hd1910
 
 
-def _publish_parity(key: str, plant: dict) -> None:
-    """Annotate the JSON so readers cannot confuse this with an XL330 rehearsal."""
+def _publish_parity(key: str, plant: dict, kp_fw: float) -> None:
+    """Annotate the JSON so readers cannot confuse this with an XL330 rehearsal.
+
+    ``kp_fw`` is the **effective** gain, i.e. the one ``--kp-fw`` asked for when
+    given. The old code always printed ``plant['kp_fw']``, so a kp sweep wrote
+    four reports whose top-level plant fingerprint all read "kp_fw=5" — only the
+    per-run ``settings.kp_fw`` told the truth. A sweep is exactly when readers
+    compare fingerprints, so this must not lie.
+    """
     json_name = pathlib.Path(plant["json_path"]).name
     rd.TRAINING_PARITY = {
         "same": [
             f"HD1910 plant '{key}' = {plant['id']} (json={json_name}, "
-            f"kp_fw={float(plant['kp_fw']):g}, model={plant['model']}, "
+            f"kp_fw={kp_fw:g}, model={plant['model']}, "
             "target_names_expr excludes passive_*) — patched via rehearse_hd1910.py",
             *list(_BASE_PARITY["same"][1:]),
         ],
         "differs": [
             *list(_BASE_PARITY["differs"]),
-            f"plant is {plant['id']} (kp_fw={float(plant['kp_fw']):g}), not XL330 m6 "
+            f"plant is {plant['id']} (kp_fw={kp_fw:g}), not XL330 m6 "
             "(kp_fw=200); infer_policy.py itself is unchanged",
         ],
     }
@@ -285,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         add_help=False,
     )
     pre.add_argument("-h", "--help", action="store_true")
-    pre.add_argument("--plant", default="live", help="live|p3|m5|ftservo")
+    pre.add_argument("--plant", default="live", help="live|p3|p8|m5|ftservo")
     known, rest = pre.parse_known_args(argv)
 
     if known.help:
@@ -296,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "HD1910 wrapper defaults:\n"
             f"  --plant : {known.plant}   (p3={HD1910_OFFICIAL_M6_KP5['id']}, "
+            f"p8={HD1910_OFFICIAL_M6_KP8['id']}, "
             f"m5={HD1910_OPENMICRODUCK_M5['id']}, "
             f"ftservo={HD1910_FTSERVO_OFFICIAL_M6['id']})\n"
             f"  --onnx  : newest under logs/rsl_rl/  ->  {newest}\n"
@@ -308,12 +348,17 @@ def main(argv: list[str] | None = None) -> int:
     rest = _strip_plant(rest)
     key, plant = resolve_plant(known.plant)
     _STATE["key"], _STATE["plant"] = key, plant
-    kp_fw = float(plant["kp_fw"])
-    _publish_parity(key, plant)
+    # --kp-fw wins over the preset: the caller is pinning the firmware P, and
+    # every report must say which P it was actually run at (kp sweep).
+    override = _flag_value(rest, "--kp-fw")
+    kp_fw = float(override) if override is not None else float(plant["kp_fw"])
+    _publish_parity(key, plant, kp_fw)
 
     print(
         f"plant: {key} -> {plant['id']}  json={pathlib.Path(plant['json_path']).name}  "
         f"kp_fw={kp_fw:g}"
+        + ("" if override is None else f"  (--kp-fw overrides preset "
+           f"{float(plant['kp_fw']):g})")
     )
     return rd.main(_inject_defaults(rest, kp_fw))
 
