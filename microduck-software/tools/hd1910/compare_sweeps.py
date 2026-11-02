@@ -60,6 +60,33 @@ def resolve(spec: str) -> Path:
     raise SystemExit(f"not a sweep directory: {spec} (no out/sweep_*{spec}*)")
 
 
+_LEG_PREFIX = ("left_", "right_")
+
+
+def _leg_joints(jo: dict, suffix: str | None = None) -> list[dict]:
+    out = []
+    for p in jo.get("per_joint") or []:
+        name = p.get("joint", "")
+        if not name.startswith(_LEG_PREFIX):
+            continue
+        if suffix and not name.endswith(suffix):
+            continue
+        out.append(p)
+    return out
+
+
+def _leg_amp(jo: dict, suffix: str | None = None) -> float | None:
+    """Mean p2p amplitude (deg) over matching leg joints; None if the block is absent."""
+    js = _leg_joints(jo, suffix)
+    vals = [p["amp_deg_median"] for p in js if p.get("amp_deg_median") is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _leg_dq(jo: dict) -> float | None:
+    vals = [p["peak_vel_rad_s"] for p in _leg_joints(jo) if p.get("peak_vel_rad_s") is not None]
+    return max(vals) if vals else None
+
+
 def load(dirpath: Path) -> list[dict]:
     rows = []
     for f in sorted(dirpath.glob("*.json")):
@@ -91,8 +118,14 @@ def load(dirpath: Path) -> list[dict]:
                 "err_xy": om.get("error_vel_xy"),
                 "err_yaw": om.get("error_vel_yaw"),
                 "fall": (st.get("terminated_frac") or 0.0) * 100.0,
-                "amp": jo.get("amp_deg_median_max"),
-                "dq": jo.get("peak_vel_rad_s_max"),
+                # Leg-only aggregates. The json-wide maxima are head_yaw / neck and
+                # routinely 3-5x the legs, so quoting them as "joint amplitude" reads
+                # as if the legs swing 90 deg. Keep the json-wide ones as *_all.
+                "knee": _leg_amp(jo, "knee"),
+                "hip_pitch": _leg_amp(jo, "hip_pitch"),
+                "dq_leg": _leg_dq(jo),
+                "amp_all": jo.get("amp_deg_median_max"),
+                "dq_all": jo.get("peak_vel_rad_s_max"),
             }
         )
     return rows
@@ -159,7 +192,7 @@ def main() -> int:
     hdr = (f"{'iter':>5} {'cmd':>5} | {'vx A':>6} {'vx B':>6} {'dvx%':>6} | "
            f"{'ratio A':>7} {'ratio B':>7} | {'err A':>6} {'err B':>6} | "
            f"{'yaw A':>6} {'yaw B':>6} | {'fall A':>6} {'fall B':>6} | "
-           f"{'amp A':>6} {'amp B':>6} {'dq B':>5}")
+           f"{'knee A':>6} {'knee B':>6} | {'dq A':>5} {'dq B':>5}")
     print("\n" + hdr)
     print("-" * len(hdr))
     for key in sorted(keyed):
@@ -178,7 +211,8 @@ def main() -> int:
               f"{fmt(A['err_xy'], 3):>6} {fmt(B['err_xy'], 3):>6} | "
               f"{fmt(A['err_yaw'], 3):>6} {fmt(B['err_yaw'], 3):>6} | "
               f"{fmt(A['fall'], 1):>6} {fmt(B['fall'], 1):>6} | "
-              f"{fmt(A['amp'], 1):>6} {fmt(B['amp'], 1):>6} {fmt(B['dq'], 2):>5}")
+              f"{fmt(A['knee'], 1):>6} {fmt(B['knee'], 1):>6} | "
+              f"{fmt(A['dq_leg'], 2):>5} {fmt(B['dq_leg'], 2):>5}")
 
     print("\nreading: ratio = vx/cmd is the speed axis; err_xy the tracking axis; "
           "fall%% >= 3 means unusable regardless of speed.")
