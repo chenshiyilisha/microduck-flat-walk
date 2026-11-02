@@ -27,10 +27,15 @@ different instrument, see §12.5. This tool answers a binary question per condit
 deployed stack keep walking, or does it collapse. The conditions are the ones training
 randomised over, so the interesting answer is at the extremes, not the nominal point:
 
+  low_volt     vin 4.5 V, sag 0.1   — bench anchor (台架 sine was measured here); below
+                                      Feetech's 4-8.4 V band, a pessimistic bound, not
+                                      a deployment point
   nominal      vin 7.4 V, sag 0.1   — training's midpoint
   low_batt     vin 6.5 V, sag 0.2   — both worst ends at once
   high_batt    vin 8.2 V, sag 0.0   — stiffest, no sag
-  latency_60   3 control steps of action delay — upstream's 3-6 period envelope
+  delay1/2/4   1/2/4 control steps of action delay = 20/40/80 ms. Training randomised
+                                      15-30 ms, so only delay1 is inside the band; delay2
+                                      and delay4 are stress, not a verdict.
 
 Usage::
 
@@ -117,6 +122,12 @@ TRAIN_DELAY_MS = (15.0, 30.0)
 CONTROL_STEP_MS = 20.0
 
 CONDITIONS = {
+    # 4.5 V is the bench anchor: the台架 sine measurements (gain 0.433 / lag 116 deg at
+    # P=5, 1.89 Hz) were taken at 4.5 V, so this is the one condition whose plant can be
+    # checked against hardware instead of only against BAM's own scaling. It is below
+    # Feetech's 4-8.4 V band edge and below anything the real robot will see -- it is a
+    # pessimistic bound, not a deployment point.
+    "low_volt": dict(vin=4.5, vin_drop_gain=0.1, delay=0),
     "nominal": dict(vin=7.4, vin_drop_gain=0.1, delay=0),
     "low_batt": dict(vin=6.5, vin_drop_gain=0.2, delay=0),
     "high_batt": dict(vin=8.2, vin_drop_gain=0.0, delay=0),
@@ -548,7 +559,7 @@ def main(argv=None):
                     help="clip limit for cmd[2] [rad/s] (default 1.0 = training ang_vel_z[1])")
     ap.add_argument("--seconds", type=float, default=8.0, help="rehearsal length per condition")
     ap.add_argument("--sweep", action="store_true",
-                    help="run all four training-DR conditions instead of just --condition")
+                    help="run all CONDITIONS (voltage + delay) instead of just --condition")
     ap.add_argument("--condition", default="nominal", choices=sorted(CONDITIONS),
                     help="single condition when --sweep is absent")
     ap.add_argument("--vin", type=float, default=None, help="override battery voltage [V]")
