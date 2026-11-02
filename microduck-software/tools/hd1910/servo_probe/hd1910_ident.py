@@ -348,6 +348,12 @@ def cmd_step(bus: Bus, sid: int, args):
     rows, miss = [], 0
     print(f"录制 → {path}：静置 {args.pre}s → {start}→{up}→{back}，"
           f"每段 {args.hold}s，50 Hz。Ctrl-C 中止，数据照常落盘。")
+    # 限速/限流三个寄存器必须先存原值 —— step 原先只存了增益，于是反测完
+    # reg48=500（50% 力矩）在舵机上留了一整天，下一个人测到的是未知基线。
+    sp_orig = bus.read_u16(sid, REG_SPEED)
+    ac_orig = bus.read_u8(sid, REG_ACCEL)
+    tl_orig = bus.read_u16(sid, REG_TORQUE_LIMIT)
+    print(f"原限速 reg46={sp_orig} reg41={ac_orig}｜限流 reg48={tl_orig}（测完恢复）")
     try:
         # ① 先把 goal 钉在当前位置：切增益的瞬间若 goal 还停在上一轮残留值，
         #    新增益会立刻把它拽过去 —— 那是"没测就动了"。
@@ -397,6 +403,21 @@ def cmd_step(bus: Bus, sid: int, args):
         print("\n手动中止")
     finally:
         _disarm(bus, sid)
+        # 限速/限流同样要恢复并回读。sine 早就有这段，step 一直没有 ——
+        # 于是 reg48=500 被留了整天（A/B 证明无影响，但那是运气，不是设计）。
+        try:
+            bus.write_u16(sid, REG_SPEED, sp_orig)
+            bus.write_u8(sid, REG_ACCEL, ac_orig)
+            bus.write_u16(sid, REG_TORQUE_LIMIT, tl_orig)
+            time.sleep(0.05)
+            rb = (bus.read_u16(sid, REG_SPEED), bus.read_u8(sid, REG_ACCEL),
+                  bus.read_u16(sid, REG_TORQUE_LIMIT))
+            ok = rb == (sp_orig, ac_orig, tl_orig)
+            print(f"{'✔' if ok else '✗'} 限速/限流恢复 reg46={rb[0]} reg41={rb[1]} "
+                  f"reg48={rb[2]}（原 {sp_orig}/{ac_orig}/{tl_orig}）")
+        except Exception as e:
+            print(f"✗ 限速/限流恢复失败：{e}  ⚠️ 舵机仍是测试值，手动写回 "
+                  f"reg46={sp_orig} reg41={ac_orig} reg48={tl_orig}")
         # 恢复原 RAM 增益（不动 EEPROM）。恢复也要回读 —— 否则"以为恢复了"。
         if args.kp is not None or args.kd is not None:
             try:
@@ -657,9 +678,10 @@ def cmd_sine(bus: Bus, sid: int, args):
     # 用 telem / 手写 goal 时就是"无限速"状态 —— 那是下一个人的事故。
     sp_orig = bus.read_u16(sid, REG_SPEED)
     ac_orig = bus.read_u8(sid, REG_ACCEL)
+    tl_orig = bus.read_u16(sid, REG_TORQUE_LIMIT)
     sp_rb = ac_rb = None
     print(f"起始 {start}  RAM P={kp_ram} D={kd_ram}｜EEPROM P={kp_ee} D={kd_ee}")
-    print(f"原限速 reg46={sp_orig} reg41={ac_orig}（测完恢复）")
+    print(f"原限速 reg46={sp_orig} reg41={ac_orig}｜限流 reg48={tl_orig}（测完恢复）")
     print(f"行程限制 reg9/reg11 = {amin}/{amax}　幅度 ±{amp_steps} 步 "
           f"({args.sine_amp_deg}°)")
 
@@ -764,9 +786,12 @@ def cmd_sine(bus: Bus, sid: int, args):
         try:
             bus.write_u16(sid, REG_SPEED, sp_orig)
             bus.write_u8(sid, REG_ACCEL, ac_orig)
+            bus.write_u16(sid, REG_TORQUE_LIMIT, tl_orig)
             sr, ar = bus.read_u16(sid, REG_SPEED), bus.read_u8(sid, REG_ACCEL)
-            print(f"{'✔' if (sr, ar) == (sp_orig, ac_orig) else '✗'} 限速恢复 "
-                  f"reg46={sr} reg41={ar}（原 {sp_orig}/{ac_orig}）")
+            tr = bus.read_u16(sid, REG_TORQUE_LIMIT)
+            ok = (sr, ar, tr) == (sp_orig, ac_orig, tl_orig)
+            print(f"{'✔' if ok else '✗'} 限速/限流恢复 "
+                  f"reg46={sr} reg41={ar} reg48={tr}（原 {sp_orig}/{ac_orig}/{tl_orig}）")
         except Exception as e:
             print(f"✗ 限速恢复失败：{e}  ⚠️ 舵机仍是无限速状态，"
                   f"下次上电或手动写 reg46={sp_orig}")
