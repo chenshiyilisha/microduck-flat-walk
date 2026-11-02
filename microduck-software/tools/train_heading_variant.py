@@ -638,12 +638,20 @@ def main() -> int:
         # rejects every resume out of hand -- and worse, silently accepting a
         # mismatched pair would run the tracking phase at the wrong time.
         absolute_total = resume_offset + int(args.agent.max_iterations)
-        if stage_iters[3] > absolute_total:
+        if stage_iters[3] >= absolute_total:
             raise SystemExit(
-                f"the last heading stage ({stage_iters[3]}) is past the absolute end of "
-                f"this run ({absolute_total} = resume_offset {resume_offset} + "
-                f"max_iterations {args.agent.max_iterations}); the run would end "
-                "before the tracking phase starts."
+                f"the last heading stage (iteration {stage_iters[3]}) never activates: "
+                f"mdp.reward_weight applies a stage only while "
+                f"common_step_counter > step ({stage_iters[3]}*{int(args.agent.num_steps_per_env)} "
+                f"= {stage_iters[3] * int(args.agent.num_steps_per_env)}), and this run ends at "
+                f"counter {absolute_total * int(args.agent.num_steps_per_env)} "
+                f"(iterations {resume_offset} + {args.agent.max_iterations} = {absolute_total}, "
+                f"the last one being {absolute_total - 1}).\n"
+                "  Observed 2026-11-02: --heading-stage-iters 0,1000,1750,2500 with "
+                "--agent.max-iterations 2500 trained 750 iterations at tracking weight 1.5 and "
+                "NEVER reached the designed 3.0 -- the strict '>' makes a stage whose step "
+                "equals the run length unreachable. Move the last mark strictly inside the run "
+                "(e.g. 0,1000,1750,2100 for a 2500-iteration run)."
             )
         heading_rewards = add_heading_reward_curriculum(
             args.env,

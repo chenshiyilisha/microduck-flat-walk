@@ -102,6 +102,32 @@ def read_state(ckpt: Path) -> tuple[int, int | None]:
     return it, (None if counter is None else int(counter))
 
 
+def heading_tracking_stages(run_dir: Path) -> list[tuple[int, float]]:
+    """Read back the tracking-weight stages this run was launched with.
+
+    params/env.yaml is dumped with python tags, so yaml.safe_load fails on it --
+    locate the block by indentation instead and pull the (step, weight) pairs.
+    """
+    text = (run_dir / "params" / "env.yaml").read_text(encoding="utf-8")
+    i = text.find("\n  heading_tracking_weight:")
+    if i < 0:
+        return []
+    rest = text[i + 1:]
+    nxt = re.search(r"^  \w", rest[3:], re.MULTILINE)
+    block = rest[: nxt.start() + 3] if nxt else rest
+    return [(int(a), float(b))
+            for a, b in re.findall(r"step:\s*(\d+)\s*\n\s*weight:\s*([0-9.eE+-]+)", block)]
+
+
+def active_weight(stages: list[tuple[int, float]], counter: int) -> float | None:
+    """Same rule as mjlab_microduck.tasks.mdp.reward_weight: last stage with step < counter."""
+    w = None
+    for step, weight in stages:
+        if counter > step:
+            w = weight
+    return w
+
+
 def num_steps_per_env(run_dir: Path) -> int:
     """Read it as text: mjlab dumps params with python tags, so yaml.safe_load fails."""
     text = (run_dir / "params" / "agent.yaml").read_text(encoding="utf-8")
@@ -188,26 +214,50 @@ def main() -> int:
 
     # Gate 2: the saved iteration and the saved curriculum counter must agree.
     # save() runs after the iteration's num_steps_per_env control steps, hence +1.
+    #
+    # Off-by-one on resume (measured 2026-11-02, see docstring): rsl_rl's load()
+    # restores current_learning_iteration = it and learn() then runs range(it, ...),
+    # so the boundary iteration is trained a second time. Every resume therefore
+    # adds exactly num_steps_per_env steps to common_step_counter, leaving
+    # counter = (iter + 1 + resumes) * nse. Demanding exact equality refuses every
+    # second resume, so the drift is bounded and printed instead.
     expect = (done + 1) * nse
     if counter is None:
         raise SystemExit(
             f"{ckpt.name} has no infos['env_state']['common_step_counter']; the heading "
             "curriculum would restart at phase 1 on resume. Refusing."
         )
-    if counter != expect:
+    drift = counter - expect
+    if drift < 0 or drift % nse != 0 or drift > 2 * nse:
         raise SystemExit(
-            f"counter {counter} != (iter {done} + 1) x {nse} = {expect}. The checkpoint's "
-            "iteration and its curriculum stage disagree -- resuming would run the wrong "
-            "heading stage. Refusing rather than guessing."
+            f"counter {counter} is not (iter {done} + 1) x {nse} = {expect} plus a whole "
+            f"number of duplicated resume iterations (drift {drift} steps, allowed "
+            f"0..{2 * nse}). The checkpoint's iteration and its curriculum stage disagree "
+            "-- resuming would run the wrong heading stage. Refusing rather than guessing."
         )
+    if drift:
+        print(f"⚠️  counter drift +{drift} steps = +{drift // nse} iteration(s): rsl_rl "
+              "re-trains the boundary iteration on every resume, so the curriculum runs "
+              "that far ahead of the iteration number.")
     if it_from_name != done:
         raise SystemExit(f"filename says iter {it_from_name} but the file says {done}")
-    print(f"counter ok : (iter+1) x num_steps_per_env = {expect}")
+    print(f"counter ok : (iter+1) x num_steps_per_env = {expect} (+{drift})")
 
     remaining = a.target - done
     if remaining <= 0:
         print(f"nothing to do: already at {done} of {a.target} iterations")
         return 0
+
+    # Which heading weight will actually be applied? counter is the authority for
+    # that (mdp.reward_weight picks the last stage with step < counter), so read the
+    # stages back out of the dumped config instead of trusting the iteration number.
+    stages = heading_tracking_stages(run_dir)
+    if stages:
+        now = active_weight(stages, counter)
+        end = active_weight(stages, counter + remaining * nse)
+        print(f"heading    : tracking weight {now} now -> {end} at the end of this launch "
+              f"(counter {counter} -> {counter + remaining * nse}; stages "
+              f"{[(s, w) for s, w in stages]})")
 
     if not a.skip_plant_check:
         print(f"plant      : {plant_check()}")
