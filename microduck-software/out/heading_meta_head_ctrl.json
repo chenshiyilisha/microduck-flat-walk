@@ -1,0 +1,84 @@
+{
+  "created": "2026-10-29T13:06:10",
+  "run": "head_ctrl",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "variant": {
+    "requested": null,
+    "rel_heading_envs": 0.0,
+    "heading_control_stiffness": 0.5,
+    "rel_forward_envs": 0.2,
+    "expected_heading_x_forward_overlap": 0.0,
+    "saturation_heading_error_rad": 2.0,
+    "saturation_heading_error_deg": 114.59155902616465
+  },
+  "command_before": {
+    "command_class": "VelocityCommandCommandOnlyCfg",
+    "heading_command": true,
+    "heading_control_stiffness": 0.5,
+    "rel_heading_envs": 0.0,
+    "rel_forward_envs": 0.2,
+    "rel_standing_envs": 0.02,
+    "rel_turn_in_place_envs": 0.15,
+    "ranges_ang_vel_z": [
+      -1.0,
+      1.0
+    ],
+    "ranges_heading": [
+      -3.141592653589793,
+      3.141592653589793
+    ]
+  },
+  "command_after": {
+    "command_class": "VelocityCommandCommandOnlyCfg",
+    "heading_command": true,
+    "heading_control_stiffness": 0.5,
+    "rel_heading_envs": 0.0,
+    "rel_forward_envs": 0.2,
+    "rel_standing_envs": 0.02,
+    "rel_turn_in_place_envs": 0.15,
+    "ranges_ang_vel_z": [
+      -1.0,
+      1.0
+    ],
+    "ranges_heading": [
+      -3.141592653589793,
+      3.141592653589793
+    ]
+  },
+  "other_rel_heading_writers": null,
+  "plant": {
+    "name": "hd1910",
+    "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+    "source_sha256_12": "f3d62a7a51de",
+    "kwargs": {
+      "json_path": "E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15/microduck-software/tools/bam_params/hd1910/m5.json",
+      "target_names_expr": [
+        "^(?!passive_).*"
+      ],
+      "kp_fw": 32.0,
+      "vin_range": [
+        6.5,
+        8.2
+      ],
+      "vin_drop_gain_range": [
+        0.0,
+        0.2
+      ],
+      "vin_min": 6.0,
+      "delay_min_lag": 3,
+      "delay_max_lag": 6
+    },
+    "json_path_exists": true,
+    "json_sha256_12": "d1553204e756",
+    "kp_fw": 32.0,
+    "actuator_class": "FrictionDRBamActuatorCfg"
+  },
+  "envs": 1,
+  "iters": 50000,
+  "cfg_sha256_16": "75a0430b814ac749",
+  "mdp_sha256_16": "9f9b77c05d16a1a3",
+  "passthrough_args": [
+    "--agent.run-name",
+    "head_ctrl"
+  ]
+}

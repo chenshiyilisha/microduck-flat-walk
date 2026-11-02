@@ -1,0 +1,87 @@
+{
+  "tool": "rehearse_deploy",
+  "onnx": "E:\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\out\\walk_std004_1250.onnx",
+  "infer_policy": "E:\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.upstream\\microduck_rl-develop\\scripts\\infer_policy.py",
+  "scene": "E:\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck\\scene.xml",
+  "protocol": {
+    "note": "single robot, deterministic initial state -> NOT comparable with the 32-env eval_velocity_in_sim.py numbers (different instrument).",
+    "fall_height_m": 0.06,
+    "fall_tilt_deg": 60.0,
+    "steady_window": "last 75% of control steps"
+  },
+  "runs": [
+    {
+      "condition": "nominal",
+      "settings": {
+        "vin": 7.4,
+        "vin_drop_gain": 0.1,
+        "delay": 6,
+        "kp_fw": 200.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "start_height": 0.125,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "speed": {
+        "vx_mean_steady": -0.0004759874278533971,
+        "vx_p50_steady": -0.0002100094861816615,
+        "ratio_vs_cmd": -0.0011899685696334927,
+        "vx_first_second": 0.20619786135852336
+      },
+      "displacement": {
+        "dx_world": 0.18558335556147504,
+        "dy_world": -0.2954767147509747
+      },
+      "stability": {
+        "fell_at_s": 0.8200000000000001,
+        "fell": true,
+        "nan_at_s": null,
+        "min_height": 0.05971918673363922,
+        "final_height": 0.060759916483764685,
+        "max_tilt_deg": 112.55404335513552,
+        "mean_abs_tilt_deg": 78.79957478406584
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": false,
+        "moves_forward": true
+      },
+      "failed": [
+        "stayed_upright"
+      ]
+    }
+  ],
+  "all_gates_pass": false
+}

@@ -12,7 +12,14 @@ logs/
 out/*
 !out/sine/
 !out/kpsweep_hdg/
-!out/plant*.json
+!out/hdg2000/
+!out/hdg2499/
+!out/rehearse_*.json
+!out/plantP_*.json
+!out/plantFreq_*.json
+!out/heading_meta_*.json
+# Patterns, not a blanket !out/plant*.json: that also un-ignores last week's
+# run metadata, which is build noise rather than evidence.
 wandb/
 *.pt
 *.onnx

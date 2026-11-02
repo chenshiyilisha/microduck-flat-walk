@@ -1,0 +1,629 @@
+{
+  "tool": "rehearse_deploy",
+  "onnx": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\out\\hd1910_resume_4096_to6000_1027_it5999.onnx",
+  "infer_policy": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.upstream\\microduck_rl-develop\\scripts\\infer_policy.py",
+  "scene": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck\\scene.xml",
+  "training_parity": {
+    "same": [
+      "BAM OpenMicroDuck m5 on HD1910 (json=m5.json, kp_fw=32, target_names_expr excludes passive_*) \u2014 patched via rehearse_hd1910.py",
+      "obs layout 61D: ang_vel3 + proj_grav3 + joint_pos14 + joint_vel14 + last_action14 + twist3 + head4 + body6 (verified against the live cfg term order)",
+      "joint_pos action scale 1.0 (cfg.actions['joint_pos'].scale)",
+      "DEFAULT_POSE == HOME_FRAME.STAND2 (verified elementwise; actuator order == DEFAULT_POSE order)",
+      "control 50 Hz = decimation 4 x timestep 0.005; MuJoCo solver iterations 100/50",
+      "use_projected_gravity=True (USE_PROJECTED_GRAVITY=True in the task cfg)"
+    ],
+    "differs": [
+      "actuator delay 3-6 steps in training, 0 by default here (upstream --delay is off by default and untested) -> pass --delay to study it, but see below: it changes the gait",
+      "CPU MuJoCo (Newton/implicitfast + stiff friction constraints) vs warp/MJX at train time -> same model, different solver numerics",
+      "training uses collisions=(FULL_COLLISION,): every geom pair collides; the CPU scene keeps the XML's `self_collision_only` class for the leg shells",
+      "friction DR (FrictionDRBamActuatorCfg) is per-env at train time; here it is the fixed XML value (MuJoCo default sliding mu=1.0)",
+      "one robot, deterministic initial state (yaw=0) vs 32 envs with reset_base yaw in (-pi, pi)",
+      "no push_by_setting_velocity events here; the eval script drops them too",
+      "plant is HD1910 m5 (kt=0.692 R=3.75 kp_fw=32), not XL330 m6 (kp_fw=200); infer_policy.py itself is unchanged"
+    ]
+  },
+  "protocol": {
+    "note": "single robot, deterministic initial state -> NOT comparable with the 32-env eval_velocity_in_sim.py numbers (different instrument).",
+    "fall_criterion": "tilt > 70 deg == training fell_over (bad_orientation, limit_angle=1.2217304764 rad). Height does not trigger a fall.",
+    "truncate_at_fall": true,
+    "truncate_reason": "training terminates the episode on fell_over and resets, so no post-fall state enters its statistics; rolling through a fall fabricates a velocity for a robot that is on the floor.",
+    "window": "speed/displacement cover valid_s seconds = min(requested, fell_at)",
+    "steady_window": "last 75% of the VALID control steps"
+  },
+  "runs": [
+    {
+      "condition": "nominal",
+      "settings": {
+        "vin": 7.4,
+        "vin_drop_gain": 0.1,
+        "delay": 0,
+        "kp_fw": 32.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "start_height": 0.125,
+        "yaw_deg": 0.0,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "window": {
+        "requested_s": 8.0,
+        "valid_s": 8.0,
+        "truncated_by_fall": false,
+        "control_steps": 400,
+        "tilt_at_fall_deg": null,
+        "z_at_fall": null
+      },
+      "speed": {
+        "vx_mean_steady": 0.35241489253317315,
+        "vx_p50_steady": 0.3594244718551636,
+        "ratio_vs_cmd": 0.8810372313329329,
+        "vx_first_second": 0.2505604460369796,
+        "comparable": true,
+        "note": null
+      },
+      "displacement": {
+        "dx_body": 0.25732976661296997,
+        "dy_body": -0.23799121597927778,
+        "dx_world": 0.25732976661296997,
+        "dy_world": -0.23799121597927778
+      },
+      "heading": {
+        "yaw0_deg": 0.0,
+        "yaw_end_deg": -50.85986074693516,
+        "yaw_delta_deg": -50.85986074693517,
+        "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but dx_world<0, check yaw_delta (~\u00b1180 = turned around)."
+      },
+      "stability": {
+        "fell_at_s": null,
+        "fell": false,
+        "fall_criterion": "tilt > 70 deg (== training fell_over limit_angle 1.2217304764 rad)",
+        "nan_at_s": null,
+        "min_height": 0.08375139605460104,
+        "final_height": 0.09582420201988465,
+        "max_tilt_deg": 7.2894382043408035,
+        "mean_abs_tilt_deg": 2.2987735599603427
+      },
+      "ctrl_path": {
+        "probed": true,
+        "max_abs_ctrl_minus_target": 0.6443637343820943,
+        "ctrl_max_abs": 0.5545454511059498,
+        "bam_flag": true
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": true,
+        "moves_forward": true,
+        "covered_window": true,
+        "ctrl_path_matches_flag": true
+      },
+      "not_applicable": [],
+      "failed": []
+    },
+    {
+      "condition": "low_batt",
+      "settings": {
+        "vin": 6.5,
+        "vin_drop_gain": 0.2,
+        "delay": 0,
+        "kp_fw": 32.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "start_height": 0.125,
+        "yaw_deg": 0.0,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "window": {
+        "requested_s": 8.0,
+        "valid_s": 8.0,
+        "truncated_by_fall": false,
+        "control_steps": 400,
+        "tilt_at_fall_deg": null,
+        "z_at_fall": null
+      },
+      "speed": {
+        "vx_mean_steady": 0.3407666387160619,
+        "vx_p50_steady": 0.34131956100463867,
+        "ratio_vs_cmd": 0.8519165967901546,
+        "vx_first_second": 0.20983798016794025,
+        "comparable": true,
+        "note": null
+      },
+      "displacement": {
+        "dx_body": 0.5683922689941358,
+        "dy_body": 1.0153008376357546,
+        "dx_world": 0.5683922689941358,
+        "dy_world": 1.0153008376357546
+      },
+      "heading": {
+        "yaw0_deg": 0.0,
+        "yaw_end_deg": -166.9221933191679,
+        "yaw_delta_deg": -166.9221933191679,
+        "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but dx_world<0, check yaw_delta (~\u00b1180 = turned around)."
+      },
+      "stability": {
+        "fell_at_s": null,
+        "fell": false,
+        "fall_criterion": "tilt > 70 deg (== training fell_over limit_angle 1.2217304764 rad)",
+        "nan_at_s": null,
+        "min_height": 0.0789275560100412,
+        "final_height": 0.09593810263077789,
+        "max_tilt_deg": 5.130340445793794,
+        "mean_abs_tilt_deg": 2.094988474932763
+      },
+      "ctrl_path": {
+        "probed": true,
+        "max_abs_ctrl_minus_target": 0.5478165264850383,
+        "ctrl_max_abs": 0.454250073737558,
+        "bam_flag": true
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": true,
+        "moves_forward": true,
+        "covered_window": true,
+        "ctrl_path_matches_flag": true
+      },
+      "not_applicable": [],
+      "failed": []
+    },
+    {
+      "condition": "high_batt",
+      "settings": {
+        "vin": 8.2,
+        "vin_drop_gain": 0.0,
+        "delay": 0,
+        "kp_fw": 32.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "start_height": 0.125,
+        "yaw_deg": 0.0,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "window": {
+        "requested_s": 8.0,
+        "valid_s": 8.0,
+        "truncated_by_fall": false,
+        "control_steps": 400,
+        "tilt_at_fall_deg": null,
+        "z_at_fall": null
+      },
+      "speed": {
+        "vx_mean_steady": 0.373369794562459,
+        "vx_p50_steady": 0.38823018968105316,
+        "ratio_vs_cmd": 0.9334244864061475,
+        "vx_first_second": 0.22532104702666403,
+        "comparable": true,
+        "note": null
+      },
+      "displacement": {
+        "dx_body": 0.5968435676362973,
+        "dy_body": -0.06898382502288636,
+        "dx_world": 0.5968435676362973,
+        "dy_world": -0.06898382502288636
+      },
+      "heading": {
+        "yaw0_deg": 0.0,
+        "yaw_end_deg": -52.85920888513228,
+        "yaw_delta_deg": -52.85920888513229,
+        "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but dx_world<0, check yaw_delta (~\u00b1180 = turned around)."
+      },
+      "stability": {
+        "fell_at_s": null,
+        "fell": false,
+        "fall_criterion": "tilt > 70 deg (== training fell_over limit_angle 1.2217304764 rad)",
+        "nan_at_s": null,
+        "min_height": 0.08825520786641082,
+        "final_height": 0.09695105445019793,
+        "max_tilt_deg": 7.0234208555621,
+        "mean_abs_tilt_deg": 2.573112529147147
+      },
+      "ctrl_path": {
+        "probed": true,
+        "max_abs_ctrl_minus_target": 0.7185325222592222,
+        "ctrl_max_abs": 0.6342454395501204,
+        "bam_flag": true
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": true,
+        "moves_forward": true,
+        "covered_window": true,
+        "ctrl_path_matches_flag": true
+      },
+      "not_applicable": [],
+      "failed": []
+    },
+    {
+      "condition": "train_lag3",
+      "settings": {
+        "vin": 7.4,
+        "vin_drop_gain": 0.1,
+        "delay": 3,
+        "kp_fw": 32.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "start_height": 0.125,
+        "yaw_deg": 0.0,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "window": {
+        "requested_s": 8.0,
+        "valid_s": 8.0,
+        "truncated_by_fall": false,
+        "control_steps": 400,
+        "tilt_at_fall_deg": null,
+        "z_at_fall": null
+      },
+      "speed": {
+        "vx_mean_steady": 0.18823555518562596,
+        "vx_p50_steady": 0.2276427149772644,
+        "ratio_vs_cmd": 0.4705888879640649,
+        "vx_first_second": 0.1513082153443247,
+        "comparable": true,
+        "note": null
+      },
+      "displacement": {
+        "dx_body": -0.9854150299861651,
+        "dy_body": -0.7534593149472901,
+        "dx_world": -0.9854150299861651,
+        "dy_world": -0.7534593149472901
+      },
+      "heading": {
+        "yaw0_deg": 0.0,
+        "yaw_end_deg": 1.811541988338986,
+        "yaw_delta_deg": 1.8115419883389734,
+        "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but dx_world<0, check yaw_delta (~\u00b1180 = turned around)."
+      },
+      "stability": {
+        "fell_at_s": null,
+        "fell": false,
+        "fall_criterion": "tilt > 70 deg (== training fell_over limit_angle 1.2217304764 rad)",
+        "nan_at_s": null,
+        "min_height": 0.04762290001320229,
+        "final_height": 0.04762290001320229,
+        "max_tilt_deg": 30.529731554933235,
+        "mean_abs_tilt_deg": 6.873690102330905
+      },
+      "ctrl_path": {
+        "probed": false
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": true,
+        "moves_forward": false,
+        "covered_window": true,
+        "ctrl_path_matches_flag": true
+      },
+      "not_applicable": [],
+      "failed": [
+        "moves_forward"
+      ]
+    },
+    {
+      "condition": "train_lag4",
+      "settings": {
+        "vin": 7.4,
+        "vin_drop_gain": 0.1,
+        "delay": 4,
+        "kp_fw": 32.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "start_height": 0.125,
+        "yaw_deg": 0.0,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "window": {
+        "requested_s": 8.0,
+        "valid_s": 0.98,
+        "truncated_by_fall": true,
+        "control_steps": 49,
+        "tilt_at_fall_deg": 72.99578330636086,
+        "z_at_fall": 0.06477020010281341
+      },
+      "speed": {
+        "vx_mean_steady": -0.08976216614246368,
+        "vx_p50_steady": -0.05612298846244812,
+        "ratio_vs_cmd": -0.2244054153561592,
+        "vx_first_second": -0.05456268221938184,
+        "comparable": false,
+        "note": "NOT comparable: fell at 0.98s, value covers only the pre-fall window (survivorship bias inflates it)"
+      },
+      "displacement": {
+        "dx_body": 0.1905757433683295,
+        "dy_body": 0.10134581078690084,
+        "dx_world": 0.1905757433683295,
+        "dy_world": 0.10134581078690084
+      },
+      "heading": {
+        "yaw0_deg": 0.0,
+        "yaw_end_deg": 140.42217252261392,
+        "yaw_delta_deg": 140.4221725226139,
+        "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but dx_world<0, check yaw_delta (~\u00b1180 = turned around)."
+      },
+      "stability": {
+        "fell_at_s": 0.98,
+        "fell": true,
+        "fall_criterion": "tilt > 70 deg (== training fell_over limit_angle 1.2217304764 rad)",
+        "nan_at_s": null,
+        "min_height": 0.0748773362347053,
+        "final_height": 0.0748773362347053,
+        "max_tilt_deg": 63.16776419355174,
+        "mean_abs_tilt_deg": 16.578207456625037
+      },
+      "ctrl_path": {
+        "probed": false
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": false,
+        "moves_forward": true,
+        "covered_window": false,
+        "ctrl_path_matches_flag": true
+      },
+      "not_applicable": [],
+      "failed": [
+        "stayed_upright",
+        "covered_window"
+      ]
+    },
+    {
+      "condition": "train_lag6",
+      "settings": {
+        "vin": 7.4,
+        "vin_drop_gain": 0.1,
+        "delay": 6,
+        "kp_fw": 32.0,
+        "action_scale": 1.0,
+        "timestep": 0.005,
+        "decimation": 4,
+        "control_hz": 50.0,
+        "start_height": 0.125,
+        "yaw_deg": 0.0,
+        "bam": true
+      },
+      "command": {
+        "vx": 0.4,
+        "vy": 0.0,
+        "wz": 0.0
+      },
+      "shape": {
+        "obs_dim": 61,
+        "nu": 14,
+        "actuator_names": [
+          "left_hip_yaw",
+          "left_hip_roll",
+          "left_hip_pitch",
+          "left_knee",
+          "left_ankle",
+          "neck_pitch",
+          "head_pitch",
+          "head_yaw",
+          "head_roll",
+          "right_hip_yaw",
+          "right_hip_roll",
+          "right_hip_pitch",
+          "right_knee",
+          "right_ankle"
+        ]
+      },
+      "window": {
+        "requested_s": 8.0,
+        "valid_s": 0.88,
+        "truncated_by_fall": true,
+        "control_steps": 44,
+        "tilt_at_fall_deg": 74.67157482978809,
+        "z_at_fall": 0.050552884319665134
+      },
+      "speed": {
+        "vx_mean_steady": 0.29593843639348494,
+        "vx_p50_steady": 0.17078974843025208,
+        "ratio_vs_cmd": 0.7398460909837123,
+        "vx_first_second": 0.22867893164617603,
+        "comparable": false,
+        "note": "NOT comparable: fell at 0.88s, value covers only the pre-fall window (survivorship bias inflates it)"
+      },
+      "displacement": {
+        "dx_body": 0.251412518290502,
+        "dy_body": 0.12376401339564716,
+        "dx_world": 0.251412518290502,
+        "dy_world": 0.12376401339564716
+      },
+      "heading": {
+        "yaw0_deg": 0.0,
+        "yaw_end_deg": -2.933450376537414,
+        "yaw_delta_deg": -2.9334503765374222,
+        "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but dx_world<0, check yaw_delta (~\u00b1180 = turned around)."
+      },
+      "stability": {
+        "fell_at_s": 0.88,
+        "fell": true,
+        "fall_criterion": "tilt > 70 deg (== training fell_over limit_angle 1.2217304764 rad)",
+        "nan_at_s": null,
+        "min_height": 0.044323571790559235,
+        "final_height": 0.044323571790559235,
+        "max_tilt_deg": 68.4439489475235,
+        "mean_abs_tilt_deg": 20.739096365432985
+      },
+      "ctrl_path": {
+        "probed": false
+      },
+      "action": {
+        "p95_abs_max": null
+      },
+      "gates": {
+        "obs_dim_61": true,
+        "actuators_14": true,
+        "no_nan": true,
+        "stayed_upright": false,
+        "moves_forward": true,
+        "covered_window": false,
+        "ctrl_path_matches_flag": true
+      },
+      "not_applicable": [],
+      "failed": [
+        "stayed_upright",
+        "covered_window"
+      ]
+    }
+  ],
+  "all_gates_pass": false
+}
