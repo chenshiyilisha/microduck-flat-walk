@@ -125,6 +125,45 @@ does not drop enough, escalate to 0.50. If training diverges, drop to 0.15.
 
 The overlap at training time uses the real `rel_forward_envs=0.2` (read off the
 live cfg), not the probe's exaggerated 0.5.
+
+Second knob: `--pin-action-rate` (added 2026-11-02)
+---------------------------------------------------
+The reward panel of `p3head030` (iter 1999, per-step weighted means) shows
+`Episode_Reward/action_rate_l2 = -1.525` against
+`Episode_Reward/track_linear_velocity = +0.910`: **the smoothing penalty is 1.67x
+the entire forward-tracking reward**, and it is the only term the recipe
+deliberately tightens (stage table -0.1 -> -0.2@500 -> -0.4@750 -> -0.6@1000 ->
+-0.8@1250 -> -1.0@1500, `microduck_velocity_env_cfg.py:778-795`, byte-identical
+to upstream -- not a local patch).
+
+That run's commanded-vs-measured slope is `vx = 0.28*cmd + 0.025` (ratio 0.30),
+against XL330's `0.659*cmd - 0.018`, and the ratio does not improve from iter
+1000 to iter 1999 even though the fall rate drops 21.5% -> 0-2%. The last 1000
+iterations bought stability, not speed.
+
+But the causal claim "relaxing the penalty buys speed" is NOT established by that
+run: at iter 400 the weight was already at its loosest working value (-0.1) and
+`error_vel_xy` was 0.353, the same order as the 0.467 at weight -1.0. The ramp and
+the curriculum's expanding command ranges move together, so the two variables
+cannot be separated from one run. `--pin-action-rate` runs the separation:
+replace the stage table with a single stage so the weight is constant from step 0,
+identical in every other respect.
+
+This is deliberately a **single-variable** change against `p3head030`: same plant
+(hd1910_kp5), same `rel_heading_envs`, same env count/iterations/seed, only the
+action-rate schedule differs. Read the effective table back off the live cfg
+before launching -- a declared pin that did not take is the exact failure mode
+this project keeps hitting.
+
+Note `reward_weight` (mdp.py:3584-3603) mutates `env.reward_manager.get_term_cfg()`
+at runtime, so **two** places carry the weight: the curriculum stage table and
+`cfg.rewards[...].weight` (the pre-first-step value, set at line 349). Both are
+written here, otherwise step 0 would still use -0.1.
+
+Caveat on reading the result: `action_rate_l2` is ~89% exploration-noise floor
+(-25*sigma^2, R^2=0.98, measured on the joy task by
+`tools/patch_joy_action_rate.py`), so a looser weight partly just permits larger
+`sigma`. Compare `feet`/`air_time`/`vx`, not reward totals.
 """
 
 from __future__ import annotations
@@ -219,6 +258,80 @@ def find_other_writers(cfg) -> list[dict[str, Any]]:
     return hits
 
 
+def find_weight_writers(cfg, reward_name: str) -> list[dict[str, Any]]:
+    """Who writes `<reward_name>.weight` while training runs?
+
+    Reflective over every curriculum term, and keyed on the term's own
+    `reward_name` param rather than on the term name: an upstream rename of
+    `action_rate_weight` would silently defeat a name-matched lookup.
+    """
+    hits: list[dict[str, Any]] = []
+    for term_name, term in getattr(cfg, "curriculum", {}).items():
+        params = getattr(term, "params", None) or {}
+        if params.get("reward_name") != reward_name:
+            continue
+        hits.append(
+            {
+                "term": term_name,
+                "key": "weight_stages",
+                "stages": [dict(s) for s in params.get("weight_stages", [])],
+            }
+        )
+    return hits
+
+
+def pin_reward_weight(cfg, reward_name: str, weight: float) -> dict[str, Any]:
+    """Collapse a staged reward-weight curriculum into one constant.
+
+    Both carriers are written (see module docstring): the stage table, and the
+    `cfg.rewards[...].weight` that seeds the reward manager before the first
+    curriculum tick. Leaving the second at its shipped value would make step 0
+    the one step that disagrees with the declared pin.
+    """
+    if weight > 0.0:
+        raise SystemExit(
+            f"refusing a positive {reward_name} weight ({weight}): it is a "
+            "penalty, so a positive value would reward large actions."
+        )
+    writers = find_weight_writers(cfg, reward_name)
+    if len(writers) != 1:
+        raise SystemExit(
+            f"expected exactly one curriculum writer of {reward_name}.weight, "
+            f"found {len(writers)}: {writers}. Pinning would leave a second "
+            "writer free to undo it."
+        )
+    term_name = writers[0]["term"]
+    term = cfg.curriculum[term_name]
+    before = [dict(s) for s in term.params["weight_stages"]]
+    seed_before = cfg.rewards[reward_name].weight
+
+    term.params["weight_stages"] = [{"step": 0, "weight": weight}]
+    cfg.rewards[reward_name].weight = weight
+
+    return {
+        "reward_name": reward_name,
+        "term": term_name,
+        "seed_weight_before": seed_before,
+        "seed_weight_after": cfg.rewards[reward_name].weight,
+        "stages_before": before,
+        "stages_after": [dict(s) for s in term.params["weight_stages"]],
+        "requested": weight,
+    }
+
+
+def read_pin_state(cfg, reward_name: str) -> dict[str, Any]:
+    """Read the effective weight carriers back off the live cfg."""
+    writers = find_weight_writers(cfg, reward_name)
+    term = cfg.curriculum[writers[0]["term"]] if len(writers) == 1 else None
+    return {
+        "seed_weight": cfg.rewards[reward_name].weight,
+        "stage_table": (
+            [dict(s) for s in term.params["weight_stages"]] if term is not None else None
+        ),
+        "n_writers": len(writers),
+    }
+
+
 def plant_fingerprint() -> dict[str, Any]:
     """Record which robot this variant is declared against.
 
@@ -249,6 +362,7 @@ def main() -> int:
     pre.add_argument("--rel-heading-envs", type=float, default=None)
     pre.add_argument("--heading-stiffness", type=float, default=None)
     pre.add_argument("--rel-forward-envs", type=float, default=None)
+    pre.add_argument("--pin-action-rate", type=float, default=None)
     pre.add_argument("--task", default=DEFAULT_TASK)
     pre.add_argument("--dry-run", action="store_true")
     known, passthrough = pre.parse_known_args()
@@ -317,6 +431,27 @@ def main() -> int:
 
     after = read_heading_state(args.env)
 
+    # Reward-weight pin (opt-in). Done after the heading knobs so the readback
+    # below covers both, and pinned *before* any launch so a mismatch exits here
+    # rather than 2 hours into a GPU run.
+    pin: dict[str, Any] | None = None
+    pin_after: dict[str, Any] | None = None
+    if known.pin_action_rate is not None:
+        pin = pin_reward_weight(args.env, "action_rate_l2", known.pin_action_rate)
+        pin_after = read_pin_state(args.env, "action_rate_l2")
+        got_seed = float(pin_after["seed_weight"])
+        table = pin_after["stage_table"] or []
+        if abs(got_seed - known.pin_action_rate) > 1e-9:
+            raise SystemExit(
+                f"pin did not take on cfg.rewards['action_rate_l2'].weight: "
+                f"requested {known.pin_action_rate}, effective {got_seed}"
+            )
+        if len(table) != 1 or abs(float(table[0]["weight"]) - known.pin_action_rate) > 1e-9:
+            raise SystemExit(
+                f"pin did not take on the stage table: requested a single stage at "
+                f"{known.pin_action_rate}, effective {table}"
+            )
+
     # A declared override that did not take is the whole class of bug this
     # script exists to avoid; compare against what was asked, not against the
     # previous value.
@@ -361,6 +496,8 @@ def main() -> int:
         "command_before": before,
         "command_after": after,
         "other_rel_heading_writers": writers or None,
+        "action_rate_pin": pin,
+        "action_rate_effective": pin_after,
         "plant": plant_fingerprint(),
         "envs": int(args.env.scene.num_envs),
         "iters": int(args.agent.max_iterations),
@@ -386,6 +523,16 @@ def main() -> int:
         print(f"  cmd[2] saturates beyond {sat_err:.3f} rad heading error")
     else:
         print("control run: heading knobs left exactly as the cfg ships")
+    if pin is not None:
+        n_before = len(pin["stages_before"])
+        ramp = ", ".join(f"{s['weight']}@{s['step']}" for s in pin["stages_before"])
+        print(
+            f"action_rate_l2 weight: seed {pin['seed_weight_before']} -> "
+            f"{pin['seed_weight_after']}, stages {n_before} -> 1"
+        )
+        print(f"  replaced ramp: {ramp}")
+        # Machine-checked by tools/hd1910/explore_heading.sh; keep the format.
+        print(f"pin action_rate_l2 weight: {pin_after['seed_weight']}")
     print(f"heading meta -> {meta_path}")
 
     if known.dry_run:
