@@ -278,6 +278,10 @@ def build(mod, scene: pathlib.Path, args, cond):
     return model, data, bam_ctrl, policy, names, qpos_adr, qvel_adr
 
 
+def _wrap_to_pi(x: float) -> float:
+    return (x + math.pi) % (2.0 * math.pi) - math.pi
+
+
 def run_one(mod, scene, args, cond_name, cond):
     import mujoco
 
@@ -292,7 +296,18 @@ def run_one(mod, scene, args, cond_name, cond):
     obs_dim = int(obs0.size)
     nu = int(model.nu)
 
+    # Deployment-side heading closed loop.
+    # Mirrors training's heading_command (env.yaml: heading_command=True,
+    # heading_control_stiffness=0.5, ranges.ang_vel_z=(-1.0, 1.0)):
+    #   cmd[2] = clip(stiffness * wrap_to_pi(target_yaw - current_yaw), ±max_ang_vel)
+    # Only active when --heading-target-deg is given; otherwise cmd[2] = --cmd-wz.
+    heading_target = (math.radians(args.heading_target_deg)
+                      if args.heading_target_deg is not None else None)
+    heading_gain = args.heading_control_gain
+    heading_max = args.heading_max_ang_vel
+
     vx_hist, x_hist, z_hist, tilt_hist, act_hist = [], [], [], [], []
+    yaw_hist = []
     fell_at = None
     tilt_at_fall = None
     z_at_fall = None
@@ -302,6 +317,17 @@ def run_one(mod, scene, args, cond_name, cond):
     y0 = float(data.qpos[qpos_adr + 1])
 
     for k in range(n_steps):
+        # Heading closed loop: recompute cmd[2] every control step from current yaw.
+        if heading_target is not None:
+            qw, qx, qy, qz = (float(x) for x in data.qpos[qpos_adr + 3:qpos_adr + 7])
+            yaw = math.atan2(2.0 * (qw * qz + qx * qy),
+                             1.0 - 2.0 * (qy * qy + qz * qz))
+            err = _wrap_to_pi(heading_target - yaw)
+            cmd2 = max(-heading_max, min(heading_max, heading_gain * err))
+            policy.set_vel_cmd(args.cmd_vx, args.cmd_vy, cmd2)
+        else:
+            policy.set_vel_cmd(args.cmd_vx, args.cmd_vy, args.cmd_wz)
+
         action = policy.infer()
         policy.apply_action(action)
         # Reference target for the actuator-path probe. set_position_targets() routes either to
@@ -359,6 +385,9 @@ def run_one(mod, scene, args, cond_name, cond):
         z_hist.append(z)
         tilt_hist.append(tilt)
         act_hist.append(float(np.abs(action).max()) if args.track_action else 0.0)
+        qw, qx, qy, qz = (float(x) for x in data.qpos[qpos_adr + 3:qpos_adr + 7])
+        yaw_hist.append(math.degrees(math.atan2(2.0 * (qw * qz + qx * qy),
+                                                1.0 - 2.0 * (qy * qy + qz * qz))))
 
     # Steady-state window: skip the first 25% (startup transient / policy spin-up) OF THE VALID
     # PART. Using the nominal step count here would silently include post-fall samples.
@@ -410,6 +439,13 @@ def run_one(mod, scene, args, cond_name, cond):
         "covered_window": valid_s >= 0.75 * args.seconds,
         "ctrl_path_matches_flag": ctrl_path_ok,
     }
+    # Heading closed-loop gate: when --heading-target-deg is given, the robot should end up
+    # close to the target heading. Threshold is generous (±20°) because the proportional
+    # controller has steady-state error under constant disturbance, and the policy may not
+    # perfectly track cmd[2] at low speeds.
+    if heading_target is not None:
+        err_final = math.degrees(_wrap_to_pi(heading_target - math.radians(yaw_hist[-1]))) if yaw_hist else None
+        gates["heading_converged"] = (err_final is not None and abs(err_final) < 20.0)
     # At cmd < 0.2 the documented bistable dead zone (§11) means "does not move" can be the
     # policy's actual answer, not a broken obs layout. The sign gate exists to catch the latter,
     # so it is only applied where forward motion is expected; below that it is recorded, not
@@ -457,6 +493,20 @@ def run_one(mod, scene, args, cond_name, cond):
             "yaw0_deg": yaw0_deg,
             "yaw_end_deg": yaw_end_deg,
             "yaw_delta_deg": yaw_delta_deg,
+            "heading_closed_loop": heading_target is not None,
+            "heading_target_deg": (math.degrees(heading_target)
+                                   if heading_target is not None else None),
+            "heading_gain": heading_gain,
+            "heading_max_ang_vel": heading_max,
+            # Distance from the target at the end of the window, wrapped to ±180.
+            "heading_error_final_deg": (
+                math.degrees(_wrap_to_pi(heading_target - math.radians(yaw_hist[-1])))
+                if heading_target is not None and yaw_hist else None),
+            # Mean |yaw drift rate| over the valid window (deg/s). For an open-loop run
+            # this is the random-walk rate; for a closed-loop run it should be small.
+            "yaw_drift_deg_s": (
+                st.mean([abs(yaw_hist[i] - yaw_hist[i-1]) for i in range(1, len(yaw_hist))])
+                / control_dt if len(yaw_hist) > 1 else None),
             "note": "moves_forward uses dx_body (initial heading). If vx_body>0 but "
                     "dx_world<0, check yaw_delta (~±180 = turned around).",
         },
@@ -487,6 +537,15 @@ def main(argv=None):
     ap.add_argument("--cmd-vx", type=float, default=0.4)
     ap.add_argument("--cmd-vy", type=float, default=0.0)
     ap.add_argument("--cmd-wz", type=float, default=0.0)
+    ap.add_argument("--heading-target-deg", type=float, default=None,
+                    help="enable deployment-side heading closed loop; target heading [deg] "
+                         "(absolute, world frame). cmd[2] is recomputed every control step as "
+                         "clip(heading_control_gain * wrap_to_pi(target - yaw), ±heading_max_ang_vel), "
+                         "mirroring training's heading_command (env.yaml: stiffness 0.5, ang_vel_z ±1.0).")
+    ap.add_argument("--heading-control-gain", type=float, default=0.5,
+                    help="proportional gain for --heading-target-deg (default 0.5 = training)")
+    ap.add_argument("--heading-max-ang-vel", type=float, default=1.0,
+                    help="clip limit for cmd[2] [rad/s] (default 1.0 = training ang_vel_z[1])")
     ap.add_argument("--seconds", type=float, default=8.0, help="rehearsal length per condition")
     ap.add_argument("--sweep", action="store_true",
                     help="run all four training-DR conditions instead of just --condition")
