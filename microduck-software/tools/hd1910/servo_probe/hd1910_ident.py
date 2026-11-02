@@ -75,6 +75,8 @@ REG_POS = 56           # 遥测块起
 REG_STATUS = 65
 REG_MOVING = 66
 REG_CURRENT = 69       # 2B
+REG_ID = 5             # 总线 ID（改后要断电重启才在旧 ID 上消失）
+REG_LOCK = 55          # 0 = EPROM 可写；1 = 锁定（HL2915/HD 同表，见 ref_hl2915_bench.py:57）
 
 TELEM_LEN = 15         # 56..70
 CURRENT_MA_PER_LSB = 6.5
@@ -401,6 +403,32 @@ def cmd_backlash(bus: Bus, sid: int, args):
     print("⚠️ 含伺服稳态误差；要纯机械齿隙需在扭矩关闭时用手扳（摇晃法）对照。")
 
 
+def cmd_set_id(bus: Bus, sid: int, args):
+    """改总线 ID：unlock reg55=0 → write reg5=new_id → 验证新 ID 应答。
+
+    ⚠️ 改完必须**断电重启**才能在旧 ID 上消失（reg5 写入的是 EEPROM）。
+    一次只接一只舵机！
+    """
+    if args.dry_run:
+        sys.exit("--dry-run 不碰硬件")
+    new_id = args.new_id
+    if new_id is None or new_id < 0 or new_id > 253:
+        sys.exit("需要 --new-id（0-253）。一次只接一只舵机！")
+    # 1. unlock EPROM
+    bus.write_u8(sid, REG_LOCK, 0)
+    time.sleep(0.05)
+    # 2. write new ID
+    if not bus.write_u8(sid, REG_ID, new_id):
+        sys.exit(f"写 reg5={new_id} 失败（无应答）。检查线序/供电/波特率。")
+    time.sleep(0.05)
+    # 3. verify: PING new ID
+    ok = bus.ping(new_id)
+    print(f"{'✔' if ok else '✗'} 新 ID {new_id} "
+          f"{'有应答' if ok else '无应答——回旧 ID 重试'}")
+    print("⚠️ 改完必须断电重启（拔 USB），旧 ID 才会消失。")
+    return 0 if ok else 1
+
+
 def cmd_selftest(_bus, _sid, args):
     """不碰硬件：合成曲线验证 step_metrics，含负对照。"""
     print("=== 正例：欠阻尼（zeta=0.35）应有超调 ===")
@@ -434,7 +462,8 @@ def cmd_selftest(_bus, _sid, args):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="HD-1910 辨识台架")
-    ap.add_argument("cmd", choices=["telem", "step", "deadzone", "backlash", "selftest"])
+    ap.add_argument("cmd", choices=["telem", "step", "deadzone", "backlash",
+                                     "set-id", "selftest"])
     ap.add_argument("--port", default="COM3")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--id", type=int, default=1)
@@ -450,6 +479,8 @@ def main() -> int:
     ap.add_argument("--speed", type=int, default=300, help="reg46 目标速度（步/s）")
     ap.add_argument("--accel", type=int, default=10, help="reg41 加速度（×100 步/s²）")
     ap.add_argument("--torque-limit", type=int, default=500, help="reg48（1000=100%）")
+    ap.add_argument("--new-id", type=int, default=None,
+                    help="set-id：新总线 ID（0-253）")
     args = ap.parse_args()
 
     if args.cmd == "selftest":
@@ -477,7 +508,8 @@ def main() -> int:
                   + ("" if p == KP_FW_P3 else
                      f"  ⚠️ P3 部署值是 {KP_FW_P3}，两边不对齐时这份辨识不代表部署后行为"))
         {"telem": cmd_telem, "step": cmd_step,
-         "deadzone": cmd_deadzone, "backlash": cmd_backlash}[args.cmd](bus, args.id, args)
+         "deadzone": cmd_deadzone, "backlash": cmd_backlash,
+         "set-id": cmd_set_id}[args.cmd](bus, args.id, args)
     finally:
         bus.close()
     return 0
