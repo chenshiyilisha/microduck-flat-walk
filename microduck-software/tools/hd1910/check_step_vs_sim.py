@@ -202,6 +202,9 @@ def main() -> int:
     ap.add_argument("--sample-hz", type=float, default=50.0)
     ap.add_argument("--pre", type=float, default=1.0)
     ap.add_argument("--hold", type=float, default=2.0)
+    ap.add_argument("--lag-ms", type=float, default=0.0,
+                    help="额外动作延迟（ms）。训练里是 3~6 个物理步 × 5ms = 15~30ms；"
+                         "台架直连串口写 goal 没有这一层，传非 0 才能看到它的影响")
     ap.add_argument("--sensitivity", action="store_true",
                     help="负对照：各参数改坏 ±20%，看上升时间/静态误差动多少")
     args = ap.parse_args()
@@ -231,16 +234,24 @@ def main() -> int:
     m_bench = step_metrics(brows, "up", b_target, tol)
 
     model, act = load_plant(Path(args.json), args.kp, vin)
-    # command_delay 不在 model 上：mjlab 里延迟是 env 级（按控制步 delay 3-6），
-    # params JSON 也没有这个键 ⇒ 只能记 0 并明说，不能假装有值。
+    # 两个不同层级的"延迟"，别混为一谈：
+    # ① params JSON 的 command_delay ≈ 1 ms —— 固件内部采样/计算延迟
+    # ② 训练里的 action delay = 3~6 个**物理步**（timestep 5ms）⇒ 15~30 ms
+    #    （mjlab ActuatorCfg.delay_min/max_lag 的 docstring 与 DelayBuffer 实测语义一致：
+    #      lag=3 时前 4 次 append 都返回 0 ⇒ 单位是 buffer 追加次数，不是控制步）
     import json as _json
     delay = float(_json.loads(Path(args.json).read_text(encoding="utf-8"))
                   .get("command_delay") or 0.0)
+    lag_s = args.lag_ms / 1000.0
 
-    m_sim, r_sim = {}, {}
-    for name, dt in (("fast", 0.001), ("log", 1.0 / args.sample_hz)):
+    # 列 = (标题, 积分 dt, 额外动作延迟)
+    cols = [("sim@1ms", 0.001, 0.0), ("sim@20ms", 1.0 / args.sample_hz, 0.0)]
+    if lag_s > 0:
+        cols.append((f"sim+lag{args.lag_ms:.0f}ms", 1.0 / args.sample_hz, lag_s))
+    r_sim, m_sim = {}, {}
+    for name, dt, extra in cols:
         rows = simulate(model, act, args.kp, steps, vin, dt, args.pre, args.hold,
-                        delay, args.sample_hz)
+                        delay + extra, args.sample_hz)
         r_sim[name] = rows
         m_sim[name] = step_metrics(rows, "up", float(steps), tol)
 
@@ -248,18 +259,20 @@ def main() -> int:
           f"（CSV 中位数）")
     print(f"plant {Path(args.json).name}｜law={type(act).__name__}｜"
           f"kt={model.kt.value:.4f} R={model.R.value:.3f} "
-          f"armature={model.armature.value:.5f} delay={delay*1000:.2f} ms")
+          f"armature={model.armature.value:.5f}｜固件延迟={delay*1000:.2f} ms"
+          + (f"｜训练动作延迟={args.lag_ms:.0f} ms" if lag_s else ""))
     print()
-    hdr = f"{'指标':<10}{'台架':>12}{'sim@1ms':>12}{'sim@20ms':>12}   判据"
+    hdr = (f"{'指标':<10}{'台架':>12}"
+           + "".join(f"{n:>16}" for n, _, _ in cols) + "   判据")
     print(hdr)
     print("-" * len(hdr) + "-" * 20)
 
     def row(label, key, unit, tol_abs, tol_pct=None):
         b = m_bench.get(key)
-        s1 = (m_sim["fast"] or {}).get(key)
-        s2 = (m_sim["log"] or {}).get(key)
-        lo = min(x for x in (s1, s2) if x is not None) if (s1 is not None or s2 is not None) else None
-        hi = max(x for x in (s1, s2) if x is not None) if (s1 is not None or s2 is not None) else None
+        vals = [(m_sim[n] or {}).get(key) for n, _, _ in cols]
+        present = [v for v in vals if v is not None]
+        lo = min(present) if present else None
+        hi = max(present) if present else None
         ok = None
         if b is not None and lo is not None:
             pad = tol_abs + (tol_pct or 0) * abs(b)
@@ -267,27 +280,29 @@ def main() -> int:
             # `ok is False` 对它恒为 False ⇒ FAIL 会被误显示成"无法判"。
             ok = bool((lo - pad) <= b <= (hi + pad))
         mark = "✓ PASS" if ok else ("✗ FAIL" if ok is False else "— 无法判")
-        print(f"{label:<10}{fmt(m_bench,key,unit):>12}{fmt(m_sim['fast'],key,unit):>12}"
-              f"{fmt(m_sim['log'],key,unit):>12}   {mark}")
+        print(f"{label:<10}{fmt(m_bench,key,unit):>12}"
+              + "".join(f"{fmt(m_sim[n],key,unit):>16}" for n, _, _ in cols)
+              + f"   {mark}")
         return ok
-
     r0 = row("整定时间", "settle_ms", "ms", 60, 0.2)
     r2 = row("超调", "over_pct", "%", 5)
     r3 = row("稳态误差", "err", "步", 4)
     # 上升时间：与静态偏移解耦，是动态形状的主判据
     b_rise = rise_time_ms(brows)
-    s1_rise = rise_time_ms(r_sim["fast"])
-    s2_rise = rise_time_ms(r_sim["log"])
-    if b_rise and s1_rise and s2_rise:
-        lo, hi = min(s1_rise, s2_rise), max(s1_rise, s2_rise)
+    rises = [(n, rise_time_ms(r_sim[n])) for n, _, _ in cols]
+    if b_rise and all(v for _, v in rises):
+        vals = [v for _, v in rises]
+        lo, hi = min(vals), max(vals)
         pad = 60 + 0.2 * b_rise
-        ok = (lo - pad) <= b_rise <= (hi + pad)
+        ok = bool((lo - pad) <= b_rise <= (hi + pad))
         r1 = ok
-        print(f"{'上升时间':<10}{b_rise:>12.0f}{s1_rise:>12.0f}{s2_rise:>12.0f}"
-              f"   {'✓ PASS' if ok else '✗ FAIL'}")
+        print(f"{'上升时间':<10}{b_rise:>12.0f}"
+              + "".join(f"{v:>16.0f}" for _, v in rises)
+              + f"   {'✓ PASS' if ok else '✗ FAIL'}")
     else:
         r1 = None
-        print(f"{'上升时间':<10}{'n/a':>12}{'n/a':>12}{'n/a':>12}   — 无法判")
+        print(f"{'上升时间':<10}{'n/a':>12}"
+              + "".join(f"{'n/a':>16}" for _ in cols) + "   — 无法判")
     print()
     print("判据：整定 ±60ms 或 ±20%（仅供参考，见下）｜上升 ±60ms 或 ±20%｜"
           "超调 ±5 个百分点｜稳态误差 ±4 步")
@@ -297,13 +312,12 @@ def main() -> int:
     g = (act.kp * act.error_gain * getattr(act.model, "error_gain_ratio").value
          * vin * act.model.kt.value / act.model.R.value)
     print()
-    for label, m in (("台架", m_bench), ("sim@1ms", m_sim["fast"]),
-                     ("sim@20ms", m_sim["log"])):
+    for label, m in [("台架", m_bench)] + [(n, m_sim[n]) for n, _, _ in cols]:
         e = (m or {}).get("err")
         if e is None:
             continue
         f = abs(e) / STEPS_PER_RAD * g
-        print(f"  {label:<9}静态误差 {abs(e):5.1f} 步 ⇒ 等效库仑摩擦 "
+        print(f"  {label:<12}静态误差 {abs(e):5.1f} 步 ⇒ 等效库仑摩擦 "
               f"{f:.4f} Nm（{f * 10.197:.2f} kg·cm）")
 
     checks = (("上升", r1), ("超调", r2), ("稳态误差", r3))

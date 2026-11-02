@@ -382,6 +382,31 @@ python tools/hd1910/check_step_vs_sim.py --csv step_id10_kp5_d0.csv --kp 5 --sen
    脚本已做双向交叉校验并报警，别直接拿它当速度。
 3. **reg46 速度限在 mode=4 下不生效**：写 300 步/s 实测仍冲到 1143 步/s ⇒ 不能当安全保护用。
 
+### 训练里的动作延迟到底是多久（2026-11-02 查证）
+
+`MICRODUCK_WALK_ROBOT_CFG` 的 BAM 执行器 `delay_min_lag=3, delay_max_lag=6`。
+**单位是物理步，不是控制步** —— 这个区别差 4 倍，且两处证据都不在注释里：
+
+| 证据 | 做法 | 结果 |
+|---|---|---|
+| 活 cfg 回读 | `load_env_cfg("Mjlab-Velocity-Flat-MicroDuck")` | `timestep=0.005`、`decimation=4`、`delay 3–6`、`kp_fw=5.0` |
+| `DelayBuffer` 真对象 | `min_lag=max_lag=3` 逐次 append 看返回 | `[0,0,0,0,1,2,3,4]` ⇒ 单位 = buffer 追加次数 |
+| 调用频率 | `manager_based_rl_env.step()` 的 `for _ in range(decimation)` 内 | `write_data_to_sim()` → `apply_delay()` **每物理步一次** |
+
+⇒ **训练动作延迟 = 3–6 × 5 ms = 15–30 ms，不到一个控制周期（20 ms）**。
+⚠️ 若误按控制步读成 60–120 ms，会以为仿真里有严重通信延迟，并据此去调 kp/奖励 —— 方向就错了。
+
+这层延迟在台架上是**没有**的：我们直连串口写 goal。把它加进去重跑（`--lag-ms 30`）：
+
+| 工作点 | 台架 | sim@1ms | sim@20ms | sim+lag30ms |
+|---|---|---|---|---|
+| P=32 整定 | **162 ms** | 80 ms | 120 ms | **160 ms** |
+| P=5 上升 | 359 ms | 300 | 340 | 360 |
+
+⇒ P=32 的整定缺口（仿真偏快 40 ms）**正好被这层延迟补平**；P=5 的上升时间按定义
+（t90−t10）本就是延迟不变量 ⇒ 那条结论不依赖这个缺口。两个层级别混：params JSON 里的
+`command_delay≈1 ms` 是固件内部采样延迟，env 的动作延迟是 15–30 ms 的另一件事。
+
 ---
 
 ## 5. 0.3 kt/R 对照（资料已在仓）
