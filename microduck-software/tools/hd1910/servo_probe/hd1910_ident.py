@@ -558,20 +558,12 @@ def cmd_set_id(bus: Bus, sid: int, args):
 
 # ---------------------------------------------------------------- 正弦跟踪（带宽）
 
-def sine_metrics(rows, freq, skip_cycles=1.0):
-    """单频最小二乘拟合 → 幅值比 / 相位滞后 / 跟踪误差。
+def _sine_fit(rows, freq, skip_cycles=1.0):
+    """基波最小二乘拟合的公共内核 —— sine_metrics 与 tremor_metrics 共用。
 
-    rows: (freq, t_goal_ms, t_pos_ms, goal, pos, speed, load, volt, temp, cur_ma)
-
-    为什么用拟合而不是"逐点比峰值"：
-      峰值对比在**有噪声或有直流偏置时会失真** —— 舵机稳态误差（P5/D0 实测 −2 步）
-      会让上下峰不对称，取峰峰值就混进了偏置。拟合把基波幅值、相位、直流分量
-      三个量分开解，各自独立可读。
-
-    为什么 goal 与 pos 各用自己的时间戳：写 goal 与读位置之间有 ~1.6 ms 事务延迟，
-    用同一时刻会把这段固定延迟算成相位滞后。两条时间轴各自拟合，延迟只影响
-    pos 轴的绝对时刻（拟合对绝对相位不敏感，只看两轴之差），所以读到的滞后
-    里仍含这段测量延迟 —— 量级 1.6 ms × 360°×f，1.89 Hz 下 ≈1.1°，可接受。
+    两个指标必须吃**同一份**拟合结果：震颤 = 残差的高频能量，残差又是
+    "输出 − 基波"，若各算一遍，gain 与震颤就不是同一组数据推出来的，
+    互相校验的意义就没了（本项目已两次栽在"两个实现互抵"上）。
     """
     import math
 
@@ -605,6 +597,37 @@ def sine_metrics(rows, freq, skip_cycles=1.0):
     lag = (lag + math.pi) % (2.0 * math.pi) - math.pi
     resid = p - (Xp @ np.array(cp))
     return {
+        "freq_hz": freq, "tg": tg, "tp": tp, "g": g, "p": p,
+        "amp_g": amp_g, "amp_p": amp_p, "dc_g": dc_g, "dc_p": dc_p,
+        "lag": lag, "resid": resid, "n_pts": int(len(p)),
+    }
+
+
+def sine_metrics(rows, freq, skip_cycles=1.0):
+    """单频最小二乘拟合 → 幅值比 / 相位滞后 / 跟踪误差。
+
+    rows: (freq, t_goal_ms, t_pos_ms, goal, pos, speed, load, volt, temp, cur_ma)
+
+    为什么用拟合而不是"逐点比峰值"：
+      峰值对比在**有噪声或有直流偏置时会失真** —— 舵机稳态误差（P5/D0 实测 −2 步）
+      会让上下峰不对称，取峰峰值就混进了偏置。拟合把基波幅值、相位、直流分量
+      三个量分开解，各自独立可读。
+
+    为什么 goal 与 pos 各用自己的时间戳：写 goal 与读位置之间有 ~1.6 ms 事务延迟，
+    用同一时刻会把这段固定延迟算成相位滞后。两条时间轴各自拟合，延迟只影响
+    pos 轴的绝对时刻（拟合对绝对相位不敏感，只看两轴之差），所以读到的滞后
+    里仍含这段测量延迟 —— 量级 1.6 ms × 360°×f，1.89 Hz 下 ≈1.1°，可接受。
+    """
+    import math
+
+    import numpy as np
+
+    d = _sine_fit(rows, freq, skip_cycles)
+    if d is None:
+        return None
+    amp_g, amp_p, lag, resid, p, g = d["amp_g"], d["amp_p"], d["lag"], d["resid"], d["p"], d["g"]
+    pts = [r for r in rows if r[0] == freq]
+    return {
         "freq_hz": freq,
         "amp_goal_deg": amp_g * 360.0 / STEPS_PER_REV,
         "amp_pos_deg": amp_p * 360.0 / STEPS_PER_REV,
@@ -612,12 +635,57 @@ def sine_metrics(rows, freq, skip_cycles=1.0):
         "loss_pct": 100.0 * (1.0 - amp_p / amp_g),
         "lag_deg": math.degrees(lag),
         "lag_ms": math.degrees(lag) / 360.0 * 1000.0 / freq,
-        "dc_err_steps": dc_p - dc_g,
+        "dc_err_steps": d["dc_p"] - d["dc_g"],
         "rms_track_err_deg": float(np.sqrt(np.mean((p - g) ** 2))) * 360.0 / STEPS_PER_REV,
         "rms_resid_deg": float(np.sqrt(np.mean(resid ** 2))) * 360.0 / STEPS_PER_REV,
-        "n_pts": int(len(p)),
-        "cur_ma_peak": float(np.max(np.abs([r[9] for r in pts]))),
+        "n_pts": d["n_pts"],
+        "cur_ma_peak": float(np.max(np.abs([r[9] for r in pts if r[9] is not None]))),
     }
+
+
+def tremor_metrics(rows, freq, skip_cycles=1.0, hf_cut=3.0):
+    """震颤判据 —— 光看 gain 会把人骗了。
+
+    P 调大必然抬 gain，但代价通常是高频抖动（社区实机记录：P 大颤）。
+    只报 gain 的扫描会一路把 P 推到最大，然后在真机上抖成一团。
+
+    所以把残差（输出 − 基波拟合）按频率拆开：
+      * ``hf_ratio``  — 残差中 > ``hf_cut × f0`` 的能量占总残差能量的比例。
+        谐波（2f0/3f0）不算震颤，抖动才算，所以从 3 倍基频起算。
+      * ``jerk_rms_deg`` — 位置二阶差分的 RMS。对高频极敏感，是"抖不抖"的
+        最直接读数，单位仍然是度，可与行程幅度直接比。
+
+    两者都不设绝对阈值（没有厂商规格可依），**只做同条件跨 P 的相对比较**：
+    基线取最小 P 那一档，倍数由打印层算。
+    """
+    import numpy as np
+
+    d = _sine_fit(rows, freq, skip_cycles)
+    if d is None:
+        return None
+    resid = d["resid"]
+    n = len(resid)
+    if n < 24:
+        return None
+
+    amp_p = d["amp_p"]
+    spec = np.abs(np.fft.rfft(resid)) ** 2
+    freqs = np.fft.rfftfreq(n, d=1.0 / (n / (d["tp"][-1] - d["tp"][0])))
+    total = float(spec[1:].sum())        # 去掉直流
+    hf = float(spec[freqs >= hf_cut * freq].sum())
+    hf_ratio = (hf / total) if total > 1e-12 else 0.0
+
+    jerk = np.diff(resid, n=2)
+    scale = 360.0 / STEPS_PER_REV
+    return {
+        "freq_hz": freq,
+        "hf_ratio": hf_ratio,
+        "rms_resid_deg": float(np.sqrt(np.mean(resid ** 2))) * scale,
+        "jerk_rms_deg": float(np.sqrt(np.mean(jerk ** 2))) * scale if len(jerk) else 0.0,
+        "resid_over_amp": float(np.sqrt(np.mean(resid ** 2)) / amp_p) if amp_p else 0.0,
+        "n_pts": n,
+    }
+
 
 
 def synth_sine(center, amp_steps, freq, seconds, hz=50.0, gain=0.8,
@@ -852,6 +920,113 @@ def cmd_sine(bus: Bus, sid: int, args):
     print("对表：仿真 plant 预测 P=5 在 1.89 Hz 约 35% 幅值损失 / 70° 滞后。")
     print("⚠️ 只凭 gain/lag 两个数字不够：本仪器对频率错标不敏感（见 selftest），"
           "削波/失真也能给出像样的数 —— 必须同时看残差和原始 CSV。")
+    # 供 cmd_psweep 复用：单档扫描也要能拿到原始行，否则 P 扫描就得重写一遍
+    # 录制循环 —— 那是两个实现互抵，本项目明确禁止。
+    return results, rows
+
+
+def cmd_psweep(bus: Bus, sid: int, args):
+    """P 扫描：同一正弦、同一行程、只改 RAM P，**同时**量带宽与震颤。
+
+    ★ 为什么必须二维判据（本子命令存在的唯一理由）
+      只报 gain 的扫描一定会把 P 推到上限：gain 随 P 单调涨，数字很好看，
+      而真机上早就抖成一团。社区记录「实机 P 大颤」不是传说。
+      所以每一档都同时给 ``jerk_rms``（位置二阶差分，对抖动最敏感）与
+      ``hf_ratio``（残差里 >3f0 的能量占比），并按最小 P 档归一化。
+
+    ★ 与单个 --kp 测量的关系
+      内部**直接调用 cmd_sine**，不复制录制循环 —— 两个实现互抵是本项目明确
+      禁止的事。因此各档之间只差一个寄存器，行程中心 / 限速 / 限流 / 采样率
+      / 周期数完全一致，这是"可比"的前提。
+
+    ★ 不写 EEPROM
+      只动 RAM reg50/reg51（掉电回落），不碰 reg21/22。cmd_sine 每档结束会把
+      RAM 增益恢复成进来时的值，所以档间不会互相污染。
+    """
+    import argparse as _ap
+
+    kps = []
+    for tok in str(args.kp_list).split(","):
+        tok = tok.strip()
+        if tok:
+            kps.append(int(tok))
+    if not kps:
+        sys.exit("--kp-list 为空")
+    freqs = [float(x) for x in args.sine_freqs.split(",") if x.strip()]
+    if not freqs:
+        sys.exit("--sine-freqs 为空")
+    if len(freqs) > 1:
+        print("⚠️ psweep 只用第一个频率；要多频请分次跑（各档必须同频才可比）")
+    fr = freqs[0]
+
+    out, base = [], None
+    for kp in kps:
+        print(f"\n{'=' * 20} RAM P={kp}  D=0 {'=' * 20}")
+        sub = _ap.Namespace(
+            kp=kp, kd=0, dry_run=False,
+            sine_freqs=args.sine_freqs, sine_amp_deg=args.sine_amp_deg,
+            sine_cycles=args.sine_cycles, sine_skip_cycles=args.sine_skip_cycles,
+            rate=args.rate, csv=str(SINE_DIR / f"psweep_id{sid}_kp{kp}.csv"),
+            sine_speed=args.sine_speed, sine_accel=args.sine_accel,
+            torque_limit=args.torque_limit)
+        try:
+            res, rows = cmd_sine(bus, sid, sub)
+        except SystemExit as e:
+            print(f"✗ P={kp} 中止（{e}），继续下一档")
+            continue
+        m = next((r for r in res if abs(r["freq_hz"] - fr) < 1e-9), None)
+        t = tremor_metrics(rows, fr, skip_cycles=args.sine_skip_cycles)
+        if m is None or t is None:
+            print(f"✗ P={kp} 拟合失败（样本不足或被限位削顶）")
+            continue
+        if base is None:
+            base = {"kp": kp, "gain": m["gain"], "jerk": t["jerk_rms_deg"]}
+        out.append({
+            "kp": kp, "gain": m["gain"], "lag_deg": m["lag_deg"],
+            "rms_resid_deg": t["rms_resid_deg"], "hf_ratio": t["hf_ratio"],
+            "jerk_rms_deg": t["jerk_rms_deg"], "cur_ma_peak": m["cur_ma_peak"],
+            "rms_track_err_deg": m["rms_track_err_deg"],
+        })
+
+    if not out:
+        sys.exit("没有一档成功，无法比较")
+
+    print(f"\n{'=' * 92}")
+    print(f"P 扫描汇总　{fr:g} Hz　±{args.sine_amp_deg:g}°　"
+          f"基线 = 最小 P（P={base['kp']}）")
+    print(f"{'P':>4} {'gain':>7} {'滞后°':>7} {'残差°':>7} {'hf%':>6} {'jerk°':>7} "
+          f"{'gain×':>6} {'jerk×':>6} {'峰流mA':>7}  判据")
+    print("-" * 92)
+    for r in out:
+        gx = r["gain"] / base["gain"] if base["gain"] else float("nan")
+        jx = r["jerk_rms_deg"] / base["jerk"] if base["jerk"] else float("nan")
+        if r["gain"] >= 0.6 and jx <= 2.0:
+            verdict = "可用"
+        elif r["gain"] >= 0.6:
+            verdict = "带宽够但抖 ⚠️"
+        else:
+            verdict = "带宽不足"
+        print(f"{r['kp']:>4} {r['gain']:>7.3f} {r['lag_deg']:>7.1f} "
+              f"{r['rms_resid_deg']:>7.2f} {r['hf_ratio'] * 100:>6.2f} "
+              f"{r['jerk_rms_deg']:>7.4f} {gx:>6.2f} {jx:>6.2f} "
+              f"{r['cur_ma_peak']:>7.0f}  {verdict}")
+    print("-" * 92)
+    print("口径：『可用』= gain≥0.6 且 jerk ≤ 2× 基线。")
+    print("  **jerk**（位置二阶差分 RMS，单位度）是主判据 —— 已在历史数据上验证有区分度："
+          "P32 0.41 vs P5 0.14（2.7×）。")
+    print("  hf%（残差里 >3f0 的能量占比）只作参考：同一 P 重复测量在 25~68% 间跳，"
+          "不可单独判据。")
+    print("⚠️ 阈值是相对判据，不是规格：飞特没给 P 与带宽的曲线，只能同条件跨 P 横比，"
+          "并回看原始 CSV 是否出现静止位微振。")
+
+    p = Path(unique_path(str(SINE_DIR / f"psweep_id{sid}.json")))
+    p.write_text(json.dumps({
+        "servo_id": sid, "freq_hz": fr, "amp_deg": args.sine_amp_deg,
+        "rate_hz": args.rate, "cycles": args.sine_cycles,
+        "baseline_kp": base["kp"], "ladder": out,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"扫描结果 → {p}")
+    return out
 
 
 def cmd_selftest(_bus, _sid, args):
@@ -949,8 +1124,8 @@ def cmd_selftest(_bus, _sid, args):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="HD-1910 辨识台架")
-    ap.add_argument("cmd", choices=["telem", "step", "sine", "deadzone", "backlash",
-                                     "set-id", "selftest"])
+    ap.add_argument("cmd", choices=["telem", "step", "sine", "psweep", "deadzone",
+                                     "backlash", "set-id", "selftest"])
     ap.add_argument("--port", default="COM3")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--id", type=int, default=1)
@@ -986,6 +1161,9 @@ def main() -> int:
                          "三角波，测出来是限速不是 P ⇒ sine 默认把它拉到最大")
     ap.add_argument("--sine-accel", type=int, default=254,
                     help="sine：reg41 加速度上限，同理解限速")
+    ap.add_argument("--kp-list", default="5,8,12,16,24,32",
+                    help="psweep：要扫的 RAM P 列表（逗号分隔）。P3 部署值是 5，"
+                         "实测带宽不足；本扫描找『带宽够且不颤』的档位")
     args = ap.parse_args()
 
     if args.cmd == "selftest":
@@ -1002,7 +1180,7 @@ def main() -> int:
         if not bus.ping(args.id):
             sys.exit(f"ID {args.id} 无应答：查线序（1=信号 2=V 3=G）、供电、波特率")
         print(f"✔ PING {args.id} @ {args.port}")
-        if args.cmd in ("step", "sine", "deadzone", "backlash"):
+        if args.cmd in ("step", "sine", "psweep", "deadzone", "backlash"):
             mode = bus.read_u8(args.id, REG_MODE)
             print(f"  reg33 mode = {mode}（本脚本所有实测结论基于 mode=4）")
             if mode != 4:
@@ -1013,7 +1191,7 @@ def main() -> int:
                   + ("" if p == KP_FW_P3 else
                      f"  ⚠️ P3 部署值是 {KP_FW_P3}，两边不对齐时这份辨识不代表部署后行为"))
         {"telem": cmd_telem, "step": cmd_step, "sine": cmd_sine,
-         "deadzone": cmd_deadzone, "backlash": cmd_backlash,
+         "psweep": cmd_psweep, "deadzone": cmd_deadzone, "backlash": cmd_backlash,
          "set-id": cmd_set_id}[args.cmd](bus, args.id, args)
     finally:
         bus.close()

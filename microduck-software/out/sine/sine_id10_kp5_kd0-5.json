@@ -1,0 +1,32 @@
+{
+  "servo_id": 10,
+  "kp": 5,
+  "kd": 0,
+  "amp_deg": 16.9,
+  "rate_hz": 50.0,
+  "speed_reg46": 4095,
+  "accel_reg41": 254,
+  "torque_limit": 500,
+  "center": 2545,
+  "voltage_v": [
+    4.2,
+    4.5
+  ],
+  "csv": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\out\\sine\\sine_id10_kp5_kd0-5.csv",
+  "freqs": [
+    {
+      "freq_hz": 1.89,
+      "amp_goal_deg": 16.877867459708284,
+      "amp_pos_deg": 3.911868480519227,
+      "gain": 0.2317750444395799,
+      "loss_pct": 76.82249555604201,
+      "lag_deg": 127.28340945634379,
+      "lag_ms": 187.07144246964108,
+      "dc_err_steps": 1.0616061443124636,
+      "rms_track_err_deg": 13.80049686027458,
+      "rms_resid_deg": 0.25523227114370517,
+      "n_pts": 132,
+      "cur_ma_peak": 234.0
+    }
+  ]
+}

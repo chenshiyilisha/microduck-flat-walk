@@ -1,0 +1,32 @@
+{
+  "servo_id": 10,
+  "kp": 16,
+  "kd": 0,
+  "amp_deg": 16.9,
+  "rate_hz": 50.0,
+  "speed_reg46": 4095,
+  "accel_reg41": 254,
+  "torque_limit": 500,
+  "center": 2519,
+  "voltage_v": [
+    3.7,
+    4.5
+  ],
+  "csv": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\out\\sine\\psweep_id10_kp16.csv",
+  "freqs": [
+    {
+      "freq_hz": 1.89,
+      "amp_goal_deg": 16.87457608502207,
+      "amp_pos_deg": 12.161244986778387,
+      "gain": 0.7206844738205156,
+      "loss_pct": 27.93155261794844,
+      "lag_deg": 100.43885140601539,
+      "lag_ms": 147.617359503256,
+      "dc_err_steps": -11.566054593150966,
+      "rms_track_err_deg": 15.99076066875625,
+      "rms_resid_deg": 0.9681832645119992,
+      "n_pts": 132,
+      "cur_ma_peak": 871.0
+    }
+  ]
+}

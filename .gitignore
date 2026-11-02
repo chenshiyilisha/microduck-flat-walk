@@ -67,7 +67,11 @@ artifacts/flat_walk/videos/*
 .ruff_cache/
 
 **/logs/
-**/out/
+# out/ is build output, EXCEPT out/sine -- those CSVs are the only record of
+# hardware runs. `**/out/` (whole-directory) silently defeated the nested
+# `!out/sine/` rule, so every bench file had to be force-added by hand.
+**/out/*
+!**/out/sine/
 **/wandb/
 **/*.pt
 **/*.onnx
