@@ -817,7 +817,20 @@ MUJOCO_GL=glfw python tools/flat_walk/rehearse_deploy.py \
 ```
 
 六个条件是训练 DR 的采样点：`nominal`(7.4 V, sag 0.1) / `low_batt`(6.5 V, sag 0.2) /
-`high_batt`(8.2 V, sag 0) / `train_lag{3,4,6}`（训练同款执行器延迟）。
+`high_batt`(8.2 V, sag 0) / `train_lag{3,4,6}`（原标「训练同款执行器延迟」，**实为
+60/80/120 ms，是训练带的 2–4 倍，见下方单位更正**）。
+
+> ⚠️ **2026-11-02 单位更正（延迟维）**：`train_lag{3,4,6}` **不是**训练同款延迟。
+> 训练侧 `apply_delay()` 在 decimation 循环内、每次 `sim.step()` 之前执行
+> （`mjlab/entity/entity.py::write_data_to_sim` 的 docstring 原文："Called before each
+> `sim.step()` within the decimation loop"），所以 `delay_min_lag=3 / delay_max_lag=6`
+> 的单位是**5 ms 物理步** ⇒ **15–30 ms**。彩排的最外层循环跑在 50 Hz，`--delay=N` 的单位是
+> **20 ms 控制步**。于是旧 `train_lag3/4/6` 实际测的是 **60/80/120 ms**。
+>
+> 结论影响：§14.4 那三行的读数仍然成立，但它们证明的是「**60–120 ms 站不住**」，
+> **不能**用来证明训练带内的 15–30 ms 站不住。条件已改名为 `delay1/2/4`（20/40/80 ms），
+> 输出里带 `delay=NNms`，超过 30 ms 的会标 `(>band)`。**延迟维继续只记缺口、不作判决**。
+
 前提三件不在本仓库：上游 `infer_policy.py`、`mjlab_microduck` 任务包（含 scene XML）、
 `mujoco`——与 §7.0 的可复现边界同一条，工具能支持的说法只是「给定同一任务包与环境，
 输出里的每个数能按 `settings` 复算」。

@@ -100,17 +100,29 @@ FALL_HEIGHT_TRIGGERS = False
 TRUNCATE_AT_FALL = True
 
 # Conditions = the DR envelope training sampled from (infer_policy.py constants).
-# `delay` is in control steps; training configures delay_min_lag=3, delay_max_lag=6 in
-# _BAM_ACTUATOR_KWARGS (microduck_constants.py), i.e. 60-120 ms at 50 Hz. Upstream's own
-# rehearsal defaults to NO delay, and tests/test_infer_policy_bam.py does not assert it —
-# so "nominal" here is *lighter* than training, not equal to it.
+#
+# DELAY UNITS ARE NOT THE SAME ON THE TWO SIDES — read this before comparing.
+#   training: `apply_delay()` runs inside manager_based_rl_env.py's decimation loop
+#             (line ~414: apply_action -> write_data_to_sim -> sim.step, x4), i.e. once
+#             per PHYSICS step. delay_min_lag=3..6 in _BAM_ACTUATOR_KWARGS therefore
+#             means 3..6 x 5 ms = 15..30 ms.
+#   here:     the loop runs at 50 Hz and apply_delay() is called once per CONTROL step,
+#             so `delay=N` means N x 20 ms.
+# => rehearsal delay=1 (20 ms) is the only value that lands inside the training band;
+#    delay=3/4/6 are 60/80/120 ms, i.e. 2-4x the training maximum, and a fall there says
+#    nothing about the deployed robot. This axis is recorded as a known gap, not a verdict.
+# Upstream's own rehearsal defaults to NO delay, and tests/test_infer_policy_bam.py does
+# not assert it — so "nominal" here is *lighter* than training, not equal to it.
+TRAIN_DELAY_MS = (15.0, 30.0)
+CONTROL_STEP_MS = 20.0
+
 CONDITIONS = {
     "nominal": dict(vin=7.4, vin_drop_gain=0.1, delay=0),
     "low_batt": dict(vin=6.5, vin_drop_gain=0.2, delay=0),
     "high_batt": dict(vin=8.2, vin_drop_gain=0.0, delay=0),
-    "train_lag3": dict(vin=7.4, vin_drop_gain=0.1, delay=3),
-    "train_lag4": dict(vin=7.4, vin_drop_gain=0.1, delay=4),
-    "train_lag6": dict(vin=7.4, vin_drop_gain=0.1, delay=6),
+    "delay1": dict(vin=7.4, vin_drop_gain=0.1, delay=1),   # 20 ms, inside 15-30
+    "delay2": dict(vin=7.4, vin_drop_gain=0.1, delay=2),   # 40 ms, past the band
+    "delay4": dict(vin=7.4, vin_drop_gain=0.1, delay=4),   # 80 ms, stress only
 }
 
 # What this instrument shares with training, and what it does not. Recorded in the output so
@@ -127,8 +139,9 @@ TRAINING_PARITY = {
         "use_projected_gravity=True (USE_PROJECTED_GRAVITY=True in the task cfg)",
     ],
     "differs": [
-        "actuator delay 3-6 steps in training, 0 by default here (upstream --delay is off by "
-        "default and untested) -> pass --delay to study it, but see below: it changes the gait",
+        "actuator delay 3-6 x 5 ms = 15-30 ms in training (physics steps), vs 0 by default "
+        "here; rehearsal --delay is counted in 20 ms CONTROL steps, so only delay=1 (20 ms) "
+        "lands inside the training band — delay>=2 is a stress number, not a verdict",
         "CPU MuJoCo (Newton/implicitfast + stiff friction constraints) vs warp/MJX at train time "
         "-> same model, different solver numerics",
         "training uses collisions=(FULL_COLLISION,): every geom pair collides; the CPU scene keeps "
@@ -410,6 +423,8 @@ def run_one(mod, scene, args, cond_name, cond):
         "settings": dict(cond, kp_fw=args.kp_fw, action_scale=args.action_scale,
                          timestep=args.timestep, decimation=decimation,
                          control_hz=round(1.0 / control_dt, 3),
+                         delay_ms=cond["delay"] * CONTROL_STEP_MS,
+                         delay_train_band_ms=list(TRAIN_DELAY_MS),
                          start_height=args.start_height, yaw_deg=getattr(args, "yaw_deg", 0.0),
                          bam=bam_ctrl is not None),
         "command": {"vx": args.cmd_vx, "vy": args.cmd_vy, "wz": args.cmd_wz},
@@ -549,7 +564,11 @@ def main(argv=None):
             tilt_s = f"tilt={t:.1f}deg" if t is not None else f"tilt_max={r['stability']['max_tilt_deg']:.1f}deg"
             yaw_d = r.get("heading", {}).get("yaw_delta_deg")
             yaw_s = f"yawΔ={yaw_d:+.0f}deg" if yaw_d is not None else "yawΔ=?"
-            print(f"[{r['condition']:>18}] obs={r['shape']['obs_dim']} nu={r['shape']['nu']} "
+            d_ms = float(r["settings"].get("delay_ms") or 0.0)
+            # Mark the delay axis explicitly: anything above the training band is a stress
+            # number, not evidence about the deployed robot (units differ, see CONDITIONS).
+            delay_s = f"delay={d_ms:.0f}ms" + ("(>band)" if d_ms > TRAIN_DELAY_MS[1] else "")
+            print(f"[{r['condition']:>18}] {delay_s} obs={r['shape']['obs_dim']} nu={r['shape']['nu']} "
                   f"{vx_s} "
                   f"dx_body={r['displacement']['dx_body']:+.3f} "
                   f"dx_w={r['displacement']['dx_world']:+.3f} "
