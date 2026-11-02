@@ -332,6 +332,138 @@ def read_pin_state(cfg, reward_name: str) -> dict[str, Any]:
     }
 
 
+def add_heading_reward_curriculum(
+    cfg,
+    *,
+    hold_weight: float,
+    tracking_weight: float,
+    ang_vel_z: float,
+    stage_iters: tuple[int, int, int, int],
+    num_steps_per_env: int = 24,
+) -> dict[str, Any]:
+    """Port upstream's reward-side heading recipe onto this task.
+
+    Where this comes from (all upstream, not invented here):
+
+      * `mjlab_microduck/tasks/mdp.py::heading_hold_reward` — rewards the yaw
+        ANGLE staying at the spawn heading, `exp(-wrap(yaw-yaw_spawn)^2/std^2)`,
+        std=0.4. Its docstring states the reason a yaw-RATE penalty is the wrong
+        tool: "it just tells the policy 'never turn' -> it can't steer back and
+        drifts open-loop". An angle-based reward lets the policy yaw back.
+      * `mjlab_microduck/tasks/mdp.py::heading_tracking_reward` — rewards the
+        commanded heading error (`cmd[:, 2]`) being near zero,
+        `exp(-cmd[2]^2/std^2)`, std=0.5.
+      * `microduck_velocity_swizzle_env_cfg.py:66-107` — the two-phase
+        curriculum and the narrowed `ang_vel_z`: straight first
+        (`heading_hold` dominant, `heading_tracking`=0), then follow
+        (`heading_hold`->0, `heading_tracking`->3.0). Its comment on narrowing
+        `ang_vel_z` from +-1.0 to +-0.5 is why the deployment rehearsal
+        oscillated at gain 0.5: "a +-1.0-trained policy turned too violently".
+
+    Our velocity task ships NEITHER reward term (verified by grepping
+    `cfg.rewards[...]` in `microduck_velocity_env_cfg.py`), which is the actual
+    gap: `rel_heading_envs=0.3` only feeds a heading error into cmd[2]; nothing
+    ever rewards driving that error to zero.
+
+    `stage_iters` are ITERATIONS, converted here into `common_step_counter`
+    steps with the agent's `num_steps_per_env` (24) — upstream writes its stages
+    directly as `iteration * 24`, so this keeps the same unit rather than
+    silently mixing them.
+    """
+    from mjlab.managers import CurriculumTermCfg, RewardTermCfg
+
+    from mjlab_microduck.tasks import mdp as microduck_mdp
+
+    if hold_weight <= 0.0:
+        raise SystemExit(f"hold_weight must be > 0 (got {hold_weight})")
+    if tracking_weight <= 0.0:
+        raise SystemExit(f"tracking_weight must be > 0 (got {tracking_weight})")
+    if ang_vel_z <= 0.0:
+        raise SystemExit(f"ang_vel_z must be > 0 (got {ang_vel_z}); it is the clip bound")
+
+    for name in ("heading_hold", "heading_tracking"):
+        if name in cfg.rewards:
+            raise SystemExit(
+                f"cfg.rewards already contains {name!r}; refusing to double-add "
+                "(a silent overwrite would make the readback below meaningless)."
+            )
+    for name in ("heading_hold_weight", "heading_tracking_weight"):
+        if name in cfg.curriculum:
+            raise SystemExit(f"cfg.curriculum already contains {name!r}")
+
+    n = int(num_steps_per_env or 24)
+    if n <= 0:
+        raise SystemExit(f"num_steps_per_env must be > 0 (got {n})")
+
+    cfg.rewards["heading_hold"] = RewardTermCfg(
+        func=microduck_mdp.heading_hold_reward,
+        weight=float(hold_weight),
+        params={"std": 0.4},
+    )
+    cfg.rewards["heading_tracking"] = RewardTermCfg(
+        func=microduck_mdp.heading_tracking_reward,
+        weight=0.0,                       # must match the stage table's step-0 value
+        params={"command_name": "twist", "std": 0.5},
+    )
+
+    marks = [int(i) * n for i in stage_iters]
+    cfg.curriculum["heading_hold_weight"] = CurriculumTermCfg(
+        func=microduck_mdp.reward_weight,
+        params={
+            "reward_name": "heading_hold",
+            "weight_stages": [
+                {"step": marks[0], "weight": float(hold_weight)},
+                {"step": marks[1], "weight": float(hold_weight)},
+                {"step": marks[2], "weight": float(hold_weight) * 0.5},
+                {"step": marks[3], "weight": 0.0},
+            ],
+        },
+    )
+    cfg.curriculum["heading_tracking_weight"] = CurriculumTermCfg(
+        func=microduck_mdp.reward_weight,
+        params={
+            "reward_name": "heading_tracking",
+            "weight_stages": [
+                {"step": marks[0], "weight": 0.0},
+                {"step": marks[1], "weight": 0.0},
+                {"step": marks[2], "weight": float(tracking_weight) * 0.5},
+                {"step": marks[3], "weight": float(tracking_weight)},
+            ],
+        },
+    )
+
+    # Narrowing the clip bound also bounds the OBSERVED heading error, which is
+    # what tames the turn rate (upstream's comment, see docstring).
+    cfg.commands["twist"].ranges.ang_vel_z = (-float(ang_vel_z), float(ang_vel_z))
+
+    return read_heading_reward_state(cfg)
+
+
+def read_heading_reward_state(cfg) -> dict[str, Any]:
+    """Read the added rewards + curricula back off the live cfg object."""
+    out: dict[str, Any] = {}
+    for name in ("heading_hold", "heading_tracking"):
+        term = cfg.rewards.get(name)
+        out[name] = (
+            None
+            if term is None
+            else {
+                "weight": float(term.weight),
+                "params": dict(term.params),
+                "func": getattr(term.func, "__name__", str(term.func)),
+            }
+        )
+    for name in ("heading_hold_weight", "heading_tracking_weight"):
+        term = cfg.curriculum.get(name)
+        out[name] = (
+            None
+            if term is None
+            else [dict(s) for s in term.params.get("weight_stages", [])]
+        )
+    out["ranges_ang_vel_z"] = tuple(float(v) for v in cfg.commands["twist"].ranges.ang_vel_z)
+    return out
+
+
 def plant_fingerprint() -> dict[str, Any]:
     """Record which robot this variant is declared against.
 
@@ -363,6 +495,17 @@ def main() -> int:
     pre.add_argument("--heading-stiffness", type=float, default=None)
     pre.add_argument("--rel-forward-envs", type=float, default=None)
     pre.add_argument("--pin-action-rate", type=float, default=None)
+    pre.add_argument("--heading-hold-weight", type=float, default=None,
+                     help="add upstream's heading_hold reward at this initial weight "
+                          "(std 0.4). Needs --heading-tracking-final-weight too.")
+    pre.add_argument("--heading-tracking-final-weight", type=float, default=None,
+                     help="add heading_tracking reward (std 0.5), ramped to this weight.")
+    pre.add_argument("--ang-vel-z-clip", type=float, default=None,
+                     help="set ranges.ang_vel_z = (-x, +x). Bounds the observed heading "
+                          "error, which is what tames the turn rate (upstream: 0.5).")
+    pre.add_argument("--heading-stage-iters", default="0,1000,1750,2500",
+                     help="four iteration marks for the two-phase heading curriculum "
+                          "(upstream's swizzle uses 0/1000/1750/2500).")
     pre.add_argument("--task", default=DEFAULT_TASK)
     pre.add_argument("--dry-run", action="store_true")
     known, passthrough = pre.parse_known_args()
@@ -428,6 +571,70 @@ def main() -> int:
         _check_fraction("rel_forward_envs", known.rel_forward_envs)
         requested["rel_forward_envs"] = known.rel_forward_envs
         cmd.rel_forward_envs = known.rel_forward_envs
+
+    # Reward-side heading recipe (upstream's, see add_heading_reward_curriculum).
+    # Runs before `after = read_heading_state(...)` so the ang_vel_z readback
+    # below sees the narrowed range rather than the shipped +-1.0.
+    heading_rewards: dict[str, Any] | None = None
+    if (known.heading_hold_weight is None) != (known.heading_tracking_final_weight is None):
+        raise SystemExit(
+            "--heading-hold-weight and --heading-tracking-final-weight must be "
+            "given together: hold alone teaches 'never turn', tracking alone has "
+            "no incentive to stay on a heading."
+        )
+    if known.heading_hold_weight is not None:
+        if known.ang_vel_z_clip is None:
+            raise SystemExit(
+                "--ang-vel-z-clip is required with the heading rewards. The shipped "
+                "+-1.0 is what made the deployment loop oscillate; upstream narrows "
+                "it to 0.5 for exactly this recipe."
+            )
+        if known.ang_vel_z_clip <= 0.0:
+            raise SystemExit(f"--ang-vel-z-clip must be > 0 (got {known.ang_vel_z_clip})")
+        try:
+            stage_iters = tuple(int(x) for x in known.heading_stage_iters.split(","))
+        except ValueError:
+            raise SystemExit(
+                f"--heading-stage-iters must be four comma-separated ints, got "
+                f"{known.heading_stage_iters!r}"
+            ) from None
+        if len(stage_iters) != 4:
+            raise SystemExit(
+                f"--heading-stage-iters needs exactly 4 marks, got {len(stage_iters)}"
+            )
+        if list(stage_iters) != sorted(stage_iters):
+            raise SystemExit(f"--heading-stage-iters must be non-decreasing: {stage_iters}")
+        if stage_iters[0] != 0:
+            raise SystemExit(f"the first stage must start at iteration 0: {stage_iters}")
+        if stage_iters[3] > int(args.agent.max_iterations):
+            raise SystemExit(
+                f"the last heading stage ({stage_iters[3]}) is past "
+                f"max_iterations ({args.agent.max_iterations}); the run would end "
+                "before the tracking phase starts."
+            )
+        heading_rewards = add_heading_reward_curriculum(
+            args.env,
+            hold_weight=known.heading_hold_weight,
+            tracking_weight=known.heading_tracking_final_weight,
+            ang_vel_z=known.ang_vel_z_clip,
+            stage_iters=stage_iters,
+            num_steps_per_env=int(getattr(args.agent, "num_steps_per_env", 24)),
+        )
+        # A declared value that did not take is this project's recurring failure
+        # mode, so compare the readback against what was asked.
+        if heading_rewards["heading_hold"]["weight"] != known.heading_hold_weight:
+            raise SystemExit(f"heading_hold weight did not take: {heading_rewards['heading_hold']}")
+        if heading_rewards["heading_tracking"]["weight"] != 0.0:
+            raise SystemExit(
+                f"heading_tracking must start at 0 (the curriculum ramps it): "
+                f"{heading_rewards['heading_tracking']}"
+            )
+        want_clip = (-known.ang_vel_z_clip, known.ang_vel_z_clip)
+        if heading_rewards["ranges_ang_vel_z"] != want_clip:
+            raise SystemExit(
+                f"ang_vel_z clip did not take: requested {want_clip}, "
+                f"effective {heading_rewards['ranges_ang_vel_z']}"
+            )
 
     after = read_heading_state(args.env)
 
@@ -496,6 +703,10 @@ def main() -> int:
         "command_before": before,
         "command_after": after,
         "other_rel_heading_writers": writers or None,
+        "heading_rewards": heading_rewards,
+        "heading_stage_iters": (
+            list(stage_iters) if known.heading_hold_weight is not None else None
+        ),
         "action_rate_pin": pin,
         "action_rate_effective": pin_after,
         "plant": plant_fingerprint(),
@@ -523,6 +734,15 @@ def main() -> int:
         print(f"  cmd[2] saturates beyond {sat_err:.3f} rad heading error")
     else:
         print("control run: heading knobs left exactly as the cfg ships")
+    if heading_rewards is not None:
+        print("heading rewards ADDED (upstream recipe):")
+        for name in ("heading_hold", "heading_tracking"):
+            t = heading_rewards[name]
+            print(f"  {name}: {t['func']} weight={t['weight']:.3f} params={t['params']}")
+        for name in ("heading_hold_weight", "heading_tracking_weight"):
+            stages = ", ".join(f"{s['weight']}@{s['step']}" for s in heading_rewards[name])
+            print(f"  curriculum {name}: {stages}  (step = iter x num_steps_per_env)")
+        print(f"  ang_vel_z narrowed to {heading_rewards['ranges_ang_vel_z']}")
     if pin is not None:
         n_before = len(pin["stages_before"])
         ramp = ", ".join(f"{s['weight']}@{s['step']}" for s in pin["stages_before"])
