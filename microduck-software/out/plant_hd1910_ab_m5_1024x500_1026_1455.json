@@ -1,0 +1,15 @@
+{
+  "live": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+  "sha16": "f3d62a7a51de2bfe",
+  "backup_exists": true,
+  "register_installed": true,
+  "detected": "hd1910",
+  "kp_fw": 32.0,
+  "kwargs_block": "_BAM_ACTUATOR_KWARGS = dict(\n    json_path=r\"E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15/microduck-software/tools/bam_params/hd1910/m5.json\",\n    target_names_expr=(r\"^(?!passive_).*\",),\n    kp_fw=32.0,  # HD1910 firmware P (reg 50); NOT xl330's 200\n    vin_range=(6.5, 8.2),\n    vin_drop_gain_range=(0.0, 0.2),\n    vin_min=6.0,\n    delay_min_lag=3,\n    delay_max_lag=6,\n)",
+  "expected_id": null,
+  "m5_json_exists": true,
+  "m5_sha16": "ec85c34dfbec850a",
+  "ftservo_m6_exists": true,
+  "ftservo_m6_sha16": "b5e45cb287f22085",
+  "gate_ok": null
+}
