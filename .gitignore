@@ -1,5 +1,10 @@
 # Merged .gitignore: DuckEMW/flat-walk exceptions + HD1910 WorkBuddy ignores
 
+# Machine-local scratch: ACL backups carry this box's security descriptors and
+# paths; _stage holds one-off probe scripts. Neither should reach the remote.
+/_stage/
+/acl-report/
+
 # --- flat-walk / DuckEMW (from main) ---
 dance/songs/*.mp3
 dance/songs/*.wav
