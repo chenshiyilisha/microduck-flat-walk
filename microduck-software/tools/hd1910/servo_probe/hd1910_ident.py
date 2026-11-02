@@ -43,6 +43,7 @@
 """
 import argparse
 import csv
+import json
 import os
 import sys
 import time
@@ -55,6 +56,7 @@ from hd1910_readonly import frame, query, ping, signed_mag  # noqa: E402
 # 免得跑一次就在仓库根留一个 CSV。
 ROOT = Path(__file__).resolve().parents[3]
 REC_DIR = ROOT / "out" / "steps"
+SINE_DIR = ROOT / "out" / "sine"
 
 try:
     import serial
@@ -533,6 +535,300 @@ def cmd_set_id(bus: Bus, sid: int, args):
     return 0 if ok else 1
 
 
+# ---------------------------------------------------------------- 正弦跟踪（带宽）
+
+def sine_metrics(rows, freq, skip_cycles=1.0):
+    """单频最小二乘拟合 → 幅值比 / 相位滞后 / 跟踪误差。
+
+    rows: (freq, t_goal_ms, t_pos_ms, goal, pos, speed, load, volt, temp, cur_ma)
+
+    为什么用拟合而不是"逐点比峰值"：
+      峰值对比在**有噪声或有直流偏置时会失真** —— 舵机稳态误差（P5/D0 实测 −2 步）
+      会让上下峰不对称，取峰峰值就混进了偏置。拟合把基波幅值、相位、直流分量
+      三个量分开解，各自独立可读。
+
+    为什么 goal 与 pos 各用自己的时间戳：写 goal 与读位置之间有 ~1.6 ms 事务延迟，
+    用同一时刻会把这段固定延迟算成相位滞后。两条时间轴各自拟合，延迟只影响
+    pos 轴的绝对时刻（拟合对绝对相位不敏感，只看两轴之差），所以读到的滞后
+    里仍含这段测量延迟 —— 量级 1.6 ms × 360°×f，1.89 Hz 下 ≈1.1°，可接受。
+    """
+    import math
+
+    import numpy as np
+
+    pts = [r for r in rows if r[0] == freq and r[3] is not None and r[4] is not None]
+    if len(pts) < 12:
+        return None
+    skip_s = skip_cycles / float(freq)
+    tg = np.array([r[1] / 1000.0 for r in pts])
+    tp = np.array([r[2] / 1000.0 for r in pts])
+    g = np.array([r[3] for r in pts], dtype=float)
+    p = np.array([r[4] for r in pts], dtype=float)
+    keep = tg >= (tg[0] + skip_s)
+    if int(keep.sum()) < 12:
+        keep = np.ones_like(tg, dtype=bool)
+    tg, tp, g, p = tg[keep], tp[keep], g[keep], p[keep]
+
+    w = 2.0 * math.pi * freq
+
+    def fit(t, y):
+        X = np.column_stack([np.cos(w * t), np.sin(w * t), np.ones_like(t)])
+        a, b, dc = np.linalg.lstsq(X, y, rcond=None)[0]
+        return math.hypot(a, b), math.atan2(b, a), dc, (a, b, dc), X
+
+    amp_g, ph_g, dc_g, cg, Xg = fit(tg, g)
+    amp_p, ph_p, dc_p, cp, Xp = fit(tp, p)
+    if amp_g < 1.0:                      # 目标没动起来，比值没有意义
+        return None
+    lag = ph_p - ph_g                    # >0 = pos 落后于 goal
+    lag = (lag + math.pi) % (2.0 * math.pi) - math.pi
+    resid = p - (Xp @ np.array(cp))
+    return {
+        "freq_hz": freq,
+        "amp_goal_deg": amp_g * 360.0 / STEPS_PER_REV,
+        "amp_pos_deg": amp_p * 360.0 / STEPS_PER_REV,
+        "gain": amp_p / amp_g,
+        "loss_pct": 100.0 * (1.0 - amp_p / amp_g),
+        "lag_deg": math.degrees(lag),
+        "lag_ms": math.degrees(lag) / 360.0 * 1000.0 / freq,
+        "dc_err_steps": dc_p - dc_g,
+        "rms_track_err_deg": float(np.sqrt(np.mean((p - g) ** 2))) * 360.0 / STEPS_PER_REV,
+        "rms_resid_deg": float(np.sqrt(np.mean(resid ** 2))) * 360.0 / STEPS_PER_REV,
+        "n_pts": int(len(p)),
+        "cur_ma_peak": float(np.max(np.abs([r[9] for r in pts]))),
+    }
+
+
+def synth_sine(center, amp_steps, freq, seconds, hz=50.0, gain=0.8,
+               lag_deg=30.0, noise=0.0, dc_err=0.0):
+    """合成正弦跟踪曲线（供 selftest 验证 sine_metrics，不碰硬件）。"""
+    import math
+
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    rows, n = [], int(seconds * hz)
+    lag = math.radians(lag_deg)
+    for i in range(n):
+        t = i / hz
+        g = center + amp_steps * math.sin(2 * math.pi * freq * t)
+        p = center + gain * amp_steps * math.sin(2 * math.pi * freq * t - lag) + dc_err
+        if noise:
+            p += rng.normal(0, noise)
+        rows.append((freq, t * 1000.0, (t + 0.0016) * 1000.0, g, p, 0, 0, 7.4, 30, 0.0))
+    return rows
+
+
+def cmd_sine(bus: Bus, sid: int, args):
+    """正弦跟踪录制：给 goal 发正弦，量"输出/输入"的幅值比与相位滞后。
+
+    ★ 与阶跃的三点不同，都有后果：
+
+    1. **必须解除 reg46/reg41 限速**，否则测的是限速不是 P。
+       step 命令默认 `--speed 300`（步/s）= 26 °/s；而 1.89 Hz × ±16.9° 的正弦
+       峰值速度是 2πfA = **209 °/s**，是默认限速的 8 倍。不解除的话，
+       曲线会被梯形规划器削成三角波，P 再大也"跟不上" —— 那是假阴性。
+    2. **幅度要取步态幅值**。knee 半幅 16.9°（=192 步）是策略实际要求的行程；
+       用 ±5° 的小信号测出来的是另一台机器（已实测：小幅度反而更慢）。
+    3. **电压要记**。全部在台架电压下测，7.4 V 会更快 ⇒ 这里的滞后是**上界**。
+    """
+    import math
+
+    start = bus.read_u16(sid, REG_POS)
+    kp_ram = bus.read_u8(sid, REG_P_RAM)
+    kd_ram = bus.read_u8(sid, REG_D_RAM)
+    kp_ee = bus.read_u8(sid, REG_P_GAIN)
+    kd_ee = bus.read_u8(sid, REG_D_GAIN)
+    amin = bus.read_u16(sid, REG_ANGLE_MIN)
+    amax = bus.read_u16(sid, REG_ANGLE_MAX)
+    if start is None or kp_ram is None:
+        sys.exit("读不到位置/增益，先跑 telem 确认通信")
+    if args.dry_run:
+        sys.exit("--dry-run 不碰硬件，用 `selftest` 子命令验证指标")
+
+    target_p = args.kp if args.kp is not None else kp_ram
+    target_d = args.kd if args.kd is not None else kd_ram
+    if args.kp is not None and args.kd is None:
+        target_d = 0
+        print("⚠️ 给了 --kp 未给 --kd ⇒ 按 BAM 纯 P 律把 D 归零（否则多出仿真没有的阻尼项）")
+
+    amp_steps = int(round(args.sine_amp_deg / 360.0 * STEPS_PER_REV))
+    # 必须记下原限速并在收尾恢复：sine 把 reg46 拉到最大，留下的舵机在别人
+    # 用 telem / 手写 goal 时就是"无限速"状态 —— 那是下一个人的事故。
+    sp_orig = bus.read_u16(sid, REG_SPEED)
+    ac_orig = bus.read_u8(sid, REG_ACCEL)
+    sp_rb = ac_rb = None
+    print(f"起始 {start}  RAM P={kp_ram} D={kd_ram}｜EEPROM P={kp_ee} D={kd_ee}")
+    print(f"原限速 reg46={sp_orig} reg41={ac_orig}（测完恢复）")
+    print(f"行程限制 reg9/reg11 = {amin}/{amax}　幅度 ±{amp_steps} 步 "
+          f"({args.sine_amp_deg}°)")
+
+    # 中心必须让整个行程落在限位内，否则正弦会被机械限位削顶 ——
+    # 削顶后基波拟合出来的"幅值比"是假的。
+    center = start
+    if amin is not None and amax is not None and amax > amin:
+        lo, hi = amin + amp_steps, amax - amp_steps
+        if lo <= hi:
+            if not (lo <= center <= hi):
+                center = int((amin + amax) // 2)
+                print(f"⚠️ 起始位置 {start} 会让正弦撞限位 ⇒ 中心移到 {center}")
+        else:
+            sys.exit(f"幅度 ±{amp_steps} 超出行程 [{amin},{amax}]，减小 --sine-amp-deg")
+
+    dt_s = 1.0 / args.rate
+    freqs = [float(x) for x in args.sine_freqs.split(",") if x.strip()]
+    if not freqs:
+        sys.exit("--sine-freqs 为空")
+    # 采样定理闸门：每周期样本数太少，基波幅值会被混叠污染。
+    min_pts = min(args.rate / f for f in freqs)
+    if min_pts < 10:
+        sys.exit(f"每周期仅 {min_pts:.1f} 点（{args.rate} Hz 采 {max(freqs)} Hz），"
+                 f"至少要 10 点/周期；提高 --rate 或降低 --sine-freqs")
+
+    SINE_DIR.mkdir(parents=True, exist_ok=True)
+    path = Path(unique_path(args.csv or str(
+        SINE_DIR / f"sine_id{sid}_kp{target_p}_kd{target_d}.csv")))
+    f = open(path, "w", newline="", buffering=1)
+    writer = csv.writer(f)
+    writer.writerow(["freq", "t_goal_ms", "t_pos_ms", "goal", "pos", "speed",
+                     "load", "volt", "temp_c", "cur_ma"])
+    rows, miss = [], 0
+    total_s = sum(max(args.sine_cycles, 1.0) / fr for fr in freqs)
+    print(f"录制 → {path}：{len(freqs)} 档频率，每档 {args.sine_cycles} 周期，"
+          f"共约 {total_s:.0f}s，{args.rate:g} Hz。Ctrl-C 中止，数据照常落盘。")
+    try:
+        bus.write_u16(sid, REG_GOAL, center)
+        time.sleep(0.3)
+        got_p, got_d = _write_gains(bus, sid, target_p, target_d)
+        if (got_p, got_d) != (target_p, target_d):
+            print(f"✗ 增益未生效：写入 ({target_p},{target_d}) → 回读 ({got_p},{got_d})")
+            sys.exit("增益回读不符，拒测")
+        print(f"✔ 增益生效 RAM P={got_p} D={got_d}（回读确认）")
+
+        # ① 限速/限流必须在第一次写 goal 之前落到位（_arm 的注释：顺序不能反）
+        bus.write_u16(sid, REG_SPEED, args.sine_speed)
+        bus.write_u8(sid, REG_ACCEL, args.sine_accel)
+        bus.write_u16(sid, REG_TORQUE_LIMIT, args.torque_limit)
+        time.sleep(0.1)
+        sp_rb = bus.read_u16(sid, REG_SPEED)
+        ac_rb = bus.read_u8(sid, REG_ACCEL)
+        print(f"✔ 限速 reg46 → {sp_rb}（请求 {args.sine_speed}"
+              + ("" if sp_rb == args.sine_speed else "  ⚠️ 回读被截断，固件上限如此")
+              + f"）　加速度 reg41 → {ac_rb}")
+        need_v = args.sine_amp_deg * 2 * math.pi * max(freqs)   # deg/s
+        print(f"  正弦峰值速度需求 {need_v:.0f} °/s"
+              f"（{need_v / 360 * STEPS_PER_REV:.0f} 步/s，按 reg46=步/s 口径）"
+              f"　若 reg46 上限低于此值 ⇒ 限速削波，本测量只反映限速")
+
+        for fr in freqs:
+            n_steps = int(round(args.sine_cycles / fr * args.rate))
+            w = 2.0 * math.pi * fr
+            print(f"  ── {fr:g} Hz × {args.sine_cycles:g} 周期（{n_steps} 点）")
+            t0 = time.perf_counter()
+            next_t = t0
+            for i in range(n_steps):
+                tgt = center + amp_steps * math.sin(w * (i * dt_s))
+                t_send = time.perf_counter()
+                bus.write_u16(sid, REG_GOAL, int(round(tgt)))
+                t_goal_done = time.perf_counter()
+                t_read = time.perf_counter()
+                tm = telemetry(bus, sid)
+                t_pos = time.perf_counter()
+                tg_ms = (t_goal_done - t0) * 1000.0
+                tp_ms = (t_read - t0) * 1000.0
+                if tm is None:
+                    miss += 1
+                    writer.writerow([fr, f"{tg_ms:.1f}", f"{tp_ms:.1f}",
+                                     int(round(tgt)), "", "", "", "", "", ""])
+                else:
+                    writer.writerow([fr, f"{tg_ms:.1f}", f"{tp_ms:.1f}",
+                                     int(round(tgt)), tm["pos"], tm["speed"],
+                                     tm["load"], f"{tm['volt']:.1f}", tm["temp"],
+                                     f"{tm['cur_ma']:.0f}"])
+                    rows.append((fr, tg_ms, tp_ms, int(round(tgt)), tm["pos"],
+                                 tm["speed"], tm["load"], tm["volt"], tm["temp"],
+                                 tm["cur_ma"]))
+                next_t += dt_s
+                slack = next_t - time.perf_counter()
+                if slack > 0:
+                    time.sleep(slack)
+                else:
+                    next_t = time.perf_counter()
+            # 回到中心再切下一档，避免档间阶跃污染下一档的拟合
+            bus.write_u16(sid, REG_GOAL, center)
+            time.sleep(0.3)
+    except KeyboardInterrupt:
+        print("\n手动中止")
+    finally:
+        _disarm(bus, sid)
+        try:
+            bus.write_u16(sid, REG_SPEED, sp_orig)
+            bus.write_u8(sid, REG_ACCEL, ac_orig)
+            sr, ar = bus.read_u16(sid, REG_SPEED), bus.read_u8(sid, REG_ACCEL)
+            print(f"{'✔' if (sr, ar) == (sp_orig, ac_orig) else '✗'} 限速恢复 "
+                  f"reg46={sr} reg41={ar}（原 {sp_orig}/{ac_orig}）")
+        except Exception as e:
+            print(f"✗ 限速恢复失败：{e}  ⚠️ 舵机仍是无限速状态，"
+                  f"下次上电或手动写 reg46={sp_orig}")
+        if args.kp is not None or args.kd is not None:
+            try:
+                rp, rd = _write_gains(bus, sid, kp_ram, kd_ram)
+                ok = (rp, rd) == (kp_ram, kd_ram)
+                print(f"{'✔' if ok else '✗'} 增益恢复 RAM P={rp} D={rd}"
+                      f"（原 {kp_ram}/{kd_ram}）")
+            except Exception as e:
+                print(f"✗ 增益恢复失败：{e}  ⚠️ RAM P/D 可能仍是 {target_p}/{target_d}")
+        f.close()
+
+    print(f"有效样本 {len(rows)}，丢包 {miss}"
+          + ("  ⚠️ 有丢包，拟合可能偏" if miss else ""))
+    volt = [r[7] for r in rows if r[7] is not None]
+    if volt:
+        print(f"电压 {min(volt):.1f}~{max(volt):.1f} V　⚠️ 台架电压≠部署 7.4 V，"
+              f"滞后读数是上界")
+
+    print(f"\n{'freq':>6} {'目标°':>7} {'输出°':>7} {'幅值比':>7} {'损失%':>7} "
+          f"{'滞后°':>7} {'滞后ms':>8} {'跟踪RMS°':>9} {'峰流mA':>8}  判据")
+    results = []
+    for fr in freqs:
+        m = sine_metrics(rows, fr, skip_cycles=args.sine_skip_cycles)
+        if m is None:
+            print(f"{fr:>6g} {'—':>7} {'—':>7} {'—':>7} {'—':>7} {'—':>7} "
+                  f"{'—':>8} {'—':>9} {'—':>8}  样本不足")
+            continue
+        results.append(m)
+        # 滞后 >180° 会被 wrap 成负（atan2 的值域），直接读会看成"超前"。
+        lag = m["lag_deg"]
+        star = ""
+        if lag < -90.0:                      # 真滞后 = lag+360，已超过半个周期
+            lag += 360.0
+            star = "*"
+        verdict = ("跟上" if m["gain"] >= 0.8 and lag <= 30
+                   else "勉强" if m["gain"] >= 0.6 and lag <= 60
+                   else "跟不上")
+        print(f"{fr:>6g} {m['amp_goal_deg']:>7.2f} {m['amp_pos_deg']:>7.2f} "
+              f"{m['gain']:>7.3f} {m['loss_pct']:>7.1f} {lag:>7.1f}{star:<1} "
+              f"{m['lag_ms']:>8.1f} {m['rms_track_err_deg']:>9.2f} "
+              f"{m['cur_ma_peak']:>8.0f}  {verdict}")
+    if results:
+        json_path = path.with_suffix(".json")
+        json_path.write_text(json.dumps(
+            {"servo_id": sid, "kp": target_p, "kd": target_d,
+             "amp_deg": args.sine_amp_deg, "rate_hz": args.rate,
+             "speed_reg46": sp_rb, "accel_reg41": ac_rb,
+             "torque_limit": args.torque_limit, "center": center,
+             "voltage_v": [min(volt), max(volt)] if volt else None,
+             "csv": str(path), "freqs": results},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n指标 → {json_path}")
+    print("口径：幅值比 = 输出基波/输入基波；"
+          "≥0.8 且滞后≤30° 判『跟上』，<0.6 或滞后>60° 判『跟不上』。")
+    print("  * = 真滞后 >半个周期，被 atan2 折成负数，本表已加回 360°。")
+    print("对表：仿真 plant 预测 P=5 在 1.89 Hz 约 35% 幅值损失 / 70° 滞后。")
+    print("⚠️ 只凭 gain/lag 两个数字不够：本仪器对频率错标不敏感（见 selftest），"
+          "削波/失真也能给出像样的数 —— 必须同时看残差和原始 CSV。")
+
+
 def cmd_selftest(_bus, _sid, args):
     """不碰硬件：合成曲线验证 step_metrics，含负对照。"""
     print("=== 正例：欠阻尼（zeta=0.35）应有超调 ===")
@@ -557,7 +853,69 @@ def cmd_selftest(_bus, _sid, args):
     ok4 = step_metrics([("up", 0, 2200, 2000, 0, 0, 0)] * 3, "up", 2200, 5) is None
     print(f"  3 样本 → {step_metrics([('up', 0, 2200, 2000, 0, 0, 0)] * 3, 'up', 2200, 5)}")
 
-    allok = ok1 and ok2 and ok3 and ok4
+    # ---- sine_metrics：合成正弦，验证幅值比 / 相位滞后能被还原 ----
+    print("\n=== 正弦指标：应还原已知的 gain / lag ===")
+    ok5 = True
+    for gain0, lag0 in ((0.8, 30.0), (1.0, 0.0), (0.65, 70.0)):
+        rows5 = synth_sine(2048, 192, 1.89, 6.0, gain=gain0, lag_deg=lag0)
+        m = sine_metrics(rows5, 1.89)
+        dg = abs(m["gain"] - gain0)
+        dl = abs(m["lag_deg"] - lag0)
+        good = dg < 0.02 and dl < 2.0
+        ok5 &= good
+        print(f"  真值 gain={gain0:.2f} lag={lag0:>4.1f}° → 拟合 "
+              f"gain={m['gain']:.3f} lag={m['lag_deg']:>6.1f}°  "
+              f"{'ok' if good else 'FAIL'}")
+
+    print("=== 已知局限（不作判据）：拟合对频率误差不敏感 ===")
+    # 数据是真 1.89 Hz，标签写成 2.457 Hz。结果 gain=0.809（真值 0.8）、
+    # lag=+21.9°（真值 30°）—— 两个都没崩。原因：goal 与 pos 同频，投影到错基波上
+    # 分子分母被**同等缩放**，比值近乎不变；相位受的影响也远小于预期。
+    # ⇒ **这份仪器挑不出频率错标**。真机上对应的风险是：被限速削成三角波、
+    # 或撞限位削顶的信号，照样能给出一个"看起来合理"的 gain/lag。
+    # 所以每次测量必须**另外看残差**（下一条）和原始 CSV，不能只信这两个数。
+    rows6 = [(1.89 * 1.3,) + r[1:]
+             for r in synth_sine(2048, 192, 1.89, 6.0, gain=0.8, lag_deg=30.0)]
+    m6 = sine_metrics(rows6, 1.89 * 1.3)
+    print(f"  1.3× 频率拟合 → gain={m6['gain']:.3f} lag={m6['lag_deg']:+.1f}° "
+          f"（真值 0.8 / 30°）—— 都没崩，见上方说明")
+
+    print("=== 负对照：削波必须能被残差发现（否则上一条的局限无解）===")
+    rows_pure = synth_sine(2048, 192, 1.89, 6.0, gain=0.8, lag_deg=30.0)
+    clip = 0.6 * 192                      # 削到 60% —— 撞限位 / 被限速削顶的形状
+    rows_clip = [(r[0], r[1], r[2], r[3], 2048.0 + max(-clip, min(clip, r[4] - 2048.0)),
+                  0, 0, 7.4, 30, 0.0) for r in rows_pure]
+    mp, mc = sine_metrics(rows_pure, 1.89), sine_metrics(rows_clip, 1.89)
+    # 判据用**相对**残差：绝对门槛会随幅度变，而"曲线不像正弦"是形状问题。
+    # 实测纯正弦 ≈0%，削到 60% 时 ≈6.8%（三次谐波），门槛取 3%。
+    rp = 100.0 * mp["rms_resid_deg"] / max(1e-9, mp["amp_pos_deg"])
+    rc = 100.0 * mc["rms_resid_deg"] / max(1e-9, mc["amp_pos_deg"])
+    ok6 = rc > 3.0 and rp < 0.1
+    print(f"  纯正弦 resid={rp:.3f}% → 削波后 resid={rc:.2f}%（应 >3%）  "
+          f"{'ok' if ok6 else 'FAIL'}")
+    print(f"  同时 gain 被拉低 {mp['gain']:.3f}→{mc['gain']:.3f}："
+          f"削波会让『跟不上』看起来更严重，读数偏保守")
+
+    print("=== 负对照：输出完全不动 ⇒ 幅值比必须 ≈0（不能读成『跟上』）===")
+    rows6b = [(1.89, r[1], r[2], r[3], 2048.0, 0, 0, 7.4, 30, 0.0)
+              for r in synth_sine(2048, 192, 1.89, 6.0)]
+    m6b = sine_metrics(rows6b, 1.89)
+    ok6b = m6b is not None and m6b["gain"] < 0.05
+    print(f"  pos 恒为中点 → gain={m6b['gain']:.4f}（应 <0.05）  "
+          f"{'ok' if ok6b else 'FAIL'}")
+
+    print("=== 负对照：直流偏置不能被算进幅值（P5 实测有 −2 步稳态误差）===")
+    rows7 = synth_sine(2048, 192, 1.89, 6.0, gain=0.8, lag_deg=30.0, dc_err=-40)
+    m7 = sine_metrics(rows7, 1.89)
+    ok7 = abs(m7["gain"] - 0.8) < 0.02 and abs(m7["dc_err_steps"] + 40) < 3
+    print(f"  偏置 −40 步 → gain={m7['gain']:.3f} dc_err={m7['dc_err_steps']:+.1f} 步  "
+          f"{'ok' if ok7 else 'FAIL'}")
+
+    print("=== 负对照：样本不足应返回 None 而不是崩 ===")
+    ok8 = sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89) is None
+    print(f"  5 样本 → {sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89)}")
+
+    allok = ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok6b and ok7 and ok8
     print(f"\nselftest: {'ALL PASSED' if allok else 'FAILED'}")
     return 0 if allok else 1
 
@@ -566,7 +924,7 @@ def cmd_selftest(_bus, _sid, args):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="HD-1910 辨识台架")
-    ap.add_argument("cmd", choices=["telem", "step", "deadzone", "backlash",
+    ap.add_argument("cmd", choices=["telem", "step", "sine", "deadzone", "backlash",
                                      "set-id", "selftest"])
     ap.add_argument("--port", default="COM3")
     ap.add_argument("--baud", type=int, default=1_000_000)
@@ -590,6 +948,19 @@ def main() -> int:
                     help="step：临时写 reg50（RAM P），测完恢复原值；不动 EEPROM reg21")
     ap.add_argument("--kd", type=int, default=None,
                     help="step：临时写 reg51（RAM D）。只给 --kp 时自动置 0（BAM 纯 P 律）")
+    ap.add_argument("--sine-freqs", default="1.0,1.5,1.89,2.5",
+                    help="sine：扫描频率（Hz，逗号分隔）。1.89 是步态主频")
+    ap.add_argument("--sine-amp-deg", type=float, default=16.9,
+                    help="sine：正弦振幅（度）。默认取 knee 半幅 = 策略实际要求的行程")
+    ap.add_argument("--sine-cycles", type=float, default=6.0,
+                    help="sine：每档频率跑多少个周期")
+    ap.add_argument("--sine-skip-cycles", type=float, default=1.0,
+                    help="sine：拟合时丢弃开头几个周期（躲掉起步瞬态）")
+    ap.add_argument("--sine-speed", type=int, default=4095,
+                    help="sine：reg46 限速。★ 默认 300 会把 1.89Hz×±17° 的正弦削成"
+                         "三角波，测出来是限速不是 P ⇒ sine 默认把它拉到最大")
+    ap.add_argument("--sine-accel", type=int, default=254,
+                    help="sine：reg41 加速度上限，同理解限速")
     args = ap.parse_args()
 
     if args.cmd == "selftest":
@@ -606,7 +977,7 @@ def main() -> int:
         if not bus.ping(args.id):
             sys.exit(f"ID {args.id} 无应答：查线序（1=信号 2=V 3=G）、供电、波特率")
         print(f"✔ PING {args.id} @ {args.port}")
-        if args.cmd in ("step", "deadzone", "backlash"):
+        if args.cmd in ("step", "sine", "deadzone", "backlash"):
             mode = bus.read_u8(args.id, REG_MODE)
             print(f"  reg33 mode = {mode}（本脚本所有实测结论基于 mode=4）")
             if mode != 4:
@@ -616,7 +987,7 @@ def main() -> int:
             print(f"  reg21 P = {p}"
                   + ("" if p == KP_FW_P3 else
                      f"  ⚠️ P3 部署值是 {KP_FW_P3}，两边不对齐时这份辨识不代表部署后行为"))
-        {"telem": cmd_telem, "step": cmd_step,
+        {"telem": cmd_telem, "step": cmd_step, "sine": cmd_sine,
          "deadzone": cmd_deadzone, "backlash": cmd_backlash,
          "set-id": cmd_set_id}[args.cmd](bus, args.id, args)
     finally:
