@@ -1384,3 +1384,40 @@ PLANT=p8 ENVS=4096 ITERS=3000 REL_HEADING=0.30 \
 - ⚠️ 中途 ckpt 不可用于判决（§17.4 非单调）。
 - ⚠️ 无论结论如何，**判决后把 live 植物切回 p3**，否则后续彩排都在 P8 植物上，
   而 P5 线的全部数字（含 §17.5 全电压表）都不适用。
+
+### 18.6 🔴 两个启动脚本都不带 heading 奖励配方（2026-11-03 起训前抓到）
+
+`explore_heading.sh` / `smoke_heading.sh` 只传 `--rel-heading-envs`。heading **奖励**
+却在 `--heading-hold-weight` + `--heading-tracking-final-weight` + `--ang-vel-z-clip`
+后面，**三者都默认 `None`，而 `None` 的含义是「不加这个奖励」**
+（`train_heading_variant.py:603-609`）。
+
+- 后果：2026-11-02 的 P8 冒烟与被中止的 4096×3000 **都只验了命令闭环、没验奖励**；
+  照原命令开训会得到**没有 heading_hold / heading_tracking** 的策略，与 `model_2999`
+  不是一个任务 ⇒ 2×2 交叉矩阵会退化成假对照。
+- 权威配方 = `resume_heading_run.py::RECIPE`：hold 1.0 / tracking 3.0 / clip 0.5 /
+  stages `0,1000,1750,2500`。两个脚本现已默认对齐它（可 env 覆盖）。
+- 新增两道闸门：① 冒烟后断言 run 的 `params/env.yaml` 里出现
+  `heading_hold_reward` / `heading_tracking_reward`；② 课程末档必须**严格落在**
+  run 之内（末档 ≥ ITERS → 退出码 2，且在建 4096 env **之前**退出）。
+  负对照：`ITERS=2000` + 默认表 → exit 2。
+
+🔑 这是「声明 ≠ 生效」失效模式的又一次复发，但换了形态：以前是 CLI 覆盖没回读，
+这次是**脚本压根没传，而缺省值恰好是「关掉这个功能」**。
+**凡是「默认 None = 不加某物」的开关，启动脚本必须显式列出，并回读功能是否真的出现。**
+
+### 18.7 判决工具：`xplant_matrix.sh` + `await_and_judge.sh`
+
+- `tools/hd1910/xplant_matrix.sh`：2×2 网格一条命令（8 起始 yaw × 2 彩排植物），
+  写 manifest，复用 `summarize_rehearsal_grid.py` 钉死口径；含 ONNX 代数护栏
+  （companion ckpt < 50 拒绝）。
+- `tools/hd1910/await_and_judge.sh`：等末轮 → 等 ONNX 比 ckpt 新 → 自动跑
+  ① 2×2 网格 ② `delay4`（80 ms，P5 定稿的硬边界）③ ±90° 目标负对照。
+  判据在数字出现**之前**写死，避免事后改口径；无进展 3 min 自动 ABORT。
+
+**两个 bash 坑（干跑抓到，都会毁掉一整批数据）**：
+
+- ⛔ `SECONDS` 是 bash 内建变量（shell 启动秒数），`${SECONDS:-8}` 开局读到 0
+  ⇒ 16 次彩排全跑 0 秒。改用 `DUR`。
+- ⛔ `${VAR:-default}` 对空串也回落默认值 ⇒ `PLANTS=""` 想跳过循环却跑满。
+  要「显式的空」必须写 `${VAR-default}`。
