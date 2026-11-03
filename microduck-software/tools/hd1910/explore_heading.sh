@@ -16,6 +16,15 @@
 #
 # Override: PLANT=p8 ENVS=8192 ITERS=6000 REL_HEADING=0.50 bash tools/hd1910/explore_heading.sh [run_name]
 #
+# ⚠️ The heading REWARD recipe is part of the comparison, not decoration. Until
+# 2026-11-03 this script passed only --rel-heading-envs, so runs launched from
+# here carried no heading_hold / heading_tracking rewards at all and were NOT
+# comparable with the p3head_rw_* line (which had them). Defaults below must
+# match tools/hd1910/resume_heading_run.py::RECIPE:
+#   hold 1.0 / tracking 3.0 / ang_vel_z clip 0.5 / stages 0,1000,1750,2500
+# HEADING_STAGE_ITERS is in ITERATIONS and its last mark must be strictly inside
+# the run (pre-checked below), or the tracking phase never activates.
+#
 # PIN_ARATE=<w> (default: unset) additionally pins the action_rate_l2 penalty at a
 # constant weight: the staged ramp -0.1/.../-1.0 is replaced by one stage at <w>.
 # This is the single-variable test of "is the smoothing penalty what caps forward
@@ -29,6 +38,15 @@ ITERS="${ITERS:-2000}"
 SAVE="${SAVE:-100}"
 REL_HEADING="${REL_HEADING:-0.30}"
 PIN_ARATE="${PIN_ARATE:-}"
+# --- heading reward recipe -------------------------------------------------
+# These were missing for a long time: the script drove only --rel-heading-envs,
+# so a run launched from here carried NO heading rewards at all and was not
+# comparable with the p3head_rw_* line (hold 1.0 / tracking 3.0 / clip 0.5).
+# Keep in sync with tools/hd1910/resume_heading_run.py::RECIPE.
+HEADING_HOLD="${HEADING_HOLD:-1.0}"
+HEADING_TRACKING="${HEADING_TRACKING:-3.0}"
+ANG_VEL_Z_CLIP="${ANG_VEL_Z_CLIP:-0.5}"
+HEADING_STAGE_ITERS="${HEADING_STAGE_ITERS:-0,1000,1750,2500}"
 PLANT="${PLANT:-p3}"
 case "$PLANT" in
   p3) PLANT_ID=hd1910_official_m6_kp5; DET_EXPECT=hd1910_kp5; KP_EXPECT=5.0 ;;
@@ -65,6 +83,10 @@ meta={
   'device': 'cuda:0', 'gpu_ids': [0], 'mujoco_gl': 'glfw',
   'official_m6_stslaw_sha256_16': hashlib.sha256(p.read_bytes()).hexdigest()[:16],
   'rel_heading_envs': $REL_HEADING,
+  'heading_hold_weight': $HEADING_HOLD,
+  'heading_tracking_final_weight': $HEADING_TRACKING,
+  'ang_vel_z_clip': $ANG_VEL_Z_CLIP,
+  'heading_stage_iters': '$HEADING_STAGE_ITERS',
   'pin_action_rate_weight': ('${PIN_ARATE}' or None),
   'expected_heading_x_forward_overlap': $REL_HEADING * 0.20,
   'envs': $ENVS, 'iters': $ITERS,
@@ -74,6 +96,19 @@ pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), e
 print('runmeta -> out/runmeta_${RUN}.json')
 "
 
+# Fast fail before 4096 envs are built: mdp.reward_weight applies a stage only
+# while common_step_counter > step, so a last mark >= the run length is a stage
+# that never fires (docs/05-flat-walk.md §17.2 — the shipped 0,1000,1750,2500
+# table silently trained 0 iterations at tracking weight 3.0 on a 2500 run).
+LAST_STAGE="${HEADING_STAGE_ITERS##*,}"
+if [ "$LAST_STAGE" -ge "$ITERS" ]; then
+  echo "FAIL: --heading-stage-iters last mark $LAST_STAGE >= iters $ITERS;" \
+       "the tracking phase would never activate" >&2
+  exit 2
+fi
+echo "heading: hold=$HEADING_HOLD tracking=$HEADING_TRACKING clip=$ANG_VEL_Z_CLIP" \
+     "stages=$HEADING_STAGE_ITERS (last mark $LAST_STAGE < iters $ITERS)"
+
 LOG="out/train_${RUN}.log"
 echo "== explore_heading $RUN envs=$ENVS iters=$ITERS (GPU) =="
 echo "log $LOG"
@@ -82,6 +117,10 @@ AR_FLAG=""
 if [ -n "$PIN_ARATE" ]; then AR_FLAG="--pin-action-rate $PIN_ARATE"; fi
 "$PY" tools/train_heading_variant.py \
   --rel-heading-envs "$REL_HEADING" \
+  --heading-hold-weight "$HEADING_HOLD" \
+  --heading-tracking-final-weight "$HEADING_TRACKING" \
+  --ang-vel-z-clip "$ANG_VEL_Z_CLIP" \
+  --heading-stage-iters "$HEADING_STAGE_ITERS" \
   $AR_FLAG \
   --task "$TASK" \
   --env.scene.num-envs "$ENVS" \
