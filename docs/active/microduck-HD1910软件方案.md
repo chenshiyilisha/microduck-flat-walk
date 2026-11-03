@@ -24,7 +24,8 @@
 | ONNX + parity（5999） | ✅ `out/hd1910_resume_4096_to6000_1027_it5999.onnx`；parity max\|Δ\|≈**2.5e−6** |
 | 彩排（5999） | 名义/低电/高电 **过**；`train_lag3/4/6` 仍挂（与 1999 同类；CPU MuJoCo±delay 非训练同仪） |
 | 下一步 | **人：阶段 0 下单**；Velocity 不必再长训。可选新场景 **StandUp**（`tools/hd1910/explore_standup.sh`，4070 Ti：先 1024×1000） |
-| P3 闸门（2026-11-03） | ✅ 预注册 `tools/flat_walk/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` + 14 项负对照）；`not_sideways` 退出判决、改当诊断 |
+| P3 闸门（2026-11-03） | ✅ 预注册 `tools/flat_walk/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` + 16 项负对照）；`not_sideways` 退出判决、改当诊断 |
+| kp8 参考点（2026-11-03 晚） | ✅ 部署候选 `model_2999` 三次重复：vx **0.1629**、`err_yaw` **0.7284**、absdy 0.476、dx 比 0.316（已冻结成 `--baseline-set kp8`）。⚠️ 与 m5/kp32 差三样（plant/奖励/迭代数）⇒ **不是 heading 有效性的证据** |
 
 ---
 
@@ -466,6 +467,27 @@ mujoco_warp#562"*；MuJoCo 官方 FAQ 给的出路是 **`wp.set_device("cpu")`**
   净漂移是积分结果（中位 14 deg/s ≈0.25 rad/s）。两者差 4.8× 不是矛盾 ——
   同次里 signed mean ω = 0.043 rad/s ≈ `yaw_drift_signed` 2.52 deg/s ⇒ 净转角小、瞬时在**摆**
   （等效 ±17° @ 1 Hz 的步态偏航摇摆）。摆是随机游走的源头，也是唯一低 CV 可判的量。
+- **两套基线**（`--baseline-set`）：上表是 `m5kp32`；另有 `kp8` = 部署候选 `model_2999`
+  （`2026-11-03_08-33-18_p8head_030_4096x3000`），2026-11-03 晚本机实测 3 seed
+  （同 cmd 0.4 / 32 env × 8 s / solver 100/50 / seed 11·22·33，
+  产物 `artifacts/flat_walk/evals/p8head_ref/`）：
+
+| kp8 基线（3 seed 均值） | 值 | sem | CV |
+|---|---|---|---|
+| vx | 0.1629 | 0.0016 | 1.75% |
+| `error_vel_xy` | 0.2702 | 0.0011 | 0.69% |
+| `error_vel_yaw` | 0.7284 | 0.0110 | 2.62% |
+| `abs_dy_body_median` | 0.4761 | 0.0410 | 14.92% |
+| `dx_over_expected` | 0.3162 | — | **3.55%** |
+
+  ⚠️ **它只是参考点，不是 heading 对照**：相对 m5/kp32 同时换了 plant、heading 奖励、
+  迭代数（3000 vs 6000）⇒ **不能用它宣称"heading 闭环有效"**。干净对照（kp8 +
+  `rel_heading_envs=0.3` + 不带奖励）只在 `2026-11-02_21-26-53_p8head_030` 里跑到 `model_0`
+  就被中止（`params/env.yaml` 回读：只有 `rel_heading_envs: 0.3`，无 heading_hold/tracking）
+  ⇒ kp8 上"奖励有无"这个单变量目前**没有对照**。要回答它得再花一次 ~2.7 h 的 kp8 无奖励 run。
+- **顺手撞到的证据**（同一批 gates 打在 kp8 策略上）：`not_sideways` **2 过 1 挂** ——
+  absdy 0.558 / 0.443 / 0.428，阈值 0.486 正好落在分布中间。这就是"单次高 CV 门会靠运气翻面"
+  的现场复现，不是推测。
 
 #### P3 附 · heading 闭环（治偏航，建议与 P3 合并为**同一次**重训）
 
