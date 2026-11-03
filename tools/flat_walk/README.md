@@ -6,6 +6,7 @@
 | 文件 | 作用 | 为什么值得留 |
 |---|---|---|
 | `eval_velocity_in_sim.py` | 11 项闸门评估器（含 `command_frozen_ok` / `metric_window_ok` 两条协议自检）+ **逐 env 分布**（`per_env`）（`docs/05-flat-walk.md` §2 的全部数字都由它产出） | 「在走」需要可证伪的判据：前进位移、不侧滑、脚峰、落地交替、不摔。有些量之间会互相矛盾（同一 ckpt 三次重复里 `abs(dy)` 的 CV 是 31%），所以窗口均值必须配一份逐 env 分布，否则分不清「策略变了」和「抽样变了」 |
+| `gate_p3_yaw.py` | **P3 判决闸门（预注册）**：吃 N 份 `eval_velocity_in_sim.py` 的 JSON，按写死的阈值判「偏航修好没有、走路有没有被弄坏」，出 0/1/2/3 退出码 | `eval_velocity_in_sim.py` 那套 gates 是**单次 Run 的体检**，不能当判决：里面的 `not_sideways` 压在 `abs_dy_body_median`(CV **19.6%**) 与 `dx_over_expected`(25.5%) 上，而最稳的 `error_vel_yaw`(CV **1.20%**) 反倒没进闸门 —— 判决能被运气翻面。这里把阈值开训前钉死（基线只当对照、不当被测量）、`--audit-baseline` 防常量漂移、`--selftest` 里让**基线自己**在偏航门上判红 |
 | `train_velocity.sh` | 训练包装：写 `runmeta`（含 **cfg/mdp 字节哈希** + **`rewards_effective`**）+ 求解器 CLI 覆盖 + **`EXTRA_ARGS` 实验透传** | `cfg_byte_identical_to_upstream` 是「没偷偷改奖励」的机器可验证证据；而 CLI 覆盖又不受哈希保护，所以必须用同一条 tyro 路径**回读解析**实际生效的 `std/std_sq/std_over_cmd_max`——声明式记录不算证据 |
 | `resume_velocity.sh` | 续训包装：**目标绝对轮数**、GPU 双开保护、`DRY_RUN=1` | `--agent.max-iterations` 是**增量**不是总量，手滑一次多跑 10 小时 |
 | `watch_milestones.py` | 里程碑守候：等 `model_N.pt` 落盘 → 同参评测 → 判读 → 可自动停训 | 判停阈值写死在代码里（`verdict()`），比「等我想起来看一眼」可靠 |
