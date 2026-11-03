@@ -175,7 +175,7 @@ no camera or audio**." ⇒ `REQUIRED_OVERLAY=uart2-m0` 一个。
 |---|---|---|
 | 5 GHz 无线（AIC8800） | ❌ 不需要 | 板型键只影响相机/hw_rev；无线由上层远程访问设计自理 |
 | 音频编解码 TLV320AIC3104 | ❌ 不需要 | setup-board.sh:114 "robotd owns no ... audio" |
-| 相机 IMX219（含 90° 安装角） | ❌ 不需要 | 同上；`zero3` 生产配置**不启** camera overlay |
+| 相机 IMX219（含 90° 安装角） | ❌ **走路回路不需要**（但官方确有视觉功能，见 §8） | 同上；`zero3` 生产配置**不启** camera overlay |
 | 头 IMU（BMI088） | ❌ **默认就是关的** | `params_lib.rs:1331-1341`：zero3 默认 `false`，因为"读它要花约 4% 的一个核"；beta 才是开 |
 | ToF（i2c-gpio） | ❌ 可选 | `robotd_main.rs:2397`："tofd keeps its own counsel"；重启可容忍 |
 
@@ -207,3 +207,67 @@ no camera or audio**." ⇒ `REQUIRED_OVERLAY=uart2-m0` 一个。
 
 **Pi Zero 2W 缺的是"情感/语音/视觉"那一层，不是"走路"那一层。** 走路要的三件——UART、总线上
 ID 200 的 IMU、ONNX 推理——它都有；代价是关蓝牙、自己放 libonnxruntime、一个 USB 口、SD 卡启动。
+
+---
+
+## 8. 相机与视觉：官方确实有，但它是"功能"，不是"走路"
+
+**问题**：原版有 IMX219，那不就是视觉吗？——是，但视觉的去处不是策略。
+
+### 8.1 相机被谁消费（`architecture.md:89`）
+
+`mediad` = "the camera and audio pipeline; **nothing of the robot**"。它输出：
+
+- WebRTC 视频/音频（手机 App、远程控制台）
+- `:8080` 上的 `GET /frame`（单张 PNG 调试接口）
+- `robotctl monitor` 的相机块（面板开着时 2 帧/秒，关掉就完全不取）
+- `/run/mediad/media.sock` 的 `media.frame`（给本地录像或**感知进程**）
+
+### 8.2 视觉真存在：`duck-detect`，但只做"找同类"
+
+`duck-detect/src/lib.rs` 开头："Finding other Microducks in this Microduck's camera, **on the NPU**."
+INT8 `.rknn`，320×320 入、单类、2100 候选框；crate 里三件事：letterbox、运行时、解码。
+**关键**：它同时有两条运行时——`rknn.rs`（Rockchip NPU）与 **`onnx.rs`（CPU 回退）**，
+后者的 Cargo 注释写明动机："the library belongs to the board, not to the build — and
+`setup-board.sh` already puts it there for robotd's policies, **so a board that can walk can also see**."
+
+⇒ **非 NPU 平台（含 Pi）走 CPU 回退，复用同一个 `libonnxruntime.so`，不需要改代码。**
+
+### 8.3 但它不进策略：观测里没有像素
+
+`architecture.md:321` §2.4 标题就叫 **"Data plane: features, not frames"**：
+
+> `robotd` does not need camera frames — it needs *derived features*（"ball at (x,y)"、"person
+> detected"、"loud sound"）。**Principle: put perception next to the sensor.** `mediad` owns the
+> camera, runs inference, and publishes features.
+
+走路策略的观测是 61 维本体感觉（关节位置/速度、上帧动作、重力、陀螺、速度指令），**没有图像**；
+我们的 P8 ONNX 输入就是 `[1, 61]`。相机帧**从不进 robotd**（`robotd_main.rs` 里搜不到任何取帧代码）。
+
+### 8.4 一个必须纠正的误读：`[pickup]` 不是视觉
+
+`duck-control/models/pickup_detector.onnx`（36 KB）名字像视觉，实际是**本体感觉分类器**：
+`robotd.toml:349-353` 原文——"A small classifier reads the last second of what the loop already reads
+(**gyro, gravity, joints, what it commanded**)"，用来判断"有人把机器人端在手里"并暂停策略。
+默认**开启**（`PickupParams::default.enabled = true`）。与相机无关。
+
+另有一个 `pet_detect`（摸头检测）走**麦克风**，`audio.enabled` 才启动。
+
+### 8.5 对 Pi 的实际含义
+
+| 项 | Radxa Zero 3W | Pi Zero 2W |
+|---|---|---|
+| 视频流/App | ✓ IMX219 | ✓ 需换 Pi CSI 相机（HAT 的 FPC 是 Radxa 的） |
+| 找同类（duck-detect） | ✓ RKNN NPU | ✓ CPU 回退，**同一份 `libonnxruntime.so`** |
+| 速度 | NPU，实时 | 🟠 推算 0.2–0.5 s/帧（YOLOv5n@320 在 Zero 2W 的社区实测 200–440 ms 量级） |
+| 进走路策略 | ✗ 都不进 | ✗ 同样不进 |
+
+⇒ **视觉是"走路之外的功能"，Pi 掉的是它的速度（NPU→CPU），不是它的存在。**
+反过来说：**要做视觉，Pi 不是不能，是慢到 2–5 fps**——够"看见有鸭子"，不够任何闭环控制。
+
+### 8.6 顺带修掉 §7 的一条
+
+§7 说"`libonnxruntime.so` 是最容易漏的一项"——`setup-board.sh:5,23-36,277-284` 显示它是一条
+**脚本化步骤**：从 microsoft/onnxruntime 公共 release 下 `ONNX_VERSION=1.28.0` 的 aarch64 包到
+`/usr/local/lib`，并且"ort 的版本检查是**硬失败**不是警告"（`expected >= 1.23.x`）。
+Pi 上照抄这一段即可，不是手工难题。
