@@ -2088,3 +2088,49 @@ HD1910 这条线在本机**只有一个仪器**：`rehearse_hd1910.py`。
 脚本在 cmd 模式下另有一条回读防呆：所有档位的 `settings.kp_fw` 必须都是 8——
 否则「扫的是 cmd、植物却变了」这类混淆不会被发现。
 单起点（yaw=0）与 4 起点的均值一致（cmd=0.40：0.2135 vs 0.2080），说明 4 起点已足够。
+
+---
+
+### 22.10 ⚠️ 改 `gain` 会同时改掉三个安全参数的含义（2026-11-03，一手源码，未上板）
+
+§22.8 说「把 `[policy] gain` 改成 8」。**这句话不够**：robotd 的增益体系整体按
+`gain = 200` 标定，凡是写成「占 gain 的几分之几」或「跌倒时降到多少」的量，
+换 gain 之后含义跟着变，而且是朝危险方向变。
+
+| 参数 | 源码默认 | 在 gain=200 下的含义 | 在 gain=8 下的实际含义 |
+|---|---|---|---|
+| `[policy] gain` | **200**（`params_lib.rs:2460`） | — | 期望 8；不写就是 6.25× 出厂 32，满占空比巨颤 |
+| `[safety] gain_limp` | **50**（`:2480`） | 0.25× —— 注释原话 "low enough to **give way** rather than fight the floor" | **6.25×** ⇒ 跌倒时**加力**，`limp_fall` 变成"满力硬撑地板直到没电" |
+| `[safety] limp_fall_pose_gain` | **160**（`:2500`） | 0.8× 回站姿 | **20×** ⇒ 0.6 s 拉回站姿的那一段会砸下去 |
+| `[policy] action_scale` | **0.9** | 官方 alpha/velstand 策略训练值 | 我们的 P8 训练是 **1.0**（§14 已验）⇒ 每个动作先被缩 10% 再到 PD |
+| `[policy] standing_gain_ratio` | 0.8（`:2457`） | 站立 = 160 | 站立 = 6.4；ratio 是否仍该 0.8 取决于站立策略在哪条线上训的 |
+
+**这不是推测，是算术**：50/200 = 0.25，50/8 = 6.25。注释与代码都没错，错的是
+「注释描述的那个机器人」和「我们的机器人」不是同一台。而它在任何日志里都不会报错——
+只会在机器人趴在地上、电机顶着地板发烫时才表现出来。
+
+**工具**：`tools/hd1910/audit_robotd_toml.py`（已入仓，含负对照自检）。
+
+```bash
+.venv-mjlab/Scripts/python.exe tools/hd1910/audit_robotd_toml.py --selftest
+.venv-mjlab/Scripts/python.exe tools/hd1910/audit_robotd_toml.py \
+    --toml out/upstream_ref/robotd.toml --expect-kp 8
+```
+
+实测三态（同一份上游 toml，只改 gain 一行）：
+
+| 输入 | 结果 |
+|---|---|
+| 上游原样 | 2 FAIL：`gain` 缺省→200、`action_scale` 缺省→0.9 |
+| 只加 `gain = 8` | **3 FAIL**：`gain_limp` 6.25×、`limp_fall_pose_gain` 20×、`action_scale` 0.9 |
+| 四项都改 | 0 FAIL |
+
+⇒ 部署清单 B7 **必须扩成 B9 那一族**（四项一起改），否则 B7 改对了反而更危险。
+
+**仍待核（WARN，未定论）**：`head_lowpass = 0.5` / `legs_lowpass = 0.7` 是官方
+alpha 策略的**训练值**（注释明写 "must match or transfer degrades"）。我们的 P8 训练
+配置里是否等价，还没回读到——在拿到答案之前，把它当 WARN 而不是照抄或删掉。
+
+**这条审计管不到的**：robotd 有没有在跑、它到底往 reg 50 写了什么、桥有没有应答。
+那三件只能上真机：`robotctl` 起服务后回读 reg 50（B8），桥用
+`check_imu_bridge.py` 验。

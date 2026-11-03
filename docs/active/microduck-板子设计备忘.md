@@ -271,3 +271,60 @@ INT8 `.rknn`，320×320 入、单类、2100 候选框；crate 里三件事：let
 **脚本化步骤**：从 microsoft/onnxruntime 公共 release 下 `ONNX_VERSION=1.28.0` 的 aarch64 包到
 `/usr/local/lib`，并且"ort 的版本检查是**硬失败**不是警告"（`expected >= 1.23.x`）。
 Pi 上照抄这一段即可，不是手工难题。
+
+---
+
+## 9. 具体 SKU 核对：「4GB + 无 eMMC + 带排针」（2026-11-03，电商页，未下单）
+
+用户看到的商品标题带「【Microduck 原版主板】」。逐项核：
+
+| 项 | 这款 | 是否够用 | 依据 |
+|---|---|---|---|
+| SoC | RK3566 四核 A55 1.6 GHz | ✅ | `Board::detect` 只认 DT 前缀 `radxa,zero3` / `radxa,zero-3` |
+| RAM 4GB | 官方 1/2/4/8 可选 | ✅ **超配但不错** | 第三方复刻 BOM 原文 "**2 GB RAM or more**"；robotd 包 15 MB + P8 ONNX 775 KB，512 MB 都够。4GB 只对相机/duck-detect/桌面调试有意义 |
+| 无 eMMC | 走 microSD | 🟡 **可行，多一项成本与风险** | 同上 BOM："microSD card 32 GB **A1 or better** — if the Radxa has **no eMMC**"；机器人上 SD 卡受震动/掉电/日志写放大，eMMC 原文标 "**preferred**" |
+| 带排针 | 已焊 40 pin | ✅ **必选** | 官方加价 $1 才给排针，HAT/接线都要它 |
+| WiFi6 | AIC8800 | ✅ 无关但更好 | robotd 不用无线；`setup-board.sh` 仍会装 aic8800 驱动 |
+
+**官方定价（Arace / 官方店，Liliputing 2023-12 更新）**：1GB/0=$15、2GB/0=$20、
+**4GB/0=$30**、4GB/32GB eMMC=$45、8GB/0=$45、8GB/64GB=$65，**+$1 加排针**。
+⇒ 这款的官方等值价 ≈ **$31 ≈ ¥225**。
+
+**判断**：
+1. **配置不是问题**，唯一要看的只剩价格。¥580 ⇒ 2.6× 溢价（比 1GB 版 ¥580 的 4.3× 略好，
+   因为 4GB 本身就值 $30）；≤¥300 属正常含税运费区间。
+2. **同价优先要 eMMC 版**（4GB/32GB eMMC = $45 ≈ ¥325）：机器人天天震动 + 掉电，eMMC 比
+   SD 卡可靠，且省一张 A1 卡（¥40–85）。「无 eMMC」只在便宜 100 元以上时才划算。
+3. **真正最省的 SKU 是 2GB/0 = $20（≈¥145）**：对 walking 完全够，4GB 是为视觉留的余量。
+4. 「Microduck 原版主板」是**卖家话术**，官方从未指定某个 SKU 叫"原版"；任何 Zero 3W 都能过
+   `Board::detect`。可据此判断卖家懂行（大概率是社区货），但不能当验收依据。
+5. ⚠️ **买板仍不是当前瓶颈**（§5.1：缺的是 ID 200 桥）。若只是"顺手收一块当通用 Linux 板"，
+   按上面价格阈值买不亏；若是为了跑整机，等桥板验收。
+
+---
+
+## 10. 想在 PC 上跑 `robotd --fake` 验配置？Windows 走不通（2026-11-03，源码级）
+
+结论先给：**robotd 在 Windows 上编译不过，不是"缺工具链"，是源码用了 unix-only API。**
+
+| 证据 | 位置 | 含义 |
+|---|---|---|
+| `use tokio::net::{UnixListener, UnixStream};` **无条件** | `robotd/src/main.rs:51` | tokio 的 `UnixListener` 只在 unix 存在，Windows 编译直接失败 |
+| `use std::os::unix::fs::{FileTypeExt, PermissionsExt};` | `main.rs:4279` | 同上，`std::os::unix` 在 Windows 不存在 |
+| 整个 IPC 面（`robotctl` ↔ robotd）就是 unix domain socket | `main.rs:4277-4421` | 不是可选路径，是主控制通道 |
+| `type BusIo = FakeIo;` 在 `not(target_os = "linux")` | `main.rs:1457-1461` | 即使编过，非 Linux 也**没有真总线** |
+| `--fake` → `FakeIo::at(DEFAULT_POSITION)`、`--sim` → `sim::RemoteIo::at(addr)` | `main.rs:1342-1363` | 两个后端**都不碰串口** |
+
+⇒ 两个后果：
+
+1. **别在 Windows 上折腾 Rust 工具链**（MSVC 或 mingw 都不用装）。装了也编不过；
+   要跑只能在 Linux（本机 WSL 被安全策略禁用，Docker 未装）。
+2. **即使跑起来，`--fake` 也验不了 `[policy] gain=8`**——fake 总线是内存模拟，
+   `set_gain` 写进去没有可回读的寄存器。"配置生效"这件事在 Windows 上**无法用运行验证**。
+
+**替代品（已入仓）**：`tools/hd1910/audit_robotd_toml.py` 把"配置是否与训练标度一致"
+变成静态检查，正好对症 §22.8 那类事故（默认值覆盖没写的键）。它同时暴露了四个
+按 `gain=200` 标定、在 kp8 下全部失配的参数——见 `docs/05-flat-walk.md` §22.10。
+
+**唯一能验运行时的地方**：真板（Radxa/Pi）起 `robotd` 后回读 reg 50（清单 B8）。
+不买板就没有这一步，这一点没有替代方案。
