@@ -53,6 +53,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hd1910_readonly import frame, query, ping, signed_mag  # noqa: E402
 
+
+def load_mag(lo: int, hi: int) -> int:
+    """Present Load (reg 60) 的专属解码：**bit10 = 方向，bit0-9 = 幅度**。
+
+    不能复用 ``signed_mag()``：那个函数假设符号位在 bit15（speed/current 是
+    这个布局，pos 是纯无符号 12 位），而飞特 STS 的 load 把方向放在 bit10。
+    2026-11-03 实测证据（ID10 @4.6 V，200 步阶跃）：up 段原始值稳定在
+    1044-1124，back 段在 0-116；减掉 0x400 后两段落到同一量级 20-124，
+    且方向位与电流符号逐一吻合。用 signed_mag 读会把 11.6% 的负载报成
+    1145（"114.5%"），超满量程 1000 —— 上下界矛盾即读数错误的典型形态。
+    """
+    v = lo | (hi << 8)
+    mag = v & 0x3FF
+    return -mag if (v & 0x400) else mag
+
 # 仓库根（tools/hd1910/servo_probe 上溯三层）。默认把录制数据落到 out/steps/，
 # 免得跑一次就在仓库根留一个 CSV。
 ROOT = Path(__file__).resolve().parents[3]
@@ -150,7 +165,7 @@ def telemetry(bus: Bus, sid: int):
     return {
         "pos": signed_mag(rx[0], rx[1]),          # 56-57 signed-magnitude
         "speed": signed_mag(rx[2], rx[3]),        # 58-59
-        "load": signed_mag(rx[4], rx[5]),         # 60-61
+        "load": load_mag(rx[4], rx[5]),           # 60-61 bit10 方向 + bit0-9 幅度
         "volt": rx[6] / 10.0,                     # 62  0.1 V/LSB
         "temp": rx[7],                            # 63  °C
         "unk64": rx[8],                           # 64  未确认
@@ -204,17 +219,37 @@ def step_metrics(rows, phase, target, tol):
     # p95 rather than max: the largest single sample-to-sample difference is noise
     # (measured +-20% spread across repeats, and it lands near the physical cap),
     # so max alone is not a usable number. Both are returned; read p95.
-    vs = []
-    for a, b in zip(pts, pts[1:]):
-        t1, p1, t2, p2 = a[1], a[3], b[1], b[3]
-        if t2 > t1:
-            vs.append(abs(p2 - p1) * 1000.0 / (t2 - t1))
-    vs.sort()
-    if vs:
-        idx = min(len(vs) - 1, max(0, math.ceil(0.95 * len(vs)) - 1))
-        v_p95, v_max = vs[idx], vs[-1]
+    #
+    # ⚠️ 窗口：p95 必须在**运动段**上算，不能在整个相位窗口上算。整段里含静止保持，
+    # hold 从 2 s 改到 3 s 会把 p95 从 661 拉到 525 步/s（同一颗舵机、同一参数）。
+    # 这是"指标依赖窗口长度"，和 error_vel_xy 那个坑同类。截到 settle 点，
+    # settle 由 tol 决定、与 hold 无关 ⇒ 换 hold 不再改变峰速。
+    def _speeds(seq):
+        out = []
+        for a, b in zip(seq, seq[1:]):
+            t1, p1, t2, p2 = a[1], a[3], b[1], b[3]
+            if t2 > t1:
+                out.append(abs(p2 - p1) * 1000.0 / (t2 - t1))
+        return out
+
+    win_end = settle_ms is not None
+    if win_end:
+        # settle_ms 是时间戳，换成下标
+        idx_end = next((i for i, r in enumerate(pts) if r[1] >= settle_ms), len(pts) - 1)
     else:
-        v_p95 = v_max = 0.0
+        idx_end = len(pts) - 1
+    moving = pts[: idx_end + 1] if idx_end >= 4 else pts
+
+    vs_win = _speeds(moving)
+    vs_full = _speeds(pts)
+
+    def _p95(vals):
+        if not vals:
+            return 0.0
+        s = sorted(vals)
+        return s[min(len(s) - 1, max(0, math.ceil(0.95 * len(s)) - 1))]
+
+    v_p95, v_max = _p95(vs_win), (max(vs_win) if vs_win else 0.0)
     return {
         "err": err,
         "over_pct": 100.0 * over_steps / abs(travel),
@@ -222,9 +257,14 @@ def step_metrics(rows, phase, target, tol):
         "v_p95_steps": v_p95,
         "v_p95_deg_s": v_p95 * 360.0 / STEPS_PER_REV,
         "v_max_steps": v_max,
+        "v_win_s": (moving[-1][1] - moving[0][1]) / 1000.0 if len(moving) > 1 else 0.0,
+        "v_win_n": len(moving),
+        # 旧口径（含保持段），只用于和修好之前的 JSON 对照，别再拿它下结论
+        "v_p95_full_steps": _p95(vs_full),
         "speed_field_peak_raw": max(abs(v) for _, _, _, _, v, _, _ in pts),
         "imax": max(c for _, _, _, _, _, _, c in pts),
-        "load_max": max(l for _, _, _, _, _, l, _ in pts),
+        # abs：load 是双向的，up/back 两段符号相反，直接 max 会漏掉整段
+        "load_max": max((abs(l) for _, _, _, _, _, l, _ in pts), default=0),
     }
 
 
@@ -1189,11 +1229,26 @@ def cmd_selftest(_bus, _sid, args):
           f"；speed 字段 ÷54 后仍 = {mv54['v_p95_steps']:.1f} 步/s  "
           f"{'ok' if ok_v else 'FAIL'}")
 
+    print("=== 负对照：峰速必须与保持时长无关（窗口不能含静止段）===")
+    # 实测踩过：hold 从 2 s 改 3 s，同一颗舵机同一参数，p95 从 661 掉到 525 步/s。
+    # 原因是 p95 在整个相位窗口上算，静止样本稀释了分位点。修法是截到 settle。
+    # 判据：把静止尾段拉长一倍，新口径必须**完全不变**，旧口径必须明显下降。
+    rows_long = synth_step(2000, 2200, 6.0, zeta=0.35)   # hold 3 s → 6 s
+    mv_long = step_metrics(rows_long, "up", 2200, 5)
+    inv_new = abs(mv["v_p95_steps"] - mv_long["v_p95_steps"]) < 1e-6
+    inv_old = mv_long["v_p95_full_steps"] < mv["v_p95_full_steps"] * 0.9
+    print(f"  hold 3s → 6s：新口径 {mv['v_p95_steps']:.1f} → {mv_long['v_p95_steps']:.1f}"
+          f"（应完全相同）{'ok' if inv_new else 'FAIL'}")
+    print(f"                 旧口径 {mv['v_p95_full_steps']:.1f} → "
+          f"{mv_long['v_p95_full_steps']:.1f}（应明显下降，证明旧口径确实有依赖）"
+          f"{'ok' if inv_old else 'FAIL'}")
+
     print("=== 负对照：样本不足应返回 None 而不是崩 ===")
     ok8 = sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89) is None
     print(f"  5 样本 → {sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89)}")
 
-    allok = ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok6b and ok7 and ok8 and ok_v
+    allok = ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok6b and ok7 and ok8 and ok_v \
+        and inv_new and inv_old
     print(f"\nselftest: {'ALL PASSED' if allok else 'FAILED'}")
     return 0 if allok else 1
 
