@@ -45,6 +45,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 import time
 from pathlib import Path
@@ -147,6 +148,22 @@ def apply(bus, ids, kp: int, kd: int, accel: int, persist: bool, expect: dict):
     return rows, ok
 
 
+def write_all(bus, ids, kp: int, kd: int, accel: int, persist: bool, expect: dict):
+    """Check every joint answers before the first write, then write.
+
+    `apply` walks the fleet one joint at a time. Discovering joint 11 missing
+    *after* joint 10 is already at 8 leaves a machine that is neither at 32 nor
+    at 8 — and §21.3 says one wrong joint is enough to fall (7/8 falls at kp=5).
+    A half-configured fleet is worse than an untouched one, because it still
+    walks badly while looking like it was configured.
+    """
+    missing = [sid for sid in ids if bus.ping(sid) is False]
+    if missing:
+        return [dict(id=sid, present=sid not in missing) for sid in ids], False, missing
+    rows, ok = apply(bus, ids, kp, kd, accel, persist, expect)
+    return rows, ok, []
+
+
 def report(rows, expect: dict) -> None:
     cols = ["p_eeprom", "d_eeprom", "p_ram", "d_ram", "mode", "accel", "speed", "torque"]
     print(f"{'id':>4} {'seen':>4} " + " ".join(f"{c:>8}" for c in cols) + "  mismatch")
@@ -187,8 +204,91 @@ class FakeBus:
         return True
 
 
+class VirtualClock:
+    """A clock advanced only by `sleep`, so a modelled run takes no real time.
+
+    This is not a convenience. The commit window is ~10 ms while Windows'
+    monotonic clock resolves to ~15.6 ms, so with a real clock "no pause" and
+    "50 ms pause" cannot be told apart reliably and the negative control would
+    flake green. A virtual clock makes the model deterministic.
+    """
+
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def sleep(self, seconds: float) -> None:
+        self.t += max(seconds, 0.0)
+
+
+@contextlib.contextmanager
+def virtual_time(clock: VirtualClock):
+    """Route `time.sleep` into `clock`. Restored even if the body raises."""
+    real = time.sleep
+    time.sleep = clock.sleep
+    try:
+        yield clock
+    finally:
+        time.sleep = real
+
+
+class EepromBus(FakeBus):
+    """A servo that models the 2026-11-03 failure instead of hiding it.
+
+    Real behaviour (robotic-companion §7.3, then reproduced on ID 10): an
+    EEPROM byte is ACKed immediately and lands in a RAM shadow, but only
+    becomes durable if the next packet arrives after the ~10 ms commit ends.
+    A packet inside that window leaves the shadow updated and the durable copy
+    untouched — so the register READS BACK CORRECT and reverts at power-up.
+    That asymmetry is the whole reason readback can never prove persistence.
+
+    `COMMIT_S` is a model constant, deliberately independent of
+    EEPROM_COMMIT_S: a gate derived from the value under test would pass when
+    both are zero, which is exactly the bug caught on 2026-11-03.
+    """
+
+    COMMIT_S = 0.010
+    EEPROM_REGS = (REG_P_GAIN, REG_D_GAIN, REG_LOCK)
+
+    def __init__(self, regs: dict, present=(), clock: VirtualClock | None = None):
+        super().__init__(regs, present)
+        self.clock = clock or VirtualClock()
+        self.durable = {sid: dict(v) for sid, v in regs.items()}
+        self.last_packet_t = -1e9
+        self.torn = 0
+
+    def write_u8(self, sid, addr, v):
+        gap = self.clock.t - self.last_packet_t
+        self.last_packet_t = self.clock.t
+        super().write_u8(sid, addr, v)   # shadow + ACK, exactly as the servo does
+        if addr in self.EEPROM_REGS:
+            if gap >= self.COMMIT_S:
+                self.durable[sid][addr] = v
+            else:
+                self.torn += 1           # ACKed, shadowed, never durable
+        return True
+
+    def power_cycle(self) -> None:
+        """Flash -> shadow and flash -> RAM. Anything not committed is lost.
+
+        Both halves matter: reading reg 21 after power-up returns flash, not the
+        shadow, and reg 50 is reloaded from reg 21 by the firmware. Without the
+        first half a torn write would look intact even after a power cycle.
+        """
+        for sid, regs in self.regs.items():
+            d = self.durable[sid]
+            for addr in self.EEPROM_REGS:
+                if addr in regs:
+                    regs[addr] = d.get(addr, regs[addr])
+            if REG_P_GAIN in d:
+                regs[REG_P_RAM] = d[REG_P_GAIN]
+            if REG_D_GAIN in d:
+                regs[REG_D_RAM] = d[REG_D_GAIN]
+
+
 def selftest() -> int:
     """Prove the write sequence and the readback gate, without hardware."""
+    # Test 7 temporarily zeroes this to replay the pre-2026-11-03 code path.
+    global EEPROM_COMMIT_S
     ok = True
     good = {10: {21: 32, 22: 40, 50: 5, 51: 0, 33: 4, 41: 0, 46: 0, 48: 1000}}
 
@@ -249,6 +349,62 @@ def selftest() -> int:
           f"{'ok' if (rhythm_ok and torque_off and torque_back) else 'FAIL'}")
     ok &= rhythm_ok and torque_off and torque_back
 
+    # 6. persistence, modelled. Tests 1-5 cannot tell "ACKed" from "committed":
+    #    FakeBus writes land instantly, and test 5 only measures the pause. Here
+    #    the register can read back 8 while the durable copy is still 32, so
+    #    this is the first test that asks the question that matters.
+    factory = {REG_P_GAIN: 32, REG_D_GAIN: 40, REG_P_RAM: 5, REG_D_RAM: 0,
+               REG_MODE: 4, REG_ACCEL: 0, REG_SPEED: 0, REG_TORQUE_LIMIT: 1000,
+               REG_TORQUE_ENABLE: 1}
+    clock = VirtualClock()
+    with virtual_time(clock):
+        bus = EepromBus({10: dict(factory)}, present={10}, clock=clock)
+        _, passed6 = apply(bus, [10], 8, 0, 0, True,
+                           {"p_ram": 8, "p_eeprom": 8, "d_ram": 0, "d_eeprom": 0})
+    readback6, torn6 = bus.regs[10][REG_P_GAIN], bus.torn
+    bus.power_cycle()
+    survived6 = (bus.regs[10][REG_P_GAIN], bus.regs[10][REG_P_RAM])
+    good6 = passed6 and readback6 == 8 and torn6 == 0 and survived6 == (8, 8)
+    print(f"selftest 6 persist-powercycle readback={readback6} torn={torn6} "
+          f"after={survived6} {'ok' if good6 else 'FAIL'}")
+    ok &= good6
+
+    # 7. negative control: remove the per-packet pause (EEPROM_COMMIT_S -> 0,
+    #    i.e. the code that shipped before 2026-11-03) and the same run must
+    #    reproduce the observed failure -- ACKed, reads back 8, reverts to 32.
+    #    If this goes green while 6 is green, the model stopped modelling.
+    clock = VirtualClock()
+    saved = EEPROM_COMMIT_S
+    try:
+        EEPROM_COMMIT_S = 0.0
+        with virtual_time(clock):
+            bus = EepromBus({10: dict(factory)}, present={10}, clock=clock)
+            _, passed7 = apply(bus, [10], 8, 0, 0, True,
+                               {"p_ram": 8, "p_eeprom": 8})
+    finally:
+        EEPROM_COMMIT_S = saved
+    lied = bus.regs[10][REG_P_GAIN]
+    bus.power_cycle()
+    truth = bus.regs[10][REG_P_GAIN]
+    good7 = passed7 and lied == 8 and bus.torn > 0 and truth == 32
+    print(f"selftest 7 no-pause-replay readback={lied} torn={bus.torn} "
+          f"after={truth} {'ok' if good7 else 'FAIL'}")
+    ok &= good7
+
+    # 8. preflight: one absent joint must stop the run BEFORE the first write.
+    #    Test 4 shows a missing joint fails the result; it does not show that
+    #    nothing was written on the way there, and on a 15-joint machine the
+    #    difference is a half-configured robot.
+    clock = VirtualClock()
+    with virtual_time(clock):
+        bus = EepromBus({10: dict(factory)}, present={10}, clock=clock)
+        _, passed8, missing8 = write_all(
+            bus, [10, 11], 8, 0, 0, True, {"p_ram": 8, "p_eeprom": 8})
+    good8 = (not passed8) and missing8 == [11] and not bus.log
+    print(f"selftest 8 preflight-abort  ok={passed8} missing={missing8} "
+          f"writes={len(bus.log)} {'ok' if good8 else 'FAIL'}")
+    ok &= good8
+
     print("selftest", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
@@ -286,12 +442,21 @@ def main() -> int:
     bus = Bus(args.port)
     try:
         if args.write:
-            rows, ok = apply(bus, args.ids, args.kp, args.kd, args.accel,
-                             args.persist, expect)
+            rows, ok, missing = write_all(bus, args.ids, args.kp, args.kd,
+                                          args.accel, args.persist, expect)
         else:
             rows, ok = audit(bus, args.ids, expect)
+            missing = [r["id"] for r in rows if not r["present"]]
     finally:
         bus.close()
+
+    if args.write and missing:
+        print(f"\n⛔ preflight: {len(missing)}/{len(args.ids)} joint(s) did not "
+              f"answer: {missing}")
+        print("   Nothing was written — a half-configured fleet is worse than an "
+              "untouched one.")
+        print("   Fix presence first (stage0_software_prep.md §6), then re-run.")
+        return 2
 
     report(rows, expect)
     seen = sum(1 for r in rows if r["present"])
