@@ -53,9 +53,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "servo_probe"))
 
 REG_P_GAIN, REG_D_GAIN = 21, 22          # EEPROM, survives power cycle
 REG_MODE, REG_ACCEL, REG_SPEED = 33, 41, 46
+REG_TORQUE_ENABLE = 40                   # 1 B; EEPROM writes want torque off
 REG_TORQUE_LIMIT = 48                    # 2 B
 REG_P_RAM, REG_D_RAM = 50, 51            # in effect now, reloaded from 21/22
 REG_LOCK = 55                            # 0 = EEPROM writable, 1 = locked
+
+#: Inter-packet pause after *every* EEPROM-region write, including the two lock
+#: writes. STS3215 commits an EEPROM byte in ~10 ms; a packet that arrives
+#: mid-commit is rejected (error -6) or, worse, ACKed while the commit is torn —
+#: the register then reads back the new value from a RAM shadow and reverts at
+#: the next power-up. 50 ms = 10 ms commit + margin, matching the 30 ms floor
+#: used by robotic-companion/motor/bus.py ("EEPROM commit timing").
+#: This constant is the fix for the 2026-11-03 finding: EEPROM read back 8,
+#: survived as 32 (§22.5). Readback alone can never prove persistence.
+EEPROM_COMMIT_S = 0.05
+
+#: Hard floor from the same source: below this the next packet lands in the
+#: commit window. Kept separate from EEPROM_COMMIT_S on purpose — a gate that
+#: compares a value against a threshold derived from itself passes when both
+#: are zero (caught by the negative control on 2026-11-03).
+EEPROM_COMMIT_FLOOR_S = 0.03
 
 #: 15 joints: legs 10-14 / 20-24 / 30-34 (docs §11: factory IDs are all 1 and
 #: must be assigned one at a time; these are the slots this build uses).
@@ -100,10 +117,18 @@ def apply(bus, ids, kp: int, kd: int, accel: int, persist: bool, expect: dict):
         bus.write_u8(sid, REG_P_RAM, kp)
         bus.write_u8(sid, REG_D_RAM, kd)
         if persist:
-            bus.write_u8(sid, REG_LOCK, 0)
-            bus.write_u8(sid, REG_P_GAIN, kp)
-            bus.write_u8(sid, REG_D_GAIN, kd)
-            bus.write_u8(sid, REG_LOCK, 1)
+            # EEPROM is committed one byte at a time: pause after each write or
+            # the next packet lands inside the commit window (§22.5).
+            was_torque = bus.read_u8(sid, REG_TORQUE_ENABLE)
+            if was_torque:
+                bus.write_u8(sid, REG_TORQUE_ENABLE, 0)
+                time.sleep(EEPROM_COMMIT_S)
+            for reg, val in ((REG_LOCK, 0), (REG_P_GAIN, kp),
+                             (REG_D_GAIN, kd), (REG_LOCK, 1)):
+                bus.write_u8(sid, reg, val)
+                time.sleep(EEPROM_COMMIT_S)
+            if was_torque:
+                bus.write_u8(sid, REG_TORQUE_ENABLE, was_torque)
         time.sleep(0.05)
 
         r = dict(id=sid, present=True,
@@ -155,7 +180,7 @@ class FakeBus:
         return self.regs.get(sid, {}).get(addr)
 
     def write_u8(self, sid, addr, v):
-        self.log.append(("w8", sid, addr, v))
+        self.log.append(("w8", sid, addr, v, time.monotonic()))
         if self.drop_writes:
             return False
         self.regs.setdefault(sid, {})[addr] = v
@@ -200,6 +225,29 @@ def selftest() -> int:
     print(f"selftest 4 missing-joint   ok={passed} (must be False) "
           f"{'ok' if not passed else 'FAIL'}")
     ok &= not passed
+
+    # 5. EEPROM commit rhythm (§22.5). Two things must hold, and both were false
+    #    on 2026-11-03: every EEPROM-region write is separated by >= commit time,
+    #    and torque is switched off around the write and left as it was found.
+    #    A dropped sleep here is invisible in the readback — only this catches it.
+    joint = dict(good[10])
+    joint[40] = 1
+    bus = FakeBus({10: joint}, present={10})
+    rows, passed = apply(bus, [10], 8, 0, 0, True,
+                         {"p_ram": 8, "p_eeprom": 8, "d_ram": 0, "d_eeprom": 0})
+    eeprom_writes = [e for e in bus.log if e[2] in (21, 22, 55)]
+    gaps = [b[4] - a[4] for a, b in zip(eeprom_writes, eeprom_writes[1:])]
+    # Threshold is the independent floor (30 ms), never EEPROM_COMMIT_S itself:
+    # Windows' monotonic clock resolves to ~15.6 ms, so a 50 ms sleep measures
+    # low, and a self-derived threshold would pass when the sleep is removed.
+    rhythm_ok = (EEPROM_COMMIT_S >= EEPROM_COMMIT_FLOOR_S
+                 and bool(gaps) and min(gaps) >= EEPROM_COMMIT_FLOOR_S)
+    torque_off = any(e[2] == 40 and e[3] == 0 for e in bus.log)
+    torque_back = bus.regs[10][40] == 1
+    print(f"selftest 5 commit-rhythm  min_gap={min(gaps) * 1000 if gaps else 0:.0f}ms "
+          f"writes={len(eeprom_writes)} torque_off={torque_off} restored={torque_back} "
+          f"{'ok' if (rhythm_ok and torque_off and torque_back) else 'FAIL'}")
+    ok &= rhythm_ok and torque_off and torque_back
 
     print("selftest", "PASS" if ok else "FAIL")
     return 0 if ok else 1
@@ -249,6 +297,11 @@ def main() -> int:
     seen = sum(1 for r in rows if r["present"])
     print(f"\n{seen}/{len(args.ids)} joints answered; "
           f"{'ALL MATCH' if ok else 'MISMATCH'}")
+    if args.write and args.persist and ok:
+        print("\n⚠️  readback PASS is NOT persistence. The servo answers 21/22 out of "
+              "a RAM shadow,\n    so a torn EEPROM commit also reads back correct "
+              "(observed 2026-11-03: 8 -> 32).\n    Only a power cycle proves it: "
+              "re-run this audit after unplugging the bus.")
     if not ok:
         print("⇒ this machine is NOT usable for the P8 policy: one mismatched "
               "joint is enough to fall (§21.3, 7/8 falls at kp=5).")
