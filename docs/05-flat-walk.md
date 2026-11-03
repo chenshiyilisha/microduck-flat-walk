@@ -1872,10 +1872,9 @@ RAM 写 → `p_ram=8 / p_eeprom=32`；再 `--persist` → `p_eeprom=8 / 55=1`（
    **写 EEPROM 即可持久，真机不必每次启动写 RAM。**
    ⚠️ 但这条结论**不是**靠「旧状态 `P_ram=32 / P_eeprom=8`」得到的——那个判决状态本身是坏的：
    EEPROM 当时根本没写进去（§22.7），而 32 又恰好等于出厂值，两个缺陷叠加让读数无法解释。
-2. **有没有第二个写者在启动时改 reg 50** —— 真机运行时不在本仓（venv 里没有
-   `microduck_playground`），**本机无法验证**。若它写 5，台架设好的 8 会在上电时被覆盖，
-   症状与「没写」完全一样。必须在 Radxa 上确认。
-   **优先级因 §22.7 上升**：既然 EEPROM 已被证明能持久，这个写者就成了唯一还能把 8 改掉的途径。
+2. ~~**有没有第二个写者在启动时改 reg 50**~~ → **✅ 已闭合：有，是 `robotd` 本身，默认值 200（§22.8）**。
+   它写的是 **RAM**，所以「EEPROM 已被写成 8」并不能保证真机运行在 8 上——
+   开机载入 8 之后，`robotd` 一接管就把 RAM 改成 `[policy] gain`。部署必须改这一项。
 
 
 ### 22.7 ✅ EEPROM 持久性：真的写进去了，上电也真的载入（2026-11-03 台架 ID10）
@@ -1934,6 +1933,47 @@ torque_limit=1000`，无副带漂移；`out/snap_id10_persisted.json`。**哨兵
   改为独立常量 `EEPROM_COMMIT_FLOOR_S` 后，负对照 0 ms / 5 ms 两档均 FAIL。
 
 
+
+### 22.8 ✅ 第二写者找到了：就是 `robotd`，默认把 RAM P 写成 200（一手源码，2026-11-03）
+
+**结论：EEPROM 写成 8 只解决「上电那几秒」。`robotd` 一接管就把 15 颗的 RAM 增益改成
+`[policy] gain`，默认 200。** 两者不冲突，但只做前者等于白做。
+
+代码链（`pollen-robotics/microduck@main`，全部一手）：
+
+| 位置 | 内容 |
+|---|---|
+| `duck-control/src/bus.rs:594` | `set_gain(kp)` 逐颗 `write_position_p_gain(id,kp)` + **I=0、D=0**（RAM 寄存器） |
+| `robotd/src/main.rs:1285` | `robotctl init` 在回 home 位前调 `io.set_gain(params.policy.gain)` |
+| 同上 `:1282` 注释 | 「robotd's control loop sets its own gain on the first tick」⇒ 控制环每 tick 自设，**不是一次性** |
+| `robotd-params/src/lib.rs:2460` | `impl Default for PolicyParams { gain: 200 }` —— **全局默认，不随板型** |
+| `deploy/robotd.toml:180-182` | `# Position P gain while running.` / `# gain = 200`（注释值即内建默认） |
+
+**对 HD1910 的后果**：出厂 P=32，`gain=200` 是 **6.25×**。按 §22 的 `duty% ≈ 5.1·kp`
+（4.6 V 台架），200 早在 kp≈20 就打满 ⇒ 真机会满占空比、巨颤、过热。
+**社区「实机 P 大颤」若用 HD1910 跑 robotd，这一条足以解释。**
+
+**另一个坑（注释明写）**：`position_p_gain` 是 **RAM**，且
+「**survives this process**, so whatever was written last is what the robot stands up with.
+A previous fall leaves `gain_limp` (50) there」——即跌倒会把 `gain_limp=50` 留在 RAM，
+下次只重启进程而不掉电时，机器人是从 50 而不是 8 站起来的。
+⇒ **读到 RAM=8 不能证明「跑在 8」，只能证明「此刻还没人改它」。**
+
+**部署动作（硬前置，与写 EEPROM 并列）**：在板子的 `/etc/robot/robotd.toml` 里
+```toml
+[policy]
+gain = 8
+```
+⚠️ `deploy/robotd.toml:48-53` 自带警告：`install.sh` 只拷贝一次、之后**永不覆盖**，
+取消注释的值会永久冻结在板子上（「历史上一个车队因此停在 kP 120，而 release 默认是 160」）。
+这一行冻结对我们正是想要的，但换板 / 回滚时要记得它还在。
+
+**验证判据（跑起来之后读，不是读配置文件）**：`robotd` 起来并 enable 策略后回读 `reg 50`
+= 8 才对；读到 200 ⇒ 配置没生效；读到 50 ⇒ 刚跌倒过、`gain_limp` 还在 RAM。
+D 不用管：`set_gain` 自己写 0，与 §22.4 的要求一致（其注释还解释了为什么必须钉 0：
+出厂 D 非零会阻尼内部 PID，同 kP 下机器人明显更软）。
+
+### 22.5 ⚠️ 仪器缺口（记录，不用假数字填）
 
 HD1910 这条线在本机**只有一个仪器**：`rehearse_hd1910.py`。
 `tools/rehearse_deploy.py`（上游 `infer_policy` 外层循环复用）内部写死

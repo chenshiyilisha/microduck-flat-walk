@@ -28,8 +28,10 @@
 | B2 | `robotctl health` | bus 绿；loop **50 Hz 0 missed** | |
 | B3 | 方向表 | HD1910 读数方向常与 XL330 **相反** → 多数关节 **−1**（以本机标定为准，逐颗核对） | |
 | B4 | 零位 / 限位 / IMU | 关节工作台过一遍；IMU 俯仰偏差必须运行时校掉 | |
-| B5 | 固件 P（reg 50） | **= 32**（= 训练 `kp_fw`） | |
-| B6 | D / 转矩 | 以**你刷到的** V167 release note 为准（V164 曾不写 D→出厂 40 发颤；V167 有修） | |
+| B5 | 固件 P（RAM 50 / EEPROM 21） | **= 8**（= 训练 `kp_fw`，§22）；`set_gains_all.py --persist` 写，**断电后回读**才算数（§22.7） | |
+| B6 | D / 转矩 | **D = 0**（`set_gain` 自己钉 0；出厂 D=40 会阻尼内部 PID，同 kP 下明显更软）；转矩上限 1000 | |
+| B7 | **`[policy] gain`** | `/etc/robot/robotd.toml` 里 `gain = 8`。**默认 200，控制环每 tick 写 RAM，会把 EEPROM 的 8 覆盖掉**（§22.8，一手源码） | |
+| B8 | 跑起来后回读 reg 50 | **= 8**。读到 200 ⇒ B7 没生效；读到 50 ⇒ 刚跌倒过，`gain_limp` 还在 RAM | |
 
 阶段 0 单颗闸门（URT-2/URT-1）未过 0.2 前不要买齐 15 颗：`sts_bench.py` / FD。
 
