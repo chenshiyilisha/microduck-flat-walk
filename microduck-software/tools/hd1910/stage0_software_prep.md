@@ -625,6 +625,47 @@ URT-2 的 V1/G 是 KF301 类螺钉端子（22–14 AWG／16 A／剥线 4.5–5 m
 
 夹子接触好坏不用表判断：**负载下看 reg62**。松夹在 2.5 A 上会掉 0.1 V 以上，且夹子会温。
 
+### 5.7 协议换成 Feetech SCS v1 之后，舵机侧的旧数据要不要重测（2026-11-03）
+
+**结论：不用重测。** 说错协议的只有 `check_imu_bridge.py`（已改），而它从没在真硬件上跑过 ⇒
+不存在"用错协议测出来的数据"。舵机工具一直用的就是 `FF FF ID LEN INST PARAM ~SUM`。
+
+逐行比对 kissqy `duck-control/src/`（一手实现，非文档）：
+
+| 量 | 本仓脚本 | kissqy 源码 | 判 |
+|---|---|---|---|
+| 遥测紧凑块 | 56 起 15 B | `SYNC_ADDRESS=56` `SYNC_LENGTH=15`，`hd1910.rs` "only the 15-byte block at 56..=70" | ✅ |
+| 位置 | 56 起 2 B，bit15 符号 | `signed_magnitude(..., 15)` | ✅ |
+| 电压 | reg62 × 0.1 V | `raw[6] as f64 * 0.1` | ✅ |
+| 温度 | reg63 | `raw[7]` | ✅ |
+| 电流 | reg 69–70 **2 B**，bit15 符号 | `signed_magnitude([raw[13],raw[14]], 15)` | ✅ |
+| 负载 | bit10 方向 + bit0–9 幅度 | `signed_magnitude(..., 10)` | ✅ |
+| EEPROM P/D | 21/22 | `sync_read(21, 3, ...)`，出厂 `[32,40,0]` | ✅ |
+| RAM P/D | 50/51 | `reg[50..53] = [32,40,0]` | ✅ |
+| 扭矩使能 | reg40 | `addr==40 && data==[0]` | ✅ |
+| 扭矩上限 | 48 = 1000 | 测试 `writes D0 limit1000` | ✅ |
+| 速度 | 46，0=无上限 | `preserve model P at 50, I at 52 and speed at 46` | ✅ |
+
+三类数据分开处理：
+
+1. **有效、不重测**：静态电流 `raw=3`、位置/电压/温度读数、EEPROM=8 断电持久（§22.7 哨兵法）。
+2. **不是"重测"是"还没测"**：kt / R、齿隙、温升、堵转阶跃 —— 与协议无关，只等 §5.3 的电源。
+3. **只改判据、不动数据**：BAM 筛法（陆吾那组被判出局，但 xgoduck 商业产品正在用）⇒ 堵转点互证
+   只能剔除"明显不合理"的组，不能区分"可用但保守"的组。见 `docs/active/microduck-HD1910软件方案.md` §1。
+
+⚠️ **唯一要降级的旧佐证**：`raw=3 → 19.5 mA ≈ 规格书 20 mA` 这条比我早先说的弱。
+`6.5 mA/LSB` 来自外部资料，而 **kissqy 明确不猜电流单位**（`feetech.rs:8`
+"current/gain units are deliberately not guessed from another feetech model"，
+字段 `current_ma_per_count: 0.0` 带 `units_verified` 标志）。`raw=3` 只有 3 个计数，
+系数取 4/6.5/8 分别得 12/19.5/24 mA —— **这个点区分不了系数**。
+⇒ 系数只能在**堵转点**校：7.4 V ÷ 3.75 Ω ≈ 1.97 A，按 6.5 mA/LSB 应读 **≈308 counts**，
+再与电源屏显交叉。这本来就是 §4 的堵转门禁，不是额外工作。
+
+**配置分歧已核**：kissqy 对 reg41 是 `preserve_register_41_never_written`（永不写）；
+本仓 `set_gains_all.py` 也只在显式 `--accel` 时写（默认不写），台架 ID10 读到 41=0。两边一致。
+
+**什么时候才真要重测**：reg41 ≠ 0（会改加速度斜坡，kp8 下 vx 0.2069 的判决随之作废）、
+换 plant、或换舵机批次（出厂 P/D 不再 32/40）。
 
 ---
 

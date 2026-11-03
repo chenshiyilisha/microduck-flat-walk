@@ -38,6 +38,11 @@
 未决：
   - 电流 6.5 mA/LSB 引自 HL2915 表；HD-1910 静态 raw 3 ≈ 20 mA 与规格书"静态 20 mA"
     自洽，但**未经真机校准** ⇒ 同时输出 raw 与 mA 两列，mA 只作量级参考。
+    raw=3 只有 3 个计数，系数取 4/6.5/8 分别得 12/19.5/24 mA，**这个点区分不了系数**
+    （kissqy duck-control 亦明确不猜：feetech.rs "current/gain units are deliberately
+    not guessed from another feetech model"，current_ma_per_count 默认 0.0 且带
+    units_verified 标志）。⇒ **只能在堵转点校**：7.4 V ÷ 3.75 Ω ≈ 1.97 A，
+    按 6.5 mA/LSB 应读 ≈308 counts，再与电源屏显交叉（stage0_software_prep.md §5.7）。
   - 64 / 65 / 66 在静止时全为 0，未做过扰动 ⇒ 语义按官方表（异步写标志/状态/移动）
     标注，但**未经本机实测**。
 """
