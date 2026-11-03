@@ -63,6 +63,8 @@ meta={
   'gpu_ids': [0],
   'mujoco_gl': '$MUJOCO_GL',
   'official_m6_stslaw_sha256_16': hashlib.sha256(p.read_bytes()).hexdigest()[:16],
+  'delay_min_lag': json.load(open('out/plant_${RUN}.json', encoding='utf-8'))['delay_min_lag'],
+  'delay_max_lag': json.load(open('out/plant_${RUN}.json', encoding='utf-8'))['delay_max_lag'],
   'rel_heading_envs': $REL_HEADING,
   'envs': 64, 'iters': 5,
 }

@@ -170,7 +170,7 @@ def _set_register_import(text: str, want: bool) -> str:
     )
 
 
-def apply(plant: str) -> dict:
+def apply(plant: str, delay_lag: tuple[int, int] | None = None) -> dict:
     plant = PLANT_ALIASES.get(plant, plant)
     if plant == "hd1910" and not M5_JSON.exists():
         raise SystemExit(f"missing HD1910 params: {M5_JSON}")
@@ -220,6 +220,31 @@ def apply(plant: str) -> dict:
     else:
         raise SystemExit(f"unknown plant {plant!r}")
 
+    if delay_lag is not None:
+        lo, hi = delay_lag
+        # Overlay on whatever preset was just written. Physics step is 5 ms
+        # (sim.timestep 0.005, decimation 4), so lag 3..6 = 15..30 ms. The bench
+        # found the real servo carries ~26..45 ms MORE lag than BAM models, so
+        # the shipped upper bound sits exactly on the measured lower edge.
+        if lo < 0 or hi < lo:
+            raise SystemExit(f"bad --delay-lag {lo},{hi}: need 0 <= MIN <= MAX")
+        # Count INSIDE the kwargs span only: this file also carries a
+        # pd_actuators XmlActuatorCfg with its own delay_min_lag/delay_max_lag,
+        # and a whole-file count would falsely refuse a legitimate rewrite.
+        bstart, bend = _find_kwargs_span(text)
+        btext = text[bstart:bend]
+        n_sub_min = len(re.findall(r"delay_min_lag\s*=\s*-?\d+", btext))
+        n_sub_max = len(re.findall(r"delay_max_lag\s*=\s*-?\d+", btext))
+        if n_sub_min != 1 or n_sub_max != 1:
+            raise SystemExit(
+                f"expected exactly one delay_min_lag and one delay_max_lag in the "
+                f"kwargs block, found {n_sub_min}/{n_sub_max} -- refusing to "
+                "rewrite blindly"
+            )
+        btext = re.sub(r"delay_min_lag\s*=\s*-?\d+", f"delay_min_lag={lo}", btext)
+        btext = re.sub(r"delay_max_lag\s*=\s*-?\d+", f"delay_max_lag={hi}", btext)
+        text = text[:bstart] + btext + text[bend:]
+
     LIVE_CONSTANTS.write_text(text, encoding="utf-8")
     return _readback(plant_id)
 
@@ -252,6 +277,14 @@ def _readback(expected_id: str | None = None) -> dict:
     km = re.search(r"kp_fw\s*=\s*([0-9.]+)", block)
     if km:
         kp = float(km.group(1))
+    # Command-delay band, in PHYSICS steps (5 ms each: sim.timestep 0.005,
+    # decimation 4). Reported for every plant because a --delay-lag overlay
+    # survives only until the next --plant rewrite; a reader that cannot see it
+    # would compare two runs with different latency and call it the same plant.
+    dmin = re.search(r"delay_min_lag\s*=\s*(\d+)", block)
+    dmax = re.search(r"delay_max_lag\s*=\s*(\d+)", block)
+    delay_min_lag = int(dmin.group(1)) if dmin else None
+    delay_max_lag = int(dmax.group(1)) if dmax else None
     if is_official_m6_stslaw:
         detected = {
             5.0: "hd1910_kp5",
@@ -272,6 +305,13 @@ def _readback(expected_id: str | None = None) -> dict:
         "register_installed": has_reg,
         "detected": detected,
         "kp_fw": kp,
+        "delay_min_lag": delay_min_lag,
+        "delay_max_lag": delay_max_lag,
+        "delay_ms": (
+            [delay_min_lag * 5, delay_max_lag * 5]
+            if delay_min_lag is not None and delay_max_lag is not None
+            else None
+        ),
         "kwargs_block": block.strip(),
         "expected_id": expected_id,
         "m5_json_exists": M5_JSON.exists(),
@@ -337,6 +377,14 @@ def main() -> int:
         default=None,
     )
     ap.add_argument("--check", action="store_true", help="read back only")
+    ap.add_argument(
+        "--delay-lag",
+        default=None,
+        help="MIN,MAX command delay in PHYSICS steps (5 ms each) written on top of "
+        "the chosen plant's kwargs. Benchmark 2026-11-03: the real servo carries "
+        "~26-45 ms more lag than BAM models, so the shipped 3,6 (15-30 ms) barely "
+        "reaches the measured lower edge. Overlay is wiped by the next --plant.",
+    )
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
     if a.check and a.plant:
@@ -346,8 +394,20 @@ def main() -> int:
             "need --plant hd1910|hd1910_ftservo_m6|hd1910_kp5|hd1910_kp8|xl330 or --check"
         )
 
+    delay_lag = None
+    if a.delay_lag:
+        try:
+            lo_s, hi_s = a.delay_lag.split(",")
+            delay_lag = (int(lo_s), int(hi_s))
+        except ValueError:
+            raise SystemExit(
+                f"--delay-lag must be MIN,MAX in physics steps (got {a.delay_lag!r})"
+            ) from None
+        if a.check:
+            raise SystemExit("--delay-lag writes the live file; use it with --plant")
+
     if a.plant:
-        info = apply(a.plant)
+        info = apply(a.plant, delay_lag)
     else:
         info = _readback()
 
@@ -355,6 +415,10 @@ def main() -> int:
         print(json.dumps(info, indent=2, ensure_ascii=False))
     else:
         print(f"detected   {info['detected']}  kp_fw={info['kp_fw']}")
+        print(
+            f"delay lag  {info['delay_min_lag']}..{info['delay_max_lag']} steps "
+            f"({info['delay_ms'][0]}-{info['delay_ms'][1]} ms)"
+        )
         print(f"register   {info['register_installed']}")
         print(f"live sha16 {info['sha16']}")
         if info.get("gate_ok") is not None:

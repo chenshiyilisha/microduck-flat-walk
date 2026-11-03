@@ -82,6 +82,14 @@ meta={
   'plant': '$PLANT_ID', 'kp_fw': $KP_EXPECT,
   'device': 'cuda:0', 'gpu_ids': [0], 'mujoco_gl': 'glfw',
   'official_m6_stslaw_sha256_16': hashlib.sha256(p.read_bytes()).hexdigest()[:16],
+  # Command-delay band actually live at launch (physics steps, 5 ms each).
+  # Recorded because --delay-lag is an overlay that the next --plant wipes; a
+  # run whose manifest cannot show its latency band is not comparable with one
+  # that can. Bench 2026-11-03: the real servo carries ~26-45 ms more lag than
+  # BAM models, so this field is the first thing to check when rehearsal delay
+  # results disagree with training.
+  'delay_min_lag': json.load(open('out/plant_${RUN}.json', encoding='utf-8'))['delay_min_lag'],
+  'delay_max_lag': json.load(open('out/plant_${RUN}.json', encoding='utf-8'))['delay_max_lag'],
   'rel_heading_envs': $REL_HEADING,
   'heading_hold_weight': $HEADING_HOLD,
   'heading_tracking_final_weight': $HEADING_TRACKING,
