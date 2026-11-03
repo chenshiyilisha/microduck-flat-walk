@@ -36,13 +36,14 @@
         阶跃录制不必再单独发读 goal 的事务。
 
 未决：
-  - 电流 6.5 mA/LSB 引自 HL2915 表；HD-1910 静态 raw 3 ≈ 20 mA 与规格书"静态 20 mA"
-    自洽，但**未经真机校准** ⇒ 同时输出 raw 与 mA 两列，mA 只作量级参考。
-    raw=3 只有 3 个计数，系数取 4/6.5/8 分别得 12/19.5/24 mA，**这个点区分不了系数**
-    （kissqy duck-control 亦明确不猜：feetech.rs "current/gain units are deliberately
-    not guessed from another feetech model"，current_ma_per_count 默认 0.0 且带
-    units_verified 标志）。⇒ **只能在堵转点校**：7.4 V ÷ 3.75 Ω ≈ 1.97 A，
-    按 6.5 mA/LSB 应读 ≈308 counts，再与电源屏显交叉（stage0_software_prep.md §5.7）。
+  - 电流 6.5 mA/LSB **是飞特官方 STS 内存表给的寄存器单位**（doc.feetech.cn reg 69 0x45），
+    HD-1910 属该系列表 —— 不是"从 HL2915 借的"（那是旧注释，2026-11-03 核对后改）。
+    仍不确定的是**这一颗的绝对精度**（内部 ADC 未标定）⇒ 同时输出 raw 与 mA 两列，mA 只作量级参考。
+    `raw=3 ≈ 20 mA` 与规格书静态 20 mA 自洽，但 3 个计数区分不了任何系数（4/6.5/8 → 12/19.5/24 mA），
+    这个点不算证据。308 counts 也不是"待校准点"，它是 2.0 A ÷ 6.5 mA 的算术，
+    而 2.0 A 出自规格书原件 §5-6（stage0_software_prep.md §5.1 / §5.9）。
+  - 69 号有没有方向位：官方表给 56/58/60 都标了 BIT15/BIT10 方向位，**唯独 69 没标**
+    ⇒ 更可能是无符号 u16；3.25 A 以内 bit15 永不置位，两种读法等价，不影响测量。
   - 64 / 65 / 66 在静止时全为 0，未做过扰动 ⇒ 语义按官方表（异步写标志/状态/移动）
     标注，但**未经本机实测**。
 """
