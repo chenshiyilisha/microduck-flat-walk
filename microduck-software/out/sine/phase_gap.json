@@ -1,0 +1,182 @@
+{
+  "bench_vin": 4.5,
+  "max_speed_bench_deg_s": 181.7,
+  "rated_speed_deg_s_at_7v4": 298.8,
+  "train_domain_vin": [
+    6.5,
+    7.4,
+    8.2
+  ],
+  "points": [
+    {
+      "freq": 1.89,
+      "amp": 2.0,
+      "peak_deg_s": 23.8,
+      "u": 0.131,
+      "bench_lag": 88.1,
+      "bam_lag": 101.8,
+      "gap_deg": -13.7,
+      "gap_ms": -20.1,
+      "bam_peak_duty": 0.03,
+      "bam_duty_sat": 0.0,
+      "v_lo": 4.4,
+      "src": "sweepA_kp5_a2.0.json"
+    },
+    {
+      "freq": 0.5,
+      "amp": 16.9,
+      "peak_deg_s": 53.1,
+      "u": 0.292,
+      "bench_lag": 35.2,
+      "bam_lag": 35.2,
+      "gap_deg": 0.1,
+      "gap_ms": 0.3,
+      "bam_peak_duty": 0.14,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.9,
+      "src": "sine_id10_kp5_kd0-6.json"
+    },
+    {
+      "freq": 1.89,
+      "amp": 5.0,
+      "peak_deg_s": 59.4,
+      "u": 0.327,
+      "bench_lag": 91.0,
+      "bam_lag": 91.4,
+      "gap_deg": -0.4,
+      "gap_ms": -0.6,
+      "bam_peak_duty": 0.078,
+      "bam_duty_sat": 0.0,
+      "v_lo": 4.3,
+      "src": "sweepA_kp5_a5.0.json"
+    },
+    {
+      "freq": 0.75,
+      "amp": 16.9,
+      "peak_deg_s": 79.6,
+      "u": 0.438,
+      "bench_lag": 51.3,
+      "bam_lag": 47.7,
+      "gap_deg": 3.6,
+      "gap_ms": 13.3,
+      "bam_peak_duty": 0.181,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.9,
+      "src": "sine_id10_kp5_kd0-6.json"
+    },
+    {
+      "freq": 1.89,
+      "amp": 8.5,
+      "peak_deg_s": 100.9,
+      "u": 0.555,
+      "bench_lag": 97.0,
+      "bam_lag": 88.0,
+      "gap_deg": 9.0,
+      "gap_ms": 13.2,
+      "bam_peak_duty": 0.131,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.6,
+      "src": "sweepA_kp5_a8.5.json"
+    },
+    {
+      "freq": 1.0,
+      "amp": 16.9,
+      "peak_deg_s": 106.2,
+      "u": 0.584,
+      "bench_lag": 65.5,
+      "bam_lag": 58.5,
+      "gap_deg": 7.1,
+      "gap_ms": 19.7,
+      "bam_peak_duty": 0.21,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.9,
+      "src": "sine_id10_kp5_kd0-6.json"
+    },
+    {
+      "freq": 1.25,
+      "amp": 16.9,
+      "peak_deg_s": 132.7,
+      "u": 0.73,
+      "bench_lag": 78.6,
+      "bam_lag": 67.7,
+      "gap_deg": 10.9,
+      "gap_ms": 24.3,
+      "bam_peak_duty": 0.23,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.9,
+      "src": "sine_id10_kp5_kd0-6.json"
+    },
+    {
+      "freq": 1.5,
+      "amp": 16.9,
+      "peak_deg_s": 159.3,
+      "u": 0.877,
+      "bench_lag": 90.9,
+      "bam_lag": 75.7,
+      "gap_deg": 15.2,
+      "gap_ms": 28.1,
+      "bam_peak_duty": 0.244,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.9,
+      "src": "sine_id10_kp5_kd0-6.json"
+    },
+    {
+      "freq": 1.89,
+      "amp": 16.9,
+      "peak_deg_s": 200.7,
+      "u": 1.104,
+      "bench_lag": 116.6,
+      "bam_lag": 86.4,
+      "gap_deg": 30.2,
+      "gap_ms": 44.4,
+      "bam_peak_duty": 0.257,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.9,
+      "src": "sine_id10_kp5_kd0-6.json"
+    },
+    {
+      "freq": 1.89,
+      "amp": 16.9,
+      "peak_deg_s": 200.7,
+      "u": 1.104,
+      "bench_lag": 116.1,
+      "bam_lag": 86.4,
+      "gap_deg": 29.8,
+      "gap_ms": 43.7,
+      "bam_peak_duty": 0.257,
+      "bam_duty_sat": 0.0,
+      "v_lo": 3.9,
+      "src": "sweepA_kp5_a16.9.json"
+    }
+  ],
+  "extrapolation": [
+    {
+      "vin": 4.5,
+      "u": 1.104,
+      "gap_deg_pred": 29.8,
+      "gap_ms_pred": 43.8
+    },
+    {
+      "vin": 6.5,
+      "u": 0.765,
+      "gap_deg_pred": 11.9,
+      "gap_ms_pred": 17.5
+    },
+    {
+      "vin": 7.4,
+      "u": 0.672,
+      "gap_deg_pred": 9.4,
+      "gap_ms_pred": 13.8
+    },
+    {
+      "vin": 8.2,
+      "u": 0.606,
+      "gap_deg_pred": 7.7,
+      "gap_ms_pred": 11.3
+    }
+  ],
+  "delay_band_ms": [
+    15.0,
+    30.0
+  ]
+}
