@@ -116,3 +116,32 @@
 3. **真要换板**：技术上成立（一条串口 + aarch64），但 DT/overlay、updater 的 `hw_rev` 匹配、
    没有 `tofd`/`padd` 这些只属于 HAT 的服务，全是没人验证过的路。等有先例再走。
 
+
+---
+
+## 6. 第三方 imu_to_dxl 桥板出现（2026-11-03，商品图核对，未上板）
+
+用户看到一块第三方复刻的 `imu_to_dxl` 小板——即 §5 判定的"缺的那块桥"。商品声明 vs 官方契约
+（`duck-control/src/imu.rs` / `bus.rs` / `model.rs`，一手）：
+
+| 商品声明 | 官方契约 | 判 |
+|---|---|---|
+| IMU = LSM6DSV16XTR | `imu.rs:1` "imu_to_dxl **v2** board (LSM6DSV16X)" | ✅ 同芯片 |
+| 地址 200 / 1 Mbps | `model.rs:101/103` | ✅ |
+| 5–24 V 供电、TTL 3.3 V 单总线 | 半双工 TTL（DATA 勿直连 TX） | ✅ |
+| 支持 Dynamixel 2.0 Fast_read | `fast_sync_read` 默认 **true**（0x8A）；`bus.rs:477` 明写 ID 200 也必须实现 | ✅ 关键项命中 |
+| 自适应 Dynamixel / 飞特（按帧识别） | 官方只说 Dynamixel；飞特人格是社区需求 | 🟡 要协议文档 |
+| 飞特舵机需改 robotd，提供参考代码 | 与结论一致：robotd 全总线 Dynamixel P2.0；社区 `microduck_ft1910` 已登记 | ✅ 诚实 |
+| 无需重训 | obs 的 gravity/gyro 同芯片 SFLP，格式一致则成立 | 🟡 要验证 |
+
+**官方契约（= 到手验收清单）**：组合 sync_read `@124 len 12` ⇒
+`[0..6] gyro x/y/z i16 LE ±500 dps` + `[6..12] SFLP 四元数 x/y/z`（IEEE half，w=√(1−x²−y²−z²)）；
+**全零块 = SFLP 未就绪**（host 持旧值，不 snap 到 identity）；诊断全块 20 B；
+慢速读 `@144 len 3` 只含 JOINT_IDS、不含 IMU。
+
+**买前三问卖家**：① 协议文档（逐字节核 @124/12B 布局）；② Feetech 人格的 payload 是否同 12 B SFLP
+格式；③ 参考代码基于哪个 robotd 版本（须对上 kissqy/ft1910 线）。
+
+**含义**：§5 的死结（"缺的是桥不是板"）有解。桥到手 + 任一 aarch64 SBC（Pi Zero 2W ¥298 或
+Radxa 3W 官方价）+ 飞特 robotd 补丁 = 整条 Feetech 线可跑。风险从"自研板打样 + 自写固件"
+降为"到手逐字节验收"。主控决策（买哪块 SBC、何时买）在桥到手并验收之前**维持搁置**。
