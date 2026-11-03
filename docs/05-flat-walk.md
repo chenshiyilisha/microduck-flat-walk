@@ -1973,6 +1973,77 @@ gain = 8
 D 不用管：`set_gain` 自己写 0，与 §22.4 的要求一致（其注释还解释了为什么必须钉 0：
 出厂 D 非零会阻尼内部 PID，同 kP 下机器人明显更软）。
 
+### 22.9 robotd 自带的保护：四项里只有两项，70° 是另一台仪器的口径（2026-11-03，一手源码，未上板）
+
+**先纠正自己**：11-03 早先说「安全层 = 跌倒 70° / 关节限位 / 温度电流 / 死人开关，都在 robotd 里」，
+**两处错，错法不同**：`70°` 是拿仿真判据冒充实物判据；`关节限位` 和 `温度电流` 在 robotd 里
+**根本不存在**。而 10-23 的 `docs/archive/microduck-控制环与情感.md` §5/§6 本来就写对了
+（三道限位：非有限值 / 行程 / deadman；并专门引用源码声明「这不是解剖学限位」）——
+**是后来的概括把已经读对的东西覆盖掉了**。
+
+**这些是官方固件自带**，不是社区写的、也不是我们写的：`pollen-robotics/microduck@main`，
+Apache-2.0，`scripts/install.sh` 校验签名后装成 systemd 的 `robotd.service`。
+
+| 说法 | 实际 | 出处 |
+|---|---|---|
+| 跌倒 70° | **60°**：`fall_gravity_z = -0.5`（gravity z 直立 −1.0、侧躺 0），debounce 200 ms | `duck-control/src/safety.rs:72-77` |
+| — | 70° 是**仿真终止判据** `limit_angle = radians(70) = 1.2217 rad` | `.venv-mjlab/.../velocity_env_cfg.py:381` |
+| 关节限位 | **不存在**。只有 NaN/Inf 拒收 + 目标夹 ±π（**舵机行程**，非关节） | `safety.rs:44-57` |
+| 温度/电流 | **robotd 无判据**：温度只读不判，alert 位只计数 | 见 ③ |
+| 死人开关 | ✔ 有，`deadman_ms = 500`，**只归零 twist**，力矩不撤 | `safety.rs:81` |
+
+**① 跌倒判据是「报告」，不是规则。** `Safety::fallen` 每拍更新并发布，**不阻止任何事**——
+倒着的机器人照样能 enable / init / 被驱动（"being down is exactly when someone needs to do those things"）。
+真正动手的是上层 `FallPredictor`（`fall.rs:78-88`），用陀螺仪外推 projected gravity（`ġz = −(ωx·gy − ωy·gx)`，
+不做四元数微分以免把滤波器自身的滞后加进这个「要早」的量），**三条件全要**：
+已倾斜过 `tilt_z=-0.90`（≈26°，正常走路到不了）、仍在继续倒（`ġz>0`）、300 ms 后外推越过 `predicted_z=-0.5`；
+debounce 60 ms；且**必须先站稳 200 ms 才 armed**——否则趴着 ~58° 的残姿会被反复判成跌倒
+（limp→pose→limp 死循环，2026-10-27 真机见过）。
+触发后 `limp_fall`：gain→`gain_limp=50`、关节跟随被推方向（变软）、陀螺仪判定停稳后 0.6 s
+拉回站姿（`limp_fall_pose_gain=160`），再把一个「静止在已知姿态」的机器人交还策略。
+
+**② 没有解剖学关节限位，源码自己声明了这一点。** `ACTUATOR_MIN/MAX = ±π`，注释原文：
+「这是**执行器**的行程，不是逐关节的解剖学限位……真实限位在 MJCF，而 MJCF 没有 vendored 到这里。
+所以这能抓住 NaN、荒谬的动作尺度、垃圾张量；它**不会**阻止一个关节被驱动到机械上不明智的地方。
+如实记录不粉饰——因为一个看起来像逐关节限位、其实不是的限位，会暗示一种没人真正拥有的保护。」
+⇒ **别指望 robotd 挡机械超程**。
+
+**③ 温度 / 电流：robotd 只观测，不判。**
+- `slow_sensors()` 每秒一次 `sync_read` reg 144–146 = 母线电压 + **15 颗各自温度**（`bus.rs:617-637`），
+  进遥测。逐颗而非均值，理由写得很直白：「均值会正好藏住那颗即将锁死的舵机」。
+- `hardware_errors()` 读 reg 70 的 alert 位（输入电压 / 过热 / 编码器 / 电击 / 过载），
+  robotd 只在 vetbook 里 **tally**（`robotd_main.rs:4034-4035`），**不做任何动作**。
+- **真正的温度/电流保护在舵机固件里**：那些位会 latch 住 torque off，直到 `reboot` 或拔电
+  （`io.rs:158-165`）。robotd 提供 reboot 通道（`Safety::reboot_motors`，并清 gain 缓存，
+  因为重启回来的舵机 RAM 增益回到 EEPROM 值）。
+- 唯一自带的电学保护是**电池空关断**：`battery_empty_shutdown`，电压 EMA（α=0.1，~10 s）
+  ≤ `BATTERY_EMPTY_V = 6.6` → 优雅坐下再断电（`robotd_main.rs:2952-2964`）。
+  ⚠️ 5 V USB 供电也低于 6.6 ⇒ **台架电压会映射成 0%**，不能据此判断电池。
+
+**④ 死人开关：stop ≠ limp。** 500 ms 没收到 intent → **只把 twist 归零**，头目标不动
+（"stale head pose is harmless, stale velocity walks the robot into a wall"）；
+**力矩不撤**，机器人以站立位僵住。注释说明这是故意的：「失去与客户端联系应让双足保持站立，
+因为站立是它的安全态；失去平衡是另一件事，不归这层管。」
+⇒ **客户端（Pi/PC）挂掉时机器人不会软掉**，它会以最后增益硬撑站着直到电池耗尽。
+这也解释了 §22.8 里 `gain_limp` 为什么能跨进程留在 RAM。
+
+**⑤ 一个真机上抓到的坑（写 Pi 运行时必须照抄）**：姿态滤波器未收敛时**不允许投票**。
+SFLP 需要几秒样本，其间 projected gravity 读出来像「侧躺」；200 ms 就能让直立机器人 latch 成 `fallen`，
+`apply` 随即写入 `gain_limp`，策略被拒（"the robot is down"），几秒后自己恢复，**但 50 留在了 gain 上**。
+真板观察到：手动设成 137 的关节，robotd 跑 5 秒后读回 **50**（`safety.rs:247-267`）。
+
+**对两条路线的意义**：
+
+| | Radxa / robotd | Pi 自己写 |
+|---|---|---|
+| 跌倒 limp_fall | **白送** | 要写（外推 + armed + 停止判据） |
+| 死人开关 | **白送**（但只 stop 不 limp） | 要写，且**要先决定**失联该 stop 还是 limp |
+| 电池空关断 | 白送（6.6 V） | 要写 |
+| 关节限位 | **本来就没有** | **不要假装实现**，兜底是舵机自己的 latch |
+| 温度/电流 | **只观测**，保护在舵机固件 | 同上，别重复实现 |
+
+⇒ 仪器口径：**仿真 70° ≠ robotd 60°**，两边的 `fell` 计数不可互比（同 §20 的仪器铁律）。
+
 ### 22.5 ⚠️ 仪器缺口（记录，不用假数字填）
 
 HD1910 这条线在本机**只有一个仪器**：`rehearse_hd1910.py`。
