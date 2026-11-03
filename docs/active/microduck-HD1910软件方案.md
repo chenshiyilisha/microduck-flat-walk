@@ -48,13 +48,17 @@
 
 ## 1. 开源长处对照（采什么）
 
+> 2026-11-03 修订：来源集合不变，只更新 kissqy 行、新增 xgoduck 行、BAM 链加注。依据为当日读
+> `kissqy/Microduck-kissqy` 与 `LuwuDynamics/xgoduck*` 一手源码（见 §1.1 证据）。
+
 | 来源 | ★ / 状态 | 采 | 弃 / 慎用 |
 |---|---|---|---|
 | **官方 microduck_rl** | 2645★ | 任务定义、奖励、课程、export/infer、AGENTS.md 方法论 | XL330 BAM kwargs（`motor_name=xl330`, `kp_fw=200`） |
 | **qiaosiyi/microduck_rl_hd1910** | 10★ | 全任务 HD1910 接线清单、质量修正算法、smoke 矩阵、公开权重作**负对照** | `datasheet_based_provisional` 植物；HOME 开环 8/8 摔是已知事实 |
 | **飞特 ftservo-bam** | Gitee 官方 | `feetech_hd1910_7_4V` m1–m6、`kp=32`、`error_gain=0.163`、mjlab 集成 | PyPI `better-actuator-models` **不含** HD1910，必须本地装 Gitee 克隆 |
 | **OpenMicroDuck 辨识** | 本仓已镜像 | 72 摆锤 + 48 腿实测 → m5：`kt=0.692`, `R=3.75`, delay 25.3 ms | 5 V 台架口径；上 7.4 V 时 vin 改、kt/R 可沿用 |
-| **kissqy** | 291★ | 真机镜像、中控、固件、采购账单、抖动修复（D=0） | 许可：原创部分**个人非商业**；陆吾参数勿当主植物 |
+| **kissqy** | 424★ | 真机镜像、中控、采购账单、抖动修复（D=0）；**IMU 桥固件完全开源**（`firmware/imu-source/`，STM32G031F8P6+LSM6DSV16X，ID 200，同步读 `[56,15,200]`）＋ PCB 工程（立创EDA）＋可买预烧成品板；`duck-control/src/feetech.rs` 是 HD1910 寄存器契约一手来源（遥测 15B@56..70、速度 58..59 signed-mag 50 steps/s、扭矩 40、位置命令 42） | 许可：原创部分**个人非商业**；陆吾参数勿当主植物；**总线协议是 Feetech SCS v1 不是 Dynamixel P2.0**（帧 `FF FF ID LEN INST PARAM ~SUM`），所有 hd1910 工具按此帧 |
+| **LuwuDynamics/xgoduck** | 商业产品 | 架构对照：Arduino UNO Q + STM32 协处理、2 Mbps、QMI8658A 走 I²C——**证明"MCU 侧 100 Hz 闭环 + I²C IMU"绕开 Dynamixel 总线 IMU 可行** | 另一套硬件生态，迁移成本高；其 `1910_m6.json` 与陆吾同组（见 BAM 链注） |
 | **fanhao375/microduck-replica** | 1356★ | `-FT` CAD、BOM、装配教程、踩坑、训练工程打包 | 早期「待步态验收」记录；以当前 README 真机演示为准并自验 |
 | **zhuoligetu123/hd1910m** | 28★ | 四模型 + APK 作部署对照 | **原始接线图作者自标有错**，勿照抄 |
 | **本仓已有工具** | — | `tools/bam_actuators.py`、`tools/plant.py` HD1910 SPECS、`eval_velocity_in_sim`、`train_velocity.sh` | `walk_std004` XL330 权重（交付物归档，不上 HD1910 机） |
@@ -67,6 +71,22 @@ hd1910_ftservo_official_m6 # 目标强先验：飞特 Gitee（装好后切换）
 hd1910_openmicroduck_m5    # 当前基线：本仓 tools/bam_params/hd1910/m5.json  ← 先跑通
 hd1910_luwu_1910_m6        # 历史对照 ONLY，禁止当训练主植物
 ```
+
+> 注（2026-11-03）：陆吾 `1910_m6.json` 被 xgoduck 商业产品**实际采用**（kt 0.624/R 4.91），
+> 但用规格书堵转点筛法（预测 9.6 vs 15 kg·cm）会把它判出局——该筛法只能剔除"明显不合理"的组，
+> **不能区分"可用但保守"的组**（可能解释：输出扭矩 = kt×I×减速比×效率，规格书堵转值含减速器，
+> 而 kt×I 是电磁扭矩）。仍禁止当主植物：xgoduck 架构与本方案不同，且本方案主线是 m5→飞特 m6。
+
+### 1.1 kissqy 一手证据（2026-11-03 读取）
+
+| 文件 | 内容 |
+|---|---|
+| `firmware/firmware/imu-source/src/ft_protocol.c` | 帧解析：`FF FF ID LEN INST PARAM SUM`，`LEN=参数数+2`，`SUM=~Σ(bytes[2..])`，长度字段 1 字节 |
+| `firmware/firmware/imu-source/src/ft_fast_sync.c` | 同步读应答：21 B，`LEN=17`，`[0..11]` 数据块，`[12]` seq u8，`[13]` status，`[14]` 保留 |
+| `firmware/firmware/imu-source/src/ft_imu.c` | 地址契约：身份 `6..12`、诊断块 `124..143`（20 B）、紧凑块 `56..70`（15 B）；旧 56/20 布局报 0x08 |
+| `firmware/firmware/imu-source/src/main.c` | 1 Mbps、IMU 5 ms 轮询、FIFO 水位 1、SFLP 120 Hz |
+| `firmware/duck-control/src/feetech.rs` | 主机侧常量：`SYNC_ADDRESS=56`、`SYNC_LENGTH=15`、`IMU_ID=200`、`BROADCAST=254`、`SYNC_READ=0x82` |
+| `hardware/IMU-FIRMWARE.md` | 烧录指南、针脚定义、SHA256；成品板预烧 FT6 固件 |
 
 ---
 
