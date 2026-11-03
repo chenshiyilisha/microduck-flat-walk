@@ -332,6 +332,38 @@ def read_pin_state(cfg, reward_name: str) -> dict[str, Any]:
     }
 
 
+def set_ang_vel_z_range(cfg, clip: float) -> dict[str, Any]:
+    """Narrow `ranges.ang_vel_z` to (-clip, +clip) and read the live value back.
+
+    Why this is its own function: the narrowed range is a property of the
+    COMMAND LOOP, not of the reward. `rel_heading_envs > 0` drives cmd[2] with
+    `clip(stiffness * heading_error, ranges.ang_vel_z)` every step, so the range
+    sets how hard the policy is allowed to steer — a +-1.0 range lets a heading
+    env slam 1 rad/s at a 20 deg error. Upstream narrows it to 0.5 in the same
+    commit that adds the heading rewards, which is why the two travelled
+    together; but an A/B on the REWARDS needs the range held fixed on both
+    arms, so the range has to be reachable without the rewards.
+
+    Measured cost of NOT having this (2026-11-02 21:26 run): launched with
+    `--rel-heading-envs 0.30` and no reward flags, `--ang-vel-z-clip` was
+    silently ignored (it was only read inside the reward branch), so that run
+    trained on +-1.0 and is NOT the reward-free arm of the +-0.5 run it looks
+    like it should be compared against. Silently-ignored flag == the exact
+    failure class this file exists to prevent.
+    """
+    if clip is None:
+        raise SystemExit("set_ang_vel_z_range needs a clip value")
+    if clip <= 0.0:
+        raise SystemExit(f"ang_vel_z clip must be > 0 (got {clip}); it is a range bound")
+    cmd = cfg.commands["twist"]
+    cmd.ranges.ang_vel_z = (-float(clip), float(clip))
+    got = tuple(float(v) for v in cmd.ranges.ang_vel_z)
+    want = (-float(clip), float(clip))
+    if got != want:
+        raise SystemExit(f"ang_vel_z range did not take: requested {want}, effective {got}")
+    return {"ranges_ang_vel_z": got, "requested_clip": float(clip)}
+
+
 def add_heading_reward_curriculum(
     cfg,
     *,
@@ -434,7 +466,7 @@ def add_heading_reward_curriculum(
 
     # Narrowing the clip bound also bounds the OBSERVED heading error, which is
     # what tames the turn rate (upstream's comment, see docstring).
-    cfg.commands["twist"].ranges.ang_vel_z = (-float(ang_vel_z), float(ang_vel_z))
+    set_ang_vel_z_range(cfg, ang_vel_z)
 
     return read_heading_reward_state(cfg)
 
@@ -600,12 +632,15 @@ def main() -> int:
     # Runs before `after = read_heading_state(...)` so the ang_vel_z readback
     # below sees the narrowed range rather than the shipped +-1.0.
     heading_rewards: dict[str, Any] | None = None
+    clip_only: dict[str, Any] | None = None
     if (known.heading_hold_weight is None) != (known.heading_tracking_final_weight is None):
         raise SystemExit(
             "--heading-hold-weight and --heading-tracking-final-weight must be "
             "given together: hold alone teaches 'never turn', tracking alone has "
             "no incentive to stay on a heading."
         )
+    if known.ang_vel_z_clip is not None and known.ang_vel_z_clip <= 0.0:
+        raise SystemExit(f"--ang-vel-z-clip must be > 0 (got {known.ang_vel_z_clip})")
     if known.heading_hold_weight is not None:
         if known.ang_vel_z_clip is None:
             raise SystemExit(
@@ -676,8 +711,19 @@ def main() -> int:
                 f"ang_vel_z clip did not take: requested {want_clip}, "
                 f"effective {heading_rewards['ranges_ang_vel_z']}"
             )
+    elif known.ang_vel_z_clip is not None:
+        # Control arm: same command loop and same narrowed turn range as the
+        # reward run, no heading reward terms. Both arms must share the range or
+        # the A/B measures turn freedom as well as the reward.
+        clip_only = set_ang_vel_z_range(args.env, known.ang_vel_z_clip)
 
     after = read_heading_state(args.env)
+
+    if clip_only is not None and after["ranges_ang_vel_z"] != clip_only["ranges_ang_vel_z"]:
+        raise SystemExit(
+            f"ang_vel_z range readback drifted: {after['ranges_ang_vel_z']} != "
+            f"{clip_only['ranges_ang_vel_z']}"
+        )
 
     # Reward-weight pin (opt-in). Done after the heading knobs so the readback
     # below covers both, and pinned *before* any launch so a mismatch exits here
@@ -745,6 +791,9 @@ def main() -> int:
         "command_after": after,
         "other_rel_heading_writers": writers or None,
         "heading_rewards": heading_rewards,
+        # Non-null only for the reward-free control arm: proves the narrowed
+        # turn range was applied WITHOUT adding the two reward terms.
+        "ang_vel_z_clip_without_rewards": clip_only,
         "heading_stage_iters": (
             list(stage_iters) if known.heading_hold_weight is not None else None
         ),
@@ -786,6 +835,10 @@ def main() -> int:
             stages = ", ".join(f"{s['weight']}@{s['step']}" for s in heading_rewards[name])
             print(f"  curriculum {name}: {stages}  (step = iter x num_steps_per_env)")
         print(f"  ang_vel_z narrowed to {heading_rewards['ranges_ang_vel_z']}")
+    elif clip_only is not None:
+        print("heading rewards ABSENT (control arm); command loop still narrowed:")
+        print(f"  ang_vel_z {before['ranges_ang_vel_z']} -> {clip_only['ranges_ang_vel_z']}")
+        print(f"  cmd[2] saturates beyond {sat_err:.3f} rad heading error")
     if pin is not None:
         n_before = len(pin["stages_before"])
         ramp = ", ".join(f"{s['weight']}@{s['step']}" for s in pin["stages_before"])

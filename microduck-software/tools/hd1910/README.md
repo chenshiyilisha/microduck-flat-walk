@@ -83,6 +83,11 @@ MUJOCO_GL=glfw .venv-mjlab/Scripts/python.exe tools/hd1910/probe_heading_loop.py
 | `ab_train.sh` | Phase B A/B m5 vs Feetech m6 |
 | `bam_param_compare.md` | kt/R table: m5 / official m6 / Luwu ban |
 | `stage0_software_prep.md` | 到货前：FD / **URT 接线（勿灌 V1）** / 表征 JSON / kissqy 镜像入口 |
+| **`explore_heading_control.sh`** | heading A/B 的**无奖励控制臂**（kp8 / seed 42 / 4096×3000 / `ang_vel_z ±0.5`，零奖励项）。`DRY=1` 只看解析、`SMOKE=1` 跑 64×5。**不要**在 `explore_heading.sh` 上加 flag 来当控制臂：那个脚本的默认值就是**有**奖励，漏一个环境变量就变成另一条奖励 run |
+| **`check_control_arm.py`** | 读 run 自己的 `params/`，断言"确实没有 heading 奖励、转向范围 ±0.5、envs/iters/seed 与奖励臂相同"。`--selftest` 6 项含两条负对照（奖励臂必须红、±1.0 无奖励臂必须红）与一条正对照（改成 ±0.5 后必须绿） |
+| **`diff_run_recipes.py`** | 两 run 的 `params/*.yaml` 逐叶比对；只有 `--expect` 声明过的差异才放行。就是它查出"11-02 那条不止少奖励，还多 `ang_vel_z ±1.0`" |
+| `sweep_heading_arms.sh` | 两臂按 stride 扫 checkpoint 走同一套 eval（32env×8s / cmd 0.4 / seed 11 / solver 100/50，与 `--baseline-set kp8` 同口径）；eval 自身 gates 红不算失败，没写出 JSON 才算 |
+| `summarize_heading_ab.py` | **配对判决**：同 seed 同迭代的 `model_k` 成对，判 `median(Δerr_yaw)` 是否 ≤ −10% 且 ≥80% 同号，外加 vx ≥ 97% 护栏；exit 0 判定 / 2 判不了 / 3 完整性坏（两目录不是两臂、混了 eval 设置） |
 | `server_pack/` | **Windows 训练机打包**（4070 Ti）：`make_transfer.ps1` + `bootstrap.ps1`（勿拷 venv） |
 
 ```bash

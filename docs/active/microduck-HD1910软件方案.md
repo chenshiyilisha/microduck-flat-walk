@@ -26,6 +26,7 @@
 | 下一步 | **人：阶段 0 下单**；Velocity 不必再长训。可选新场景 **StandUp**（`tools/hd1910/explore_standup.sh`，4070 Ti：先 1024×1000） |
 | P3 闸门（2026-11-03） | ✅ 预注册 `tools/flat_walk/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` + 16 项负对照）；`not_sideways` 退出判决、改当诊断 |
 | kp8 参考点（2026-11-03 晚） | ✅ 部署候选 `model_2999` 三次重复：vx **0.1629**、`err_yaw` **0.7284**、absdy 0.476、dx 比 0.316（已冻结成 `--baseline-set kp8`）。⚠️ 与 m5/kp32 差三样（plant/奖励/迭代数）⇒ **不是 heading 有效性的证据** |
+| heading A/B 控制臂（2026-11-03 晚备好） | 🟡 发现原"干净对照"（11-02）还多一个 `ang_vel_z ±1.0`（`--ang-vel-z-clip` 被静默忽略）⇒ 先补 `set_ang_vel_z_range`；控制臂脚本 + 反向闸门 + 配对判决全部就绪并冒烟通过，**待次日 3.28 h 开跑**（`explore_heading_control.sh`） |
 
 ---
 
@@ -481,13 +482,74 @@ mujoco_warp#562"*；MuJoCo 官方 FAQ 给的出路是 **`wp.set_device("cpu")`**
 | `dx_over_expected` | 0.3162 | — | **3.55%** |
 
   ⚠️ **它只是参考点，不是 heading 对照**：相对 m5/kp32 同时换了 plant、heading 奖励、
-  迭代数（3000 vs 6000）⇒ **不能用它宣称"heading 闭环有效"**。干净对照（kp8 +
-  `rel_heading_envs=0.3` + 不带奖励）只在 `2026-11-02_21-26-53_p8head_030` 里跑到 `model_0`
-  就被中止（`params/env.yaml` 回读：只有 `rel_heading_envs: 0.3`，无 heading_hold/tracking）
-  ⇒ kp8 上"奖励有无"这个单变量目前**没有对照**。要回答它得再花一次 ~2.7 h 的 kp8 无奖励 run。
+  迭代数（3000 vs 6000）⇒ **不能用它宣称"heading 闭环有效"**。见下一小节：原来的"干净对照"
+  也不干净，控制臂到 2026-11-03 晚才真正具备。
 - **顺手撞到的证据**（同一批 gates 打在 kp8 策略上）：`not_sideways` **2 过 1 挂** ——
   absdy 0.558 / 0.443 / 0.428，阈值 0.486 正好落在分布中间。这就是"单次高 CV 门会靠运气翻面"
   的现场复现，不是推测。
+
+#### P3 附 · heading 奖励 A/B：控制臂（2026-11-03 晚备好，次日开跑）
+
+**原以为的对照不成立。** `2026-11-02_21-26-53_p8head_030` 一直被当作"kp8 + `rel_heading_envs=0.3`
+不带奖励"的干净对照（只跑到 `model_0` 就中止）。逐叶比对它的 `params/env.yaml` 与奖励臂
+（`tools/hd1910/diff_run_recipes.py`，29 处差异）后确认：它还多一个 `ranges.ang_vel_z = ±1.0`
+（奖励臂是 ±0.5）。原因不是手误 —— `train_heading_variant.py` 里 `--ang-vel-z-clip`
+**只在奖励分支内被读取**，不带奖励时这个 flag 被静默忽略。⇒ 那条 run 等于一次改了**两个**变量，
+和奖励臂不可比；"再跑一遍 11-02 的配方"会同时改转向范围。
+
+**改法**（`train_heading_variant.py::set_ang_vel_z_range`）：转向范围是**命令环**的属性，不是奖励的
+属性 —— `cmd[2] = clip(stiffness·heading_error, ranges.ang_vel_z)` 每步生效，±1.0 就是允许以
+1 rad/s 猛打方向。抽出独立函数后，`--ang-vel-z-clip` 在**不带奖励**时也生效并回读断言；
+带奖励的路径行为不变（回归干跑逐字对过）。meta 新增 `ang_vel_z_clip_without_rewards` 记录这条。
+
+**两臂定义**（唯一差别＝两个奖励项）
+
+| | 奖励臂 A | 控制臂 B |
+|---|---|---|
+| run | `2026-11-03_08-33-18_p8head_030_4096x3000` | `p8ctl_030_4096x3000`（待跑） |
+| plant / seed / envs / iters | kp8 / 42 / 4096 / 3000 | 同 |
+| `rel_heading_envs` / `ang_vel_z` | 0.30 / ±0.5 | 同 |
+| heading 奖励 | hold 1.0→0、tracking 0→3.0 | **无** |
+| solver | 100 / 50 | 同 |
+
+**开跑一条命令**（本机 4070，实测 **3.28 h**：11-03 那条 08:33:29→11:50:16、3.94 s/iter；
+之前估的 2.7 h 偏乐观）
+
+```bash
+bash microduck-software/tools/hd1910/explore_heading_control.sh
+# DRY=1 先看解析结果；SMOKE=1 跑 64×5 只验闸门
+```
+
+**闸门**（`tools/hd1910/check_control_arm.py`，读 run 自己的 `params/`，不信命令行）
+① 奖励项**必须缺席**（`rewards`/`curriculum` 里零个含 heading 的键 —— 反向断言，多一个就红）；
+② `ang_vel_z == ±0.5`；③ `rel_heading_envs == 0.3`；④ envs / iters / seed 与 A 相同。
+每次跑完自动做**负对照**：同一脚本打在奖励臂上必须红，否则说明闸门是坏的。
+`--selftest` 6 项：奖励臂必须被拒、±1.0 无奖励臂必须被拒（就是 11-02 那种）、把范围改成 ±0.5
+后必须通过（证明不是"对谁都红"）、seed 不同必须被拒。
+
+**判决规则**（`tools/hd1910/summarize_heading_ab.py`，开跑前写死）
+同 seed 同迭代 ⇒ 每个 `model_k` 是一**配对**，比配对差而不是比两臂均值：
+
+- `d(k) = 100·(err_yaw_B − err_yaw_A)/err_yaw_A`，`median(d) ≤ −10%` 且 ≥80% 的配对同号 ⇒
+  "奖励有效"；反向 ⇒ "奖励有害"；否则 **no decision**（退出码 2，不当作失败也不当作通过）。
+- 速度护栏：B 的 vx 不得低于 A 的 97%（"靠少走路换来的偏航改善"不算赢，与 `gate_p3_yaw.py`
+  对基线用的是同一条）。
+- 10% 的依据：单次 eval 的 `err_yaw` CV 1.2–2.6%，配对差更紧；而奖励想拿到的效应是
+  1.20→0.73 rad/s ≈ **39%**。10% 既不会被运气跨过，也远低于效应量。
+- `abs_dy` / `dx_over_expected` **只报不判**（CV 15–25%，单 seed 十个点救不回来）。
+
+**评估路径**（跑完直接两条命令）
+
+```bash
+bash microduck-software/tools/hd1910/sweep_heading_arms.sh      # 默认 stride 300 → 每臂 11 点
+python microduck-software/tools/hd1910/summarize_heading_ab.py \
+  --a-dir ../artifacts/flat_walk/evals/ab_heading/A \
+  --b-dir ../artifacts/flat_walk/evals/ab_heading/B
+```
+
+扫点用固定 32 env × 8 s / cmd 0.4 / seed 11 / solver 100/50，与冻结的 `--baseline-set kp8`
+同口径；`summarize` 在配对前会核对两目录的 eval 设置、plant 指纹与"谁有奖励、谁没有"，
+不一致直接 exit 3。
 
 #### P3 附 · heading 闭环（治偏航，建议与 P3 合并为**同一次**重训）
 
