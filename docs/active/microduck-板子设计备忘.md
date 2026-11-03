@@ -145,3 +145,65 @@
 **含义**：§5 的死结（"缺的是桥不是板"）有解。桥到手 + 任一 aarch64 SBC（Pi Zero 2W ¥298 或
 Radxa 3W 官方价）+ 飞特 robotd 补丁 = 整条 Feetech 线可跑。风险从"自研板打样 + 自写固件"
 降为"到手逐字节验收"。主控决策（买哪块 SBC、何时买）在桥到手并验收之前**维持搁置**。
+
+---
+
+## 7. Pi Zero 2W 到底"缺"什么：缺的是 Radxa 被换上来加的那部分（2026-11-03，一手源码）
+
+**结论**：Pi 缺的功能真实存在，但**全部不在走路回路上**；它们正是当年把原型从 Pi 换成 Radxa 的原因
+（5 GHz 无线、音频编解码、相机、更快的 CPU）。零改动的 `zero3` 生产配置里，这些**要么默认关闭、
+要么根本不用**。
+
+### 7.1 板型键是声明式的，不是探测式的
+
+`robotd-params/src/board.rs:1-15` 原文："**Declared, not detected.**" `Board::detect` 读设备树，
+但**只有 `robotctl health` 用它**——用来提示"声明与硬件不符"，**没有任何逻辑按它分支**：
+"Nothing switches on what it finds, because a guess that is right on the boards we have is not a
+fact about the next one."
+
+⇒ 在 Pi 上声明 `[board] version = "zero3"`，robotd 照跑，只是 `robotctl health` 会警告不符。
+板型键只门控三件事：`hw_rev`（updater 的发布门槛，zero3=1 / beta=2）、相机型号（IMX219 / GC2093）、
+相机安装角（90° / 0°）。
+
+### 7.2 生产配置只用得到一个 overlay
+
+`scripts/setup-board.sh:112-114` 原文：原型还启用了 `i2c-gpio-pihat`、`aic3104-pihat` 和 camera
+overlay，"**none apply here** — our IMU rides the Dynamixel bus rather than I²C, and **`robotd` owns
+no camera or audio**." ⇒ `REQUIRED_OVERLAY=uart2-m0` 一个。
+
+| Pi 缺的功能 | robotd 需要吗 | 依据 |
+|---|---|---|
+| 5 GHz 无线（AIC8800） | ❌ 不需要 | 板型键只影响相机/hw_rev；无线由上层远程访问设计自理 |
+| 音频编解码 TLV320AIC3104 | ❌ 不需要 | setup-board.sh:114 "robotd owns no ... audio" |
+| 相机 IMX219（含 90° 安装角） | ❌ 不需要 | 同上；`zero3` 生产配置**不启** camera overlay |
+| 头 IMU（BMI088） | ❌ **默认就是关的** | `params_lib.rs:1331-1341`：zero3 默认 `false`，因为"读它要花约 4% 的一个核"；beta 才是开 |
+| ToF（i2c-gpio） | ❌ 可选 | `robotd_main.rs:2397`："tofd keeps its own counsel"；重启可容忍 |
+
+### 7.3 真正要付的代价（都不是"功能缺失"，是胶水）
+
+1. **UART**：必须用 PL011 走 GPIO14/15 + `dtoverlay=disable-bt`（**代价是失去蓝牙**）；Zero 2W 默认
+   `ttyS0` 是 miniUART，时钟随 VPU 调频，跑不了 1 Mbps 总线。
+2. **`libonnxruntime.so`**：`duck-control/Cargo.toml` 用 `ort = "=2.0.0-rc.11"` + **`load-dynamic`**
+   ⇒ 运行期 dlopen，Pi OS 不自带此库，得自己放一个 aarch64 的（版本要对得上 ort rc.11 的 API）。
+3. **只有 1 个数据 micro-USB**：URT-2 占掉就没有第二个 USB 口。
+4. **512 MB RAM / 无 eMMC**：跑 robotd+策略够（15 MB daemon 包，P8 仅 775 KB），但加相机串流就紧；
+   SD 卡要 A2，日志写放大要注意。
+5. **官方 HAT 不是 Pi 形状的**：HAT 的总线走 `uart2-m0`、ToF 走 i2c-gpio、codec 走 i2s3、相机是 Radxa
+   FPC；40 针**机械兼容、功能不兼容**。我们这条飞特线本来就用第三方桥手接，不受影响。
+6. **provision/updater**：`setup-board.sh` 是 Armbian/RK3568 专用（`ttyS2`、`rk3568` overlay 前缀、
+   停 getty），Pi 上不能跑；updater 按 `hw_rev=1` 放行 zero3 的通用 release（同 aarch64 包），
+   但板级脚本要自己写一份等价物。
+
+### 7.4 反向证据：50 Hz 本来就是在 Pi Zero 2W 上定的
+
+`params_lib.rs:2525-2526` 原文："50 Hz is inherited from the prototype, where it was chosen on a
+**Pi Zero 2W** — re-derive it on the Radxa rather than trusting it."
+
+⇒ **控制节拍的原生平台就是 Pi Zero 2W**；Radxa 是后来为了相机/音频/无线才换的。
+`fast_sync_read` 也可关（`bus.rs:477`：设备不支持 0x8A 就整条读超时，关掉即解），
+所以"桥只实现普通 sync read"也有退路。
+
+### 7.5 一句话
+
+**Pi Zero 2W 缺的是"情感/语音/视觉"那一层，不是"走路"那一层。** 走路要的三件——UART、总线上
+ID 200 的 IMU、ONNX 推理——它都有；代价是关蓝牙、自己放 libonnxruntime、一个 USB 口、SD 卡启动。
