@@ -37,9 +37,27 @@ progress() { grep -o "Learning iteration [0-9]*/${ITERS}" "$LOG" 2>/dev/null | t
 done_marker=""
 last=""
 stall=0
+# ⚠️ 2026-11-03 踩过：训练跑满了 3000 轮、ckpt 与 ONNX 都齐，但 `out/train_${RUN}.log`
+# 里没有 "Learning iteration 3000/3000"（该文件只有 1 行启动错误）⇒ 本脚本在
+# 一个永远不更新的日志上空转了 3 小时，最后什么也没判。
+# 教训：**完成判据不能只看日志**，要以产物为准。两个判据取"或"：
+#   ① 日志出现末轮标记；② 最新 model_*.pt 的编号 >= ITERS-1。
+RUN_DIR_GLOB="logs/rsl_rl/microduck_velocity_hd1910/*${RUN}"
+newest_ckpt() {
+  local d n
+  d="$(ls -d $RUN_DIR_GLOB 2>/dev/null | tail -1)"
+  [ -n "$d" ] || { echo -1; return; }
+  n="$(ls -1 "$d"/model_*.pt 2>/dev/null | sed 's/.*model_//;s/\.pt$//' | sort -n | tail -1)"
+  echo "${n:--1}"
+}
 for i in $(seq 1 "$MAXWAIT"); do
   if grep -q "Learning iteration ${ITERS}/${ITERS}" "$LOG" 2>/dev/null; then
     done_marker="final-iteration"
+    break
+  fi
+  ck="$(newest_ckpt)"
+  if [ "${ck:-0}" -ge "$((ITERS - 1))" ] 2>/dev/null; then
+    done_marker="ckpt>=${ck}（日志里没有末轮标记，按产物判完成）"
     break
   fi
   cur="$(progress)"
@@ -50,6 +68,8 @@ for i in $(seq 1 "$MAXWAIT"); do
   fi
   last="$cur"
   # 6 polls (~3 min) with no new iteration and no final marker => assume it died.
+  # 只在"日志有迭代行但停住"时才成立；日志完全没有迭代行（开局就错）时，
+  # 由 ckpt 判据兜底，stall 不该误杀。
   if [ "$stall" -ge 6 ] && [ -n "$cur" ]; then
     echo "ABORT: no progress for $((stall * POLL))s, last seen '$cur'" >&2
     exit 3
@@ -57,6 +77,7 @@ for i in $(seq 1 "$MAXWAIT"); do
   sleep "$POLL"
 done
 [ -n "$done_marker" ] || { echo "ABORT: never reached iteration $ITERS" >&2; exit 3; }
+echo "  完成判据: $done_marker"
 
 RUNDIR="$(ls -d logs/rsl_rl/microduck_velocity_hd1910/*"${RUN}" 2>/dev/null | tail -1)"
 [ -n "$RUNDIR" ] || { echo "ABORT: no run dir matching ${RUN}" >&2; exit 2; }
