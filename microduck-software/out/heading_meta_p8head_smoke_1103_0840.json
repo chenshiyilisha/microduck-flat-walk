@@ -1,0 +1,169 @@
+{
+  "created": "2026-11-03T08:32:34",
+  "run": "p8head_smoke_1103_0840",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "variant": {
+    "requested": {
+      "rel_heading_envs": 0.3
+    },
+    "rel_heading_envs": 0.3,
+    "heading_control_stiffness": 0.5,
+    "rel_forward_envs": 0.2,
+    "expected_heading_x_forward_overlap": 0.06,
+    "saturation_heading_error_rad": 1.0,
+    "saturation_heading_error_deg": 57.29577951308232
+  },
+  "command_before": {
+    "command_class": "VelocityCommandCommandOnlyCfg",
+    "heading_command": true,
+    "heading_control_stiffness": 0.5,
+    "rel_heading_envs": 0.0,
+    "rel_forward_envs": 0.2,
+    "rel_standing_envs": 0.02,
+    "rel_turn_in_place_envs": 0.15,
+    "ranges_ang_vel_z": [
+      -1.0,
+      1.0
+    ],
+    "ranges_heading": [
+      -3.141592653589793,
+      3.141592653589793
+    ]
+  },
+  "command_after": {
+    "command_class": "VelocityCommandCommandOnlyCfg",
+    "heading_command": true,
+    "heading_control_stiffness": 0.5,
+    "rel_heading_envs": 0.3,
+    "rel_forward_envs": 0.2,
+    "rel_standing_envs": 0.02,
+    "rel_turn_in_place_envs": 0.15,
+    "ranges_ang_vel_z": [
+      -0.5,
+      0.5
+    ],
+    "ranges_heading": [
+      -3.141592653589793,
+      3.141592653589793
+    ]
+  },
+  "other_rel_heading_writers": null,
+  "heading_rewards": {
+    "heading_hold": {
+      "weight": 1.0,
+      "params": {
+        "std": 0.4
+      },
+      "func": "heading_hold_reward"
+    },
+    "heading_tracking": {
+      "weight": 0.0,
+      "params": {
+        "command_name": "twist",
+        "std": 0.5
+      },
+      "func": "heading_tracking_reward"
+    },
+    "heading_hold_weight": [
+      {
+        "step": 0,
+        "weight": 1.0
+      },
+      {
+        "step": 24,
+        "weight": 1.0
+      },
+      {
+        "step": 48,
+        "weight": 0.5
+      },
+      {
+        "step": 72,
+        "weight": 0.0
+      }
+    ],
+    "heading_tracking_weight": [
+      {
+        "step": 0,
+        "weight": 0.0
+      },
+      {
+        "step": 24,
+        "weight": 0.0
+      },
+      {
+        "step": 48,
+        "weight": 1.5
+      },
+      {
+        "step": 72,
+        "weight": 3.0
+      }
+    ],
+    "ranges_ang_vel_z": [
+      -0.5,
+      0.5
+    ]
+  },
+  "heading_stage_iters": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "action_rate_pin": null,
+  "action_rate_effective": null,
+  "plant": {
+    "name": "hd1910",
+    "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+    "source_sha256_12": "30768e18ffeb",
+    "kwargs": {
+      "json_path": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\tools\\bam_params\\hd1910\\official_m6_stslaw.json",
+      "target_names_expr": [
+        "^(?!passive_).*"
+      ],
+      "kp_fw": 8.0,
+      "vin_range": [
+        6.5,
+        8.2
+      ],
+      "vin_drop_gain_range": [
+        0.0,
+        0.2
+      ],
+      "vin_min": 6.0,
+      "delay_min_lag": 3,
+      "delay_max_lag": 6
+    },
+    "json_path_exists": true,
+    "json_sha256_12": "799800a2ea0d",
+    "kp_fw": 8.0,
+    "actuator_class": "FrictionDRBamActuatorCfg"
+  },
+  "envs": 64,
+  "iters": 5,
+  "resume_offset": 0,
+  "iters_absolute": 5,
+  "cfg_sha256_16": "75a0430b814ac749",
+  "mdp_sha256_16": "9f9b77c05d16a1a3",
+  "passthrough_args": [
+    "--env.scene.num-envs",
+    "64",
+    "--env.sim.mujoco.iterations",
+    "100",
+    "--env.sim.mujoco.ls-iterations",
+    "50",
+    "--agent.max-iterations",
+    "5",
+    "--agent.save-interval",
+    "5",
+    "--gpu-ids",
+    "[0]",
+    "--agent.logger",
+    "tensorboard",
+    "--agent.experiment-name",
+    "microduck_velocity_hd1910",
+    "--agent.run-name",
+    "p8head_smoke_1103_0840"
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "created": "2026-11-02T21:26:53",
+  "created": "2026-11-03T08:33:18",
   "run": "p8head_030_4096x3000",
   "task": "Mjlab-Velocity-Flat-MicroDuck",
   "variant": {
@@ -10,8 +10,8 @@
     "heading_control_stiffness": 0.5,
     "rel_forward_envs": 0.2,
     "expected_heading_x_forward_overlap": 0.06,
-    "saturation_heading_error_rad": 2.0,
-    "saturation_heading_error_deg": 114.59155902616465
+    "saturation_heading_error_rad": 1.0,
+    "saturation_heading_error_deg": 57.29577951308232
   },
   "command_before": {
     "command_class": "VelocityCommandCommandOnlyCfg",
@@ -39,8 +39,8 @@
     "rel_standing_envs": 0.02,
     "rel_turn_in_place_envs": 0.15,
     "ranges_ang_vel_z": [
-      -1.0,
-      1.0
+      -0.5,
+      0.5
     ],
     "ranges_heading": [
       -3.141592653589793,
@@ -48,8 +48,69 @@
     ]
   },
   "other_rel_heading_writers": null,
-  "heading_rewards": null,
-  "heading_stage_iters": null,
+  "heading_rewards": {
+    "heading_hold": {
+      "weight": 1.0,
+      "params": {
+        "std": 0.4
+      },
+      "func": "heading_hold_reward"
+    },
+    "heading_tracking": {
+      "weight": 0.0,
+      "params": {
+        "command_name": "twist",
+        "std": 0.5
+      },
+      "func": "heading_tracking_reward"
+    },
+    "heading_hold_weight": [
+      {
+        "step": 0,
+        "weight": 1.0
+      },
+      {
+        "step": 24000,
+        "weight": 1.0
+      },
+      {
+        "step": 42000,
+        "weight": 0.5
+      },
+      {
+        "step": 60000,
+        "weight": 0.0
+      }
+    ],
+    "heading_tracking_weight": [
+      {
+        "step": 0,
+        "weight": 0.0
+      },
+      {
+        "step": 24000,
+        "weight": 0.0
+      },
+      {
+        "step": 42000,
+        "weight": 1.5
+      },
+      {
+        "step": 60000,
+        "weight": 3.0
+      }
+    ],
+    "ranges_ang_vel_z": [
+      -0.5,
+      0.5
+    ]
+  },
+  "heading_stage_iters": [
+    0,
+    1000,
+    1750,
+    2500
+  ],
   "action_rate_pin": null,
   "action_rate_effective": null,
   "plant": {

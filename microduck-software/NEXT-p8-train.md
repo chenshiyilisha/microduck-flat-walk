@@ -1,6 +1,7 @@
 # 明天执行：P8 植物重训（`hd1910_kp8`）
 
-_准备于 2026-11-02 晚。植物、闸门、冒烟已就绪并通过，明天只跑训练 + 判决。_
+_准备于 2026-11-02 晚；2026-11-03 08:35 起训。**植物、闸门、冒烟已就绪并通过，
+但开工前发现两个启动脚本根本没带 heading 奖励配方（见 §1.0），已修并重跑冒烟。**_
 
 > **背景与动机在仓库** `docs/05-flat-walk.md` **§18**（本文件的上游）。两边不一致时以仓库为准。
 
@@ -14,6 +15,27 @@ _准备于 2026-11-02 晚。植物、闸门、冒烟已就绪并通过，明天�
 
 **不是**为了证明 P8 更快。P8 更快已经由台架证明了（gain +43%）；没证明的是
 **在 P8 上训出来的策略**是否比在 P5 上训出来的更好。这两件事不是一回事。
+
+---
+
+## 1.0 🔴 开工当天发现的坑：两个启动脚本都没带 heading 奖励
+
+`explore_heading.sh` / `smoke_heading.sh` 只传了 `--rel-heading-envs`，而
+**heading 奖励藏在 `--heading-hold-weight` + `--heading-tracking-final-weight` +
+`--ang-vel-z-clip` 后面，三者都默认 None ⇒ 不带就不加奖励**。也就是说：
+
+- 昨夜那次 P8 冒烟、以及被中止的 4096×3000，**都只验了命令闭环，没验奖励**；
+- 今天若照原命令开训，产出的策略会**没有 heading_hold / heading_tracking**，
+  与 `model_2999`（hold 1.0 / tracking 课程到 3.0）完全不是同一个任务 ——
+  2×2 矩阵会变成一个假对照。
+
+已修：两个脚本都带上配方（默认对齐 `resume_heading_run.py::RECIPE`），冒烟新增
+「env.yaml 里必须出现 heading_hold/heading_tracking」的闸门，并预检课程末档必须
+严格落在 run 之内（负对照：`ITERS=2000` + 默认表 → 退出码 2，且在建 4096 env 之前退出）。
+
+**今天这次 08:35 起训的 run 是修好之后跑的**，回读已确认：
+`heading_hold weight=1.0`、`heading_tracking 0.0@0 → 1.5@42000 → 3.0@60000`、
+`ang_vel_z (-0.5, 0.5)`、`rel_heading_envs 0.0 → 0.3`。
 
 ---
 
@@ -69,21 +91,25 @@ PLANT=p8 ENVS=4096 ITERS=3000 REL_HEADING=0.30 \
 | **P8**（明天产出） | ? | ? |
 
 每格 n=8（起始 yaw 0,45,…,315），`--seconds 8 --cmd-vx 0.4 --heading-target-deg 0`。
-P5×P5 与 P5×P8 两格今晚已测完，明天只需补 P8 那一行。
+P5×P5 与 P5×P8 两格昨晚已测完，只需补 P8 那一行。
+
+**用 `xplant_matrix.sh`，别手敲**（一条命令跑完 8 个 yaw、校验 ONNX 代数、写 manifest、出汇总）：
 
 ```bash
-ONNX=<明天 run 目录里的 .onnx>
-for P in 5 8; do for Y in 0 45 90 135 180 225 270 315; do
-  .venv-mjlab/Scripts/python.exe tools/hd1910/rehearse_hd1910.py \
-    --plant p3 --onnx "$ONNX" --kp-fw $P --yaw-deg $Y \
-    --heading-target-deg 0 --seconds 8 \
-    --out out/kpsweep_p8train/p${P}_y${Y}.json --quiet \
-    > out/kpsweep_p8train/p${P}_y${Y}.log 2>&1
-done; done
-.venv-mjlab/Scripts/python.exe tools/hd1910/summarize_rehearsal_grid.py \
-  "out/kpsweep_p8train/p*_y*.json" --baseline 5 \
-  --json out/kpsweep_p8train/summary.json
+# P8 那一行（今天产出的 ckpt）
+TRAIN_PLANT=p8 ONNX=logs/rsl_rl/microduck_velocity_hd1910/<run>/<run>.onnx \
+  bash tools/hd1910/xplant_matrix.sh
+
+# 想重测 P5 那一行做同代码路径对照
+TRAIN_PLANT=p5 ONNX=<model_2999.onnx> bash tools/hd1910/xplant_matrix.sh
 ```
+
+默认 `PLANTS="p3 p8"`、`YAWS="0 45 … 315"`、`DUR=8`；`COND=delay4` 可切条件档，
+`FORCE=1` 重跑已有格子，`PLANTS="" YAWS=""` 只写 manifest（干跑用）。
+
+⚠️ 三个已踩过的坑：① 变量名是 **`DUR` 不是 `SECONDS`**（`SECONDS` 是 bash 内建变量，
+开局为 0 ⇒ 所有彩排跑 0 秒）；② 空串要用 `${VAR-default}` 才不会被默认值覆盖；
+③ `--plant p8` 与 `--plant p3 --kp-fw 8` 等价（P8 = 同 JSON + 同控制律 + 只改 reg 50）。
 
 ### 3.2 判据（先写好，跑完再对，不许事后挑）
 
