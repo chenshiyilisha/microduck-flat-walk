@@ -500,6 +500,33 @@ def audit(cfg: dict, expect_kp: int) -> Report:
         rep.add("WARN", "thermal.warn_c", warn_c,
                 f"not below walk_max_c {wm}: the warning never precedes the refusal")
 
+    # R10b: [thermal] section internal consistency (2026-11-04)
+    # The guard has four actions in order: warn → rest → sit → walk-blocked.
+    # Each threshold must fire before the one that acts more strongly, and the
+    # hysteresis must be positive so a reading hovering on a threshold does not flap.
+    sr, _ = effective(cfg, "thermal", "rest_c")
+    rc, _ = effective(cfg, "thermal", "resume_c")
+    rsm, _ = effective(cfg, "thermal", "rest_min_s")
+    hy, _ = effective(cfg, "thermal", "hysteresis_c")
+    sc, _ = effective(cfg, "thermal", "sit_c")
+    if isinstance(sr, (int, float)) and isinstance(wm, (int, float)) and sr > 0 and sr >= wm:
+        rep.add("WARN", "thermal.rest_c", sr,
+                f"at or above walk_max_c {wm}: rest (legs go limp) fires at the same "
+                f"temperature as walk-blocked, so the legs drop instead of refusing")
+    if isinstance(sr, (int, float)) and isinstance(rc, (int, float)) and sr > 0 and rc >= sr:
+        rep.add("WARN", "thermal.resume_c", rc,
+                f"not below rest_c {sr}: a rest can never end -- the servo cools below "
+                f"resume_c only after it has already cooled below rest_c")
+    if isinstance(hy, (int, float)) and hy <= 0:
+        rep.add("WARN", "thermal.hysteresis_c", hy,
+                "must be > 0: with 0, a reading hovering on a threshold flaps the guard")
+    if isinstance(rsm, (int, float)) and rsm < 0:
+        rep.add("WARN", "thermal.rest_min_s", rsm, "negative: a rest lasts negative time")
+    if isinstance(sc, (int, float)) and isinstance(sr, (int, float)) and sc > 0 and sc <= sr:
+        rep.add("WARN", "thermal.sit_c", sc,
+                f"at or below rest_c {sr}: sit (keeps torque) fires before rest (drops it), "
+                f"so the robot sits down and then immediately goes limp on top of it")
+
     # R8: safety verdicts that are reported, not enforced
     fz, _ = effective(cfg, "safety", "fall_gravity_z")
     rep.add("ok", "safety.fall_gravity_z", fz,
@@ -668,6 +695,33 @@ def selftest() -> int:
               for lv, k, _, _ in audit(off, 8).rows))
     check("walk_max_c 70 is ok", any(k == "thermal.walk_max_c" and lv == "ok"
                                      for lv, k, _, _ in audit(good, 8).rows))
+
+    # ---- [thermal] section internal consistency: negative controls ----
+    # rest_c at or above walk_max_c: rest fires at the same temp as walk-blocked
+    r_rest_hot = dict(good, thermal={"walk_max_c": 70.0, "rest_c": 70.0})
+    check("rest_c == walk_max_c is a WARN",
+          any(k == "thermal.rest_c" and lv == "WARN"
+              for lv, k, _, _ in audit(r_rest_hot, 8).rows))
+    # resume_c >= rest_c: a rest can never end
+    r_never_end = dict(good, thermal={"rest_c": 60.0, "resume_c": 60.0})
+    check("resume_c == rest_c is a WARN",
+          any(k == "thermal.resume_c" and lv == "WARN"
+              for lv, k, _, _ in audit(r_never_end, 8).rows))
+    # hysteresis <= 0: flaps on a hovering reading
+    r_no_hyst = dict(good, thermal={"hysteresis_c": 0.0})
+    check("hysteresis_c = 0 is a WARN",
+          any(k == "thermal.hysteresis_c" and lv == "WARN"
+              for lv, k, _, _ in audit(r_no_hyst, 8).rows))
+    # sit_c <= rest_c: sit fires before rest, robot sits then immediately goes limp
+    r_sit_first = dict(good, thermal={"rest_c": 60.0, "sit_c": 55.0})
+    check("sit_c < rest_c is a WARN",
+          any(k == "thermal.sit_c" and lv == "WARN"
+              for lv, k, _, _ in audit(r_sit_first, 8).rows))
+    # rest_min_s negative
+    r_neg_min = dict(good, thermal={"rest_min_s": -5.0})
+    check("rest_min_s negative is a WARN",
+          any(k == "thermal.rest_min_s" and lv == "WARN"
+              for lv, k, _, _ in audit(r_neg_min, 8).rows))
 
     # ---- joint_ids: a distinct-but-different map is a WARN, not a pass ----
     ref = dict(good, bus=dict(base_bus, joint_ids=list(REFERENCE_JOINT_IDS)))
