@@ -114,18 +114,45 @@ print(f"  {d['checkpoint'].split('/')[-1].split(chr(92))[-1]:16s} vx={sp['vx_mea
 EOF
 }
 
+# Both arms must be evaluated at the SAME iterations. Selecting each arm's own "last"
+# checkpoint does not do that: a run that stops at max_iterations saves model_3000 while
+# one that saved at 2999 first ends on model_2999, so the two most-trained checkpoints are
+# each unpaired and summarize_heading_ab.py drops both. Pair on the intersection instead.
+iters_both() {
+  # process substitution, not mktemp: this shell's safe-delete hook rejects rm on the
+  # Windows-style paths mktemp hands back, and `set -e` turns that into a silent abort.
+  comm -12 \
+    <(ls "$1"/model_*.pt | xargs -n1 basename | sed 's/^model_//; s/\.pt$//' | sort -n) \
+    <(ls "$2"/model_*.pt | xargs -n1 basename | sed 's/^model_//; s/\.pt$//' | sort -n) \
+    | sort -n
+}
+
+ITERS=$(iters_both "$DIR_A" "$DIR_B")
+LAST_IT=$(echo "$ITERS" | tail -1)
+# model_0 is the untrained network: its err_yaw is random weights, not a reward effect.
+PLAN=""
+for k in $ITERS; do
+  if [ "$k" -gt 0 ] && { [ $((k % STRIDE)) -eq 0 ] || [ "$k" = "$LAST_IT" ]; }; then
+    PLAN="$PLAN $k"
+  fi
+done
+if [ -z "$PLAN" ]; then
+  echo "FAIL: the two runs share no checkpoints at stride $STRIDE" >&2
+  exit 2
+fi
+echo "== plan:$(printf ' %s' $PLAN)  ($(echo $PLAN | wc -w) paired iterations,"
+echo "   of $(echo "$ITERS" | wc -l) common saves; arm A ends at $(ls "$DIR_A"/model_*.pt | sort -V | tail -1 | xargs -n1 basename),"
+echo "   arm B at $(ls "$DIR_B"/model_*.pt | sort -V | tail -1 | xargs -n1 basename))"
+if [ -n "${PLAN_ONLY:-}" ]; then
+  echo "PLAN_ONLY set -- not evaluating."
+  exit 0
+fi
+
 sweep_arm() {
-  local arm="$1" dir="$2"
-  local all last
-  all=$(ls "$dir"/model_*.pt | sort -V)
-  last=$(echo "$all" | tail -1)
-  echo "== $arm ($(echo "$all" | wc -l) ckpts)"
-  local k bad=0
-  for f in $all; do
-    k=$(basename "$f" .pt); k=${k#model_}
-    if [ "$k" -eq 0 ] || [ $((k % STRIDE)) -eq 0 ] || [ "$f" = "$last" ]; then
-      eval_one "$arm" "$dir" "$f" || bad=$((bad + 1))
-    fi
+  local arm="$1" dir="$2" k bad=0
+  echo "== $arm"
+  for k in $PLAN; do
+    eval_one "$arm" "$dir" "$dir/model_$k.pt" || bad=$((bad + 1))
   done
   if [ "$bad" -gt 0 ]; then
     echo "  $arm: $bad checkpoint(s) produced no JSON" >&2
