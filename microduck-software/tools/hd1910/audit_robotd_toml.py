@@ -95,10 +95,43 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "limp_fall_arm_ms": 200,
         "battery_empty_shutdown": True,
     },
-    "bus": {"fast_sync_read": True, "servo": "feetech_hls",
+    "bus": {"servo": "feetech_hls",
             "position_kp": 8, "position_kp_head": 16, "position_kd": 8},
-    "board": {"version": "zero3"},
 }
+
+# ---------------------------------------------------------------------------
+# The schema, transcribed from the Rust structs. Load-bearing because BOTH `Params`
+# and `Bus` are `#[serde(deny_unknown_fields)]` (robotd-params/src/lib.rs:32,934):
+# one unknown key anywhere and robotd refuses the ENTIRE file -- it does not start,
+# it does not warn about the one key, and the failure reads as "the daemon is broken".
+# That is exactly how a `bus.protocol = ` line copied from kissqy's config bricks it.
+#
+# Sections: Params' twelve fields (lib.rs:34-47). There is NO `[board]` section --
+# `board.version` was a phantom in this audit until 2026-11-04; `grep zero3` over the
+# upstream tree finds only Bluetooth hostnames, and there is no board.rs.
+KNOWN_SECTIONS = {
+    "bus", "control", "update_gate", "policy", "safety", "audio", "theremin",
+    "chorale", "media", "detect", "thermal", "battery",
+}
+# Only the sections this audit drives are enumerated key-by-key; an unknown key in
+# `[audio]`/`[media]`/... is not judged here rather than guessed at.
+SECTION_KEYS: dict[str, set[str]] = {
+    # lib.rs:941-1000 (Bus). No `baud`, no `protocol`, no `joint_names`.
+    "bus": {"port", "servo", "joint_ids", "joint_signs", "joint_offsets", "imu",
+            "imu_axes", "imu_pitch_trim_deg", "imu_roll_trim_deg", "imu_median",
+            "position_kp", "position_kp_head", "position_kd", "current_limit_ma",
+            "mouth_torque", "mouth_wake"},
+    "battery": {"cells", "max_volts"},
+    "thermal": {"warn_c", "walk_max_c", "sit_c", "hysteresis_c", "rest_c", "resume_c",
+                "rest_min_s", "rest_head_c", "deep_sit"},
+}
+
+# The HD-1910's own overheat latch: reg13 = 80 degC, read from ID 10 on 2026-11-02.
+SERVO_OVERHEAT_C = 80.0
+# HD-1910 rated supply (robotd-params/src/lib.rs:52: "4-8.4 V, burn on 3S").
+HD1910_MAX_V = 8.4
+# duck-control/src/model.rs:15 -- the reference map, for judging a filled-in joint_ids.
+REFERENCE_JOINT_IDS = [20, 21, 22, 23, 24, 30, 31, 32, 33, 34, 10, 11, 12, 13, 14]
 
 # feetech.rs:115 -- the XL330 gain the policies run at. Every requested gain is scaled
 # by position_kp / this before it reaches reg 50.
@@ -120,6 +153,57 @@ def effective(cfg: dict, section: str, key: str):
     if key in table:
         return table[key], True
     return DEFAULTS.get(section, {}).get(key), False
+
+
+# ---------------------------------------------------------------------------
+# The whitelist above is only worth what its provenance is. It was wrong once: this audit
+# used to report `bus.fast_sync_read` and `board.version` as real knobs, and neither exists
+# in the DuckBuddy tree -- as unknown keys they abort the whole config load instead of doing
+# what the audit said they did. So the lists are re-derived from the Rust source whenever it
+# is present, and a mismatch is a FAIL rather than a footnote.
+# ---------------------------------------------------------------------------
+
+DEFAULT_SCHEMA_RS = (Path(__file__).resolve().parents[2]
+                     / ".upstream/DuckBuddy-main/robotd-params/src/lib.rs")
+
+STRUCT_OF_SECTION = {"Params": None, "Bus": "bus", "BatteryParams": "battery",
+                     "Thermal": "thermal"}
+
+
+def parse_struct_fields(src: str, struct_name: str) -> set[str] | None:
+    """`pub name:` inside `pub struct <struct_name> { ... }`, or None if not found."""
+    import re
+    m = re.search(rf"^pub struct {struct_name} \{{", src, re.M)
+    if not m:
+        return None
+    body = src[m.end():]
+    end = re.search(r"^\}$", body, re.M)
+    if end:
+        body = body[:end.start()]
+    return set(re.findall(r"^\s*pub ([a-z_][a-z0-9_]*):", body, re.M))
+
+
+def verify_schema(rust_path: Path) -> list[str]:
+    """Cross-check the hardcoded schema against the Rust structs. Returns problems."""
+    if not rust_path.exists():
+        return []
+    src = rust_path.read_text(encoding="utf-8", errors="replace")
+    problems: list[str] = []
+    for struct, section in STRUCT_OF_SECTION.items():
+        got = parse_struct_fields(src, struct)
+        want = KNOWN_SECTIONS if section is None else SECTION_KEYS[section]
+        if got is None:
+            problems.append(f"{struct}: not found in {rust_path.name} -- the struct was renamed")
+            continue
+        extra = sorted(want - got)
+        missing = sorted(got - want)
+        if extra:
+            problems.append(f"{struct}: this audit allows {extra}, which the struct does not "
+                            f"have -- those keys abort the load (deny_unknown_fields)")
+        if missing:
+            problems.append(f"{struct}: this audit does not know {missing}, which the struct "
+                            f"DOES have -- a real key would be reported as unknown")
+    return problems
 
 
 class Report:
@@ -266,34 +350,57 @@ def audit(cfg: dict, expect_kp: int) -> Report:
                     "1.0 is the matching value. This one filters targets the policy never saw"
                     + ("" if was_set else " (from default)"))
 
-    # R7: bus / board identity
+    bus_tbl = cfg.get("bus") or {}
+    # R7: bus identity
     port = (cfg.get("bus") or {}).get("port")
     rep.add("ok" if port else "WARN", "bus.port", port or "(unset)",
             "must be the tty the URT-2/bridge enumerates as, e.g. /dev/ttyS2 or /dev/ttyUSB0"
             if not port else "")
-    fast, fast_set = effective(cfg, "bus", "fast_sync_read")
-    if fast:
-        rep.add("WARN", "bus.fast_sync_read", fast,
-                "0x8A is a DYNAMIXEL P2.0 instruction; HD-1910 is Feetech (0x82 sync read). "
-                "robotd's own note: a device that does not implement 0x8A does not answer, so "
-                "EVERY read times out and the journal fills with 'bus read failed' -- which "
-                "reads as wiring or baud at first power-on. Set false unless the HD1910 "
-                "firmware is proven to answer 0x8A (one packet at the bench)"
-                + ("" if fast_set else " (from default)"))
-    else:
-        rep.add("ok", "bus.fast_sync_read", fast,
-                "plain 0x82 sync read -- correct for Feetech; MEASURED 2026-11-04 on ID 10: "
-                "0x8A returned 0 bytes while PING/0x82 single-read both answered "
-                "(servo_probe/probe_sync_read.py)")
-    board, _ = effective(cfg, "board", "version")
-    rep.add("ok", "board.version", board,
-            "declared, not detected (board.rs:1) -- only gates camera/hw_rev")
+    # `fast_sync_read` used to be audited here as a real knob. It is not one in this
+    # codebase: it appears ZERO times in the whole DuckBuddy tree, and the Feetech driver
+    # only ever calls rustypot's sync_read_raw_data (feetech.rs:412,474,556), i.e. 0x82.
+    # The key belongs to the other fork (params_lib.rs), so in a file for THIS robotd it
+    # is an unknown key -> the whole config is refused. The unknown-key check above says
+    # the mechanics; this row exists only so the message names the mistake.
+    if "fast_sync_read" in bus_tbl:
+        rep.add("FAIL", "bus.fast_sync_read", bus_tbl["fast_sync_read"],
+                "no such field here (0 hits in the DuckBuddy tree). The 0x8A/0x82 choice is "
+                "inside rustypot, not a config key -- and the bench answer is already in: "
+                "0x8A returned 0 bytes on ID 10 while 0x82 sync read matched single reads "
+                "(servo_probe/probe_sync_read.py). DELETE the line, do not set it false")
+    # R7c: keys that do not exist. One of them aborts the whole load, so this is the
+    # cheapest failure to catch off-hardware and the most expensive to debug on it.
+    stray_sections = sorted(set(cfg) - KNOWN_SECTIONS)
+    if stray_sections:
+        rep.add("FAIL", "unknown section", ", ".join(stray_sections),
+                "Params is #[serde(deny_unknown_fields)] (lib.rs:32): robotd refuses the "
+                "whole file. Known sections: " + ", ".join(sorted(KNOWN_SECTIONS))
+                + ("  -- `board` in particular is NOT a section: there is no board.rs and "
+                   "`grep zero3` finds only Bluetooth hostnames. Board identity comes from "
+                   "configd / the device tree, not this file" if "board" in stray_sections else ""))
+    for sec, allowed in SECTION_KEYS.items():
+        table = cfg.get(sec) or {}
+        # `fast_sync_read` and `bus.protocol` get their own rows below, with the specific
+        # "where this came from" story; listing them twice only pads the FAIL count.
+        extra = sorted(k for k in table
+                       if k not in allowed and k not in ("fast_sync_read", "protocol"))
+        if extra:
+            hint = ""
+            if sec == "bus" and "baud" in extra:
+                hint = ("  `baud` is compiled in (feetech.rs:35 BAUD_RATE = 500_000) and "
+                        "lives in the servo as reg6 = 1, NOT here. Move it with "
+                        "servo_probe/hd1910_ident.py baud")
+            if sec == "bus" and "protocol" in extra:
+                hint = ('  the key is bus.servo = "feetech_hls"; kissqy\'s protocol= targets '
+                        "an older schema")
+            rep.add("FAIL", f"{sec}.<unknown>", ", ".join(extra),
+                    f"not a field of the {sec} struct; deny_unknown_fields aborts the load"
+                    + hint)
 
     # R7b: which servo family. The key is `bus.servo` (robotd-params ServoKind), NOT
     # `bus.protocol` -- and Bus carries #[serde(deny_unknown_fields)], so a stray protocol=
     # line makes robotd refuse the whole file at startup. ServoKind's default IS FeetechHls,
     # so "servo absent" is correct here and must not be warned about.
-    bus_tbl = cfg.get("bus") or {}
     if "protocol" in bus_tbl:
         rep.add("FAIL", "bus.protocol", bus_tbl["protocol"],
                 "upstream Bus is #[serde(deny_unknown_fields)] (robotd-params/src/lib.rs:934): "
@@ -325,8 +432,65 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     elif len(jids) != NUM_JOINTS or len(set(jids)) != len(jids):
         rep.add("FAIL", "bus.joint_ids", f"{len(jids)} ids",
                 f"need exactly {NUM_JOINTS} distinct IDs in JOINT_NAMES order")
+    elif sorted(jids) != sorted(REFERENCE_JOINT_IDS):
+        rep.add("WARN", "bus.joint_ids", f"{len(jids)} ids",
+                "distinct, but not the reference set "
+                f"{REFERENCE_JOINT_IDS} (model.rs:15). Could be real -- this airframe is not "
+                "the XL330 duck -- or a mis-pairing, which drives one joint with another's "
+                "targets. Re-check with servo_probe/identify_joints.py")
     else:
-        rep.add("ok", "bus.joint_ids", f"{len(jids)} ids", "mapped")
+        rep.add("ok", "bus.joint_ids", f"{len(jids)} ids",
+                "the reference set, in JOINT_NAMES order -- matches model.rs:15. Still not "
+                "measured on THIS robot: one deflection per joint settles it")
+
+    # R9: the pack. The default is cells = [2, 3], and with both accepted a 3S pack reads as
+    # a perfectly valid 3S (11.1 V / 3 = 3.7 V a cell) and robotd drives the servos at it.
+    # HD-1910s are 4-8.4 V and burn on 3S (lib.rs:52). Nothing about this fails loudly.
+    cells, cells_set = effective(cfg, "battery", "cells")
+    cells = list(cells or [])
+    if 3 in cells:
+        rep.add("FAIL", "battery.cells", cells,
+                "a 3S pack would be accepted and driven: HD-1910s are rated 4-8.4 V and burn "
+                "on 3S (lib.rs:52). Use [2]"
+                + ("" if cells_set else " (this is the [2, 3] default -- nothing in the file "
+                                        "said otherwise)"))
+    elif 2 not in cells:
+        rep.add("FAIL", "battery.cells", cells,
+                "2S not allowed -- this robot runs a 2S pack, and identify_pack would refuse it")
+    else:
+        rep.add("ok", "battery.cells", cells, "2S only" + ("" if cells_set else " (default)"))
+    mv, mv_set = effective(cfg, "battery", "max_volts")
+    if not mv_set or not isinstance(mv, (int, float)):
+        rep.add("WARN", "battery.max_volts", mv,
+                "0 = only the cell count is checked. A full 2S LiHV is 8.7 V, over the "
+                f"HD-1910's {HD1910_MAX_V} rating; set {HD1910_MAX_V}")
+    elif mv > HD1910_MAX_V:
+        rep.add("WARN", "battery.max_volts", mv,
+                f"above the servo rating {HD1910_MAX_V} V -- a pack that reads over the "
+                f"rating is refused, so this lets it through")
+    else:
+        rep.add("ok", "battery.max_volts", mv, f"refuses a pack over the {HD1910_MAX_V} V rating")
+
+    # R10: the thermal guard. The servo latches its own shutdown at reg13 = 80 degC and cuts
+    # torque, which drops a walking robot; walk_max_c must stop short of it.
+    wm, wm_set = effective(cfg, "thermal", "walk_max_c")
+    if not isinstance(wm, (int, float)) or wm <= 0:
+        rep.add("WARN", "thermal.walk_max_c", wm,
+                "0 = no guard. The servo's own latch is reg13 = 80 degC and it drops the "
+                "robot; set 70 (10 degC of margin, the HL-2915 robot's choice after a "
+                "walking trial took its hottest servo to 61)")
+    elif wm >= SERVO_OVERHEAT_C:
+        rep.add("FAIL", "thermal.walk_max_c", wm,
+                f"at or above the servo's own latch ({SERVO_OVERHEAT_C:.0f} degC): the guard "
+                f"never acts before the servo cuts torque")
+    else:
+        rep.add("ok", "thermal.walk_max_c", wm,
+                f"{SERVO_OVERHEAT_C - wm:.0f} degC below the servo's reg13 latch"
+                + ("" if wm_set else " (from default)"))
+    warn_c, _ = effective(cfg, "thermal", "warn_c")
+    if isinstance(wm, (int, float)) and isinstance(warn_c, (int, float)) and warn_c >= wm:
+        rep.add("WARN", "thermal.warn_c", warn_c,
+                f"not below walk_max_c {wm}: the warning never precedes the refusal")
 
     # R8: safety verdicts that are reported, not enforced
     fz, _ = effective(cfg, "safety", "fall_gravity_z")
@@ -355,12 +519,14 @@ def selftest() -> int:
     check("kp_for_gain(0, 8) = 1 (never zero)", register_kp(0, 8) == 1)
     check("kp_for_gain(200, 16) = 16", register_kp(200, 16) == 16)
 
-    base_bus = {"port": "/dev/ttyS2", "fast_sync_read": False, "servo": "feetech_hls",
+    base_bus = {"port": "/dev/ttyS2", "servo": "feetech_hls",
                 "joint_ids": list(range(1, 16))}
     good = {
         "policy": {"action_scale": 1.0, "standing_gain_ratio": 0.8,
                    "head_lowpass": 1.0, "legs_lowpass": 1.0},
         "bus": dict(base_bus),
+        "battery": {"cells": [2], "max_volts": 8.4},
+        "thermal": {"walk_max_c": 70.0},
     }
     r2 = audit(good, 8)
     check("a default file (gain 200, position_kp 8) passes", r2.fails == 0)
@@ -414,10 +580,13 @@ def selftest() -> int:
     check("default legs_lowpass 0.7 raises a WARN",
           any(k == "policy.legs_lowpass" and lv == "WARN" for lv, k, _, _ in r4.rows))
 
-    fs = dict(good, bus=dict(base_bus, fast_sync_read=True))
+    # `fast_sync_read` is NOT a knob in this codebase (0 hits in the DuckBuddy tree). It used
+    # to be reported here as a WARN-or-ok, which taught the reader to keep a line that makes
+    # robotd refuse the whole file.
+    fs = dict(good, bus=dict(base_bus, fast_sync_read=False))
     r5 = audit(fs, 8)
-    check("fast_sync_read true raises a WARN",
-          any(k == "bus.fast_sync_read" and lv == "WARN" for lv, k, _, _ in r5.rows))
+    check("fast_sync_read raises a FAIL, not a WARN",
+          any(k == "bus.fast_sync_read" and lv == "FAIL" for lv, k, _, _ in r5.rows))
 
     # which servo family: bus.servo is the real key; bus.protocol does not exist and, because
     # Bus is deny_unknown_fields, would abort the daemon's config load outright.
@@ -451,6 +620,82 @@ def selftest() -> int:
     check("50/8 is 6.25x", abs(50 / 8 - 6.25) < 1e-12)
     check("50/200 is 0.25x", abs(50 / 200 - 0.25) < 1e-12)
 
+    # ---- keys that do not exist (deny_unknown_fields kills the whole file) ----
+    bd = dict(good, board={"version": "zero3"})
+    check("[board] is a FAIL (no such section; it used to be a phantom row here)",
+          any(k == "unknown section" and lv == "FAIL" for lv, k, _, _ in audit(bd, 8).rows))
+    baw = dict(good, bus=dict(base_bus, baud=500_000))
+    r_baw = audit(baw, 8)
+    check("bus.baud is a FAIL", any(k == "bus.<unknown>" and lv == "FAIL"
+                                    for lv, k, _, _ in r_baw.rows))
+    check("...and says the rate is reg6 / compiled in",
+          any("reg6" in n for _, _, _, n in r_baw.rows))
+    jn = dict(good, bus=dict(base_bus, joint_names=["a"]))
+    check("bus.joint_names is a FAIL", any(k == "bus.<unknown>"
+                                           for lv, k, _, _ in audit(jn, 8).rows))
+
+    # ---- the pack: the [2, 3] default accepts a 3S and burns the servos ----
+    nobat = dict(good)
+    nobat.pop("battery")
+    r_bat = audit(nobat, 8)
+    check("absent [battery] falls back to [2, 3] -> FAIL",
+          any(k == "battery.cells" and lv == "FAIL" for lv, k, _, _ in r_bat.rows))
+    three_s = dict(good, battery={"cells": [2, 3], "max_volts": 8.4})
+    check("cells = [2, 3] is a FAIL (3S burns an HD-1910)",
+          any(k == "battery.cells" and lv == "FAIL"
+              for lv, k, _, _ in audit(three_s, 8).rows))
+    nov = dict(good, battery={"cells": [2]})
+    check("max_volts absent -> WARN", any(k == "battery.max_volts" and lv == "WARN"
+                                          for lv, k, _, _ in audit(nov, 8).rows))
+    check("cells = [2] + 8.4 V passes", audit(good, 8).fails == 0)
+
+    # ---- the thermal guard must stop before the servo's own latch ----
+    hot = dict(good, thermal={"walk_max_c": 80.0})
+    check("walk_max_c at the servo's 80 degC latch is a FAIL",
+          any(k == "thermal.walk_max_c" and lv == "FAIL"
+              for lv, k, _, _ in audit(hot, 8).rows))
+    off = dict(good, thermal={"walk_max_c": 0.0})
+    check("walk_max_c = 0 (guard off) is a WARN",
+          any(k == "thermal.walk_max_c" and lv == "WARN"
+              for lv, k, _, _ in audit(off, 8).rows))
+    check("walk_max_c 70 is ok", any(k == "thermal.walk_max_c" and lv == "ok"
+                                     for lv, k, _, _ in audit(good, 8).rows))
+
+    # ---- joint_ids: a distinct-but-different map is a WARN, not a pass ----
+    ref = dict(good, bus=dict(base_bus, joint_ids=list(REFERENCE_JOINT_IDS)))
+    check("the reference set is ok", any(k == "bus.joint_ids" and lv == "ok"
+                                         for lv, k, _, _ in audit(ref, 8).rows))
+    check("a map outside the reference set is a WARN",
+          any(k == "bus.joint_ids" and lv == "WARN"
+              for lv, k, _, _ in audit(good, 8).rows))
+
+    # ---- the whitelist must be derivable from the Rust source, not remembered ----
+    snippet = (
+        'pub struct Bus {\n'
+        '    /// doc line with a brace { in it\n'
+        '    pub port: String,\n'
+        '    pub joint_ids: Vec<u8>,\n'
+        '}\n'
+    )
+    check("parser finds the two fields, ignores doc lines",
+          parse_struct_fields(snippet, "Bus") == {"port", "joint_ids"})
+    check("parser returns None for a struct that is not there",
+          parse_struct_fields(snippet, "Nope") is None)
+
+    if DEFAULT_SCHEMA_RS.exists():
+        check("whitelist matches robotd-params/src/lib.rs",
+              verify_schema(DEFAULT_SCHEMA_RS) == [])
+        # negative control: one invented key must be caught
+        SECTION_KEYS["bus"].add("fast_sync_read")
+        try:
+            caught = verify_schema(DEFAULT_SCHEMA_RS)
+        finally:
+            SECTION_KEYS["bus"].discard("fast_sync_read")
+        check("...and an invented key is caught",
+              any("fast_sync_read" in p for p in caught))
+    else:
+        print("  skip  whitelist cross-check (no .upstream copy) -- run with --schema-rs")
+
     print()
     if fails:
         print(f"SELFTEST FAILED ({len(fails)}): {', '.join(fails)}")
@@ -464,6 +709,9 @@ def main() -> int:
     ap.add_argument("--toml", default="deploy/robotd.toml")
     ap.add_argument("--expect-kp", type=int, default=8,
                     help="the reg-50 Kp the plant was trained at (not policy.gain)")
+    ap.add_argument("--schema-rs", default=None,
+                    help="robotd-params/src/lib.rs to re-derive the key whitelist from "
+                         "(default: the .upstream copy if present)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
@@ -479,13 +727,26 @@ def main() -> int:
         cfg = tomllib.load(fh)
 
     print(f"== {path} (expecting reg50 = {args.expect_kp}) ==")
+    schema_rs = Path(args.schema_rs) if args.schema_rs else DEFAULT_SCHEMA_RS
+    problems = verify_schema(schema_rs)
+    if problems:
+        print(f"  FAIL  schema  {'':<10}  the key whitelist does not match {schema_rs}:")
+        for p in problems:
+            print(f"        - {p}")
+    elif schema_rs.exists():
+        print(f"  ok    schema  {'':<10}  key whitelist re-derived from {schema_rs.name} "
+              f"(Params + Bus + BatteryParams + Thermal)")
     rep = audit(cfg, args.expect_kp)
     rep.render()
     print()
-    print(f"{rep.fails} FAIL" if rep.fails else "all pass")
+    fails = rep.fails + len(problems)
+    print(f"{fails} FAIL" if fails else "all pass")
     print("\nnot checked: whether robotd is running, what it wrote to reg 50, or whether the "
           "bridge answers -- for reg 50 read it back on the robot after robotd starts.")
-    return 1 if rep.fails else 0
+    print("Also not in this file: reg6 (baud) and reg33 (mode). robotd CHECKS those and "
+          "refuses to open the bus on a mismatch (feetech.rs:386); the rate is compiled in "
+          "(500 kbps) and the servo ships at 1 Mbps, so they must be moved on the servo.")
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

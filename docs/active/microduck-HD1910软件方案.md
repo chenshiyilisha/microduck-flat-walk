@@ -860,7 +860,7 @@ SFLP 本身能直接输出 gravity vector（TAG 17h，int16，2 g 灵敏度）�
 |---|---|---|---|---|
 | `[policy] action_scale` | **0.9** | **1.0**（`microduck_velocity_env_cfg.py:273` 显式赋值） | 每个动作先缩 10% 再进 PD | 必须写 1.0（已在 B9） |
 | `[policy] head_lowpass` / `legs_lowpass` | **0.5 / 0.7** | **没有低通** | 目标被 τ≈17 ms 一阶滤波：2 Hz 处 −2%、4 Hz 处 −7%、相移 6–11° | 必须写 **1.0**（新增 B10） |
-| `[bus] fast_sync_read` | **true（0x8A）** | Feetech 只有 **0x82** | 设备不应答 ⇒ **每一次读都超时**，症状像接线/波特率错 | 先写 **false**（新增 B10） |
+| ~~`[bus] fast_sync_read`~~ | **这个键在本仓不存在** | Feetech 走 0x82 | **写了就不是「超时」，是整份配置加载失败** | **删掉这行**，不是写 false（见下方订正） |
 | `[control] cmd_alpha` | **0.2** | **无**（训练是阶跃命令） | 指令变成 τ≈90 ms 的斜坡：0→0.4 要 ~0.4 s 才到 95% | 首跑写 **1.0**；确认无害后再开 |
 
 **「训练侧没有低通」是查出来的，不是推的**：`grep -r "low_pass\|lowpass"` 在
@@ -880,6 +880,17 @@ robotd 注释里说 0.5/0.7 是"alpha 策略的训练值"——那是**上一代
 2. **总线这一项有现成仪器**：`bench_dynamixel_bus`（`microduck_runtime`）直接报
    achieved rate / jitter / bus utilisation / error counts，robotd 还有自带的 5 分钟汇总。
    ⇒ 8.5.2 里"总线实测事务时间"不必自己造，**先对齐它的口径**（我们已有 fanhao 的 4.8 ms/15 颗）。
+
+**订正（2026-11-04 逐字核）：`fast_sync_read` 在整棵 DuckBuddy 树里出现 0 次。**
+这一行原本是照着**另一个 fork** 的笔记写的（那些笔记引的是 `params_lib.rs`，而本仓是
+`robotd-params/src/lib.rs`）。本仓的 `Bus` 只有 16 个字段（`port servo joint_ids joint_signs
+joint_offsets imu imu_axes imu_pitch_trim_deg imu_roll_trim_deg imu_median position_kp
+position_kp_head position_kd current_limit_ma mouth_torque mouth_wake`），**没有**速率选择：
+0x8A 还是 0x82 由 rustypot 的 `sync_read_raw_data` 决定（`feetech.rs:412/474/556`），而 `Bus`
+带 `#[serde(deny_unknown_fields)]` ⇒ 多写一个键 = robotd **拒绝整份文件**，不是「读到超时」。
+同一个坑还有 `[board]`（本仓没有这个段、也没有 `board.rs`，`grep zero3` 只命中蓝牙主机名）。
+⇒ 结论方向不变（Feetech 就该走 0x82），**动作相反**：不是把它设成 false，而是**不写**。
+`audit_robotd_toml.py` 现在会拿 Rust 源码重新推导键白名单，写错键直接 FAIL。
 
 补充进 8.5.2 的一条台架项：**HD1910 固件是否应答 0x8A**。一条包就能测，但**测错方向的代价是
 上电即全红**，所以默认按 false 配、按 true 验。
@@ -1274,3 +1285,65 @@ plant"这句要改准：**是 kp=8 等于换 plant**，模式只是间接影响�
   而 reg19 早就在 11-01 的记忆里（`reg19=4`），我没去查。
   抓法还是老一套：**拿第二个来源（记忆里的 reg19）去撞第一个来源（reg14）**，
   两个都"合理"但不可能同时成立（有 10.0 V 阈值 vs 只有温度保护开着）。
+
+---
+
+## 9. 装机前三道闸门（2026-11-04 晚，robotd 自己会校验）
+
+这一节只回答一个问题：**把配置和舵机交给 robotd，它会在哪一步拒绝，以及为什么症状看起来像别的东西。**
+
+### 9.1 robotd 开机逐颗硬校验的三项（checked, not corrected）
+
+`feetech.rs:374-386`：`check_registers()` 读 reg6 / reg33 / reg9+reg11，任一不符就
+`IoError::Bus("servo N is not configured for this robot: ...")`，总线不打开、机器人不上扭矩。
+注释原话 *EEPROM is checked, not corrected* —— 它**不会**替你改。
+
+| 项 | robotd 要求 | 我们的现状（ID 10 的 EEPROM 备份，2026-11-02） | 怎么改 |
+|---|---|---|---|
+| reg6 波特率 | **1 = 500 kbps**（`feetech.rs:35`，A733 的 UART7 只做得到 24 MHz/16/3） | **0 = 1 Mbps** ✗ 出厂值 | `hd1910_ident.py baud` |
+| reg33 模式 | **0**（纯位置 PD） | **4** ✗ 出厂值 | `hd1910_ident.py mode` |
+| reg9/11 行程 | **0/4095** | 0/4095 ✓ | 不用动 |
+
+⚠️ **波特率这一项的杀伤力在"改完就失联"**：我们**全部**台架探针默认 `--baud 1000000`，
+而这颗舵机能被读到，恰恰是因为它是 1 Mbps。改成 500 kbps 之后，旧命令一律超时，
+症状与"没上电/线序错"逐字相同（`feetech.rs:372` 的原注释就写了这点：波特率错的舵机根本读不到）。
+⇒ 改完给探针加 `--baud 500000`，并把「一条 1 Mbps、一条 500 kbps 都不应答」当成
+**线/电问题**、只一条不应答当成**波特率问题**。
+
+### 9.2 robotd 每次启动自己写的（所以这些**不是**装机步骤）
+
+`check_registers()` 后半段，每颗每启动一次：reg44 电流上限（`current_limit_ma/6.5`）、
+reg46 = **250**、reg41 = **0**（= 最大加速度）、reg50/51 = P/Kd、reg40 = 0（扭矩关）。
+⇒ 早期笔记里"装机要写 46=250 / 48=1000 / 41=0"这几条**是多余的**，而且手写的值会被
+robotd 下一次启动覆盖。真正只能手写的是 EEPROM 那一组（ID、reg6、reg33、reg19 保护位）
+和机械标定（中位 / 方向 / 零点偏移）。
+
+### 9.3 配置侧两个"默认值即事故"
+
+- **`[battery] cells` 必须写 `[2]`**。默认 `[2, 3]`（`lib.rs:68`）表示"文件没说"，而
+  `identify_pack` 按电压逐串判：一块 3S LiPo 11.1 V → 3.7 V/cell ⇒ 判成合法 3S ⇒
+  **照常驱动**，而 HD-1910 额定 4–8.4 V、接 3S 会烧（`lib.rs:52` 原话 "burn on 3S"）。
+  这一步**不报任何错**。配 `cells = [2]` + `max_volts = 8.4`（满电 2S LiHV 8.7 V 也拦住）。
+  连带后果：**4.6 V 台架跑不了会走路的 robotd** —— 4.6/2 = 2.3 V/cell 低于 2.95 V 下限，
+  `identify_pack` 报"既不是 2S 也不是 3S"、机器人保持瘫软；上电至少要 ~6.0 V。
+- **`[thermal] walk_max_c`**：舵机自己的 latch 是 **reg13 = 80 °C**（ID 10 的 EEPROM 读到的
+  出厂值），到点自己切扭矩 = 走路中趴下。robotd 的守卫到 `walk_max_c` 只是拒走
+  （zero twist）。取 **70**，留 10 °C 余量（上游在 HL-2915 上就是从 65 调到 70：
+  满载升温约 13 °C/分钟，65 撑不完一次试跑）。
+
+### 9.4 「不存在的键」是这一轮最贵的一类错
+
+`Params` 和 `Bus` 都带 `#[serde(deny_unknown_fields)]`，所以**多写一个键不是忽略，是整份
+配置加载失败**。已经踩过三个：`bus.protocol`（抄 kissqy）、`[board]`（本仓没有这个段，
+也没有 `board.rs`）、`bus.fast_sync_read`（属于另一个 fork 的 `params_lib.rs`；本仓 0 命中）。
+`audit_robotd_toml.py` 现在**从 Rust 源码重新推导键白名单**（解析 `pub struct` 的字段），
+源码与硬编码表不一致就 FAIL，自检 42 项（含"故意往白名单塞一个假键必须被抓到"的负对照）。
+
+### 9.5 这一轮新增/改动的工具
+
+| 工具 | 作用 |
+|---|---|
+| `servo_probe/hd1910_ident.py baud` | reg6 → 1，带**唯一验证过的 EEPROM 时序**（解锁 0.25 → 写 0.50 → 上锁 0.50 → 断电回读）；`set-id` 也改用同一路径（原来是 0.05 s 窗口） |
+| `servo_probe/hd1910_ident.py mode` | reg33 → 0，同一时序；并说明 mode 4→0 的带宽损失已由 `position_kp=16` 抵掉 |
+| `servo_probe/identify_joints.py` | **只读**解 `joint_ids`：逐关节提示"扳哪个"，8 步（≈0.7°）阈值 + "第二名必须 < 第一名一半"，两个一起动就判"分不清"，最后打印可粘贴的 `joint_ids = [...]` |
+| `audit_robotd_toml.py` | 白名单（源码推导）+ `[battery]`/`[thermal]` 判据 + `joint_ids` 与参考表差异 WARN；自检 24 → **42 项** |

@@ -105,7 +105,20 @@ REG_STATUS = 65
 REG_MOVING = 66
 REG_CURRENT = 69       # 2B
 REG_ID = 5             # 总线 ID（改后要断电重启才在旧 ID 上消失）
+REG_BAUD = 6           # 波特率索引（EEPROM）。0..7 = 1M/500k/250k/128k/115200/76800/57600/38400
 REG_LOCK = 55          # 0 = EPROM 可写；1 = 锁定（HL2915/HD 同表，见 ref_hl2915_bench.py:57）
+
+# ---- 波特率：出厂索引 ≠ 部署索引，这是 robotd 连不上我们的第一道墙 ----
+# 出处 duck-control/src/feetech.rs:34-38
+#   pub const BAUD_RATE: u32 = 500_000;      // 恰好可表示：A733 的 UART7 = 24 MHz / 16 / 3
+#   pub const BAUD_BITRATE_VALUE: u8 = 1;    // 0..7 = 1M/500k/250k/128k/...
+# 我们的舵机出厂是索引 0（1 Mbps，实测 eeprom_backup_id10.json 的 reg6=0），
+# 而 robotd 只按 500 kbps 打开串口 → 索引 0 的舵机在 robotd 眼里"不存在"，
+# 报错会和"没上电／线序错"完全一样（feetech.rs:372 原注释：「波特率错的舵机根本读不到」）。
+BAUD_INDEX_TO_RATE = {0: 1_000_000, 1: 500_000, 2: 250_000, 3: 128_000,
+                      4: 115_200, 5: 76_800, 6: 57_600, 7: 38_400}
+ROBOTD_BAUD_INDEX = 1     # ← 装机必须是这个（feetech.rs BAUD_BITRATE_VALUE）
+FACTORY_BAUD_INDEX = 0    # ← 台架现在这个（1 Mbps），USB 转接板吃得下 1 Mbps，SBC 的 UART 不行
 
 TELEM_LEN = 15         # 56..70
 CURRENT_MA_PER_LSB = 6.5
@@ -657,19 +670,98 @@ def cmd_set_id(bus: Bus, sid: int, args):
     new_id = args.new_id
     if new_id is None or new_id < 0 or new_id > 253:
         sys.exit("需要 --new-id（0-253）。一次只接一只舵机！")
-    # 1. unlock EPROM
-    bus.write_u8(sid, REG_LOCK, 0)
-    time.sleep(0.05)
-    # 2. write new ID
-    if not bus.write_u8(sid, REG_ID, new_id):
-        sys.exit(f"写 reg5={new_id} 失败（无应答）。检查线序/供电/波特率。")
-    time.sleep(0.05)
+    _eeprom_write(bus, sid, REG_ID, [new_id])
     # 3. verify: PING new ID
     ok = bus.ping(new_id)
     print(f"{'✔' if ok else '✗'} 新 ID {new_id} "
           f"{'有应答' if ok else '无应答——回旧 ID 重试'}")
     print("⚠️ 改完必须断电重启（拔 USB），旧 ID 才会消失。")
     return 0 if ok else 1
+
+
+def _eeprom_write(bus: Bus, sid: int, addr: int, data) -> None:
+    """写 EEPROM 的唯一已验证时序（2026-11-04 两次断电复现）。
+
+        解锁 55=0 等 0.25 s → 写值 等 0.50 s → 上锁 55=1 等 0.50 s
+
+    为什么不是"写一个包等 50 ms"：EEPROM 每字节 commit ~10 ms，四包背靠背会全撞在
+    同一个提交窗口里，而**回读读的是 RAM shadow** —— 于是回读 PASS、掉电回旧值。
+    这个项目的旧 set-id 就是 0.05 s 窗口，PASS 了两次，第三次断电才露馅。
+
+    另外三条硬约束（违反任一条都会"成功"但没写进去）：
+      ① 窗口 < 0.35 s 全灭；
+      ② **绝不切 mode**（切 mode 会从 EEPROM 重载配置，把刚写的值冲掉）；
+      ③ 值没变会被跳过 commit（回读 PASS、掉电回旧值）—— 所以要改的是"不同的值"。
+    """
+    bus.write_u8(sid, REG_LOCK, 0)
+    time.sleep(0.25)
+    if not bus.write(sid, addr, list(data)):
+        bus.write_u8(sid, REG_LOCK, 1)
+        sys.exit(f"写 reg{addr}={list(data)} 无应答。检查线序/供电/波特率。")
+    time.sleep(0.50)
+    bus.write_u8(sid, REG_LOCK, 1)
+    time.sleep(0.50)
+
+
+def cmd_set_baud(bus: Bus, sid: int, args):
+    """把 reg6 改成 robotd 要求的索引（默认 1 = 500 kbps），并在**新波特率**上验证。
+
+    用法（一次只接一只舵机）：
+        python hd1910_ident.py baud --port COM3 --baud 1000000 --id 10
+
+    顺序不能省：断电重上电 → 用**旧**波特率连上 → 写 reg6 → 断电重上电 →
+    用**新**波特率 PING + 回读 reg6。回读必须在断电之后，RAM shadow 会骗人。
+    """
+    if args.dry_run:
+        sys.exit("--dry-run 不开串口：本命令必须读到 reg6 才知道要改什么")
+    new_idx = args.baud_index
+    if new_idx not in BAUD_INDEX_TO_RATE:
+        sys.exit(f"--baud-index 只能 0..7，拿到 {new_idx}")
+    old_idx = bus.read_u8(sid, REG_BAUD)
+    old_rate = BAUD_INDEX_TO_RATE.get(old_idx) if old_idx is not None else None
+    print(f"ID {sid} @ {args.baud}：reg6 = {old_idx}"
+          f"（{old_rate if old_rate else '未知识别'}）→ 目标 {new_idx}"
+          f"（{BAUD_INDEX_TO_RATE[new_idx]}）")
+    if old_idx == new_idx:
+        print("✔ 已经是目标索引，不需要写（写了也会被跳过 commit，回读 PASS 但不算证据）")
+        return 0
+    speed = bus.read_u16(sid, REG_SPEED)
+    if speed not in (None, 0):
+        print(f"⚠️ reg46 目标速度 = {speed}（非 0）：这只舵机可能正在动。"
+              f"断电重上电后再跑本命令（上电默认 reg40=0、reg46=0）")
+    _eeprom_write(bus, sid, REG_BAUD, [new_idx])
+    print("写入窗口已关闭。任何回读现在都只证明 RAM 变了，不证明 EEPROM 变了。")
+    print(f"\n下一步（必须做，否则退出码 0 也只代表广播成功）：")
+    print(f"  1) 断电重上电（拔掉舵机电源，等 2 s 再上）")
+    print(f"  2) 用**新**波特率验证：")
+    print(f"       python hd1910_ident.py telem --port {args.port} "
+          f"--baud {BAUD_INDEX_TO_RATE[new_idx]} --id {sid} --seconds 1")
+    print(f"  3) 若新波特率无应答而旧波特率仍应答 ⇒ 没写进去，重来一次")
+    return 0
+
+
+def cmd_set_mode(bus: Bus, sid: int, args):
+    """把 reg33 改成 robotd 要的 0（纯位置 PD），并强调必须断电验证。
+
+    robotd 的 check_registers 要求 **mode 0**（feetech.rs:386），出厂是 **4**。
+    实测过 mode 4 → mode 0 的全部后果：0.5–4 Hz 每个频点少 12–45% 增益、多滞后 6–21°，
+    且 mode0/P16 ≡ mode4/P8 ⇒ 部署配置已经用 `position_kp = 16` 抵掉了，不需要再动别的。
+
+    ⚠️ 模式是 EEPROM：写完不切 mode（切 mode 会从 EEPROM 重载，撕掉写入窗口），
+       写完必须断电重上电，再回读。`probe_mode_ab.py` 里那种直接 write_u8(33) 只改 RAM。
+    """
+    if args.dry_run:
+        sys.exit("--dry-run 不开串口")
+    target = args.mode
+    got = bus.read_u8(sid, REG_MODE)
+    print(f"ID {sid}：reg33 = {got} → 目标 {target}（robotd 要求 0）")
+    if got == target:
+        print("✔ 已经是目标值；值没变会被跳过 commit —— 别把回读 PASS 当证据，去断电回读")
+        return 0
+    _eeprom_write(bus, sid, REG_MODE, [target])
+    print("写入窗口已关闭。**必须断电重上电**，再 `telem` 回读 reg33。")
+    print("回读仍是旧值 ⇒ 没写进去（窗口或 commit），不是「这颗不支持」。")
+    return 0
 
 
 # ---------------------------------------------------------------- 正弦跟踪（带宽）
@@ -1263,8 +1355,22 @@ def cmd_selftest(_bus, _sid, args):
     ok8 = sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89) is None
     print(f"  5 样本 → {sine_metrics([(1.89, 0, 0, 2048, 2048, 0, 0, 7.4, 30, 0)] * 5, 1.89)}")
 
+    print("=== 波特率索引表：必须与 feetech.rs:34-38 对齐 ===")
+    # 正例：robotd 开的速率 == 索引 1 的速率 == 500k（24 MHz/16/3 可整除）
+    ok_b = (BAUD_INDEX_TO_RATE[ROBOTD_BAUD_INDEX] == 500_000
+            and BAUD_INDEX_TO_RATE[FACTORY_BAUD_INDEX] == 1_000_000
+            and len(BAUD_INDEX_TO_RATE) == 8)
+    print(f"  索引 {ROBOTD_BAUD_INDEX} → {BAUD_INDEX_TO_RATE[ROBOTD_BAUD_INDEX]}；"
+          f"出厂 {FACTORY_BAUD_INDEX} → {BAUD_INDEX_TO_RATE[FACTORY_BAUD_INDEX]}  "
+          f"{'ok' if ok_b else 'FAIL'}")
+    # 负对照：这条步骤只在"出厂索引 ≠ 部署索引"时才有意义。
+    # 若两者相等，「装机前改波特率」就是一条空步骤，而 robotd 仍可能连不上。
+    neg_b = ROBOTD_BAUD_INDEX != FACTORY_BAUD_INDEX
+    print(f"  负对照：出厂索引 ≠ 部署索引（否则这步是空的）  "
+          f"{'ok' if neg_b else 'FAIL'}")
+
     allok = ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok6b and ok7 and ok8 and ok_v \
-        and inv_new and inv_old
+        and inv_new and inv_old and ok_b and neg_b
     print(f"\nselftest: {'ALL PASSED' if allok else 'FAILED'}")
     return 0 if allok else 1
 
@@ -1274,7 +1380,7 @@ def cmd_selftest(_bus, _sid, args):
 def main() -> int:
     ap = argparse.ArgumentParser(description="HD-1910 辨识台架")
     ap.add_argument("cmd", choices=["telem", "step", "sine", "psweep", "deadzone",
-                                     "backlash", "set-id", "selftest"])
+                                     "backlash", "set-id", "baud", "mode", "selftest"])
     ap.add_argument("--port", default="COM3")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--id", type=int, default=1)
@@ -1319,6 +1425,13 @@ def main() -> int:
     ap.add_argument("--kp-list", default="5,8,12,16,24,32",
                     help="psweep：要扫的 RAM P 列表（逗号分隔）。部署档是 8"
                          "（kp5 带宽不足且 P8 在 kp5 上 7/8 摔）；本扫描找『带宽够且不颤』的档位")
+    ap.add_argument("--mode", type=int, default=0,
+                    help="mode：reg33 的目标值。robotd 只接受 **0**（纯位置 PD）；"
+                         "出厂是 4。mode 4→0 的带宽损失已由 position_kp=16 抵消")
+    ap.add_argument("--baud-index", type=int, default=ROBOTD_BAUD_INDEX,
+                    help=f"baud：reg6 的目标索引，默认 {ROBOTD_BAUD_INDEX}"
+                         f"（{BAUD_INDEX_TO_RATE[ROBOTD_BAUD_INDEX]}，robotd 唯一能开的速率）。"
+                         f"出厂是 {FACTORY_BAUD_INDEX}（1 Mbps，只有 USB 转接板吃得下）")
     args = ap.parse_args()
 
     if args.cmd == "selftest":
@@ -1347,7 +1460,8 @@ def main() -> int:
                      f"  ⚠️ 部署档是 {KP_FW_DEPLOY}，两边不对齐时这份辨识不代表部署后行为"))
         {"telem": cmd_telem, "step": cmd_step, "sine": cmd_sine,
          "psweep": cmd_psweep, "deadzone": cmd_deadzone, "backlash": cmd_backlash,
-         "set-id": cmd_set_id}[args.cmd](bus, args.id, args)
+         "set-id": cmd_set_id, "baud": cmd_set_baud,
+         "mode": cmd_set_mode}[args.cmd](bus, args.id, args)
     finally:
         bus.close()
     return 0
