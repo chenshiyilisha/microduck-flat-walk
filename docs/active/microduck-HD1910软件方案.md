@@ -1647,3 +1647,155 @@ near ±1, the accuracy of qw is reduced"*。这一条在本项目里的落点是
 `tools/hd1910/verify_imu_chain.py`（13 项检查，`--selftest` 15 项 / 8 条负对照）。
 跑一次约 8 s（要 import mjlab）。负对照里最能说明问题的一条：**去掉 `w ≥ 0` 的规范化，
 端到端立刻红** —— 说明 ST 那条保证是承重的，不是注释。
+
+## 13. policy bundle 的加载链：两端各查什么，中间漏什么（2026-11-04，39 项自检 / 22 条负对照）
+
+### 13.1 为什么单独查这一项
+
+§10 查「robotd 发出去的 61 个 float」，§12 查「最前 6 个槽里的量怎么算」。本节查的是
+**中间那段**：训练导出一个 `.onnx`，`publish` 打包成一个 bundle，`robotctl policy load`
+读它，`robotd` 每次启动加载它。四步之间，每一处都有「错的时候不报错，只让机器人走歪」。
+
+### 13.2 结论先行
+
+1. **`publish` 和这台 robotd 不是同一条链。** `manifest.json`（schema 2）是**另一代**
+   robotd（`robotctl policy load/add`）读的；`DuckBuddy-main` 这一代 `grep metadata`
+   零命中、`PolicyParams` 里没有 manifest 字段 ⇒ 这份 manifest **一个字段都不生效**。
+2. **这台 robotd 对 onnx 的全部检查是两个宽度**：`check_width(inputs[-1] == 61)`、
+   `check_width(outputs[-1] == 14)`，而且只看 `outlets.first()` 的最后一维。
+3. 所以 bundle 里唯一能挡住「换了模型但观测布局变了」的东西是 **onnx metadata**
+   （`joint_names` / `default_joint_pos` / `observation_names` / `command_names`）
+   —— **而它没有任何读者**。
+4. 顺着这条线查出一个**实打实的部署缺陷**：部署候选 `deploy61` 的归一化器没有下限，
+   7 个「robotd 会真的写非零值」的槽被放大 **89866 倍**。转 5.7° 头，动作从 `-0.29`
+   跳到 `-35.7` rad ⇒ **接上舵机就是一记猛打限位**。
+
+### 13.3 两端各查什么
+
+| 检查 | 写侧 `publish` | 读侧这台 `robotd` |
+|---|---|---|
+| 单 input / 单 output | `check_onnx` 拒绝 | 不查（只看第一个） |
+| obs / action 宽度 | 末维 = 61 / 14，**字面量**（符号维拒绝） | `check_width` 末维 == 61 / 14 |
+| 输入名 | 不查 | `ort::inputs!["obs"]` 硬编码（fail loud） |
+| 能否执行 | `smoke_run_onnx` 50 步随机，要求有限 + 输出**不是常数** | `open_warm`：一次 `Observation::zeroed()` 推理，失败 ⇒ unhealthy ⇒ 自动回滚 |
+| 观测布局 / 关节序 / 动作语义序 / 归一化器 | **都不查** | **都不查** |
+| `action_scale` / lowpass / gain / 50 Hz | 写进 manifest（无人读） | 从 `robotd.toml` 的 `[policy]` 读 |
+| `manifest.json` 本身 | 写 | **不打开** |
+
+**差集就是静默区**：布局、动作语义、归一化器、旁挂参数、manifest —— 五样东西在两端
+都不产生任何判决。
+
+### 13.4 六个样本的实测结论
+
+| 样本 | 宽度 | onnx metadata | 归一化除数下限 | 结论 |
+|---|---|---|---|---|
+| `out/deploy61.onnx` | 61 → 14 | **0 条** | **1.113e-05（10 维）** | **不能上**，见 13.5 |
+| `out/p8head_2999.onnx` | 61 → 14 | 0 条 | 0.01289 | 可用（缺契约） |
+| `out/hd1910_resume_*_it5999.onnx` | 61 → 14 | 8 条，**joint_names 逐位对、home 差 0.0003 rad** | 0.01289 | **全绿**，正样本 |
+| `out/publish/duck-walk-56d/` | **56** → 14 | 0 条 | 除数 56 宽 | 装不进（宽度），且 **`.data` 丢失、加载即失败** |
+| `.upstream/.../alpha_walking.onnx`（官方） | 61 → 14 | 8 条，全对 | 0.01289 | 基准 |
+| `.upstream/.../hl2915_roulade_v4bl_6999.onnx` | 61 → 14 | 8 条，但 **`joint_names` 28 个** | 0.010 | metadata 自相矛盾（B 代自己产线） |
+
+三条附带结论：
+
+- **56 维那份 bundle 是手写的**：`publish` 的 `check_onnx` 拒绝任何不是 61→14 的图，
+  所以这份 manifest 没经过任何闸门。它的 `observation_normalizer_baked: true` 现在
+  **无法验证** —— `policy.onnx` 引用的 `walk56.onnx.data` 不在同目录，ORT 连图都加载不了。
+- **`publish` 不打包外部权重**：`shutil.copyfile(onnx_path, staged / POLICY_FILE)` 只拷
+  `.onnx`，而 `check_onnx` 用 `load_external_data=False` 读 ⇒ 一个 split 导出会
+  **以 3 KB 的无权重图上传成功**。我们的 `deploy61.onnx` 就是 5/8 个 initializer 在
+  `deploy61.onnx.data` 里 —— 单独拷这个 `.onnx` 到机器人上，加载失败。
+- **B 代自己的导出把 `joint_names` 忘了筛**：28 个名字（`passive_*_backlash` 与真关节
+  交错）配 14 个动作。任何「按名字索引动作」的消费者都会错位。
+
+### 13.5 核心发现：`deploy61` 的归一化器没有下限
+
+`Div` 的分母（`add_3`，即训练 std，61 宽）里 **10 个维 = 1.113e-05**：
+
+```
+[51..54] head[0..3]      [55] body.x      [56] body.y
+[57] body.z  [58] body.roll  [59] body.pitch  [60] body.yaw
+```
+
+同家族健康导出的下限是 **0.01289**（`p8head_2999` / `resume_5999` / 官方 `alpha_walking` /
+`hl2915_*` 全都是）—— **差 1157 倍**。前者是 `VecNorm` 的 `std + eps` 地板，后者是
+「running variance 本来就是 0，没有地板」。放大 **89866×**。
+
+**哪些维真的会被写**（判据取自 `obs.rs` 的 `fill(command_block, [...])`，哪些槽是
+`command.*`、哪些是字面量 `0.0`）：
+
+| 槽 | 来源 | 会被写非零？ |
+|---|---|---|
+| `head[0..3]` | `command.head` ← `intents.set_head()` **+ chorale sway**（`main.rs:2430` 四项相加） | **是** |
+| `body.z / roll / pitch` | `command.body` ← `body_ema`（pose intent） | **是** |
+| `body.x / body.y / body.yaw` | `obs.rs` 里是字面量 `0.0` | 否（恒 0） |
+
+⇒ **10 个病态维里有 7 个，robotd 真的会往里写值。**
+
+**实证**（同一套 plausible obs，站稳、走 0.3 m/s，只改 head / body 命令；单位 rad）：
+
+| 策略 | 基线 `a[0]` | head_pitch 5.7° | head_pitch 17° | body_pitch 5.7° |
+|---|---|---|---|---|
+| `alpha_walking` | −0.088 | 0.064 | 0.196 | 0.035 |
+| `p8head_2999` | −0.194 | 0.050 | 0.153 | 0.106 |
+| `resume_5999` | −0.066 | 0.055 | 0.167 | 0.019 |
+| **`deploy61`** | −0.293 | **77.235**（→ −35.708） | **232.333**（→ −107.436） | **88.704**（→ −37.422） |
+
+**为什么两个现成的探针都看不见**：
+
+- **`publish` 的 `smoke_run_onnx`**：用 `N(0, 0.05)` 抖全 61 维，只断言 `std(outputs) != 0`。
+  `deploy61` 在这里的 std 是 **104**（健康的 0.29–0.83）—— **抖动越大越容易通过**。
+- **本工具早先加的 R2「真实量级」**：用真实站姿 + `head/body = 0`，`0 / 1.1e-5 = 0`
+  恰好安全 ⇒ `max|a| = 0.491`，看起来正常。
+
+两个探针，一个只看「有没有变化」，一个只看「零命令下的幅值」，都绕过了这个洞。只有把
+**分母本身**和**谁会往这些槽写**放在一起看，才浮出来。
+
+**修法**：**不能靠改 onnx 修。** 把 std 从 1.1e-5 抬到 1.2e-2，该维的归一化输入就从 0 变成
+「命令 / 0.012」，而模型权重是在 `std=1.1e-5` 下学的 —— 等于换了一个策略。正解是
+**重新导出，让 `VecNorm` 带 eps 地板**（`p8head_2999` / `resume_5999` 那条路径本来就有）。
+
+⇒ **部署候选换 `p8head_2999` 或 `resume_5999`，`deploy61` 下线。**
+
+### 13.6 `--stamp`：把契约写进裸图
+
+`deploy61` / `p8head_2999` 的 metadata 是 0 条。`--stamp` 写一份新的：
+
+```bash
+python tools/hd1910/verify_policy_bundle.py out/p8head_2999.onnx \
+    --stamp out/p8head_2999_stamped.onnx --action-scale 1.0
+```
+
+- `joint_names` / `default_joint_pos` 取自 `duck-ipc-proto::JOINT_NAMES` 与
+  `model.rs::DEFAULT_POSITION`（跳过 mouth），`command_names` / `observation_names`
+  与官方 8 键同形。
+- 顺手把外部权重**内联成单文件**（`onnx.load` 读进内存后按
+  `save_as_external_data=False` 存），解决「拷 `.onnx` 忘拷 `.data`」。
+- **它修不了 C4**，也修不了任何权重问题 —— 只是让下一个读者有东西可以对质。
+
+### 13.7 这一节查不到的三件事（必须留给人）
+
+1. **`robotd` 侧没有任何版本号能挡住「导出脚本换了但 cwd 没换」。** 如果以后要防，
+   最小改动是 `policy.rs::open` 里读一次 metadata 的 `joint_names` 与 `JOINT_NAMES`
+   对质（约 15 行，fail loud）。
+2. **`--stamp` 只是我的兜底，不是上游承诺。** 它会跟着 `JOINT_NAMES` / `DEFAULT_POSITION`
+   漂移，而这两个常量在 Rust 侧改了不会通知任何 `.onnx`。
+3. **`deploy61` 的病态维是「训练时这些槽恰好没动」的记录，不是导出 bug。** 所以
+   `std + eps` 地板只对「确实会变的维」有用；一个地板写在恒 0 的维上不会报错，但会让
+   该维的归一化输入不再是 0 —— 需要确认这在训练侧是否等价。
+
+### 13.8 工具
+
+`tools/hd1910/verify_policy_bundle.py`（13 项检查，`--selftest` 39 项 / 22 条负对照）。
+A/B 两组检查项：**静态**（图结构、算子集、初始化器、归一化器分母的逐维下限、metadata
+逐字段、与 `JOINT_NAMES` / `DEFAULT_POSITION` / `action_scale` 默认值的对质）；
+**动态**（零观测预热、真实站姿幅值、输出是否响应输入、5.7° 头部命令的响应）。
+
+负对照里最能说明问题的几条：**去掉 `--stamp` 的 `joint_names` ⇒ B2 立刻红**；
+**home 偏 10 mrad ⇒ B2 红**；**归一化器 `Sub` 的常量换成第二个输入 ⇒ C2 红**；
+**manifest 声称 `observation_normalizer_baked: true` 但图里没有 Sub ⇒ E6 红**；
+**`Div` 常量 < 1e-3 ⇒ C4 必须红**（这一条是本节发现的那个缺陷的判据本身）。
+
+---
+
+_细节与完整表格见 [`microduck-policy-bundle链.md`](microduck-policy-bundle链.md)。_

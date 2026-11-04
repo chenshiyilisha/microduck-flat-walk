@@ -53,13 +53,14 @@
 
 | # | 项 | 期望 | □ |
 |---|---|---|---|
-| C1 | 导出 | 本仓 HD1910 ONNX，**烘焙 normalizer**；parity 过 | |
-| C2 | 契约 | obs **61** / act **14** / **50 Hz** — 勿改布局 | |
+| C1 | 导出 | 本仓 HD1910 ONNX，**烘焙 normalizer**；parity 过。⚠️ **`publish` 不打包外部权重**：只拷 `.onnx`，而它自己用 `load_external_data=False` 读 ⇒ 一个 split 导出会**以 3 KB 的无权重图上传成功**。拷到机器人上之前必须确认 `graph.initializer` 没有 `EXTERNAL`（`verify_policy_bundle.py` 的 A8），或用 `--stamp` 内联成单文件 | |
+| C2 | 契约 | obs **61** / act **14** / **50 Hz** — 勿改布局。跑 `verify_policy_contract.py`；**再跑 `verify_policy_bundle.py`**（多一道归一化器下限 + metadata 对质） | |
 | C3 | 植物指纹 | runmeta / 笔记写明：`hd1910_openmicroduck_m5`（或日后 ftservo m6）+ m5 sha | |
 | C4 | 热加载 | 中控「模型管理」导入自训 walk；**不要**上 XL330 `walk_std004_*` | |
 | C5 | 部署缩放 | 训练侧 1/1/1；运行端常见 **基础 0.9 / 头 0.5 / 腿 0.7**（官方 Dynamixel 运行默认，**不是训练超参**）；再乘电压补偿 `7.4/V`（以当时中控说明为准） | |
 | C6 | 短站立 | 先站稳再给速度指令；再谈走路 | |
 | C7 | 本仓彩排 | `rehearse_hd1910.py`（仿真，m5/kp32）作对照，**不能单独宣称真机已会走** | |
+| C8 | **归一化器下限（2026-11-04 查出，会让机器人猛打限位）** | 导出的 `Div` 分母（= 训练 std）必须逐维 > `1e-3`。`deploy61.onnx` 有 **10 个维 = `1.113e-05`**（`head[0..3]`、`body.x/y/z/roll/pitch/yaw`），放大 **89866×**；其中 **7 个是 `obs.rs:196-211` 会真写非零值的槽** ⇒ 转 5.7° 头，动作从 −0.29 跳到 **−35.7 rad**。实测 `p8head_2999` / `resume_5999` 下限 `0.01289`（**差 1157 倍**）⇒ **`deploy61` 下线，换这两个之一**。⚠️ **不能靠改 onnx 修**：把 std 抬到 `1.2e-2` 等于换了一个策略（权重是在 `1.1e-5` 下学的），必须重新导出让 `VecNorm` 带 eps 地板。`publish` 自带的 `smoke_run_onnx` 抓不到它：它只断言 `std(outputs) != 0`，而 `deploy61` 在那里的 std 是 **104**（健康 0.29–0.83）—— **抖动越大越容易通过** | |
 
 ---
 
