@@ -91,6 +91,7 @@ MUJOCO_GL=glfw .venv-mjlab/Scripts/python.exe tools/hd1910/probe_heading_loop.py
 | `sweep_cmd_envelope.sh` | **P4 前置：cmd 包线扫点**（0.15/0.2/0.3/0.4 × seed 11·22·33，与冻结基线同口径）。kp8 候选在 0.4 只到 cmd 的 41% ⇒ 部署前必须知道哪档开始塌；汇总只报 mean±sem 不作判决（判决归 `gate_p3_yaw.py`）。`TASK=` / `DEVICE=` 可换域（齿隙域跑同一脚本） |
 | **`check_backlash_task.py`** | **齿隙域开训闸门**：断言 14 根 `passive_*_backlash` 铰链都在、范围 = ±deg/2、`limited`（死区必须是硬限位）、执行器是 `BacklashEncoder*`（PD 读输出侧）、奖励/命令与基础任务逐键一致、**obs/act 仍 61/14**、执行器仍是 hd1910（`kp_fw=8`）。`--selftest` 6 项：基础任务必须判红、反向断言下必须绿、期望 3° 时必须红 |
 | `server_pack/` | **Windows 训练机打包**（4070 Ti）：`make_transfer.ps1` + `bootstrap.ps1`（勿拷 venv） |
+| **`servo_probe/set_protection.py`** | **保护开关（reg19 卸力条件）落盘 + 断电复核**。判决 `13 = 电压+过热+过流`；**过载位(32)刻意不开**（kp8 带载稳态误差会被判成"被挡住"⇒ 卸力 2 s ⇒ 走路必摔）。`--apply` 写、`--verify` 断电后复核、`--selftest` 9 项。15 颗装机时逐颗跑 |
 
 ```bash
 # plants (do not switch while a train is mid-run)
