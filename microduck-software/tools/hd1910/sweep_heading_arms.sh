@@ -40,6 +40,12 @@ SECONDS_PER_RUN="${SECONDS_PER_RUN:-8}"
 SEED="${SEED:-11}"
 CMD_VX="${CMD_VX:-0.4}"
 OUT_ROOT="${OUT_ROOT:-../artifacts/flat_walk/evals/ab_heading}"
+# 域可换（默认无齿隙 Flat）。齿隙域：TASK=Mjlab-Velocity-Flat-Backlash-MicroDuck
+TASK="${TASK:-Mjlab-Velocity-Flat-MicroDuck}"
+case "$TASK" in
+  *Backlash*) TASK_TAG="_bl" ;;
+  *) TASK_TAG="" ;;
+esac
 
 find_run() {
   local name="$1" d=""
@@ -68,7 +74,7 @@ echo "== eval: ${ENVS}env x ${SECONDS_PER_RUN}s cmd_vx=$CMD_VX seed=$SEED stride
 eval_one() {
   local arm="$1" dir="$2" ckpt="$3"
   local tag; tag=$(basename "$ckpt" .pt)
-  local out="$OUT_ROOT/$arm/${tag}_vx${CMD_VX}_s${SEED}_e${ENVS}t${SECONDS_PER_RUN}.json"
+  local out="$OUT_ROOT/$arm/${tag}_vx${CMD_VX}_s${SEED}_e${ENVS}t${SECONDS_PER_RUN}${TASK_TAG}.json"
   if [ -f "$out" ]; then
     echo "  skip $arm/$tag (have $out)"
     return 0
@@ -79,7 +85,7 @@ eval_one() {
   # a sweep only needs the metrics, which are written before the exit code is
   # decided. So tolerate the code, but refuse to continue without the JSON.
   set +e
-  "$PY" tools/eval_velocity_in_sim.py \
+  "$PY" tools/eval_velocity_in_sim.py --task "$TASK" \
     --checkpoint "$ckpt" --num-envs "$ENVS" --seconds "$SECONDS_PER_RUN" \
     --device cuda:0 --cmd-vx "$CMD_VX" --seed "$SEED" \
     --solver-iters 100 --solver-ls 50 --out "$out" \

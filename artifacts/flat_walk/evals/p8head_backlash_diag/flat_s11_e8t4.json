@@ -1,0 +1,466 @@
+{
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "checkpoint": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-03_08-33-18_p8head_030_4096x3000/model_2999.pt",
+  "num_envs": 8,
+  "seconds": 4.0,
+  "device": "cpu",
+  "plant": "default",
+  "plant_info": null,
+  "seed": 11,
+  "plant_fingerprint": {
+    "name": "hd1910",
+    "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+    "source_sha256_12": "30768e18ffeb",
+    "kwargs": {
+      "json_path": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\tools\\bam_params\\hd1910\\official_m6_stslaw.json",
+      "target_names_expr": [
+        "^(?!passive_).*"
+      ],
+      "kp_fw": 8.0,
+      "vin_range": [
+        6.5,
+        8.2
+      ],
+      "vin_drop_gain_range": [
+        0.0,
+        0.2
+      ],
+      "vin_min": 6.0,
+      "delay_min_lag": 3,
+      "delay_max_lag": 6
+    },
+    "json_path_exists": true,
+    "json_sha256_12": "799800a2ea0d",
+    "kp_fw": 8.0,
+    "actuator_class": "FrictionDRBamActuatorCfg"
+  },
+  "solver": {
+    "before": {
+      "iterations": 10,
+      "ls_iterations": 20,
+      "nconmax": 35
+    },
+    "after": {
+      "iterations": 100,
+      "ls_iterations": 50,
+      "nconmax": 35
+    }
+  },
+  "play_cfg": false,
+  "command": {
+    "vx": 0.4,
+    "vy": 0.0,
+    "wz": 0.0
+  },
+  "command_measured": {
+    "frozen": {
+      "vx": 0.4,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "uniq_cmd_vx": [
+      0.4
+    ],
+    "frac_cmd_zero_vx": 0.0,
+    "frac_off_frozen_1e3": 0.0,
+    "max_dev_from_frozen": 0.0
+  },
+  "curriculum_counter_before_pin": 72000,
+  "dropped_events": [
+    "push_robot"
+  ],
+  "sensors": {
+    "height": "foot_height_scan",
+    "contact": "feet_ground_contact"
+  },
+  "speed": {
+    "cmd_vx": 0.4,
+    "vx_median_of_env_means": 0.11089537292718887,
+    "vx_mean": 0.1117507815361023,
+    "vy_mean": 0.0067065441980957985,
+    "wz_mean": -0.06834100931882858
+  },
+  "official_metrics": {
+    "error_vel_xy": 0.316365122795105,
+    "error_vel_yaw": 0.670387327671051,
+    "error_vel_xy_median": 0.30743369460105896
+  },
+  "official_metric_terms": {
+    "mean_action_acc": 0.0754225724004209
+  },
+  "displacement": {
+    "dx_body_mean": 0.4075465500354767,
+    "path_dx_median": 0.4435815215110779,
+    "expected_dx": 1.6,
+    "dx_over_expected": 0.24951696395874023,
+    "abs_dy_body_median": 0.08889728784561157,
+    "dy_body_mean": -0.048489540815353394,
+    "dy_body_median": -0.06228363513946533,
+    "dy_body_sem": 0.053966790437698364,
+    "dx_world_mean_unused": 0.1492764949798584
+  },
+  "heading": {
+    "yaw_drift_deg_s": 3.972564697265625,
+    "yaw_drift_signed_deg_s_mean": -3.8059444427490234,
+    "yaw_drift_signed_deg_s_median": -6.1501312255859375,
+    "yaw_drift_signed_deg_s_sem": 1.5872162580490112,
+    "frac_same_sign": 0.625
+  },
+  "stability": {
+    "upright_mean": 0.9978877305984497,
+    "upright_min": 0.9947838187217712,
+    "terminated_frac": 0.0
+  },
+  "feet": {
+    "landings_per_foot_hz": 2.09375,
+    "air_time": {
+      "n_samples": 134,
+      "p25_s": 0.19999997317790985,
+      "median_s": 0.21999996900558472,
+      "p75_s": 0.23999996483325958,
+      "max_s": 0.2799999713897705,
+      "frac_in_reward_window": 0.8059701323509216,
+      "window_s": [
+        0.125,
+        0.3
+      ],
+      "gain_if_in_window": "1 per airborne foot (weight in cfg.rewards.air_time)"
+    },
+    "landing_events": 134,
+    "touchdown_events": 134,
+    "simultaneous_frac": 0.05970149114727974,
+    "left_peak_mm_median": 19.06043291091919,
+    "right_peak_mm_median": 18.189482390880585,
+    "both_peak_mm_median": 18.189482390880585,
+    "stance_mm_median": 0.9392686188220978
+  },
+  "joints": {
+    "note": "achieved joint motion over the window, envs that never reset only; amp = p2p of running min/max, vel = max |dq|",
+    "n_envs_used": 8,
+    "n_envs_reset": 0,
+    "per_joint": [
+      {
+        "joint": "left_hip_yaw",
+        "amp_deg_median": 18.557844161987305,
+        "amp_deg_p90": 26.016244888305664,
+        "peak_vel_rad_s": 3.7715816497802734
+      },
+      {
+        "joint": "left_hip_roll",
+        "amp_deg_median": 11.520574569702148,
+        "amp_deg_p90": 13.491326332092285,
+        "peak_vel_rad_s": 3.4474823474884033
+      },
+      {
+        "joint": "left_hip_pitch",
+        "amp_deg_median": 24.17624855041504,
+        "amp_deg_p90": 29.39748191833496,
+        "peak_vel_rad_s": 4.687216281890869
+      },
+      {
+        "joint": "left_knee",
+        "amp_deg_median": 44.09131622314453,
+        "amp_deg_p90": 49.09560775756836,
+        "peak_vel_rad_s": 5.526612758636475
+      },
+      {
+        "joint": "left_ankle",
+        "amp_deg_median": 30.342626571655273,
+        "amp_deg_p90": 39.828739166259766,
+        "peak_vel_rad_s": 5.336787700653076
+      },
+      {
+        "joint": "neck_pitch",
+        "amp_deg_median": 28.8398494720459,
+        "amp_deg_p90": 41.94931411743164,
+        "peak_vel_rad_s": 4.6545329093933105
+      },
+      {
+        "joint": "head_pitch",
+        "amp_deg_median": 36.18555450439453,
+        "amp_deg_p90": 54.698699951171875,
+        "peak_vel_rad_s": 5.645474433898926
+      },
+      {
+        "joint": "head_yaw",
+        "amp_deg_median": 54.92881393432617,
+        "amp_deg_p90": 84.8246841430664,
+        "peak_vel_rad_s": 5.317047119140625
+      },
+      {
+        "joint": "head_roll",
+        "amp_deg_median": 18.468746185302734,
+        "amp_deg_p90": 27.908363342285156,
+        "peak_vel_rad_s": 3.8087351322174072
+      },
+      {
+        "joint": "right_hip_yaw",
+        "amp_deg_median": 17.719430923461914,
+        "amp_deg_p90": 21.662609100341797,
+        "peak_vel_rad_s": 4.112584590911865
+      },
+      {
+        "joint": "right_hip_roll",
+        "amp_deg_median": 14.772053718566895,
+        "amp_deg_p90": 17.77666664123535,
+        "peak_vel_rad_s": 4.511578559875488
+      },
+      {
+        "joint": "right_hip_pitch",
+        "amp_deg_median": 23.5291748046875,
+        "amp_deg_p90": 28.338947296142578,
+        "peak_vel_rad_s": 4.715998649597168
+      },
+      {
+        "joint": "right_knee",
+        "amp_deg_median": 43.58869171142578,
+        "amp_deg_p90": 50.22071838378906,
+        "peak_vel_rad_s": 5.373623847961426
+      },
+      {
+        "joint": "right_ankle",
+        "amp_deg_median": 29.310773849487305,
+        "amp_deg_p90": 35.128143310546875,
+        "peak_vel_rad_s": 4.929086208343506
+      }
+    ],
+    "amp_deg_median_max": 54.92881393432617,
+    "amp_deg_median_max_joint": "head_yaw",
+    "peak_vel_rad_s_max": 5.645474433898926,
+    "peak_vel_rad_s_max_joint": "head_pitch"
+  },
+  "metric_window": {
+    "window_steps": 200,
+    "step_dt": 0.02,
+    "resampling_time_range_s": [
+      4.0,
+      4.0
+    ],
+    "max_command_step": 200.0,
+    "ratio_window_over_max": 1.0,
+    "is_true_mean": true,
+    "note": "error_vel_xy is a true m/s mean only when is_true_mean is true; otherwise multiply by ratio_window_over_max before comparing."
+  },
+  "per_env": {
+    "note": "per-env values; sem = std/sqrt(n) over the env axis only, which is the uncertainty of the mean above",
+    "vx_mean": {
+      "n": 8,
+      "mean": 0.1117507847957313,
+      "std": 0.03129935355466694,
+      "sem": 0.011065992572630131,
+      "p10": 0.07554460577666759,
+      "p50": 0.11505181714892387,
+      "p90": 0.13967786282300948,
+      "min": 0.054798420518636703,
+      "max": 0.15720412135124207,
+      "values": [
+        0.119208,
+        0.129032,
+        0.132167,
+        0.084436,
+        0.054798,
+        0.110895,
+        0.157204,
+        0.106266
+      ]
+    },
+    "error_vel_xy": {
+      "n": 8,
+      "mean": 0.3163651041686535,
+      "std": 0.02963087351048854,
+      "sem": 0.010476095795873643,
+      "p10": 0.2906578093767166,
+      "p50": 0.31254418194293976,
+      "p90": 0.35267063677310945,
+      "min": 0.2755018174648285,
+      "max": 0.36969003081321716,
+      "values": [
+        0.307434,
+        0.29825,
+        0.297153,
+        0.345377,
+        0.36969,
+        0.317655,
+        0.275502,
+        0.319861
+      ]
+    },
+    "error_vel_yaw": {
+      "n": 8,
+      "mean": 0.670387327671051,
+      "std": 0.06456104126278842,
+      "sem": 0.022825775038691095,
+      "p10": 0.6144058585166932,
+      "p50": 0.6568361818790436,
+      "p90": 0.7456691861152649,
+      "min": 0.5795308947563171,
+      "max": 0.7945559024810791,
+      "values": [
+        0.629352,
+        0.64866,
+        0.794556,
+        0.579531,
+        0.724718,
+        0.660316,
+        0.653356,
+        0.67261
+      ]
+    },
+    "dx_body": {
+      "n": 8,
+      "mean": 0.4075465388596058,
+      "std": 0.117119805735525,
+      "sem": 0.04140810442342041,
+      "p10": 0.2866682022809982,
+      "p50": 0.4220409691333771,
+      "p90": 0.5171022474765777,
+      "min": 0.2140311300754547,
+      "max": 0.6039974689483643,
+      "values": [
+        0.450936,
+        0.479861,
+        0.444855,
+        0.349666,
+        0.214031,
+        0.317798,
+        0.603997,
+        0.399227
+      ]
+    },
+    "abs_dy_body": {
+      "n": 8,
+      "mean": 0.1301204850897193,
+      "std": 0.09982389948552081,
+      "sem": 0.035293078125348036,
+      "p10": 0.045797821879386906,
+      "p50": 0.0934244655072689,
+      "p90": 0.2734369397163391,
+      "min": 0.0073309242725372314,
+      "max": 0.29540660977363586,
+      "values": [
+        0.097952,
+        0.139675,
+        0.264021,
+        0.007331,
+        0.088897,
+        0.295407,
+        0.085398,
+        0.062284
+      ]
+    },
+    "dy_body_signed": {
+      "n": 8,
+      "mean": -0.04848953802138567,
+      "std": 0.16318023300244214,
+      "sem": 0.05769292465581384,
+      "p10": -0.2734369397163391,
+      "p50": -0.03480727970600128,
+      "p90": 0.11046860739588737,
+      "min": -0.29540660977363586,
+      "max": 0.1396748572587967,
+      "values": [
+        0.097952,
+        0.139675,
+        -0.264021,
+        -0.007331,
+        0.088897,
+        -0.295407,
+        -0.085398,
+        -0.062284
+      ]
+    },
+    "yaw_drift_signed_deg_s": {
+      "n": 8,
+      "mean": -3.8059444427490234,
+      "std": 4.799290790427802,
+      "sem": 1.6968055313988222,
+      "p10": -9.210343933105468,
+      "p50": -5.061347961425781,
+      "p90": 1.672064208984375,
+      "min": -9.348739624023438,
+      "max": 1.6726837158203125,
+      "values": [
+        1.502594,
+        1.672684,
+        -9.151031,
+        -6.672165,
+        -6.150131,
+        -9.34874,
+        1.671799,
+        -3.972565
+      ]
+    },
+    "upright": {
+      "n": 8,
+      "mean": 0.9978876635432243,
+      "std": 0.0009115603786369462,
+      "sem": 0.00032228526259758073,
+      "p10": 0.9970982551574707,
+      "p50": 0.9980318248271942,
+      "p90": 0.9986936807632446,
+      "min": 0.9958509802818298,
+      "max": 0.9987413287162781,
+      "values": [
+        0.998343,
+        0.998673,
+        0.995851,
+        0.997633,
+        0.998015,
+        0.998048,
+        0.998741,
+        0.997796
+      ]
+    },
+    "yaw_drift_deg_s": {
+      "n": 8,
+      "mean": 5.017715930938721,
+      "std": 3.28838744878044,
+      "sem": 1.16262053210069,
+      "p10": 1.6210399270057678,
+      "p50": 5.061350107192993,
+      "p90": 9.210349845886231,
+      "min": 1.5026005506515503,
+      "max": 9.34874153137207,
+      "values": [
+        1.502601,
+        1.672687,
+        9.151039,
+        6.672159,
+        6.150134,
+        9.348742,
+        1.6718,
+        3.972566
+      ]
+    }
+  },
+  "gates": {
+    "command_frozen_ok": true,
+    "metric_window_ok": true,
+    "sensor_zero_ok": true,
+    "measurement_consistent": true,
+    "tracks_half_command": false,
+    "translates_forward": true,
+    "not_sideways": true,
+    "error_vel_xy_le_0.25": false,
+    "no_fall": true,
+    "stays_upright": true,
+    "feet_clear_8mm": true,
+    "steps_alternate": true
+  },
+  "passed": [
+    "command_frozen_ok",
+    "metric_window_ok",
+    "sensor_zero_ok",
+    "measurement_consistent",
+    "translates_forward",
+    "not_sideways",
+    "no_fall",
+    "stays_upright",
+    "feet_clear_8mm",
+    "steps_alternate"
+  ],
+  "failed": [
+    "tracks_half_command",
+    "error_vel_xy_le_0.25"
+  ]
+}

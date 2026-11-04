@@ -13,7 +13,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 植物 live | OpenMicroDuck **m5**（`kp_fw=32`）；A/B 后已切回 |
+| 植物 live | **hd1910_kp8**（`official_m6_stslaw.json`、`kp_fw=8.0`；`apply_to_live.py --check` 回报）。早先的 m5/kp32 只用于跨 plant 对照，不再是 live |
 | GPU smoke 64×5 | ✅ `hd1910_smoke_1026_gpu2` |
 | 探索 1024×2000 | ✅；P-walk **未过**（ratio≈0.34） |
 | 探索 4096×2000 | ✅；P-walk **过**（vx0.4 ratio≈**0.62**）；ONNX `out/hd1910_explore_4096x2000_1026_it1999.onnx` |
@@ -29,7 +29,8 @@
 | heading A/B 控制臂（2026-11-03 晚备好） | 🟡 发现原"干净对照"（11-02）还多一个 `ang_vel_z ±1.0`（`--ang-vel-z-clip` 被静默忽略）⇒ 先补 `set_ang_vel_z_range`；控制臂脚本 + 反向闸门 + 配对判决全部就绪并冒烟通过，**待次日 3.28 h 开跑**（`explore_heading_control.sh`） |
 | 控制臂训练（2026-11-04） | 🟢 **跑中**：`2026-11-04_08-38-17_p8ctl_030_1104`（起步核对全绿；早期曲线与奖励臂基本重合，err_yaw 略高符合预期），ETA ~11:40 |
 | ONNX + parity（kp8 候选 2999） | ✅ `artifacts/flat_walk/checkpoints/p8head_2999.onnx`；parity max\|Δ\|**3.53e−6**、负对照 53348× 容差（`evals/onnx_parity_p8head_2999.json`）——P4 链第一步完成，A/B 判决后如换臂重导即可 |
-| cmd 包线扫点工具 | ✅ `tools/hd1910/sweep_cmd_envelope.sh`（0.15/0.2/0.3/0.4×3 seed，与冻结基线同口径；只报数不判决），训练完与 A/B 扫点一起排 GPU 队 |
+| cmd 包线扫点工具 | ✅ `tools/hd1910/sweep_cmd_envelope.sh`（0.15/0.2/0.3/0.4×3 seed，与冻结基线同口径；只报数不判决），训练完与 A/B 扫点一起排 GPU 队；`TASK=` 可换域 |
+| **齿隙域（backlash，2026-11-04）** | ✅ **上游自带**，非自研：`add_backlash.py` 串 `passive_<joint>_backlash` 硬限位铰链 + `BacklashEncoderBamActuator`（PD 读输出侧）+ obs 换 `*_rel_backlash`；任务 `Mjlab-Velocity-Flat-Backlash-MicroDuck` 与 **hd1910 kp8 零改动组合**（执行器共用 `_BAM_ACTUATOR_KWARGS`）。闸门 `check_backlash_task.py` 6 项自检全绿（obs/act **61/14 不变**、nq 21→35）。**剂量曲线**（同策略三 seed CPU）：0.5°(厂标) → err_yaw **+9.2%**、1.0° → +15.8%、2.0°(上游默认) → +17.7%，**均不摔不降速** ⇒ 真机量级约 +9%，不进单独 3.3 h run，并入 P4 候选那一版 |
 
 ---
 
@@ -642,6 +643,64 @@ max|Δ|=3.53e−6）；cmd 包线工具 `sweep_cmd_envelope.sh` 备好。彩排�
 - **部署首跑注意**（社区高频翻车点，已核对上游随机化覆盖）：训练域 `foot_friction=(0.7,1.3)`
   假设高摩擦脚垫 ⇒ 真机首跑选橡胶垫/地毯，**别在瓷砖上首跑**（侧滑是社区头号 sim2real 症状）；
   IMU 角速度 z 符号、关节零位是上电第一检查项。
+
+### P4 附 · 齿隙域（backlash）：不用自研，上游已给，且与 kp8 零改动组合
+
+**结论先说**：之前写的"plant 无齿隙字段、二期再做"是**错的定位**——齿隙不是 plant 参数，
+而是**任务域**。上游 `microduck_rl@develop` 自带完整实现，且与我们换过的 hd1910 植物自动兼容。
+
+三件套（源码位置，已逐行核对）：
+
+| 组件 | 位置 | 做的事 |
+|---|---|---|
+| `add_backlash.py` | `robot/microduck/` | 给每个 `class="chosen_actuator"` 关节串一根**不驱动**的 `passive_<joint>_backlash` 铰链，`range=±deg/2`、`limited=true`、`solreflimit=0.01 1`（否则小行程下限位会被冲击穿透 ~2×）。死区内电机转负载不动，撞限位后刚性传递 ⇒ **方向相关**，加噪声模拟不出来 |
+| `BacklashEncoderBamActuator` | `actuator/friction_dr_bam.py` | 固件位置环读 `qpos[main]+qpos[backlash]`（输出侧编码器），与真舵机一致；缺失齿隙关节时自动退化为普通 BAM |
+| `make_backlash_variant` | `tasks/backlash.py` | joint_pos/vel obs 换 `*_rel_backlash`；`dof_pos_limits` 奖励收窄到舵机关节（齿隙关节终生贴限位，否则喂永久越界惩罚）；`pose` 正则加 `^(?!passive_.*_backlash)` 防歧义 |
+
+**为什么能直接接我们的 plant**：`backlash_actuators = BacklashEncoderBamActuatorCfg(**_BAM_ACTUATOR_KWARGS)`，
+与主任务**共用同一块 kwargs**，而 `apply_to_live.py --plant` 改的正是那块 ⇒ 实测 backlash 任务的执行器
+就是 `json_path=official_m6_stslaw.json`、`kp_fw=8.0`。
+
+**实测（2026-11-04，`check_backlash_task.py` 闸门）**：
+- 29 关节 = 14 舵机 + 14 齿隙（+1 基座自由关节，`nq 21→35`），14 根齿隙全部 `limited`、范围 ±0.017453 rad（**2° 总游隙**）；
+- **obs 61 / action 14 不变** ⇒ ONNX、`infer_policy.py`、robotd 一行都不用改（导出侧已有 `passive_*` 过滤补丁）；
+- 奖励键与基础任务逐键一致、命令范围一致（只换域，不换任务）；
+- 建环境 + 两步 `step` 无 NaN。
+
+**同策略跨域实测**（`model_2999`，CPU 8env×4s，seed 11/22/33；`--backlash-deg` 可扫游隙，
+读数落 `evals/p8head_backlash_diag/`）：
+
+| 总游隙 | vx（mean±sd）| err_yaw（mean±sd）| 配对中位 Δerr_yaw | 同号 |
+|---|---|---|---|---|
+| flat（0°）| 0.1434 ± 0.0294 | 0.6930 ± 0.0413 | — | — |
+| **0.5°（HD1910 厂标上限）** | 0.1571 ± 0.0158 | **0.7667** ± 0.0339 | **+9.2%** | 3/3 |
+| 1.0° | 0.1647 ± 0.0168 | 0.7956 ± 0.0193 | +15.8% | 3/3 |
+| 2.0°（上游默认，XL330 级）| 0.1648 ± 0.0159 | 0.8115 ± 0.0340 | +17.7% | 3/3 |
+
+三条读法：
+1. **单调剂量响应且饱和**：0.5°→2° 只再涨 8 个点 ⇒ 约一半效应来自**反馈路径**（PD/obs 读输出侧），
+   不是死区宽度本身。**只要开齿隙域就有固定成本**，这决定了"为齿隙重训"的收益上限有限。
+2. **不摔、vx 不降**（vx 的 sd 20%，不作判据）。齿隙吃的是**偏航精度**，与"脚踝游隙 ⇒ 转向松"
+   的物理预期一致。
+3. 结构已核：16 body / 75 geom / 7 site / 质量 0.7372 / 14 舵机行程**全部相同**，只多 14 根被动铰链
+   ⇒ 差异可归因于齿隙本身，不是模型换了别的。
+
+⚠️ **仪器限制**：CPU 8env×4s，flat 臂 0.143 比冻结基线（GPU 32env×8s）的 0.163 低 12%
+⇒ **只能同仪器纵比，不能与冻结基线横比**；上 GPU 后应重跑 32env×8s×3seed 再定论。
+
+⚠️ **踩过的坑**：`--backlash-deg` 首版读回用 `startswith("passive_")` 筛关节，而编译模型名带实体前缀
+（`robot/passive_...`）⇒ 读到 **0 个关节却"无异常"**，一个未验证的读数就写进了 JSON。现已改为
+**0 个关节即失败** + 逐关节回读编译模型的 `jnt_range` 对齐请求值（实测 `actual_half_range_rad=[0.004363]`
+= 0.25°）。凡"改参数"的开关都必须这样回读，不能只看 flag 生效。
+
+**结论与队列位置（2026-11-04 修正）**：
+- **2° 是上游按 XL330 级行星减速给的默认，HD1910 厂标只有 ≤0.5°（4× 之差）** ⇒ 早先"2° 吃掉 18%"
+  是**最坏上界**，真机量级是 **~+9% 的瞬时偏航误差**，不摔、不降速。
+- 因此**不值得现在就为齿隙单开一条 3.3 h 的 run**：收益小，且会引入新变量。正确位置是
+  **A/B 判决出胜出配方后，把齿隙域并进 P4 部署候选那一版**（同一配方 + 实测游隙）。
+- 台架到手必做（1 分钟）：抓住舵机、晃舵盘量游隙；`--backlash-deg` 直接吃这个数，无需改 XML/代码。
+  若实测接近 1.5–2°，则齿隙域从"可选"升为"该单独训一版"。
+
 
 ### P5 · 阶段 3 自动跟随（偏航修好后才有意义）
 

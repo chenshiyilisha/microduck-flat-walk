@@ -86,6 +86,73 @@ def pin_curriculum(env) -> int:
     return before
 
 
+def set_backlash_deg(cfg, deg: float) -> dict:
+    """Rewrite the passive backlash joint ranges to +/- deg/2 (deg = TOTAL play).
+
+    Why this exists: upstream bakes the play into the MJCF (``add_backlash.py
+    --backlash-deg 2.0``), i.e. 2 deg total, which is the XL330-class planetary
+    default. The HD1910 datasheet says **<= 0.5 deg**, so the shipped variant is
+    4x the real servo's play. Reading a 2-deg result and calling it "the robot's
+    backlash cost" would be comparing against the wrong machine. This wrapper
+    rewrites the ranges on the loaded spec, so the same registered task can be
+    evaluated at the datasheet value, at the upstream default, and anywhere in
+    between -- without forking the task or regenerating XMLs.
+
+    Readback is mandatory: the caller asserts the compiled model really carries
+    the requested ranges, because a silently-ignored flag is exactly the failure
+    class this repo keeps getting bitten by.
+    """
+    import math
+
+    want = math.radians(deg) / 2.0
+    inner = cfg.scene.entities["robot"].spec_fn
+
+    def spec_fn():
+        spec = inner()
+        n = 0
+        for j in spec.joints:
+            if j.name.startswith("passive_") and j.name.endswith("_backlash"):
+                j.range[:] = [-want, want]
+                j.limited = True
+                n += 1
+        if n == 0:
+            raise SystemExit(
+                "--backlash-deg was given but this model has no passive_*_backlash "
+                "joints; use the Backlash task variant."
+            )
+        return spec
+
+    cfg.scene.entities["robot"].spec_fn = spec_fn
+    return {"requested_deg": deg, "half_range_rad": want}
+
+
+def backlash_readback(env, want: float) -> dict:
+    """Read the COMPILED model's ranges back; refuse if they are not what we asked.
+
+    mjlab prefixes entity joint names with ``<entity>/`` in the compiled model
+    (``robot/passive_left_hip_yaw_backlash``), so a ``startswith("passive_")``
+    filter matches nothing -- which is how the first version of this readback
+    reported ``joints: 0`` and let an unverified run through. A zero count is
+    therefore an error, not an empty success.
+    """
+    import mujoco
+
+    m = env.sim._mj_model
+    got = {}
+    for i in range(m.njnt):
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, i) or ""
+        if "passive_" in name and name.endswith("_backlash"):
+            got[name] = (float(m.jnt_range[i][0]), float(m.jnt_range[i][1]))
+    if not got:
+        raise SystemExit(
+            "backlash readback found 0 passive_*_backlash joints in the compiled "
+            "model -- the play value was NOT verified, refusing to report a reading"
+        )
+    bad = [n for n, (lo, hi) in got.items() if abs(hi - want) > 1e-6 or abs(lo + want) > 1e-6]
+    return {"joints": len(got), "bad": bad[:3],
+            "actual_half_range_rad": sorted({round(v[1], 6) for v in got.values()})}
+
+
 def freeze_command(cfg, vx: float, vy: float, wz: float, duration: float) -> None:
     """Hold one command for the whole episode.
 
@@ -196,7 +263,8 @@ def _read_metrics(u) -> dict[str, float]:
 
 
 def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
-        solver_iters=None, solver_ls=None, solver_ncon=None, seed=None):
+        solver_iters=None, solver_ls=None, solver_ncon=None, seed=None,
+        backlash_deg=None):
     from dataclasses import asdict
 
     from mjlab.envs import ManagerBasedRlEnv
@@ -237,7 +305,20 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
 
     solver = override_solver(env_cfg, solver_iters, solver_ls, solver_ncon)
 
+    # Only meaningful on the Backlash variant; the CLI refuses otherwise, so a
+    # plain task can never be "evaluated with 0.5 deg" and silently ignored.
+    backlash = None
+    if backlash_deg is not None:
+        backlash = set_backlash_deg(env_cfg, backlash_deg)
+
     env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
+    if backlash is not None:
+        backlash.update(backlash_readback(env, backlash["half_range_rad"]))
+        if backlash["bad"]:
+            raise SystemExit(
+                f"backlash range readback failed: {backlash['bad']} not +/-"
+                f"{backlash['half_range_rad']:.6f} rad -- the rewrite did not take"
+            )
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
@@ -715,6 +796,10 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         # it (the actuator lives one import deeper, in microduck_constants), and
         # it moves vx from 0.316/0%-falls to 0.109/100%-falls. Never omit this.
         "plant_fingerprint": _plant_fingerprint(),
+        # Null on a non-backlash task. Non-null records the play actually
+        # compiled into the model, so a 0.5-deg reading can never be mistaken
+        # for a 2-deg one in a later table.
+        "backlash": backlash,
         "solver": solver,
         "play_cfg": play,
         "command": frozen,
@@ -764,11 +849,21 @@ def main() -> int:
                          "behaviour. Three different seeds = three independent "
                          "repeats (needed for quantities whose single-run CV is "
                          "of order tens of percent).")
+    ap.add_argument("--backlash-deg", type=float, default=None,
+                    help="TOTAL gear play in degrees for the Backlash task "
+                         "variant (upstream bakes 2.0 = XL330-class; the HD1910 "
+                         "datasheet says <= 0.5). Rewrites the passive joint "
+                         "ranges and asserts the compiled model matches.")
     a = ap.parse_args()
+
+    # Mechanical guard: a play value on a task that has no backlash joints would
+    # be a silent no-op, and the JSON would then claim a domain it never ran in.
+    if a.backlash_deg is not None and "Backlash" not in a.task:
+        ap.error(f"--backlash-deg needs a Backlash task; got {a.task}")
 
     r = run(a.task, a.checkpoint, a.num_envs, a.seconds, a.device,
             a.cmd_vx, a.cmd_vy, a.cmd_wz, a.plant, a.play,
-            a.solver_iters, a.solver_ls, a.solver_ncon, a.seed)
+            a.solver_iters, a.solver_ls, a.solver_ncon, a.seed, a.backlash_deg)
 
     if a.out:
         p = Path(a.out)

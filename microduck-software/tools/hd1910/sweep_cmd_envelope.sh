@@ -28,26 +28,33 @@ SEEDS="${SEEDS:-11 22 33}"
 ENVS="${ENVS:-32}"
 SECONDS_PER_RUN="${SECONDS_PER_RUN:-8}"
 OUT_ROOT="${OUT_ROOT:-../artifacts/flat_walk/evals/cmd_envelope}"
+# 域可换（默认无齿隙 Flat）。齿隙域：TASK=Mjlab-Velocity-Flat-Backlash-MicroDuck
+TASK="${TASK:-Mjlab-Velocity-Flat-MicroDuck}"
+case "$TASK" in
+  *Backlash*) TASK_TAG="_bl" ;;
+  *) TASK_TAG="" ;;
+esac
+DEVICE="${DEVICE:-cuda:0}"
 
 [ -f "$CKPT" ] || { echo "FAIL: ckpt not found: $CKPT" >&2; exit 2; }
 name=$(basename "$CKPT" .pt)
 
 run_one() {
   local cmd="$1" seed="$2"
-  local out="$OUT_ROOT/${TAG}/${name}_vx${cmd}_s${seed}.json"
+  local out="$OUT_ROOT/${TAG}/${name}_vx${cmd}_s${seed}${TASK_TAG}.json"
   if [ -f "$out" ]; then echo "  skip vx=$cmd s=$seed (have $out)"; return 0; fi
   mkdir -p "$(dirname "$out")"
   echo "  eval vx=$cmd seed=$seed -> $out"
   if [ "${DRY:-0}" = "1" ]; then return 0; fi
-  MUJOCO_GL=glfw "$PY" tools/eval_velocity_in_sim.py \
+  MUJOCO_GL=glfw "$PY" tools/eval_velocity_in_sim.py --task "$TASK" \
     --checkpoint "$CKPT" --num-envs "$ENVS" --seconds "$SECONDS_PER_RUN" \
-    --device cuda:0 --cmd-vx "$cmd" --seed "$seed" \
+    --device "$DEVICE" --cmd-vx "$cmd" --seed "$seed" \
     --solver-iters 100 --solver-ls 50 --out "$out" > /dev/null
   [ -f "$out" ] || { echo "FAIL: no JSON for vx=$cmd s=$seed" >&2; exit 2; }
 }
 
 echo "== cmd envelope: $name (plant must be hd1910_kp8) =="
-echo "   cmds=[$CMDS] seeds=[$SEEDS] ${ENVS}env x ${SECONDS_PER_RUN}s"
+echo "   task=$TASK cmds=[$CMDS] seeds=[$SEEDS] ${ENVS}env x ${SECONDS_PER_RUN}s"
 for cmd in $CMDS; do
   for seed in $SEEDS; do
     run_one "$cmd" "$seed"
