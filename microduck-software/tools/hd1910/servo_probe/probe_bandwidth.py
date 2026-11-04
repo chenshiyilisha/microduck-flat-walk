@@ -142,6 +142,55 @@ def gains(rec: list[tuple[float, int, int]], f: float, cycles: int = 2):
     return (r["gain"], r["lag"]) if r["ok"] else None
 
 
+def steady(rec: list[tuple[float, int, int]], freq: float, tol: float = 0.05):
+    """逐周期峰峰值 → (最后两周期是否收敛, 每周期 p2p 列表)。
+
+    稳态判据与拟合无关：真正的极限环不会自己收敛，而没衰减完的初始瞬态会。
+    2026-11-04 仿真侧那个"4 Hz 自己振起来"就是这条：p2p 从 941 一路降到 92，
+    因为仿真从 q=0 起步却立刻命令 177°，而 4 Hz 全程只有 1.0 s。
+    """
+    per = 1.0 / freq
+    pps = []
+    n_cyc = int(rec[-1][0] / per) + 1 if rec else 0
+    for c in range(n_cyc):
+        seg = [r[2] for r in rec if c * per <= r[0] < (c + 1) * per]
+        if len(seg) > 3:
+            pps.append(max(seg) - min(seg))
+    if len(pps) < 3:
+        return False, pps
+    a, b = pps[-2], pps[-1]
+    return (abs(b - a) <= tol * max(a, b, 1e-9)), pps
+
+
+def one_over_f(points: dict, amp_deg: float, tol: float = 0.10) -> tuple[bool, dict, float]:
+    """高频段 `gain·2πf·A` 变平 ⇔ gain ∝ 1/f。返回 (是否已进入 1/f 段, v_peak 表, 拐点估计 Hz)。
+
+    ⚠️ **这条判据只能说"进入 1/f 段"，不能说"速度饱和"**（2026-11-04 我自己判错过）。
+    一阶闭环的远场是 gain≈fc/f，同样给出平坦的 v_peak；而真的速度饱和也给平坦的
+    v_peak。两者形状一模一样，区分方法是**改环路增益**：
+      - 台架 mode4：P=8/16/24 → 2 Hz gain 0.603/0.819/0.949 ⇒ 拐点随 P 上移 ⇒ 是带宽；
+      - 真正的速度饱和不会因为 P 变大而变快。
+    同一批数据我还一度用"平台值 103 °/s = 规格书 4.6 V 折算 103.6"给它背书 —— 那是
+    巧合：P=24 时读到 157 °/s，已经超过规格书折算值，说明那个"上限"根本不存在。
+    """
+    fs = sorted(points)
+    vs = {f: points[f] * 2.0 * math.pi * f * amp_deg for f in fs}
+    if len(fs) < 2:
+        return False, vs, float("nan")
+    flat = [fs[-1]]
+    for f in reversed(fs[:-1]):
+        if abs(vs[flat[0]] - vs[f]) <= tol * max(vs[flat[0]], vs[f], 1e-9):
+            flat.append(f)
+        else:
+            break
+    is1f = len(flat) >= 2
+    # 拐点：1/f 段的直线 gain = fc/f 外推到 gain=1
+    fc = float("nan")
+    if is1f:
+        fc = sum(points[f] * f for f in flat) / len(flat)
+    return is1f, vs, fc
+
+
 def rate_stats(rec: list[tuple[float, int, int]], f: float) -> dict:
     """这次采集到底能不能用 —— 采样密度与间隔抖动。
 
@@ -284,20 +333,56 @@ def selftest() -> int:
         globals()["_fit"] = real_fit
     chk("拟合振幅超过峰峰一半 → 必须判作废", not bad_an["ok"])
 
+    # 稳态判据：定幅信号必须判"收敛"；逐周期衰减的必须判"未收敛"
+    ok_s, _ = steady(synth(2.0, 0.80, -25.0, cycles=4), 2.0)
+    # ⚠️ 不能用 synth(..., gain=1.0) 造衰减：gain=1 时 p−c ≡ 0，衰减分量被抹平，
+    # 四个周期的 p2p 全是 0（这条第一次就写错了，自检自己逮到的）。
+    decay = [(t, int(round(2014 + 150 * math.sin(2 * math.pi * 2.0 * t))),
+              int(round(2014 + 150 * math.exp(-t / 0.4) * math.sin(2 * math.pi * 2.0 * t - 0.3))))
+             for t in (i * TICK for i in range(int(2.0 / TICK)))]
+    bad_s, pps_d = steady(decay, 2.0)
+    chk(f"定幅→收敛 / 衰减→未收敛（逐周期 {[round(p) for p in pps_d]}）",
+        ok_s and not bad_s)
+
+    # 1/f 判据：真数据（台架 mode 4）必须认出来；未被衰减的跟踪必须不误判
+    f1, vs, fc = one_over_f({0.5: 0.96, 1.0: 0.85, 2.0: 0.60, 3.0: 0.43, 4.0: 0.30}, 13.2)
+    chk("台架 mode 4 的 2–4 Hz 判为已进入 1/f 段（v_peak "
+        + "/".join(f"{vs[f]:.0f}" for f in (2.0, 3.0, 4.0))
+        + f" °/s，拐点 ~{fc:.1f} Hz）", f1 and 1.0 < fc < 1.5)
+    f2, vs2, _ = one_over_f({0.5: 1.0, 1.0: 1.0, 2.0: 0.95, 3.0: 0.90, 4.0: 0.85}, 13.2)
+    chk("未被衰减的理想跟踪不得判成 1/f（v_peak 递增到 "
+        f"{vs2[4.0]:.0f} °/s）", not f2)
+
     print(f"  self-checks: {total - bad}/{total} pass")
     return 0 if bad == 0 else 1
 
 
 def measure(bus, sid: int, *, mode: int, freq: float, amp: int, center: int,
-            speed: int, cycles: int = 3) -> list[tuple[float, int, int]]:
+            speed: int, cycles: int = 3, settle_s: float = 1.0,
+            p_gain: int | None = None) -> list[tuple[float, int, int]]:
     bus.write_u8(sid, REG_MODE, mode)
     time.sleep(0.25)
     if bus.read_u8(sid, REG_MODE) != mode:
         return []
+    # ⚠️ P 必须写在切 mode **之后**：切 mode 会从 EEPROM 重载配置，把刚写进 RAM 的
+    # P（reg50）冲掉（memory: 2026-11-04 EEPROM 时序那条硬约束②）。
+    if p_gain is not None:
+        bus.write_u8(sid, ident.REG_P_RAM, p_gain)
+        time.sleep(0.05)
     bus.write_u16(sid, ident.REG_SPEED, speed)
     time.sleep(0.03)
     bus.write_u8(sid, REG_ACCEL, 0)
     time.sleep(0.03)
+    # 先站到中心再扫：否则"最后 2 个周期"里还留着从上一位置走到中心的阶跃振铃。
+    if settle_s > 0:
+        t_set = time.perf_counter()
+        nxt = t_set
+        while time.perf_counter() - t_set < settle_s:
+            bus.write_u16(sid, ident.REG_GOAL, center)
+            nxt += TICK
+            slp = nxt - time.perf_counter()
+            if slp > 0:
+                time.sleep(slp)
     w = 2.0 * math.pi * freq
     dur = (cycles + 1) / freq                   # 多跑一个周期再取后两个，避开起始瞬态
     rec = []
@@ -331,6 +416,8 @@ def main() -> int:
     ap.add_argument("--speed", type=int, default=RUNNING_SPEED,
                     help="reg46 速度上限；默认取部署值 250（0 = 停转，不是无限）")
     ap.add_argument("--freqs", default=",".join(str(f) for f in FREQS))
+    ap.add_argument("--p-gain", type=int, default=None,
+                    help="写 RAM reg50（在切 mode 之后写）；不给就用手上现成的")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -358,7 +445,7 @@ def main() -> int:
                 got = {}
                 for f in freqs:
                     rec = measure(bus, sid, mode=mode, freq=f, amp=a.amp,
-                                  center=a.center, speed=a.speed)
+                                  center=a.center, speed=a.speed, p_gain=a.p_gain)
                     an = analyze(rec, f)
                     rs = rate_stats(rec, f)
                     dens = (f"{rs['rate']:.1f} 点/s，每周期 {rs['per_period']:.1f} 点，"
@@ -366,11 +453,18 @@ def main() -> int:
                             if rs.get("rate") else rs.get("why", ""))
                     if an["ok"]:
                         got[f] = (an["gain"], an["lag"])
+                        vp = an["gain"] * 2 * math.pi * f * a.amp * 360 / 4096
+                        st, pps = steady(rec, f)
                         print(f"    mode{mode} {f:4.1f} Hz: gain {an['gain']:.3f}  "
-                              f"lag {an['lag']:+.1f}°  （pos 峰峰 {an['p2p']} 步 /"
-                              f" 振幅 {an['amp_pos']:.0f}；{an['n']} 点；{dens}）")
+                              f"lag {an['lag']:+.1f}°  峰值角速度 {vp:5.0f} °/s  "
+                              f"（pos 峰峰 {an['p2p']} 步 / 振幅 {an['amp_pos']:.0f}；"
+                              f"{an['n']} 点；{dens}）")
                         if not rs.get("valid"):
                             print(f"      但采集质量不合格（{rs['why']}）⇒ 该频点作废")
+                            got.pop(f, None)
+                        elif not st:
+                            print(f"      但逐周期峰峰未收敛（{[round(p) for p in pps]}）"
+                                  f"⇒ 窗口里是瞬态，该频点作废")
                             got.pop(f, None)
                     else:
                         print(f"    mode{mode} {f:4.1f} Hz: 作废（{an['why']}）"
@@ -380,6 +474,13 @@ def main() -> int:
                     print("\n".join(notes))
                     print(f"    ⇒ mode{mode} 只保留 {usable}")
                 res[mode] = {f: got[f] for f in usable}
+                is1f, vs, fc = one_over_f({f: got[f][0] for f in usable},
+                                          a.amp * 360 / 4096)
+                if is1f:
+                    vmax = max(vs.values())
+                    print(f"    ⇒ mode{mode}: 已进入 1/f 段，等效拐点 ~{fc:.2f} Hz"
+                          f"（2 Hz 以上 gain·2πfA ≈ {vmax:.0f} °/s）"
+                          f"—— 这是**环路带宽**，不是速度上限：改 P 会移动拐点")
             # 收尾：模式恢复成进来时的，速度恢复成进来时的 —— 但进来时若读到 0
             # （= 停转），恢复 0 会把舵机冻住，下一次探针就以为舵机坏了。0 不是
             # 合法的工作值，改写成部署值。
