@@ -93,6 +93,7 @@ MUJOCO_GL=glfw .venv-mjlab/Scripts/python.exe tools/hd1910/probe_heading_loop.py
 | `server_pack/` | **Windows 训练机打包**（4070 Ti）：`make_transfer.ps1` + `bootstrap.ps1`（勿拷 venv） |
 | **`servo_probe/hd1910_ident.py baud` / `mode`** | **robotd 开机硬校验的两项 EEPROM**：reg6 要 `1`(500 kbps)、reg33 要 `0`；出厂是 `0`(1 Mbps) 和 `4`。`feetech.rs:386` 不符就拒绝打开总线，而"波特率错的舵机根本读不到"⇒ 症状与没上电一样。写入用**唯一验证过的时序**（解锁 0.25 → 写 0.50 → 上锁 0.50 → **断电回读**）；`set-id` 一并改用它（原来 0.05 s 窗口是假成功） |
 | **`servo_probe/identify_joints.py`** | **只读**解 `[bus] joint_ids`：逐关节提示"扳哪个、怎么扳"，每 ID 采 3 s 峰峰值，阈值 8 步(≈0.7°)、第二名须 < 第一名一半，否则判"分不清"——不猜。最后打印可粘贴的 `joint_ids = [...]`，并与 `model.rs:15` 参考表逐项对照。`--selftest` 10 项 |
+| **`verify_policy_contract.py`** | **策略 ↔ robotd 的观测/动作契约**，两个独立来源对质：Rust 侧从 `obs.rs` 的布局表解析、`model.rs` 的 `MOUTH_INDEX`/`DEFAULT_POSITION`、`duck-ipc-proto` 的 `JOINT_NAMES`；训练侧解析真跑那个 task 的 cfg（actor obs 项**顺序**+宽度）与编译后的 MuJoCo 模型（执行器顺序）。8 项：宽度 / 块序 / 关节序 / home 位姿 / 13 宽命令块拆分 / 动作映射 / 控制频率 / ONNX 图上名义站姿的动作幅值。`--selftest` 15 项，含 8 条负对照（换两根关节、home +1°、宽度少 1、块 0↔1 互换、action_scale=0.5、head↔body 互换、100 Hz） —— 其中六条（换关节序 / home / 块序 / 命令块内部 / action_scale / 频率）改完之后**61 这个总数一个都不变**，只盯宽度是看不见的 |
 | **`servo_probe/set_protection.py`** | **保护开关（reg19 卸力条件）落盘 + 断电复核**。判决 `13 = 电压+过热+过流`；**过载位(32)刻意不开**（kp8 带载稳态误差会被判成"被挡住"⇒ 卸力 2 s ⇒ 走路必摔）。`--apply` 写、`--verify` 断电后复核、`--selftest` 9 项。15 颗装机时逐颗跑 |
 
 ```bash

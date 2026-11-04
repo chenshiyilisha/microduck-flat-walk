@@ -1360,3 +1360,62 @@ robotd 下一次启动覆盖。真正只能手写的是 EEPROM 那一组（ID、
 | `servo_probe/hd1910_ident.py mode` | reg33 → 0，同一时序；并说明 mode 4→0 的带宽损失已由 `position_kp=16` 抵掉 |
 | `servo_probe/identify_joints.py` | **只读**解 `joint_ids`：逐关节提示"扳哪个"，8 步（≈0.7°）阈值 + "第二名必须 < 第一名一半"，两个一起动就判"分不清"，最后打印可粘贴的 `joint_ids = [...]` |
 | `audit_robotd_toml.py` | 白名单（源码推导）+ `[battery]`/`[thermal]` 判据 + `joint_ids` 与参考表差异 WARN；自检 24 → **42 项** |
+
+---
+
+## 10. 策略 ↔ robotd 的接口契约（2026-11-04，两个来源对质，8 项全绿）
+
+### 10.1 为什么单独查这一项
+
+`duck-control/src/obs.rs` 的头注释自己写着 **"This is the highest-risk code in the crate"**，理由写得比我能写的更准：
+
+> A wrong offset does not fail loudly — it produces a plausible-looking robot that falls over,
+> and the symptom looks like a tuning or timing problem rather than an indexing one.
+
+同类错误还有关节序，robotd 在 `main.rs:1136` 的原话是 *a guess drives one joint with another's targets*。
+而这一轮我们已经栽过一次"拿**另一个 fork** 的笔记当参考"（`bus.fast_sync_read`，见 §9.4），
+所以这次定死一条：**两个来源不许互相引用，也不许共用常量。**
+
+| 侧 | 读的是 |
+|---|---|
+| Rust（robotd） | `obs.rs` 顶部那张 `//! index width contents` 表 + `OBS_LEN`/`COMMAND_LEN`；`model.rs` 的 `MOUTH_INDEX`/`DEFAULT_POSITION`；`duck-ipc-proto/src/lib.rs` 的 `JOINT_NAMES`；`robotd-params/src/lib.rs` 的 `Control::default()` |
+| Python（训练） | 真跑那个 task 的 `make_microduck_velocity_env_cfg()` 里 **actor obs 项的插入顺序**（宽度从 term 语义与命令 range 推，不硬编码）；`MICRODUCK_WALK_ROBOT_CFG.spec_fn().compile()` 的**执行器顺序**；`HOME_FRAME.joint_pos` 的 regex 表 |
+
+### 10.2 结论（`--onnx out/p8head_2999.onnx --toml out/robotd_hd1910_mode0.toml`）
+
+| 项 | 结果 |
+|---|---|
+| 总宽 | robotd 61 = 训练 61 = ONNX 输入 61 |
+| 块序 | `gyro 3 │ gravity 3 │ joint_pos 14 │ joint_vel 14 │ last_action 14 │ command 13`，训练的 8 个 term 逐块落位 |
+| 13 宽命令块 | `3 / 4 / 6`（twist / head / body），由 `obs.rs` 第二张表逐行核对 |
+| 关节序 | 14 位**逐位相同**：MuJoCo 执行器序 ≡ `JOINT_NAMES` 去掉 `MOUTH_INDEX = 9` |
+| home 位姿 | `max|Δ| = 0.00e+00` rad（`DEFAULT_POSITION` ≡ `HOME_FRAME` 展开） |
+| 动作映射 | 训练 `scale = 1.0` 且 `use_default_offset = True` ⇒ `target = home + a`；配置里 `[policy] action_scale = 1.0` |
+| 控制频率 | `decimation 4 × timestep 0.005` = 50 Hz；配置没写 `[control]`，取 `Control::default()` 的 **50**（从源码读出来，不是猜） |
+| ONNX | `obs[1,61] -> actions[1,14]`，名义站姿观测下 `|a|max = 0.193 rad`（≈11°，合理） |
+
+### 10.3 这一项最容易骗人的地方：61 个数字对了，里面可以全是错的
+
+`--selftest` 15 项，8 条负对照。其中**六条**改完之后 **总宽仍然是 61**：
+
+- 换两根关节 → 只有「关节序」能看见；
+- home 某关节 +1° → 只有「home 位姿」能看见（这是 14 个 obs 槽上的**常量偏移**）；
+- 块 0↔1 互换 → 只有「块序」能看见（宽度序列 `3,3,14…` 里两个 3 互换，和没变）；
+- head↔body 互换 → 只有「命令块拆分」能看见（3+4+6 与 3+6+4 都等于 13）；
+- `action_scale = 0.5` → 只有「动作映射」能看见（每个关节被按比例压折）；
+- 频率 100 Hz → 只有「控制频率」能看见。
+
+⇒ 这就是"**读数一致**不等于**结构一致**"的具体样子：`obs_len == 61` 这条断言单独存在时，
+对它本该守住的六类错误全部免疫。
+
+### 10.4 它查不到的三件事（必须留给人）
+
+1. **躯干坐标系**。`gyro` 与 `projected gravity` 必须在躯干系；`imu_mount` 对不对是台架标定（B4）。
+2. **每关节的符号与零点**。那是标定，不是 schema；`joint_signs`/`joint_offsets` 空着就是恒等。
+3. **舵机侧的任何东西**。这是「文件与图」的检查，不含被控对象。
+
+前两条的错误**也能骗过上面 8 项**——契约对得再齐，一根关节反了照样走不直。
+
+### 10.5 工具
+
+`tools/hd1910/verify_policy_contract.py`（`--selftest` 15 项）。跑一次约 6 s（要 import mjlab）。
