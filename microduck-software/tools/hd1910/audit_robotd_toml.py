@@ -214,6 +214,23 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     rep.add("ok", "board.version", board,
             "declared, not detected (board.rs:1) -- only gates camera/hw_rev")
 
+    # R7b: which daemon this file is for. The upstream schema has no protocol key at all;
+    # the Feetech build (kissqy) needs protocol="feetech" plus a per-robot calibration file
+    # (robotd-selftrained.toml). Auditing an upstream-shaped file says nothing about whether
+    # a Feetech daemon will accept it -- see docs/active/microduck-HD1910软件方案.md 8.5.6.
+    proto = (cfg.get("bus") or {}).get("protocol")
+    if proto is None:
+        rep.add("WARN", "bus.protocol", "(absent)",
+                "upstream (Dynamixel) schema. The Feetech daemon wants protocol=\"feetech\" + "
+                "feetech_calibration=<per-robot file>; confirm which build you install -- "
+                "the XL330 velocity scale is 3.2x off for HD1910 (bus.rs:40 vs hd1910.rs:15)")
+    elif proto == "feetech":
+        rep.add("ok", "bus.protocol", proto, "Feetech build")
+    else:
+        rep.add("FAIL", "bus.protocol", proto,
+                "HD1910 is a Feetech servo: joint_vel would decode at the XL330 scale (3.2x "
+                "small) and negative speeds as sign-magnitude garbage")
+
     # R8: safety verdicts that are reported, not enforced
     fz, _ = effective(cfg, "safety", "fall_gravity_z")
     rep.add("ok", "safety.fall_gravity_z", fz,
@@ -243,7 +260,7 @@ def selftest() -> int:
         "policy": {"gain": 8, "action_scale": 1.0, "standing_gain_ratio": 1.0,
                    "head_lowpass": 1.0, "legs_lowpass": 1.0},
         "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
-        "bus": {"port": "/dev/ttyS2", "fast_sync_read": False},
+        "bus": {"port": "/dev/ttyS2", "fast_sync_read": False, "protocol": "feetech"},
     }
     r2 = audit(good, 8)
     check("a corrected file passes", r2.fails == 0)
@@ -259,6 +276,17 @@ def selftest() -> int:
     r5 = audit(fs, 8)
     check("fast_sync_read true raises a WARN",
           any(k == "bus.fast_sync_read" and lv == "WARN" for lv, k, _, _ in r5.rows))
+
+    # which daemon: a protocol key naming anything but feetech must be red, and absent must
+    # not be silently green (the upstream schema has no such key at all)
+    dx = dict(good, bus={"port": "/dev/ttyS2", "protocol": "dynamixel"})
+    r6 = audit(dx, 8)
+    check("protocol=dynamixel is a FAIL",
+          any(k == "bus.protocol" and lv == "FAIL" for lv, k, _, _ in r6.rows))
+    nk = dict(good, bus={"port": "/dev/ttyS2"})
+    r7 = audit(nk, 8)
+    check("absent protocol is a WARN",
+          any(k == "bus.protocol" and lv == "WARN" for lv, k, _, _ in r7.rows))
 
     # negative control: the gain key absent must not be silently accepted
     r3 = audit({"policy": {}, "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
