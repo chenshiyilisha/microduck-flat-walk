@@ -107,8 +107,16 @@ DEFAULTS: dict[str, dict[str, object]] = {
 # That is exactly how a `bus.protocol = ` line copied from kissqy's config bricks it.
 #
 # Sections: Params' twelve fields (lib.rs:34-47). There is NO `[board]` section --
-# `board.version` was a phantom in this audit until 2026-11-04; `grep zero3` over the
-# upstream tree finds only Bluetooth hostnames, and there is no board.rs.
+# `board.version` was a phantom in this audit until 2026-11-04 **for this generation**.
+# Careful: there are TWO robotd generations in this workspace and their schemas do not mix.
+#   A) out/upstream_ref/  (Radxa Zero 3W + XL330): Params HAS `board`, `pickup`, `head_imu`,
+#      `idle`, `duck_detector`; BUS HAS `fast_sync_read`; there is a board.rs. No `joint_ids`,
+#      no feetech, no `[battery]`/`[thermal]`.
+#   B) .upstream/DuckBuddy-main/ (Orange Pi + HL-2915): `joint_ids`, `servo`, `[battery]`,
+#      `[thermal]`; NO `board`, NO `fast_sync_read`, no board.rs, 500 kbps hardcoded.
+# HD-1910 is a Feetech HLS servo -> only B can drive it -> the whitelist below is B's.
+# A key that is real in A and absent in B is still a load failure in B, which is the whole
+# point: `deny_unknown_fields` does not care that the key exists somewhere else.
 KNOWN_SECTIONS = {
     "bus", "control", "update_gate", "policy", "safety", "audio", "theremin",
     "chorale", "media", "detect", "thermal", "battery",
@@ -375,9 +383,9 @@ def audit(cfg: dict, expect_kp: int) -> Report:
         rep.add("FAIL", "unknown section", ", ".join(stray_sections),
                 "Params is #[serde(deny_unknown_fields)] (lib.rs:32): robotd refuses the "
                 "whole file. Known sections: " + ", ".join(sorted(KNOWN_SECTIONS))
-                + ("  -- `board` in particular is NOT a section: there is no board.rs and "
-                   "`grep zero3` finds only Bluetooth hostnames. Board identity comes from "
-                   "configd / the device tree, not this file" if "board" in stray_sections else ""))
+                + ("  -- `board` exists in the OLD generation (out/upstream_ref, Radxa+XL330, "
+                   "which has a board.rs) but NOT in the Feetech one this audit targets: here "
+                   "it is a load failure, not a setting" if "board" in stray_sections else ""))
     for sec, allowed in SECTION_KEYS.items():
         table = cfg.get(sec) or {}
         # `fast_sync_read` and `bus.protocol` get their own rows below, with the specific

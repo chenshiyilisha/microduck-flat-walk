@@ -888,7 +888,20 @@ joint_offsets imu imu_axes imu_pitch_trim_deg imu_roll_trim_deg imu_median posit
 position_kp_head position_kd current_limit_ma mouth_torque mouth_wake`），**没有**速率选择：
 0x8A 还是 0x82 由 rustypot 的 `sync_read_raw_data` 决定（`feetech.rs:412/474/556`），而 `Bus`
 带 `#[serde(deny_unknown_fields)]` ⇒ 多写一个键 = robotd **拒绝整份文件**，不是「读到超时」。
-同一个坑还有 `[board]`（本仓没有这个段、也没有 `board.rs`，`grep zero3` 只命中蓝牙主机名）。
+同一个坑还有 `[board]`。
+
+⚠️ **这里的「不存在」必须先说清是哪一代** —— 工作区里有**两代 robotd，schema 不通用**，而我这轮差点把两代混成一代：
+
+| | **A 代** `out/upstream_ref/`（Radxa Zero 3W + XL330） | **B 代** `.upstream/DuckBuddy-main/`（OPi + HL-2915） |
+|---|---|---|
+| `[board]` / `board.rs` | **有** | **没有** |
+| `[bus] fast_sync_read` | **有**（0x8A 开关） | **没有**：rustypot 内部决定，恒 0x82 |
+| `[bus] servo` / `joint_ids` | 没有 | **有**（Feetech 必需） |
+| `[battery]` / `[thermal]` | **没有** | **有** |
+| 波特率 | 1 Mbps（`model.rs:166`，Dynamixel） | **500 kbps** 写死（`feetech.rs:35`） |
+| 段名 | `pickup` `head_imu` `idle` `duck_detector` | `detect` `battery` `thermal` |
+
+HD-1910 是 Feetech HLS 舵机 ⇒ **只有 B 代能驱动它**（A 代只有 Dynamixel 路径）⇒ 配置与键白名单都按 B 代。**关键点：某个键在 A 代是真的，在 B 代照样是加载失败** —— `deny_unknown_fields` 不管这个键在别处存不存在。我们那份部署 toml 正是把两代混着写的（`servo`/`joint_ids` 来自 B 代，`fast_sync_read` 来自 A 代），所以它**两代都起不来**。
 ⇒ 结论方向不变（Feetech 就该走 0x82），**动作相反**：不是把它设成 false，而是**不写**。
 `audit_robotd_toml.py` 现在会拿 Rust 源码重新推导键白名单，写错键直接 FAIL。
 

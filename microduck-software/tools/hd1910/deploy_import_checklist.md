@@ -24,7 +24,7 @@
 
 | # | 项 | 期望 | □ |
 |---|---|---|---|
-| B1 | 舵机家族 | `[bus] servo = "feetech_hls"`。**`ServoKind` 的 `#[default]` 就是它**，所以不写也对；写成 `dynamixel_xl330` 会让 15 维 `joint_vel` 小 3.15×。⚠️ **没有 `protocol` 这个键** —— `Bus` 带 `#[serde(deny_unknown_fields)]`，抄 kissqy 那份的 `protocol = "feetech"` 会让 robotd **整个配置文件加载失败**（不是静默忽略） | |
+| B1 | 舵机家族 | `[bus] servo = "feetech_hls"`。**`ServoKind` 的 `#[default]` 就是它**，所以不写也对；写成 `dynamixel_xl330` 会让 15 维 `joint_vel` 小 3.15×。⚠️ **没有 `protocol` 这个键** —— `Bus` 带 `#[serde(deny_unknown_fields)]`，抄 kissqy 那份的 `protocol = "feetech"` 会让 robotd **整个配置文件加载失败**（不是静默忽略）。🔴 **更要紧的是「两代 schema 不通用」**：`out/upstream_ref/` 是**A 代**（Radxa+XL330，有 `[board]`、`bus.fast_sync_read`、无 `joint_ids`、1 Mbps），`.upstream/DuckBuddy-main/` 是**B 代**（OPi+HL-2915，有 `servo`/`joint_ids`/`[battery]`/`[thermal]`、无 `board`/`fast_sync_read`、500 kbps 写死）。HD-1910 是 Feetech ⇒ **只能用 B 代**；而某个键在 A 代是真的、在 B 代照样是加载失败。我们那份 toml 混着两代写过（`servo`/`joint_ids` 来自 B、`fast_sync_read` 来自 A）⇒ **两代都起不来** | |
 | B2 | `robotctl health` | bus 绿；loop **50 Hz 0 missed** | |
 | B3 | 方向表 | HD1910 读数方向常与 XL330 **相反** → 多数关节 **−1**（以本机标定为准，逐颗核对） | |
 | B4 | 零位 / 限位 / IMU | 关节工作台过一遍；IMU 俯仰偏差必须运行时校掉。⚠️ **别指望舵机自己的行程当限位**：EEPROM `reg9/reg11 = 0/4095` 在物理上不起作用，实测推超程时堵在 1213/2816（相隔 1603 counts ≈ 141°），而 reg19 的过载位 32 是刻意关的 ⇒ 撞住不卸力，只有过流 3.25 A 兜底 | |
