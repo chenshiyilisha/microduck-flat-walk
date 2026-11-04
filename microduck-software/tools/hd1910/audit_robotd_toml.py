@@ -11,17 +11,28 @@ reg 50. Worse, robotd does not compile on Windows at all: `use tokio::net::{Unix
 UnixStream}` (main.rs:51) and `std::os::unix::fs::{FileTypeExt, PermissionsExt}`
 (main.rs:4279) are unconditional, and the whole IPC surface is a unix socket.
 
-What *can* be checked off-hardware is the thing that actually went wrong before:
-the daemon's defaults are calibrated for **gain = 200**, and our deployment runs
-**gain = 8**. Every parameter that is expressed *relative* to gain then silently
-means something 25x different. This tool reads a toml and says which ones are wrong.
+What *can* be checked off-hardware is the arithmetic that turns a gain into a
+register value, and that arithmetic is the whole story here (see the next section).
 
 The trap in one line
 --------------------
-`[safety] gain_limp = 50` is documented as "low enough to give way rather than fight
-the floor" (params_lib.rs:2392). That is true at gain=200 (0.25x). At gain=8 it is
-**6.25x**, so a fall would stiffen the robot instead of softening it. Arithmetically
-certain, and invisible in every log until the robot is on the floor.
+**`policy.gain` is not reg 50.** On the Feetech path every gain goes through
+
+    reg50 = clamp(round(gain * position_kp / 200), 1, 254)      (feetech.rs:236)
+
+so `[policy] gain = 8` with the default `position_kp = 8` writes
+`round(8*8/200) = 0.32 -> 1`: every servo at its softest possible Kp. The robot
+goes limp, and the symptom reads as "the policy does not walk".
+
+This file used to make exactly that mistake: it compared the raw `gain` number
+against the trained register Kp and demanded `gain = 8`, which is the destructive
+value. Correct is `policy.gain = 200` (the XL330 reference the policies run at)
+with `[bus] position_kp = 8` -- which is what the built-in defaults already give.
+
+Because running/standing/limp/pose all pass through the same round(), the
+*ratios* survive any uniform rescale; what does not survive is rounding at a
+small `position_kp` (50*2/200 = 0.5 -> 1, so limp collapses onto running). That
+is checked here in register units, where it is visible.
 
 Defaults audited here (robotd-params/src/lib.rs, checked 2026-11-03):
   PolicyParams  gain 200 (:2460) | standing_gain_ratio 0.8 (:2457) | action_scale 0.9
@@ -84,9 +95,23 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "limp_fall_arm_ms": 200,
         "battery_empty_shutdown": True,
     },
-    "bus": {"fast_sync_read": True, "servo": "feetech_hls"},
+    "bus": {"fast_sync_read": True, "servo": "feetech_hls",
+            "position_kp": 8, "position_kp_head": 16, "position_kd": 8},
     "board": {"version": "zero3"},
 }
+
+# feetech.rs:115 -- the XL330 gain the policies run at. Every requested gain is scaled
+# by position_kp / this before it reaches reg 50.
+KP_REFERENCE = 200.0
+
+
+def register_kp(gain: float, position_kp: float) -> int:
+    """`policy.gain` -> the value actually written to reg 50 (feetech.rs:236).
+
+    `(running * kp / KP_REFERENCE).round().clamp(1, 254)`. Upstream's own unit tests pin
+    the reference points: kp_for_gain(200, 8) = 8, (50, 8) = 2, (160, 8) = 6, (0, 8) = 1.
+    """
+    return int(min(254.0, max(1.0, round(gain * position_kp / KP_REFERENCE))))
 
 
 def effective(cfg: dict, section: str, key: str):
@@ -116,56 +141,100 @@ class Report:
 def audit(cfg: dict, expect_kp: int) -> Report:
     rep = Report()
     gain, gain_set = effective(cfg, "policy", "gain")
+    pkp, pkp_set = effective(cfg, "bus", "position_kp")
+    pkp_head, head_set = effective(cfg, "bus", "position_kp_head")
+    p_legs = register_kp(gain, pkp)
+    p_head = register_kp(gain, pkp_head)
 
-    # R1: the deployment gain itself. Absent = 200 = 6.25x too stiff for a kp8 policy.
-    if not gain_set:
-        rep.add("FAIL", "policy.gain",
-                f"{gain} (default)",
-                f"not set in the file, so the daemon uses {DEFAULTS['policy']['gain']}; "
-                f"expected {expect_kp}. HD1910 ships at 32, so this is "
-                f"{DEFAULTS['policy']['gain'] / 32:.1f}x factory, not "
-                f"{expect_kp / 32:.2f}x")
-    elif gain != expect_kp:
-        rep.add("FAIL", "policy.gain", gain, f"expected {expect_kp} (the plant the policy was trained on)")
+    # R1: what the legs' reg 50 will actually be. The failure this catches is not "gain
+    # is not the trained number" -- it is "the mapping eats the number".
+    where = (f"reg50 = round(policy.gain {gain} x position_kp {pkp} / {KP_REFERENCE:.0f})"
+             f" = {p_legs}")
+    if p_legs != expect_kp:
+        want = round(expect_kp * KP_REFERENCE / gain) if gain else expect_kp
+        rep.add("FAIL", "bus.position_kp", f"{pkp} (-> reg50 {p_legs})",
+                f"{where}, but the plant was trained at Kp {expect_kp}. "
+                f"position_kp = {want} would give it. "
+                + (f"policy.gain = {gain} is an XL330-scale number, NOT reg 50 -- "
+                   f"setting it to {expect_kp} with the default position_kp=8 writes "
+                   f"round({expect_kp}*8/200) = {register_kp(expect_kp, 8)}"
+                   if gain != KP_REFERENCE else ""))
     else:
-        rep.add("ok", "policy.gain", gain, "matches the trained plant")
+        rep.add("ok", "bus.position_kp", f"{pkp} (-> reg50 {p_legs})",
+                f"{where} -- matches the trained plant"
+                + ("" if pkp_set else " (from default)"))
 
-    gain_num = gain if isinstance(gain, (int, float)) and gain else 1
+    if gain != KP_REFERENCE:
+        rep.add("WARN", "policy.gain", gain,
+                f"set in the file; the reference is {KP_REFERENCE:.0f} (feetech.rs:115). "
+                f"Every ratio still survives (they all take the same round()), but this "
+                f"number no longer means what the docs say it means -- and the register "
+                f"value it produces is {p_legs}")
+    else:
+        rep.add("ok", "policy.gain", gain, "the XL330 reference the policies run at"
+                + ("" if gain_set else " (from default)"))
 
-    # R2: limp gain must be *below* the running gain, or a fall stiffens the robot.
+    # The head group is a different register value on purpose (main.rs:1169 applies it to
+    # joints 5..=9 = neck/head pitch/yaw/roll/mouth). Reported, not judged.
+    rep.add("ok", "bus.position_kp_head", f"{pkp_head} (-> reg50 {p_head})",
+            "joints 5..=9 only; the leg value does not reach them"
+            + ("" if head_set else " (from default)")
+            + ("  ⚠️ equal to the legs' -- upstream keeps it stiffer because at 6 the neck "
+               "sagged 15 deg off the home pose" if p_head == p_legs else ""))
+
+    # R2: limp must be a LOWER reg 50 than running, or a fall stiffens the robot.
     limp, limp_set = effective(cfg, "safety", "gain_limp")
-    if isinstance(limp, (int, float)):
-        ratio = limp / gain_num
-        if limp >= gain_num:
-            rep.add("FAIL", "safety.gain_limp", limp,
-                    f"{ratio:.2f}x the running gain -- limp_fall would STIFFEN the robot. "
-                    f"Default {DEFAULTS['safety']['gain_limp']} was chosen for gain=200 "
-                    f"(0.25x). Set it to about {max(1, round(gain_num * 0.4))}")
-        else:
-            rep.add("ok", "safety.gain_limp", limp, f"{ratio:.2f}x running gain"
-                    + ("" if limp_set else " (from default; re-derive for this gain)"))
+    p_limp = register_kp(limp, pkp)
+    if p_limp >= p_legs:
+        rep.add("FAIL", "safety.gain_limp", f"{limp} (-> reg50 {p_limp})",
+                f"not below the running {p_legs}: limp_fall would STIFFEN the robot. "
+                f"Upstream's 50 lands at 2 because of the same round(); pick a smaller "
+                f"gain_limp, or raise position_kp so the rounding stops collapsing")
+    else:
+        rep.add("ok", "safety.gain_limp", f"{limp} (-> reg50 {p_limp})",
+                f"{p_limp / p_legs:.2f}x the running Kp"
+                + ("" if limp_set else " (from default)"))
 
-    # R3: posing back up after a fall runs at its own gain, also calibrated for 200.
+    # R3: standing back up after a fall runs at its own gain.
     pose, pose_set = effective(cfg, "safety", "limp_fall_pose_gain")
-    if isinstance(pose, (int, float)):
-        ratio = pose / gain_num
-        if ratio > 1.5:
-            rep.add("FAIL", "safety.limp_fall_pose_gain", pose,
-                    f"{ratio:.1f}x the running gain -- the 0.6 s stand-back-up would slam "
-                    f"at {pose} instead of {gain_num}. Set it to about {gain_num}")
-        else:
-            rep.add("ok", "safety.limp_fall_pose_gain", pose, f"{ratio:.2f}x running gain"
-                    + ("" if pose_set else " (from default)"))
+    p_pose = register_kp(pose, pkp)
+    if p_pose > p_legs:
+        rep.add("FAIL", "safety.limp_fall_pose_gain", f"{pose} (-> reg50 {p_pose})",
+                f"stiffer than the running {p_legs}: the 0.6 s stand-back-up would slam. "
+                f"Upstream's 160 lands at 6")
+    elif p_pose == p_legs:
+        rep.add("WARN", "safety.limp_fall_pose_gain", f"{pose} (-> reg50 {p_pose})",
+                f"rounds onto the running Kp exactly -- no softening left"
+                + ("" if pose_set else " (from default)"))
+    else:
+        rep.add("ok", "safety.limp_fall_pose_gain", f"{pose} (-> reg50 {p_pose})",
+                f"{p_pose / p_legs:.2f}x running Kp" + ("" if pose_set else " (from default)"))
 
-    # R4: standing runs at gain * ratio. A ratio tuned against 200 may overshoot here.
+    # R4: standing runs at gain * ratio, and then through the same rounding.
     sgr, sgr_set = effective(cfg, "policy", "standing_gain_ratio")
+    p_stand = p_legs                      # only reassigned when the ratio is a number
     if isinstance(sgr, (int, float)):
-        standing = gain_num * sgr
-        level = "ok" if 0.5 * gain_num <= standing <= 1.2 * gain_num else "WARN"
-        rep.add(level, "policy.standing_gain_ratio", sgr,
-                f"standing gain = {standing:.1f}"
-                + ("" if sgr_set else f" (default {DEFAULTS['policy']['standing_gain_ratio']}, "
-                                      "copied from the prototype's --standing-kp-ratio)"))
+        p_stand = register_kp(gain * sgr, pkp)
+        level = "ok" if 0.5 * p_legs <= p_stand <= 1.2 * p_legs else "WARN"
+        rep.add(level, "policy.standing_gain_ratio", f"{sgr} (-> reg50 {p_stand})",
+                f"standing Kp {p_stand} vs running {p_legs}"
+                + ("" if sgr_set else f" (default {DEFAULTS['policy']['standing_gain_ratio']})"))
+
+    # R4b: rounding is the only place the requested ratios can be lost. When two requests
+    # differ by a real amount but land on the same register value, the safety layer stops
+    # having the distinction it thinks it has -- and nothing in any log says so.
+    collapse = []
+    for name, req, got in (("gain_limp", limp, p_limp),
+                           ("limp_fall_pose_gain", pose, p_pose),
+                           ("standing", gain * sgr if isinstance(sgr, (int, float)) else gain,
+                            p_stand)):
+        if got == p_legs and gain and abs(req - gain) >= 0.10 * gain:
+            collapse.append(f"{name} {req:.0f}->{got}")
+    if collapse:
+        rep.add("WARN", "bus.position_kp (rounding)", f"{pkp}",
+                f"{', '.join(collapse)} all round onto the running reg50 {p_legs}: those "
+                f"requests ask for a different stiffness and do not get one. Raise "
+                f"position_kp to give the rounding room")
 
     # R5: action scale. Training used 1.0; robotd's default is the prototype's 0.9,
     # which would shrink every action by 10% before it reaches the PD loop.
@@ -277,22 +346,66 @@ def selftest() -> int:
         if not cond:
             fails.append(name)
 
-    bad = {"policy": {"gain": 8}, "safety": {"gain_limp": 50, "limp_fall_pose_gain": 160}}
-    r = audit(bad, 8)
-    msgs = {(lvl, key) for lvl, key, _, _ in r.rows}
-    check("kp8 + default gain_limp is a FAIL", ("FAIL", "safety.gain_limp") in msgs)
-    check("kp8 + default pose gain is a FAIL", ("FAIL", "safety.limp_fall_pose_gain") in msgs)
-    check("missing action_scale is a FAIL", ("FAIL", "policy.action_scale") in msgs)
+    # The mapping itself, pinned against upstream's own unit tests
+    # (feetech.rs:875 gain_scales_from_the_reference). If these drift, every verdict below
+    # is arithmetic on the wrong number.
+    check("kp_for_gain(200, 8) = 8", register_kp(200, 8) == 8)
+    check("kp_for_gain(50, 8) = 2", register_kp(50, 8) == 2)
+    check("kp_for_gain(160, 8) = 6", register_kp(160, 8) == 6)
+    check("kp_for_gain(0, 8) = 1 (never zero)", register_kp(0, 8) == 1)
+    check("kp_for_gain(200, 16) = 16", register_kp(200, 16) == 16)
 
+    base_bus = {"port": "/dev/ttyS2", "fast_sync_read": False, "servo": "feetech_hls",
+                "joint_ids": list(range(1, 16))}
     good = {
-        "policy": {"gain": 8, "action_scale": 1.0, "standing_gain_ratio": 1.0,
+        "policy": {"action_scale": 1.0, "standing_gain_ratio": 0.8,
                    "head_lowpass": 1.0, "legs_lowpass": 1.0},
-        "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
-        "bus": {"port": "/dev/ttyS2", "fast_sync_read": False,
-                "servo": "feetech_hls", "joint_ids": list(range(1, 16))},
+        "bus": dict(base_bus),
     }
     r2 = audit(good, 8)
-    check("a corrected file passes", r2.fails == 0)
+    check("a default file (gain 200, position_kp 8) passes", r2.fails == 0)
+    check("...and reports reg50 = 8",
+          any(k == "bus.position_kp" and "reg50 8" in v for _, k, v, _ in r2.rows))
+
+    # 🔴 THE regression: gain=8 was demanded by an earlier version of this file. With the
+    # default position_kp it writes 0.32 -> 1, i.e. every servo at its softest Kp.
+    hazard = dict(good, policy=dict(good["policy"], gain=8))
+    r_h = audit(hazard, 8)
+    check("policy.gain = 8 (with default position_kp) is a FAIL",
+          any(k == "bus.position_kp" and lv == "FAIL" for lv, k, _, _ in r_h.rows))
+    check("...and the message says it lands on reg50 1",
+          any("reg50 1" in v or "round(8*8/200) = 1" in n
+              for _, _, v, n in r_h.rows))
+
+    # The plant-equivalent deployment for mode 0 is position_kp = 16, not gain = 16.
+    dev16 = dict(good, bus=dict(base_bus, position_kp=16))
+    check("position_kp=16 is a FAIL when the plant is Kp8", audit(dev16, 8).fails > 0)
+    check("...and passes when the plant is Kp16", audit(dev16, 16).fails == 0)
+
+    # gain=400 / position_kp=8 is the same register value as 200/16 -- the mapping is what
+    # binds, so a rescaled file must audit identically.
+    alt = dict(good, policy=dict(good["policy"], gain=400))
+    check("gain=400 x position_kp=8 == position_kp=16 (reg50 16)",
+          audit(alt, 16).fails == 0)
+
+    # Rounding collapse: at position_kp=2 a requested 160 lands on the running 2, so the
+    # stand-back-up stops being softer than walking without any single check turning red.
+    squash = dict(good, bus=dict(base_bus, position_kp=2))
+    r_s = audit(squash, 2)
+    check("position_kp=2 makes the requested ratios vanish -> WARN",
+          any("rounding" in k and lv == "WARN" for lv, k, _, _ in r_s.rows))
+    check("...and it does NOT fire at the default position_kp=8",
+          not any("rounding" in k for _, k, _, _ in r2.rows))
+
+    # limp stiffer than running, in register units
+    stifflimp = dict(good, safety={"gain_limp": 300})
+    check("gain_limp above the running gain is a FAIL",
+          any(k == "safety.gain_limp" and lv == "FAIL"
+              for lv, k, _, _ in audit(stifflimp, 8).rows))
+
+    check("missing action_scale is a FAIL",
+          any(k == "policy.action_scale" and lv == "FAIL"
+              for lv, k, _, _ in audit({"policy": {}, "bus": dict(base_bus)}, 8).rows))
 
     # negative controls for the two deploy defaults that look harmless and are not
     only_defaults = dict(good, policy=dict(good["policy"]))
@@ -301,14 +414,13 @@ def selftest() -> int:
     check("default legs_lowpass 0.7 raises a WARN",
           any(k == "policy.legs_lowpass" and lv == "WARN" for lv, k, _, _ in r4.rows))
 
-    fs = dict(good, bus={"port": "/dev/ttyS2", "fast_sync_read": True})
+    fs = dict(good, bus=dict(base_bus, fast_sync_read=True))
     r5 = audit(fs, 8)
     check("fast_sync_read true raises a WARN",
           any(k == "bus.fast_sync_read" and lv == "WARN" for lv, k, _, _ in r5.rows))
 
     # which servo family: bus.servo is the real key; bus.protocol does not exist and, because
     # Bus is deny_unknown_fields, would abort the daemon's config load outright.
-    base_bus = {"port": "/dev/ttyS2", "joint_ids": list(range(1, 16))}
     dx = dict(good, bus=dict(base_bus, servo="dynamixel_xl330"))
     r6 = audit(dx, 8)
     check("servo=dynamixel_xl330 is a FAIL",
@@ -330,19 +442,12 @@ def selftest() -> int:
     check("empty joint_ids is a FAIL (bus refuses to open)",
           any(k == "bus.joint_ids" and lv == "FAIL" for lv, k, _, _ in r9.rows))
 
-    dupids = dict(good, bus=dict(base_bus, servo="feetech_hls",
-                                 joint_ids=[1] * 15))
+    dupids = dict(good, bus=dict(base_bus, joint_ids=[1] * 15))
     r10 = audit(dupids, 8)
     check("duplicate joint_ids is a FAIL",
           any(k == "bus.joint_ids" and lv == "FAIL" for lv, k, _, _ in r10.rows))
 
-    # negative control: the gain key absent must not be silently accepted
-    r3 = audit({"policy": {}, "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
-                "policy2": {}}, 8)
-    check("absent gain is a FAIL", any(k == "policy.gain" and lv == "FAIL"
-                                       for lv, k, _, _ in r3.rows))
-
-    # the ratio arithmetic itself, independent of the audit logic
+    # the plain ratio arithmetic, independent of the audit logic
     check("50/8 is 6.25x", abs(50 / 8 - 6.25) < 1e-12)
     check("50/200 is 0.25x", abs(50 / 200 - 0.25) < 1e-12)
 
@@ -357,7 +462,8 @@ def selftest() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Audit robotd.toml against the trained gain scale.")
     ap.add_argument("--toml", default="deploy/robotd.toml")
-    ap.add_argument("--expect-kp", type=int, default=8, help="policy gain the plant was trained at")
+    ap.add_argument("--expect-kp", type=int, default=8,
+                    help="the reg-50 Kp the plant was trained at (not policy.gain)")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
@@ -372,7 +478,7 @@ def main() -> int:
     with path.open("rb") as fh:
         cfg = tomllib.load(fh)
 
-    print(f"== {path} (expecting policy.gain = {args.expect_kp}) ==")
+    print(f"== {path} (expecting reg50 = {args.expect_kp}) ==")
     rep = audit(cfg, args.expect_kp)
     rep.render()
     print()

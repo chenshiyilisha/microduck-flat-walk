@@ -34,6 +34,7 @@ import hd1910_ident as ident  # noqa: E402
 
 REG_MODE = 33
 REG_ACCEL = 41
+REG_KP = 50                     # RAM 位置环 P；robotd 每次启动/切增益都会重写它
 TICK = 0.02                     # 50 Hz，与 robotd 一致
 FREQS = (0.5, 1.0, 2.0, 3.0, 4.0)
 MIN_PER_PERIOD = 10.0           # 每周期最少采样点
@@ -359,15 +360,21 @@ def selftest() -> int:
 
 def measure(bus, sid: int, *, mode: int, freq: float, amp: int, center: int,
             speed: int, cycles: int = 3, settle_s: float = 1.0,
-            p_gain: int | None = None) -> list[tuple[float, int, int]]:
+            p_gain: int | None = None,
+            d_gain: int | None = None) -> list[tuple[float, int, int]]:
     bus.write_u8(sid, REG_MODE, mode)
     time.sleep(0.25)
     if bus.read_u8(sid, REG_MODE) != mode:
         return []
-    # ⚠️ P 必须写在切 mode **之后**：切 mode 会从 EEPROM 重载配置，把刚写进 RAM 的
+    # ⚠️ P/D 必须写在切 mode **之后**：切 mode 会从 EEPROM 重载配置，把刚写进 RAM 的
     # P（reg50）冲掉（memory: 2026-11-04 EEPROM 时序那条硬约束②）。
     if p_gain is not None:
         bus.write_u8(sid, ident.REG_P_RAM, p_gain)
+        time.sleep(0.05)
+    # D 单独给：robotd 的 bring-up 会写 reg51 = position_kd（默认 8,feetech.rs:399），
+    # 而"mode0/P16 ≡ mode4/P8"那组是在 D=0 上测的。部署档必须带 D 一起测。
+    if d_gain is not None:
+        bus.write_u8(sid, ident.REG_D_RAM, d_gain)
         time.sleep(0.05)
     bus.write_u16(sid, ident.REG_SPEED, speed)
     time.sleep(0.03)
@@ -418,6 +425,12 @@ def main() -> int:
     ap.add_argument("--freqs", default=",".join(str(f) for f in FREQS))
     ap.add_argument("--p-gain", type=int, default=None,
                     help="写 RAM reg50（在切 mode 之后写）；不给就用手上现成的")
+    ap.add_argument("--mode", type=int, default=None, choices=(0, 4),
+                    help="只测这一个模式；不给就按「当前 mode → mode 0」的顺序扫两种。"
+                         "显式指定才不会让读数依赖台架上一次实验留下的状态。")
+    ap.add_argument("--d-gain", type=int, default=None,
+                    help="写 RAM reg51。部署档是 position_kd=8（feetech.rs:399），"
+                         "不会等于手测常见的 D=0 —— 要判部署响应必须显式给这个值")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -436,16 +449,19 @@ def main() -> int:
                 continue
             mode0 = bus.read_u8(sid, REG_MODE)
             spd0 = bus.read_u16(sid, ident.REG_SPEED)
+            p0 = bus.read_u8(sid, REG_KP)
+            d0 = bus.read_u8(sid, ident.REG_D_RAM)
             print(f"  ID {sid}: 起始 mode={mode0}，中心 {a.center} 振幅 {a.amp} 步"
                   f"（{a.amp * 360 / 4096:.1f}°），50 Hz 命令")
             res = {}
-            for mode in (mode0, 0):
+            for mode in ([a.mode] if a.mode is not None else (mode0, 0)):
                 if mode in res:
                     continue
                 got = {}
                 for f in freqs:
                     rec = measure(bus, sid, mode=mode, freq=f, amp=a.amp,
-                                  center=a.center, speed=a.speed, p_gain=a.p_gain)
+                                  center=a.center, speed=a.speed, p_gain=a.p_gain,
+                                  d_gain=a.d_gain)
                     an = analyze(rec, f)
                     rs = rate_stats(rec, f)
                     dens = (f"{rs['rate']:.1f} 点/s，每周期 {rs['per_period']:.1f} 点，"
@@ -490,9 +506,19 @@ def main() -> int:
             if c is not None:
                 bus.write_u16(sid, ident.REG_GOAL, c)
             bus.write_u16(sid, ident.REG_SPEED, spd0 or RUNNING_SPEED)
-            print(f"\n  收尾 mode={bus.read_u8(sid, REG_MODE)} reg46={spd0}")
+            # P 也必须恢复：--p-gain 16 只该是一次测量，不能把台架留在那个值上
+            # （robotd 起后会自己写 [policy] gain，手测与部署就再也分不清了）
+            if p0 is not None:
+                bus.write_u8(sid, REG_KP, p0)
+                time.sleep(0.03)
+            if d0 is not None:
+                bus.write_u8(sid, ident.REG_D_RAM, d0)
+                time.sleep(0.03)
+            print(f"\n  收尾 mode={bus.read_u8(sid, REG_MODE)} reg46={spd0} "
+                  f"P={bus.read_u8(sid, REG_KP)} D={bus.read_u8(sid, ident.REG_D_RAM)}")
             print()
-            print("  判决: " + verdict(res.get(mode0, {}), res.get(0, {})))
+            if res.get(mode0) and res.get(0):
+                print("  判决: " + verdict(res.get(mode0, {}), res.get(0, {})))
     finally:
         bus.close()
     return 0
