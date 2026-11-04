@@ -27,6 +27,9 @@
 | P3 闸门（2026-11-03） | ✅ 预注册 `tools/flat_walk/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` + 16 项负对照）；`not_sideways` 退出判决、改当诊断 |
 | kp8 参考点（2026-11-03 晚） | ✅ 部署候选 `model_2999` 三次重复：vx **0.1629**、`err_yaw` **0.7284**、absdy 0.476、dx 比 0.316（已冻结成 `--baseline-set kp8`）。⚠️ 与 m5/kp32 差三样（plant/奖励/迭代数）⇒ **不是 heading 有效性的证据** |
 | heading A/B 控制臂（2026-11-03 晚备好） | 🟡 发现原"干净对照"（11-02）还多一个 `ang_vel_z ±1.0`（`--ang-vel-z-clip` 被静默忽略）⇒ 先补 `set_ang_vel_z_range`；控制臂脚本 + 反向闸门 + 配对判决全部就绪并冒烟通过，**待次日 3.28 h 开跑**（`explore_heading_control.sh`） |
+| 控制臂训练（2026-11-04） | 🟢 **跑中**：`2026-11-04_08-38-17_p8ctl_030_1104`（起步核对全绿；早期曲线与奖励臂基本重合，err_yaw 略高符合预期），ETA ~11:40 |
+| ONNX + parity（kp8 候选 2999） | ✅ `artifacts/flat_walk/checkpoints/p8head_2999.onnx`；parity max\|Δ\|**3.53e−6**、负对照 53348× 容差（`evals/onnx_parity_p8head_2999.json`）——P4 链第一步完成，A/B 判决后如换臂重导即可 |
+| cmd 包线扫点工具 | ✅ `tools/hd1910/sweep_cmd_envelope.sh`（0.15/0.2/0.3/0.4×3 seed，与冻结基线同口径；只报数不判决），训练完与 A/B 扫点一起排 GPU 队 |
 
 ---
 

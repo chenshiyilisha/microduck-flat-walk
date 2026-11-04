@@ -88,6 +88,7 @@ MUJOCO_GL=glfw .venv-mjlab/Scripts/python.exe tools/hd1910/probe_heading_loop.py
 | **`diff_run_recipes.py`** | 两 run 的 `params/*.yaml` 逐叶比对；只有 `--expect` 声明过的差异才放行。就是它查出"11-02 那条不止少奖励，还多 `ang_vel_z ±1.0`" |
 | `sweep_heading_arms.sh` | 两臂按 stride 扫 checkpoint 走同一套 eval（32env×8s / cmd 0.4 / seed 11 / solver 100/50，与 `--baseline-set kp8` 同口径）；eval 自身 gates 红不算失败，没写出 JSON 才算 |
 | `summarize_heading_ab.py` | **配对判决**：同 seed 同迭代的 `model_k` 成对，判 `median(Δerr_yaw)` 是否 ≤ −10% 且 ≥80% 同号，外加 vx ≥ 97% 护栏；exit 0 判定 / 2 判不了 / 3 完整性坏（两目录不是两臂、混了 eval 设置） |
+| `sweep_cmd_envelope.sh` | **P4 前置：cmd 包线扫点**（0.15/0.2/0.3/0.4 × seed 11·22·33，与冻结基线同口径）。kp8 候选在 0.4 只到 cmd 的 41% ⇒ 部署前必须知道哪档开始塌；汇总只报 mean±sem 不作判决（判决归 `gate_p3_yaw.py`） |
 | `server_pack/` | **Windows 训练机打包**（4070 Ti）：`make_transfer.ps1` + `bootstrap.ps1`（勿拷 venv） |
 
 ```bash
