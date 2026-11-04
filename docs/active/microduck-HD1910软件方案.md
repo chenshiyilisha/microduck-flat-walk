@@ -1556,3 +1556,94 @@ fn sync_read(...) {
 
 `servo_probe/probe_bus_budget.py`（`--selftest` 25 项，含"跨波特率搬绝对值会差 2×"的负对照）。
 只读，不动扭矩。它同时打印 A 静态模型 / B 纯传输 / C 台架实测 / D 外推 / E 判据 / F 波特率证据。
+
+---
+
+## 12. IMU 解码链：12 字节 → (gyro, gravity)（2026-11-04 深夜，两个来源对质，13 项全绿）
+
+### 12.1 为什么单独查这一项
+
+§10 查的是「61 个 float 的布局」，本节查的是**填最前 6 个槽的那个量本身**。区别在于：
+关节位置是**读**出来的，`gyro` 和 `gravity` 是**算**出来的 —— 挂载错、半精度指数偏错、
+旋转方向反了，每一种都会给出一个**看起来合理的数**，然后机器人走得歪，症状像调参。
+
+而 robotd 侧这段代码自己就把风险写在头注释里（`imu.rs:5` 说明了它为什么只取前 12 字节），
+`check_registers` 之外它是唯一一处"输入是原始字节、输出直接进策略"的地方。
+
+### 12.2 两个来源，互不引用
+
+| 侧 | 读的是 |
+|---|---|
+| Rust（robotd） | `imu.rs` 的块布局表、`half()`、`mul/rotate/rotate_inverse`、`median3_each`、`mount_from_axes`、`GYRO_RAD_PER_LSB`、`ready()` 阈值；`params_lib` 的 `imu_axes` / `imu_median` 默认值 |
+| 训练（Python） | mjlab 的 `projected_gravity_b = quat_apply_inverse(q, [0,0,-1])`、`root_link_ang_vel_b = quat_apply_inverse(q, ω_world)`；**scipy** 作四元数代数的独立实现；真实 cfg 里的 `delay_min_lag/max_lag` |
+
+Rust 在本机跑不起来（没有工具链），所以 Rust 侧是**移植**。三件事让它站得住：
+① 移植必须复现 crate 自带的 9 个单元测试；② 对**外部 oracle** 校验（numpy `float16`
+全 65536 位型、scipy `Rotation`）；③ 每条断言都有负对照。
+
+### 12.3 结论
+
+| 项 | 结果 |
+|---|---|
+| `half()` | **65536/65536 与 numpy `float16` 逐位相同**，最大偏差 0 |
+| 四元数代数 | vs scipy：`mul` 3.3e-16、`rotate` 1.3e-15、`rotate_inverse` 1.3e-15、往返 2.2e-15 |
+| `mount_from_axes` | 24 个真旋转全部按声明旋转；24 个镜像全部拒绝；`DEFAULT_MOUNT ≡ mount_from_axes("z,y,-x")` |
+| 端到端 | 16 姿态 × 2 挂载，重力最大 **1.67°**、gyro 最大 **0.5 counts**（都是量化残差） |
+| gyro 标度 | 文档 17.5 mdps/LSB ⇒ `3.054326e-04` rad/s/LSB，代码一致；int16 满量程 573 dps，**±500 dps 在 28571 counts 饱和** |
+| `ready()` | 25 样本 = 100 Hz 下 0.25 s；**50 Hz 下 0.5 s**，robotd 在此之前拒绝驱动 |
+
+### 12.4 唯一一条要改配置的：`imu_median`
+
+中值滤波（`median3_each`）**不是平滑器，是纯延迟**：三分量中位数对阶梯和斜坡都恰好
+输出**上一个样本**，50 Hz 下就是 20 ms，每一拍都有。
+
+而训练给 IMU 的延迟包络是 **0–1 个控制拍 = 0–20 ms**（`microduck_velocity_env_cfg.py:564`，
+注释原话 *"was 3 (=60 ms worst case); real dxl IMU path is fast — ±20 ms envelope"*），
+一半的 env 拿到 0。⇒ 开着中值，每一拍都**顶在包络上沿**，再叠上芯片自己的采样滞后
+（0 到一个 SFLP 周期）就是 20–30 ms。
+
+`imu.rs` 自己的注释也指向同一个方向：*the walking policies fail past ~20 ms of IMU lag
+(BAM simulation, 2026-10-10): with it, the HL-2915 robot's trunk rocked and the policy
+flailed the neck as on the robot.*
+
+它买到的抗尖峰**不承重**：块有校验和（rustypot `read_status_packet` 会验），
+而"SFLP 还没起来"那种全零块由解码器单独处理。
+
+⇒ 部署配置写 **`[bus] imu_median = false`**，并注明这是**故意偏离上游默认值**。
+
+### 12.5 一个看起来像 bug、其实有背书的假设
+
+芯片只发 `qx,qy,qz`，`w` 由解码器按 `+sqrt(1-n²)` 重建。若芯片偶尔发另一个符号
+（`-q`），解码出来会是**另一个旋转**而不是同一个 —— 这个假设在代码里完全看不见。
+
+ST 官方的答复把这件事说死了（A. Vitali，ST 社区，2024-01）：
+
+> *The SFLP output quaternion is chosen to have qw >= 0 always. For efficiency, in
+> LSM6DSV sensors the FIFO only stores 3 components: qx, qy, qz. The 4th component qw is
+> recomputed as +sqrt(1 - qx² - qy² - qz²)*
+
+⇒ **不是碰巧，是按设计**。同一答复也承认另一半：*"when any of the vector components is
+near ±1, the accuracy of qw is reduced"*。这一条在本项目里的落点是可算的：
+
+| 现象 | 本项目的落点 | 代价 |
+|---|---|---|
+| `n≈1` 时 `w` 重建病态，角度按 ~2° 步进 | 芯片 180° 极点 ⇒ **躯干俯仰 ≈90°（趴下）** | 最坏 **2.00°**；60–80° 区间 ≤0.13° ⇒ 对 26° 闸门与 60° 判据无影响 |
+| 三分量中位数不是单位向量 | 600 dps 翻滚（≈12°/拍） | \|g\| 最多短 **2.2%** ⇒ 26° 闸门**提前 3° 触发**（只会更敏感，不会漏报） |
+| 全零块 = "SFLP 未启动" | 传感器系与世界系重合 ⇒ 本项目 **抬头 90°** | 窗口是 \|x\|,\|y\|,\|z\| < 6e-8，即**精确姿态**，0.01° 之外就正常 |
+| 中值历史预置成"直立" | 上电头 2 拍 | 姿态错 40° 时报"直立"，但 `ready()` 的 0.5 s 把它盖住了 |
+
+### 12.6 查不到的三件事
+
+1. **`imu_axes` 与我们的机身对不对** —— 台架 B4，躺倒看哪个原始轴吃重力。
+2. **芯片的 gyro 满量程** —— 解码器按 ±500 dps / 17.5 mdps/LSB。若板子固件配的是 ±2000
+   dps，所有角速度差 4×，而这里**一个检查都不会红** —— 症状是"机器人很抖"，不像单位错。
+3. **IMU 自己的输出速率**（SFLP 周期 vs 我们 50 Hz 的拍）。
+
+另有一条运维约束：**上电姿态就是 SFLP 的参考姿态**，所以必须让机器人**正常站立且静止**
+开机。侧躺开机不会报错，只会收敛出一个歪的水平线。
+
+### 12.7 工具
+
+`tools/hd1910/verify_imu_chain.py`（13 项检查，`--selftest` 15 项 / 8 条负对照）。
+跑一次约 8 s（要 import mjlab）。负对照里最能说明问题的一条：**去掉 `w ≥ 0` 的规范化，
+端到端立刻红** —— 说明 ST 那条保证是承重的，不是注释。
