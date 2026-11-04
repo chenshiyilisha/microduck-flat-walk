@@ -41,6 +41,34 @@ reward is supposed to have (1.20 -> 0.73 rad/s on the kp8 reference point) is
 abs_dy / dx_over_expected are printed but never gated: CV 15-25%, and N=10
 checkpoints of ONE seed does not fix that (measured 2026-11-03).
 
+Degraded pairs are REPORTED, never used to change the verdict
+-------------------------------------------------------------
+A checkpoint can look good on err_yaw because the robot is not walking at all
+(err_yaw is an error against a yaw command; a robot that has fallen holds no
+heading and gets a small |cmd_wz - actual_wz| by accident). The first real
+sweep had exactly this: model_300 arm A fell in 91% of envs, walked at 0.046
+m/s against a 0.4 m/s command, and scored d_yaw = +221% -- one such pair moves
+the median from +0.18% to +5.87%.
+
+So every pair is checked against two thresholds that come from OUTSIDE this
+comparison -- the termination counter, and the frozen kp8 reference baseline
+measured before this A/B existed (vx 0.1629 at cmd 0.4, 3 seeds,
+artifacts/flat_walk/evals/p8head_ref/). A threshold cannot be derived from the
+quantity it is supposed to judge:
+  vx < 0.5 * WALK_REF_VX    -- walks less than half of what this plant's own
+                               reference achieves
+  terminated_frac >= 0.5    -- more than half the envs ended early
+The first version used "vx < 0.5 * cmd_vx" (0.2 m/s) and flagged 10/10 pairs:
+on kp8, 0.4 m/s is simply not reachable (the reference itself tracks 41%), so
+the bar said "nobody here is walking" about the whole sweep. A bar that is
+always red is as broken as one that is always green.
+
+Matching pairs are listed, and the median d_yaw of the REST is printed next to
+the pre-registered one. The verdict keeps using ALL pairs: dropping data after
+seeing it would make the pre-registered rule meaningless. The filtered number
+is there so that a reader can tell "the arm is better" from "the arm stopped
+walking", which is the only thing this test can be fooled by.
+
 Exit codes: 0 decided, 2 no decision (not a failure of the run, a failure of the
 test to resolve), 3 integrity problem (mismatched eval settings, missing pairs,
 or the two directories are not the two arms).
@@ -69,6 +97,12 @@ MIN_PAIRS = 5
 DECIDE_PCT = 10.0
 CONSISTENCY = 0.80
 VX_FLOOR = 0.97
+# "the robot is not walking" thresholds, for the degraded-pair report only.
+# WALK_REF_VX is the frozen kp8 baseline (3 seeds, cmd 0.4, artifacts/flat_walk/
+# evals/p8head_ref/), NOT a number read off the pairs being judged.
+WALK_REF_VX = 0.1629
+DEG_VX_OF_REF = 0.50      # vx below half of what this plant's reference achieves
+DEG_TERM = 0.50           # more than half the envs terminated early
 
 
 def iter_of(rec: dict, path: Path) -> int:
@@ -183,45 +217,60 @@ def selftest() -> int:
             shutil.rmtree(root, ignore_errors=True)
 
     cases = [
-        ("A 的 yaw 误差小 25% (d=+33%) -> helps", 0, "VERDICT: reward helps", False,
+        ("A 的 yaw 误差小 25% (d=+33%) -> helps", 0, "VERDICT: reward helps", False, False,
          dict(role=R, err=E(0.75), vx=V(1.00)),
          dict(role=C, err=E(1.00), vx=V(1.00))),
-        ("A 的 yaw 误差大 30% (d=-23%) -> hurts", 0, "VERDICT: reward hurts", False,
+        ("A 的 yaw 误差大 30% (d=-23%) -> hurts", 0, "VERDICT: reward hurts", False, False,
          dict(role=R, err=E(1.30), vx=V(1.00)),
          dict(role=C, err=E(1.00), vx=V(1.00))),
-        ("两臂只差 1% -> no decision", 2, "VERDICT: no decision", False,
+        ("两臂只差 1% -> no decision", 2, "VERDICT: no decision", False, False,
          dict(role=R, err=E(0.99), vx=V(1.00)),
          dict(role=C, err=E(1.00), vx=V(1.00))),
-        ("A 好但慢 11% -> helps 且必须 CAUTION", 0, "VERDICT: reward helps", True,
+        ("A 好但慢 11% -> helps 且必须 CAUTION", 0, "VERDICT: reward helps", True, False,
          dict(role=R, err=E(0.75), vx=V(0.90)),
          dict(role=C, err=E(1.00), vx=V(1.00))),
-        ("A 好且更快 -> helps 且不得 CAUTION", 0, "VERDICT: reward helps", False,
+        ("A 好且更快 -> helps 且不得 CAUTION", 0, "VERDICT: reward helps", False, False,
          dict(role=R, err=E(0.75), vx=V(1.10)),
          dict(role=C, err=E(1.00), vx=V(1.00))),
-        ("eval 设置不同 -> 完整性退出 3", 3, "eval settings differ", False,
+        # 正常的 kp8 配对（cmd 0.4 下只能走 0.163）绝不能被判成"不走路"。
+        # 第一版阈值用 0.5*cmd=0.2，把真扫点的 10/10 全标了红，就是这条漏了。
+        ("正常 kp8 速度 -> 不得 WARNING", 0, "VERDICT: reward helps", False, False,
+         dict(role=R, err=E(0.75), vx=[0.1629 * x for x in shape]),
+         dict(role=C, err=E(1.00), vx=[0.1629 * x for x in shape])),
+        # 一个配对里 A 几乎站着不动：它的 err_yaw 是假象。
+        # 必须打出 WARNING + 剔除后的中位数，而判决仍按全部配对算。
+        ("A 有一个配对不走路 -> 必须 WARNING，判决不变",
+         0, "VERDICT: reward helps", False, True,
+         dict(role=R, err=E(0.75), vx=[0.05] + V(1.00)[1:]),
+         dict(role=C, err=E(1.00), vx=V(1.00))),
+        ("eval 设置不同 -> 完整性退出 3", 3, "eval settings differ", False, False,
          dict(role=R, err=E(0.75), vx=V(1.00), cmd_vx=0.30),
          dict(role=C, err=E(1.00), vx=V(1.00))),
-        ("两臂标反 -> 完整性退出 3", 3, "not the two arms", False,
+        ("两臂标反 -> 完整性退出 3", 3, "not the two arms", False, False,
          dict(role=C, err=E(0.75), vx=V(1.00)),
          dict(role=R, err=E(1.00), vx=V(1.00))),
-        ("is_true_mean=false -> 完整性退出 3", 3, "is_true_mean is false", False,
+        ("is_true_mean=false -> 完整性退出 3", 3, "is_true_mean is false", False, False,
          dict(role=R, err=E(0.75), vx=V(1.00), is_true_mean=False),
          dict(role=C, err=E(1.00), vx=V(1.00))),
     ]
 
     bad = 0
-    for name, want_exit, want_text, want_caution, arm_a, arm_b in cases:
+    for name, want_exit, want_text, want_caution, want_warn, arm_a, arm_b in cases:
         code, out = probe(arm_a, arm_b)
         found_text = want_text in out
         caution = "CAUTION:" in out
-        ok = (code == want_exit) and found_text and (caution == want_caution)
+        warn = "WARNING: " in out and "pairs are degraded" in out
+        ok = ((code == want_exit) and found_text and (caution == want_caution)
+              and (warn == want_warn))
         bad += 0 if ok else 1
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
         if not ok:
             print(f"         exit={code} (want {want_exit})  text={found_text}  "
-                  f"caution={caution} (want {want_caution})")
+                  f"caution={caution} (want {want_caution})  "
+                  f"warn={warn} (want {want_warn})")
             for ln in out.splitlines():
-                if ln.startswith(("VERDICT", "CAUTION", "median d_yaw", "INTEGRITY")):
+                if ln.startswith(("VERDICT", "CAUTION", "WARNING", "median d_yaw",
+                                  "  median d_yaw", "INTEGRITY")):
                     print(f"         | {ln}")
 
     print(f"  self-checks: {len(cases) - bad}/{len(cases)} pass")
@@ -237,6 +286,9 @@ def main() -> int:
     ap.add_argument("--decide-pct", type=float, default=DECIDE_PCT)
     ap.add_argument("--consistency", type=float, default=CONSISTENCY)
     ap.add_argument("--min-pairs", type=int, default=MIN_PAIRS)
+    ap.add_argument("--walk-ref-vx", type=float, default=WALK_REF_VX,
+                    help="vx this plant's frozen reference baseline achieves at the "
+                         "same command; only used to report degraded pairs")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
@@ -274,11 +326,13 @@ def main() -> int:
           f"{'d_yaw%':>7} {'d_vx%':>7} {'fall A/B':>9}")
 
     ds, dvx, n_pos, n_neg = [], [], 0, 0
+    degraded = []
     for k in common:
         ea, eb = ra[k], rb[k]
         ya = ea["official_metrics"]["error_vel_yaw"]
         yb = eb["official_metrics"]["error_vel_yaw"]
         va, vb = ea["speed"]["vx_mean"], eb["speed"]["vx_mean"]
+        fa, fb = ea["stability"]["terminated_frac"], eb["stability"]["terminated_frac"]
         d = 100.0 * (yb - ya) / ya if ya else float("nan")    # >0 => A is better
         dv = 100.0 * (vb - va) / va if va else float("nan")   # >0 => B is faster
         ds.append(d)
@@ -287,8 +341,17 @@ def main() -> int:
             n_pos += 1
         else:
             n_neg += 1
+        why = []
+        vmin = min(va, vb)
+        if vmin < DEG_VX_OF_REF * a.walk_ref_vx:
+            why.append(f"vx {vmin:.4f} < {DEG_VX_OF_REF:.2f}x walk ref "
+                       f"{a.walk_ref_vx:.4f}")
+        if max(fa, fb) >= DEG_TERM:
+            why.append(f"terminated {max(fa, fb):.2f} >= {DEG_TERM:.2f}")
+        if why:
+            degraded.append((k, d, "; ".join(why)))
         print(f"{k:5d} | {ya:9.4f} {va:6.4f} | {yb:9.4f} {vb:6.4f} | {d:+7.2f} {dv:+7.2f} "
-              f"{ea['stability']['terminated_frac']:4.2f}/{eb['stability']['terminated_frac']:4.2f}")
+              f"{fa:4.2f}/{fb:4.2f}")
 
     n = len(common)
     med_d, med_vx = st.median(ds), st.median(dvx)
@@ -299,6 +362,20 @@ def main() -> int:
           f"{frac_pos:.0%}; d>0 means A's yaw error is smaller)")
     print(f"median d_vx  = {med_vx:+.2f}%   (guard: A must not be slower than B by "
           f"more than {100 * (1 / VX_FLOOR - 1):.1f}%)")
+
+    # A pair where an arm is not walking makes its err_yaw meaningless: report
+    # it, and show the median of the rest, but never re-decide on the subset.
+    if degraded:
+        deg_keys = {k for k, _, _ in degraded}
+        kept_d = [d for k, d in zip(common, ds) if k not in deg_keys]
+        print()
+        print(f"WARNING: {len(degraded)}/{n} pairs are degraded (an arm is not walking, "
+              f"so its err_yaw is not a heading error):")
+        for k, d, why in degraded:
+            print(f"  model_{k}: {why}  ->  d_yaw {d:+.2f}% is an artefact")
+        if kept_d:
+            print(f"  median d_yaw on the remaining {len(kept_d)} pairs: "
+                  f"{st.median(kept_d):+.2f}%   <-- post-hoc, NOT the verdict")
 
     # secondary, reported not gated
     for name, get in (("err_xy", lambda r: r["official_metrics"]["error_vel_xy"]),

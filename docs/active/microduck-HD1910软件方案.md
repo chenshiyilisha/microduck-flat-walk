@@ -535,18 +535,56 @@ bash microduck-software/tools/hd1910/explore_heading_control.sh
 **判决规则**（`tools/hd1910/summarize_heading_ab.py`，开跑前写死）
 同 seed 同迭代 ⇒ 每个 `model_k` 是一**配对**，比配对差而不是比两臂均值：
 
-- `d(k) = 100·(err_yaw_B − err_yaw_A)/err_yaw_A`，`median(d) ≤ −10%` 且 ≥80% 的配对同号 ⇒
-  "奖励有效"；反向 ⇒ "奖励有害"；否则 **no decision**（退出码 2，不当作失败也不当作通过）。
-- 速度护栏：B 的 vx 不得低于 A 的 97%（"靠少走路换来的偏航改善"不算赢，与 `gate_p3_yaw.py`
-  对基线用的是同一条）。
+- `error_vel_yaw` **越小越好**。`d(k) = 100·(err_yaw_B − err_yaw_A)/err_yaw_A`
+  ⇒ **`d > 0` 表示奖励臂 A 更好**。
+  ⚠️ **2026-11-04 更正**：这里原先写的是 `median(d) ≤ −10%` ⇒ "奖励有效"，**符号反了** ——
+  会在真数据上把"奖励有用"读成"有害"。判决器同步改，`--selftest` 从 8 项扩到 10 项；
+  两条负对照现场跑过：把 `d` 的符号翻回去 ⇒ **4/10**（6 项变红、`exit=1`），
+  关掉降级检测 ⇒ **9/10**（只红那一条）。
+- 判据：`median(d) ≥ +10%` 且 ≥80% 配对同号 ⇒ "奖励有效"；`median(d) ≤ −10%` 且 ≥80% 为负
+  ⇒ "奖励有害"；否则 **no decision**（退出码 2 —— 不是跑挂了，是这个测度分辨不出来）。
+- 速度护栏：`dv(k) = 100·(vx_B − vx_A)/vx_A`，`median(dv) > 3.1%`（A 更慢）时判决降级为
+  `helps + CAUTION` —— "靠少走路换来的偏航改善"不算赢，与 `gate_p3_yaw.py` 对基线用的是同一条。
 - 10% 的依据：单次 eval 的 `err_yaw` CV 1.2–2.6%，配对差更紧；而奖励想拿到的效应是
   1.20→0.73 rad/s ≈ **39%**。10% 既不会被运气跨过，也远低于效应量。
 - `abs_dy` / `dx_over_expected` **只报不判**（CV 15–25%，单 seed 十个点救不回来）。
 
+**降级配对：只报不判**（2026-11-04 加）。一个配对若"根本没在走路"，它的 `err_yaw`
+不是偏航误差 —— 摔着的机器人不保持朝向，`|cmd_wz − actual_wz|` 反而小。判据取**本次比较之外**
+的两个量：`vx < 0.5 × 0.1629`（kp8 冻结参考基线，cmd 0.4 下只有 41% 跟踪率）
+或 `terminated_frac ≥ 0.5`。被标的配对逐个列出并附**剔除后**的中位数，但**判决仍用全部配对**
+（看完数据再删点，预注册规则就作废了）。
+
+⚠️ 这个阈值第一版写成 `vx < 0.5 × cmd_vx`（=0.2 m/s），在真数据上把 **10/10** 全标了红 ——
+kp8 在 cmd 0.4 下正常只能走 0.163，0.2 它够不到。**永远红灯的闸门和永远绿灯的一样没用**；
+`--selftest` 因此固定带一条"正常 kp8 速度不得报警"的正对照（就是会逮住这个 bug 的那条）。
+
+**结果（2026-11-04，两臂各 10 点 × 32 env × 8 s、cmd 0.4、seed 11、solver 100/50）**
+
+| | 值 |
+|---|---|
+| `median d_yaw`（全部 10 对） | **+5.87%**，A 更好 6/10 = 60% |
+| `median d_vx` | +5.77%（A **更慢**，已越过 3.1% 护栏） |
+| 降级配对 | `model_300`（A 摔 91%、vx 0.046）、`model_600`（A 摔 50%） |
+| 剔除后 8 对 | **+0.18%**，4/8 = 50% |
+| 早期 900–1500 | **+19.51%** |
+| 后期 1800–2999 | **−10.65%** |
+| 判决 | **no decision**（退出码 2） |
+
+⇒ 奖励**既没被证明有效、也没被证明有害**，且趋势在反转（早期帮、后期妨）。
+`model_300` 的 **+221.69% 是纯假象**：A 臂 91% 的 env 摔倒、vx 只有 cmd 的 12%，
+"偏航误差小"是因为它压根没在走。**这一颗就把中位数从 +0.18% 拉到 +5.87%** ——
+只看中位数会得到完全相反的量级印象，所以降级配对必须单独列。
+
+因此这条奖励不值得再花 3.3 h 重训。若还想治偏航，成本更低的两条（都还没验证）：
+① 改命令环刚度 `heading_control_stiffness` 0.5（纯推理侧、不用重训，但会改动作分布）；
+② 先修 plant —— 2 Hz（=步频）上真机 `gain` 只有 0.59、滞后 73°（见台架段），
+策略在仿真里学到的"每步微调偏航"真机上打不出去。
+
 **评估路径**（跑完直接两条命令）
 
 ```bash
-bash microduck-software/tools/hd1910/sweep_heading_arms.sh      # 默认 stride 300 → 每臂 11 点
+bash microduck-software/tools/hd1910/sweep_heading_arms.sh      # 默认 stride 300 → 每臂 10 点
 python microduck-software/tools/hd1910/summarize_heading_ab.py \
   --a-dir ../artifacts/flat_walk/evals/ab_heading/A \
   --b-dir ../artifacts/flat_walk/evals/ab_heading/B
@@ -554,7 +592,8 @@ python microduck-software/tools/hd1910/summarize_heading_ab.py \
 
 扫点用固定 32 env × 8 s / cmd 0.4 / seed 11 / solver 100/50，与冻结的 `--baseline-set kp8`
 同口径；`summarize` 在配对前会核对两目录的 eval 设置、plant 指纹与"谁有奖励、谁没有"，
-不一致直接 exit 3。
+不一致直接 exit 3。两臂 checkpoint 都是 `0,100,…,2900,2999`（各 31 颗），按 stride 300 取
+**10 对**（300…2700 九个 + 2999）；原计划写的"11 点"多算了一颗 `model_0`。
 
 #### P3 附 · heading 闭环（治偏航，建议与 P3 合并为**同一次**重训）
 
