@@ -7,8 +7,8 @@
 子命令：
     telem    --seconds 10            遥测流（50 Hz，只读；USB 档可跑）
     step     --steps 200             PD 阶跃录制 → CSV + 超调/稳态误差/整定  [需电源]
-    deadzone --max-step 20           双向最小可动步（不灵敏区）              [需电源]
-    backlash --approach 100          双向趋近同一目标 → 回差                 [需电源]
+    deadzone --max-step 20           双向最小可动步（= 齿隙+死区+静摩擦的上界）  [需电源]
+    backlash --approach 100          双向趋近同一目标 → 闭环稳态差（**不是齿隙**）[需电源]
 
 协议不自己拼：
   - PING / READ 复用同目录 `hd1910_readonly.py`（kissqy hd1910.rs 寄存器表）。
@@ -604,7 +604,10 @@ def cmd_deadzone(bus: Bus, sid: int, args):
     print(f"⚠️ 读数依赖当前参数：P={bus.read_u8(sid, REG_P_GAIN)}、"
           f"扭矩限制 reg48={args.torque_limit}、速度 reg46={args.speed}、供电"
           f"—— 记数时必须把这些一起记，否则不可复现。")
-    print("⚠️ 这是「最小可动步」，含齿轮间隙；要分离纯电气死区需夹住输出轴重测。")
+    print("⚠️ 这是「最小可动步」= 齿隙 + 电气死区 + 静摩擦**混在一起的上界**；"
+          "三者在电学上分不开——")
+    print("   编码器在输出轴（1:320 + 360°绝对/0.088°只能这样自洽），齿隙在它上游，"
+          "reg56 看不见。")
     print("⚠️ 扭矩限制压到 20% 时『不动』可能是力矩不足而非死区 ⇒ 正式数据应在 "
           "7.4 V + 部署用 P（P3=5）+ 额定扭矩限制下复测。")
     print("⚠️ 边界会抖：本机连测两次得 (正2/反2) 与 (正2/反1)，因为『动不动』取决于"
@@ -633,7 +636,12 @@ def cmd_backlash(bus: Bus, sid: int, args):
         _disarm(bus, sid)
     gap = res["from_below"] - res["from_above"]
     print(f"回差 = {gap} 步（{gap / STEPS_PER_REV * 360:.2f}°）")
-    print("⚠️ 含伺服稳态误差；要纯机械齿隙需在扭矩关闭时用手扳（摇晃法）对照。")
+    print("⚠️ **这量的不是齿轮齿隙**。编码器在输出轴（1:320 减速比 + 360° 绝对 / 0.088°"
+          " 只能这样自洽），")
+    print("   齿隙在编码器上游、reg56 永远看不见：扭矩关时读数跟舵盘一起走（差值≈0），"
+          "扭矩开时被 PD 顶住（量到刚度）。")
+    print("   这里拿到的是**闭环稳态差**（载荷/摩擦不对称）。齿隙要的是上界，"
+          "去用 `deadzone` 双向最小可动步之和。")
 
 
 def cmd_set_id(bus: Bus, sid: int, args):
