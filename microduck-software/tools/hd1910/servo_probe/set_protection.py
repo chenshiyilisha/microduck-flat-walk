@@ -29,12 +29,29 @@
 * **bit1 磁编码**：触发语义没有文档、没有阈值可核；一次误触发就是一次摔倒，
   而它防的"编码器彻底失效"并不是渐变失效模式。先关，靠 reg65 的 BIT1 在日志里观察。
 
-## 写入纪律（踩过的坑）
+## 写入纪律（三条，每条都有一次翻车记录，2026-11-04）
 
-* EEPROM 每字节 commit ~10 ms ⇒ **每包之间等 ≥50 ms**，背靠背会写进 commit 窗口（假成功）。
-* 写完必须 **reg55=1 上锁 + 回读**；而**回读 PASS ≠ 持久 PASS**，
-  唯一判据是**断电重上电后再读一次** —— 所以 --apply 之后要人为拔插一次电源，再 --verify。
-* mode 4 下 reg40=0 不生效（停不住），所以写 EEPROM 期间不断扭矩，只选不动 goal 的地址。
+被断电验证过的唯一时序（连跑两轮都活过了拔插，reg13 对照组也一起活）：
+
+    断电重上电（此时 reg40 默认 0 = 扭矩关） → 解锁 reg55=0，等 0.25 s 并回读
+    → 写值，等 0.50 s → 上锁 reg55=1，等 0.50 s 并回读 → 再断电重上电 → --verify
+
+1. **回读 PASS ≠ 持久 PASS**。第一次 --apply 回读 13、上锁 1，看着完美；
+   拔插电源再 --verify **回到 4** —— 值只进了 RAM 影子。唯一判据是断电后回读。
+2. **窗口要够长**：0.10 s 那版（旧代码）两次都失败，0.35–0.50 s 才真落盘。
+   而且**值没变时固件会跳过 commit**（回读 PASS、掉电回旧值，与写失败同形），
+   所以本文件在值已等于目标时先写一个不同的值再写回。
+3. **不许切 mode**。切 mode 会让固件**从 EEPROM 重载配置**，把刚写的值冲掉 ——
+   一次 0.30 s 窗口的尝试就是毁在"临时切 mode 0 再改回"这一步上。
+   连带结论：mode 4 下 reg40 关不掉扭矩（goal+60 实测仍走 58 步），
+   所以只能借"**上电默认 reg40=0**"这个窗口写 —— 即断电重上电后、robotd 起来之前。
+
+官方依据：reg55 原文 *"写 0 关闭写入锁，写入 EEPROM 地址的值掉电保存；写 1 打开写入锁，
+写入 EEPROM 地址的值掉电不保存"* —— 锁=1 时写 EEPROM 是**静默丢弃**，ERR 照样 0。
+LeRobot 文档：*"With the torque off, a motor's EEPROM can be written."*
+
+**金丝雀**：同一轮顺手写 reg20（LED 报警，同构位段、只影响灯）。
+断电后若 reg20 变了而 reg19 没变 ⇒ 问题在寄存器，不在机制（本次两轮都一起变/一起不变）。
 """
 import argparse
 import sys
@@ -46,6 +63,9 @@ REG_UNLOAD = 19
 REG_LED = 20
 REG_LOCK = 55
 REG_PROT_CURRENT = 28
+REG_TORQUE = 40
+REG_GOAL = 42
+REG_POS = 56
 
 BITS = {0: "电压", 1: "磁编码", 2: "过热", 3: "过流", 4: "空", 5: "过载"}
 TARGET = (1 << 0) | (1 << 2) | (1 << 3)          # 13
@@ -67,9 +87,11 @@ def check(bus, sid: int) -> dict:
         "unload": bus.read_u8(sid, REG_UNLOAD),
         "led": bus.read_u8(sid, REG_LED),
         "lock": bus.read_u8(sid, REG_LOCK),
+        "torque": bus.read_u8(sid, REG_TORQUE),
         "prot_current": bus.read_u16(sid, REG_PROT_CURRENT),
         "status": bus.read_u8(sid, 65),
         "volt": bus.read_u8(sid, 62),
+        "pos": bus.read_u16(sid, REG_POS),
     }
 
 
@@ -78,9 +100,11 @@ def report(sid: int, c: dict) -> bool:
     ok = u == TARGET
     print(f"  ID {sid}: reg19 = {u} = {'+'.join(decode(u)) if u else '全关'}"
           f"   {'✅ 等于部署值 13' if ok else f'❌ 期望 {TARGET}'}")
-    print(f"          reg28 = {c['prot_current']} ⇒ {c['prot_current'] * MA_PER_LSB / 1000:.2f} A "
-          f"（{c['prot_current'] * MA_PER_LSB / 1000 / STALL_A:.2f}× 堵转 {STALL_A} A）"
-          f"   lock = {c['lock']}   电压 = {c['volt'] / 10:.1f} V   status = 0b{c['status']:08b}")
+    print(f"          reg20 = {c['led']}（LED，金丝雀）"
+          f"   reg28 = {c['prot_current']} ⇒ {c['prot_current'] * MA_PER_LSB / 1000:.2f} A "
+          f"（{c['prot_current'] * MA_PER_LSB / 1000 / STALL_A:.2f}× 堵转 {STALL_A} A）")
+    print(f"          lock = {c['lock']}   torque = {c['torque']}   "
+          f"电压 = {c['volt'] / 10:.1f} V   status = 0b{c['status']:08b}")
     if u is not None and u & FORBIDDEN:
         print("         ⚠️⚠️ bit5 过载开着 —— kp8 带载稳态误差会被判成'挡住'，"
               "触发即卸力 2 s 到 20%，走路必摔")
@@ -88,31 +112,101 @@ def report(sid: int, c: dict) -> bool:
     return ok
 
 
-def apply_one(bus, sid: int) -> bool:
+def _move_probe(bus, sid: int, pos0: int) -> int:
+    """功能性判断扭矩到底关没关：给 goal 加 60 步，看位置跟不跟。
+
+    60 步 ≈ 5.3°。旧版"reg40=0 拦不住运动"的结论就是靠这个观察得出的，
+    这里把它固化成前置检查 —— 关不掉扭矩就别指望 EEPROM 写进去。
+    """
+    bus.write_u16(sid, REG_GOAL, pos0 + 60)
+    time.sleep(0.35)
+    pos1 = bus.read_u16(sid, REG_POS)
+    bus.write_u16(sid, REG_GOAL, pos0)
+    time.sleep(0.20)
+    d = abs((pos1 or pos0) - pos0)
+    print(f"          扭矩功能性检查：goal +60 步 → 实际动了 {d} 步 "
+          f"{'⇒ 扭矩仍是开的 ❌' if d > 10 else '⇒ 确实是自由状态 ✅'}")
+    return d
+
+
+def _write_eeprom_u8(bus, sid: int, addr: int, target: int, name: str):
+    """写一个 EEPROM 字节，并保证这次写**真的是一次变化**。
+
+    值本来就等于 target 时，固件很可能直接跳过 EEPROM commit（"没变就不用存"），
+    于是回读 PASS、掉电照样回旧值 —— 和写失败长得一模一样。
+    所以先写一个不同的值，再写 target。
+    """
+    cur = bus.read_u8(sid, addr)
+    if cur == target:
+        alt = target ^ 0x08 if (target & 0x08) else target | 0x08
+        bus.write_u8(sid, addr, alt)
+        time.sleep(0.50)
+        print(f"          {name} 本就是 {target} ⇒ 先写 {alt} 制造一次变化，再写回")
+    bus.write_u8(sid, addr, target)
+    time.sleep(0.50)
+    return bus.read_u8(sid, addr)
+
+
+def apply_one(bus, sid: int, probe: bool = True) -> bool:
+    """唯一被断电验证过的写入时序（2026-11-04，连跑两轮都活过了断电）：
+
+        解锁 reg55=0 → 等 0.25 s（回读确认） → 写值 → 等 0.50 s
+        → 上锁 reg55=1 → 等 0.50 s（回读确认）
+
+    三条硬约束，每一条都有一次失败记录：
+
+    * **窗口要够长**：0.10 s 那版回读 PASS、断电回 4；0.35–0.50 s 才真落盘。
+    * **不许切 mode**：切 mode 会让固件把配置**从 EEPROM 重载**，等于把刚写的值
+      冲回旧值 —— 那次 0.30 s 窗口的尝试就是被这一步毁掉的。
+    * **写的时候扭矩得是关的**（官方前置条件）。mode 4 下 reg40 关不掉，
+      所以只能利用"上电默认 reg40=0"这个窗口：**断电重上电后、robotd 起来之前写**。
+    """
     before = check(bus, sid)
     if before["unload"] is None:
         print(f"  ID {sid}: 无应答，跳过")
         return False
-    print(f"  ID {sid}: {before['unload']} → {TARGET}")
+    print(f"  ID {sid}: reg19 {before['unload']} → {TARGET}，reg20 {before['led']} → {TARGET}"
+          f"（金丝雀）")
+
+    if before["torque"] != 0:
+        print(f"  ID {sid}: ❌ reg40 = {before['torque']}，扭矩使能中。"
+              f"\n          mode 4 下 reg40 关不掉（goal+60 实测仍走 58 步），"
+              f"切 mode 0 又会把配置从 EEPROM 重载。"
+              f"\n          ⇒ 断电重上电（上电默认 reg40=0），在 robotd 起来之前跑这一步。")
+        return False
+    print("          扭矩 reg40 = 0 ✅（上电默认值，官方要求的写入前置条件）")
+
+    # ① goal 钉在当前位置：写 EEPROM 期间不许它动
+    pos0 = before["pos"]
+    if pos0 is not None:
+        bus.write_u16(sid, REG_GOAL, pos0)
+        time.sleep(0.20)
+    if probe:
+        _move_probe(bus, sid, pos0 or 0)
+
+    # ② 解锁（等足再回读：解锁没生效时写 EEPROM 是静默丢弃，RAM 照样变）
     bus.write_u8(sid, REG_LOCK, 0)
-    time.sleep(0.05)
+    time.sleep(0.25)
     if bus.read_u8(sid, REG_LOCK) != 0:
         print(f"  ID {sid}: 解锁失败（reg55 仍不是 0），不写")
         return False
-    bus.write_u8(sid, REG_UNLOAD, TARGET)
-    time.sleep(0.10)                       # EEPROM commit ~10 ms，留 10× 余量
-    got = bus.read_u8(sid, REG_UNLOAD)
+
+    # ③ 逐字节写，每包之间留一个完整 commit 窗口
+    rb19 = _write_eeprom_u8(bus, sid, REG_UNLOAD, TARGET, "reg19")
+    rb20 = _write_eeprom_u8(bus, sid, REG_LED, TARGET, "reg20")
+    print(f"          RAM 回读 reg19={rb19} reg20={rb20}")
+
+    # ④ 上锁前再等一个完整窗口，避免 LockEprom 自己插进 commit 里
+    time.sleep(0.50)
     bus.write_u8(sid, REG_LOCK, 1)
-    time.sleep(0.10)
-    if got != TARGET:
-        print(f"  ID {sid}: ❌ 写入后回读 {got} ≠ {TARGET}")
-        return False
-    if bus.read_u8(sid, REG_LOCK) != 1:
-        print(f"  ID {sid}: ❌ 上锁失败（reg55 ≠ 1）")
-        return False
-    print(f"  ID {sid}: 回读/上锁 PASS —— 但这只是 RAM 影子，"
-          f"**拔插一次电源再 --verify 才算持久 PASS**")
-    return True
+    time.sleep(0.50)
+    lk2 = bus.read_u8(sid, REG_LOCK)
+
+    ok = (rb19 == TARGET) and (rb20 == TARGET) and (lk2 == 1)
+    print(f"  ID {sid}: {'RAM 回读/上锁 PASS' if ok else '❌ RAM 回读或上锁不符'}"
+          f"（reg55={lk2}）—— **拔插一次电源再 --verify 才算持久 PASS**")
+    return ok
+
 
 
 def selftest() -> int:
@@ -145,6 +239,8 @@ def main() -> int:
     ap.add_argument("--ids", default="10")
     ap.add_argument("--apply", action="store_true", help="写入（默认只读）")
     ap.add_argument("--verify", action="store_true", help="只读复核（断电后跑这个）")
+    ap.add_argument("--no-probe", action="store_true",
+                    help="跳过'扭矩关没关'的功能性检查（它会让舵盘动约 5°）")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -158,7 +254,7 @@ def main() -> int:
         ok = True
         for sid in ids:
             if a.apply:
-                ok &= apply_one(bus, sid)
+                ok &= apply_one(bus, sid, probe=not a.no_probe)
             else:
                 ok &= report(sid, check(bus, sid))
     finally:
