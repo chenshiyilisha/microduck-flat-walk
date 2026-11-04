@@ -24,10 +24,10 @@
 
 | # | 项 | 期望 | □ |
 |---|---|---|---|
-| B1 | 协议 | `protocol = "feetech-sts"`（非 Dynamixel） | |
+| B1 | 舵机家族 | `[bus] servo = "feetech_hls"`。**`ServoKind` 的 `#[default]` 就是它**，所以不写也对；写成 `dynamixel_xl330` 会让 15 维 `joint_vel` 小 3.15×。⚠️ **没有 `protocol` 这个键** —— `Bus` 带 `#[serde(deny_unknown_fields)]`，抄 kissqy 那份的 `protocol = "feetech"` 会让 robotd **整个配置文件加载失败**（不是静默忽略） | |
 | B2 | `robotctl health` | bus 绿；loop **50 Hz 0 missed** | |
 | B3 | 方向表 | HD1910 读数方向常与 XL330 **相反** → 多数关节 **−1**（以本机标定为准，逐颗核对） | |
-| B4 | 零位 / 限位 / IMU | 关节工作台过一遍；IMU 俯仰偏差必须运行时校掉 | |
+| B4 | 零位 / 限位 / IMU | 关节工作台过一遍；IMU 俯仰偏差必须运行时校掉。⚠️ **别指望舵机自己的行程当限位**：EEPROM `reg9/reg11 = 0/4095` 在物理上不起作用，实测推超程时堵在 1213/2816（相隔 1603 counts ≈ 141°），而 reg19 的过载位 32 是刻意关的 ⇒ 撞住不卸力，只有过流 3.25 A 兜底 | |
 | B5 | 固件 P（RAM 50 / EEPROM 21） | **= 8**（= 训练 `kp_fw`，§22）；`set_gains_all.py --persist` 写，**断电后回读**才算数（§22.7）。**写前先确认 15 颗全应答**：脚本会预检，缺一颗就退 2 且一个字节都不写（半套配置比原样不动更糟，§22.7 末） | |
 | B6 | D / 转矩 | **D = 0**（`set_gain` 自己钉 0；出厂 D=40 会阻尼内部 PID，同 kP 下明显更软）；转矩上限 1000 | |
 | B7 | **`[policy] gain`** | `/etc/robot/robotd.toml` 里 `gain = 8`。**默认 200，控制环每 tick 写 RAM，会把 EEPROM 的 8 覆盖掉**（§22.8，一手源码） | |
@@ -35,6 +35,7 @@
 | B9 | **增益标度家族** | 改了 `gain` 之后，另外三个按 200 标定的相对量必须同步改：`[safety] gain_limp = 3`（默认 50，在 kp8 下是 **6.25× 加力**，跌倒卸力反成硬撑）、`[safety] limp_fall_pose_gain = 8`（默认 160 = **20×**，回站姿会砸）、`[policy] action_scale = 1.0`（默认 0.9 是 alpha 策略的，会让每个动作小 10%；但这是**旋钮不是常数**——kissqy 自训版用 **0.7** 也走起来了，匹配训练时才是 1.0，§8.5.6）。用 `audit_robotd_toml.py` 一条命令查（§22.10） | |
 | B10 | **两个「中立」默认值其实不中立** | ① `[policy] head_lowpass / legs_lowpass` 默认 **0.5 / 0.7**——robotd 注释说这是 alpha 策略的训练值，但**本训练管线里零低通**（`grep low_pass` 在 microduck_rl + mjlab 1.3.0 + bam 全无命中，动作是 `target = current + action*scale`）⇒ 必须写 **1.0**，否则等于给策略从未见过的目标加了个 τ≈17 ms 的一阶滤波（2 Hz 处 −2%、4 Hz 处 −7%、相移 6–11°）。② `[bus] fast_sync_read` 默认 **true** 是 **Dynamixel P2.0 的 0x8A**；HD-1910 是 Feetech（0x82）。robotd 自己的警告是「不实现 0x8A 的设备不应答，**每一次读都超时**」，症状(symptom)看起来完全像接线或波特率错 ⇒ 先写 **false**（**2026-11-04 台架已实测**：ID 10 对 0x8A 返回 0 字节，而 PING / 0x82 单读 / 0x82 同步读三个对照全通，假 id 负对照沉默 ⇒ 不是"没上电"而是"不实现"）。**优先级**：① 是硬故障（每次读超时），②③ 是"能对上最好"——kissqy 自训版 `robotd-selftrained.toml` 就把 lowpass/cmd_alpha 全留了默认并走起来了（§8.5.6） | |
 | B11 | **保护开关 reg19 = 13**（EEPROM，逐颗写） | 出厂只有 **4（仅过热）**，过压/过流/过载/磁编全关。写 **13 = 电压+过热+过流**，`set_protection.py --ids 1,...,15 --apply`。**时序不能改**：必须在**断电重上电后、robotd 起来之前**跑（那时 reg40 默认 0 = 扭矩关，是官方要求的写入前置条件），解锁 0.25 s → 写 0.50 s → 上锁 0.50 s；**绝不切 mode**（会从 EEPROM 重载、把刚写的值冲掉）。写完**必须再断电一次**跑 `--verify`：回读 PASS 只证明 RAM 影子改了，前 3 次就是这么假成功的（§8.5 台账）。⚠️ **过载位 32 绝不能开**，且别拿「恢复出厂」当安全动作（出厂 52 含 32） | |
+| B12 | **`[bus] joint_ids`（15 条，Feetech 必需）** | 空或重复 ⇒ **总线拒绝打开**，优先报 `"the key to set"` 而不是猜哪颗是哪个关节（`robotd/src/main.rs:5495` 有对应测试）。顺序**固定按 `JOINT_NAMES`**：0-4 左腿(hip_yaw/hip_roll/hip_pitch/knee/ankle)、5-9 颈/头(neck_pitch/head_pitch/head_yaw/head_roll/mouth)、10-14 右腿(同左)。建议 ID 沿用上游 `JOINT_IDS`（右腿 **10-14**、左腿 **20-24**、头 **30-34**），IMU 板 **200 不在这个表里**。台架那颗已是 **ID 10 = right_hip_yaw**，与上游一致 | |
 
 阶段 0 单颗闸门（URT-2/URT-1）未过 0.2 前不要买齐 15 颗：`sts_bench.py` / FD。
 
