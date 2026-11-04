@@ -26,8 +26,12 @@ PY=.venv-mjlab/Scripts/python.exe
 ARM_A="${ARM_A:-2026-11-03_08-33-18_p8head_030_4096x3000}"     # rewards
 ARM_B="${ARM_B:-}"                                              # control
 if [ -z "$ARM_B" ]; then
-  # newest p8ctl_* run; fail loudly rather than evaluating nothing
-  ARM_B=$(ls -d logs/rsl_rl/microduck_velocity_hd1910/*_p8ctl_* 2>/dev/null | sort | tail -1 | xargs -r basename)
+  # newest p8ctl_* run; fail loudly rather than evaluating nothing.
+  # Exclude smoke runs -- *_p8ctl_smoke_* also matches the glob and sorts into
+  # the same namespace, so picking "newest p8ctl" by date alone can land on a
+  # 2-checkpoint plumbing run and quietly produce a bogus A/B.
+  ARM_B=$(ls -d logs/rsl_rl/microduck_velocity_hd1910/*_p8ctl_* 2>/dev/null \
+            | grep -v smoke | sort | tail -1 | xargs -r basename || true)
 fi
 if [ -z "$ARM_B" ]; then
   echo "FAIL: no control run (*_p8ctl_*) found; run explore_heading_control.sh first" >&2
