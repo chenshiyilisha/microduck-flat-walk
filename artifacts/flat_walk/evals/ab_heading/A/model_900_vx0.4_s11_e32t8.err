@@ -1,0 +1,2 @@
+E:\WorkBuddyData\WorkBuddy\2026-10-23-08-26-15\microduck-software\.venv-mjlab\Lib\site-packages\mjlab\entity\entity.py:149: UserWarning: Actuator config matched 14 joint(s) but the same expressions also match 7 site(s): imu, left_foot, head_camera, tof, head_imu, mouth_tip, right_foot. Add a separate config with transmission_type=TransmissionType.SITE if those should be actuated too.
+  self._add_actuators()
