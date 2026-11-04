@@ -33,6 +33,7 @@
 | B7 | **`[policy] gain`** | `/etc/robot/robotd.toml` 里 `gain = 8`。**默认 200，控制环每 tick 写 RAM，会把 EEPROM 的 8 覆盖掉**（§22.8，一手源码） | |
 | B8 | 跑起来后回读 reg 50 | **= 8**。读到 200 ⇒ B7 没生效；读到 50 ⇒ 刚跌倒过，`gain_limp` 还在 RAM | |
 | B9 | **增益标度家族** | 改了 `gain` 之后，另外三个按 200 标定的相对量必须同步改：`[safety] gain_limp = 3`（默认 50，在 kp8 下是 **6.25× 加力**，跌倒卸力反成硬撑）、`[safety] limp_fall_pose_gain = 8`（默认 160 = **20×**，回站姿会砸）、`[policy] action_scale = 1.0`（默认 0.9 是 alpha 策略的，会让每个动作小 10%）。用 `audit_robotd_toml.py` 一条命令查（§22.10） | |
+| B10 | **两个「中立」默认值其实不中立** | ① `[policy] head_lowpass / legs_lowpass` 默认 **0.5 / 0.7**——robotd 注释说这是 alpha 策略的训练值，但**本训练管线里零低通**（`grep low_pass` 在 microduck_rl + mjlab 1.3.0 + bam 全无命中，动作是 `target = current + action*scale`）⇒ 必须写 **1.0**，否则等于给策略从未见过的目标加了个 τ≈17 ms 的一阶滤波（2 Hz 处 −2%、4 Hz 处 −7%、相移 6–11°）。② `[bus] fast_sync_read` 默认 **true** 是 **Dynamixel P2.0 的 0x8A**；HD-1910 是 Feetech（0x82）。robotd 自己的警告是「不实现 0x8A 的设备不应答，**每一次读都超时**」，症状(symptom)看起来完全像接线或波特率错 ⇒ 先写 **false**，除非台架证明固件应答 0x8A | |
 
 阶段 0 单颗闸门（URT-2/URT-1）未过 0.2 前不要买齐 15 颗：`sts_bench.py` / FD。
 

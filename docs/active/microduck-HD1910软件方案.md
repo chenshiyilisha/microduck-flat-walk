@@ -810,3 +810,36 @@ SFLP 本身能直接输出 gravity vector（TAG 17h，int16，2 g 灵敏度）�
 `passive_<joint>_backlash`（单下划线）。⇒ **判据是数字能不能回到一手源码/官方页核对，
 不是站点看起来像不像技术站**。同一批站点里 `duck.whatled.com/learn/hd1910-bench` 的规格表
 反而与官方一致——**逐条核，不按站点一票否决**。
+
+### 8.5.5 部署侧四个「中立」默认值，其实每个都是结论（2026-11-04 补）
+
+来源是一手：`deploy/robotd.toml` + `robotd/src/control.rs:106` + `duck-control/src/bus.rs`。
+四个默认值看上去只是"出厂设置"，但对照训练侧真值后全是**会咬人的偏置**：
+
+| 参数 | robotd 默认 | 训练侧真值（一手） | 不匹配的后果 | 结论 |
+|---|---|---|---|---|
+| `[policy] action_scale` | **0.9** | **1.0**（`microduck_velocity_env_cfg.py:273` 显式赋值） | 每个动作先缩 10% 再进 PD | 必须写 1.0（已在 B9） |
+| `[policy] head_lowpass` / `legs_lowpass` | **0.5 / 0.7** | **没有低通** | 目标被 τ≈17 ms 一阶滤波：2 Hz 处 −2%、4 Hz 处 −7%、相移 6–11° | 必须写 **1.0**（新增 B10） |
+| `[bus] fast_sync_read` | **true（0x8A）** | Feetech 只有 **0x82** | 设备不应答 ⇒ **每一次读都超时**，症状像接线/波特率错 | 先写 **false**（新增 B10） |
+| `[control] cmd_alpha` | **0.2** | **无**（训练是阶跃命令） | 指令变成 τ≈90 ms 的斜坡：0→0.4 要 ~0.4 s 才到 95% | 首跑写 **1.0**；确认无害后再开 |
+
+**「训练侧没有低通」是查出来的，不是推的**：`grep -r "low_pass\|lowpass"` 在
+`microduck_rl` 全树、`mjlab 1.3.0`、本地 `bam` 包三处**零命中**；动作项就是
+`target = current_joint_pos + action * scale`（`mjlab/envs/mdp/actions/actions.py:231`）。
+robotd 注释里说 0.5/0.7 是"alpha 策略的训练值"——那是**上一代 isaaclab 血统**的事，
+不是这条 mjlab 管线。⇒ 这条注释对我们是**过时的**，不能当依据。
+
+**两条量级参照（都来自官方，一手）**：
+
+1. **执行器模型是最大单因子**。官方 `duck-sim` 拿 MJCF 的 position actuator 顶替 BAM 模型后，
+   `0.15 m/s` 指令只走出 **0.06**（40%，且他们自己标注 "the forward shortfall is still open"）。
+   对比：地形（flat↔rough）、奖励、迭代数这些我们反复调的量，动的是 5–20%；
+   **执行器模型动的是 2.5×**。⇒ 我们这条链路是舵机固件 PD 本身就是 BAM 本体，
+   且 **sim 侧只有 `kp_fw`、没有 D 项**（`BamActuatorCfg` 无 kd 字段）⇔ 部署 `D = 0`（B6 钉的），两端一致，**不吃这一刀**。
+   但这也说明：**凡是要用别人数字做参照，先看他的执行器是不是同一套**。
+2. **总线这一项有现成仪器**：`bench_dynamixel_bus`（`microduck_runtime`）直接报
+   achieved rate / jitter / bus utilisation / error counts，robotd 还有自带的 5 分钟汇总。
+   ⇒ 8.5.2 里"总线实测事务时间"不必自己造，**先对齐它的口径**（我们已有 fanhao 的 4.8 ms/15 颗）。
+
+补充进 8.5.2 的一条台架项：**HD1910 固件是否应答 0x8A**。一条包就能测（发 0x8A 给单颗，
+看有没有回包），但**测错方向的代价是上电即全红**，所以默认按 false 配、按 true 验。

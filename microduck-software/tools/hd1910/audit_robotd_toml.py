@@ -177,12 +177,22 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     else:
         rep.add("ok", "policy.action_scale", scale, "matches training")
 
-    # R6: low-pass filters. Trained with them, or not? Must match or transfer degrades.
-    for key, trained in (("head_lowpass", None), ("legs_lowpass", None)):
+    # R6: low-pass filters. The deploy default is 0.5 head / 0.7 legs, described in
+    # robotd.toml as "the values the alpha policies are TRAINED with". That is NOT true of
+    # this training pipeline: `grep -r low_pass` over microduck_rl + mjlab 1.3.0 + bam finds
+    # nothing, and the action term is a plain `target = current + action*scale`
+    # (mjlab/envs/mdp/actions/actions.py:231). So pass-through 1.0 is the value that matches;
+    # anything else is a first-order filter the policy never saw (0.7 at 50 Hz = tau ~17 ms,
+    # -2% at 2 Hz and -7% at 4 Hz, plus 6-11 deg of phase).
+    for key in ("head_lowpass", "legs_lowpass"):
         val, was_set = effective(cfg, "policy", key)
-        rep.add("WARN" if not was_set else "ok", f"policy.{key}", val,
-                "from default -- confirm the training config used this value"
-                if not was_set else "explicit")
+        if val == 1.0:
+            rep.add("ok", f"policy.{key}", val, "pass-through -- matches training (no filter)")
+        else:
+            rep.add("WARN", f"policy.{key}", val,
+                    "training has NO low-pass (grep: zero hits in microduck_rl/mjlab/bam); "
+                    "1.0 is the matching value. This one filters targets the policy never saw"
+                    + ("" if was_set else " (from default)"))
 
     # R7: bus / board identity
     port = (cfg.get("bus") or {}).get("port")
@@ -190,9 +200,16 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             "must be the tty the URT-2/bridge enumerates as, e.g. /dev/ttyS2 or /dev/ttyUSB0"
             if not port else "")
     fast, fast_set = effective(cfg, "bus", "fast_sync_read")
-    rep.add("ok", "bus.fast_sync_read", fast,
-            "0x8A fast sync read; the bridge must implement it (bus.rs:477)"
-            + ("" if fast_set else " (from default)"))
+    if fast:
+        rep.add("WARN", "bus.fast_sync_read", fast,
+                "0x8A is a DYNAMIXEL P2.0 instruction; HD-1910 is Feetech (0x82 sync read). "
+                "robotd's own note: a device that does not implement 0x8A does not answer, so "
+                "EVERY read times out and the journal fills with 'bus read failed' -- which "
+                "reads as wiring or baud at first power-on. Set false unless the HD1910 "
+                "firmware is proven to answer 0x8A (one packet at the bench)"
+                + ("" if fast_set else " (from default)"))
+    else:
+        rep.add("ok", "bus.fast_sync_read", fast, "plain 0x82 sync read -- correct for Feetech")
     board, _ = effective(cfg, "board", "version")
     rep.add("ok", "board.version", board,
             "declared, not detected (board.rs:1) -- only gates camera/hw_rev")
@@ -224,12 +241,24 @@ def selftest() -> int:
 
     good = {
         "policy": {"gain": 8, "action_scale": 1.0, "standing_gain_ratio": 1.0,
-                   "head_lowpass": 0.5, "legs_lowpass": 0.7},
+                   "head_lowpass": 1.0, "legs_lowpass": 1.0},
         "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
-        "bus": {"port": "/dev/ttyS2"},
+        "bus": {"port": "/dev/ttyS2", "fast_sync_read": False},
     }
     r2 = audit(good, 8)
     check("a corrected file passes", r2.fails == 0)
+
+    # negative controls for the two deploy defaults that look harmless and are not
+    only_defaults = dict(good, policy=dict(good["policy"]))
+    only_defaults["policy"].pop("legs_lowpass")          # falls back to 0.7
+    r4 = audit(only_defaults, 8)
+    check("default legs_lowpass 0.7 raises a WARN",
+          any(k == "policy.legs_lowpass" and lv == "WARN" for lv, k, _, _ in r4.rows))
+
+    fs = dict(good, bus={"port": "/dev/ttyS2", "fast_sync_read": True})
+    r5 = audit(fs, 8)
+    check("fast_sync_read true raises a WARN",
+          any(k == "bus.fast_sync_read" and lv == "WARN" for lv, k, _, _ in r5.rows))
 
     # negative control: the gain key absent must not be silently accepted
     r3 = audit({"policy": {}, "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
