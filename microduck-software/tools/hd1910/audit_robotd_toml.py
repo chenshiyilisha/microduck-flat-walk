@@ -209,7 +209,10 @@ def audit(cfg: dict, expect_kp: int) -> Report:
                 "firmware is proven to answer 0x8A (one packet at the bench)"
                 + ("" if fast_set else " (from default)"))
     else:
-        rep.add("ok", "bus.fast_sync_read", fast, "plain 0x82 sync read -- correct for Feetech")
+        rep.add("ok", "bus.fast_sync_read", fast,
+                "plain 0x82 sync read -- correct for Feetech; MEASURED 2026-11-04 on ID 10: "
+                "0x8A returned 0 bytes while PING/0x82 single-read both answered "
+                "(servo_probe/probe_sync_read.py)")
     board, _ = effective(cfg, "board", "version")
     rep.add("ok", "board.version", board,
             "declared, not detected (board.rs:1) -- only gates camera/hw_rev")

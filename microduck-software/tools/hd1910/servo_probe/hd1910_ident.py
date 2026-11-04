@@ -111,7 +111,9 @@ TELEM_LEN = 15         # 56..70
 CURRENT_MA_PER_LSB = 6.5
 STEPS_PER_REV = 4096
 DEAD_ZONE_GUARD = 3    # 26/27 号不灵敏区出厂 1 步，再留余量
-KP_FW_P3 = 5           # P3 裁决：部署时 reg50 应为 5（32 只是出厂 ROM 默认）
+KP_FW_DEPLOY = 8       # 部署档 reg50 = 8（plant `hd1910_kp8`；32 只是出厂 ROM 默认）。
+#   2026-11-04 改：原值写作 5（P3 裁决），但部署已定 kp_fw=8 —— P8 在 kp8 上 vx 0.2069、
+#   P5 线只有 0.1129，且 P8 在 kp5 上 7/8 摔（无降级模式）。台架读数只有对齐 8 才代表部署。
 
 
 # ---------------------------------------------------------------- 数据链路
@@ -414,8 +416,8 @@ def cmd_step(bus: Bus, sid: int, args):
     if kp_ram != kp_ee:
         print(f"  ↳ RAM≠EEPROM：当前生效的是 RAM（{kp_ram}/{kd_ram}），"
               f"掉电会回落到 EEPROM（{kp_ee}/{kd_ee}）")
-    if target_p != KP_FW_P3:
-        print(f"⚠️ 本次阶跃 P={target_p}，P3 仿真 kp_fw={KP_FW_P3} —— "
+    if target_p != KP_FW_DEPLOY:
+        print(f"⚠️ 本次阶跃 P={target_p}，部署档 kp_fw={KP_FW_DEPLOY} —— "
               f"两边不对齐时这份形状不代表部署后行为。")
     if target_d != 0:
         print(f"⚠️ 本次 D={target_d}。BAM 官方 STS3215 律无 D 项，"
@@ -1315,8 +1317,8 @@ def main() -> int:
                     help="step：把指标（含 reg46/41/48 的请求值与**回读值**）写成 JSON。"
                          "A/B 靠它对比，别再靠肉眼读打印行")
     ap.add_argument("--kp-list", default="5,8,12,16,24,32",
-                    help="psweep：要扫的 RAM P 列表（逗号分隔）。P3 部署值是 5，"
-                         "实测带宽不足；本扫描找『带宽够且不颤』的档位")
+                    help="psweep：要扫的 RAM P 列表（逗号分隔）。部署档是 8"
+                         "（kp5 带宽不足且 P8 在 kp5 上 7/8 摔）；本扫描找『带宽够且不颤』的档位")
     args = ap.parse_args()
 
     if args.cmd == "selftest":
@@ -1341,8 +1343,8 @@ def main() -> int:
                       f"两条实测结论在别的模式下可能不成立，先小幅度试一次再放量。")
             p = bus.read_u8(args.id, REG_P_GAIN)
             print(f"  reg21 P = {p}"
-                  + ("" if p == KP_FW_P3 else
-                     f"  ⚠️ P3 部署值是 {KP_FW_P3}，两边不对齐时这份辨识不代表部署后行为"))
+                  + ("" if p == KP_FW_DEPLOY else
+                     f"  ⚠️ 部署档是 {KP_FW_DEPLOY}，两边不对齐时这份辨识不代表部署后行为"))
         {"telem": cmd_telem, "step": cmd_step, "sine": cmd_sine,
          "psweep": cmd_psweep, "deadzone": cmd_deadzone, "backlash": cmd_backlash,
          "set-id": cmd_set_id}[args.cmd](bus, args.id, args)
