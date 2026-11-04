@@ -1313,9 +1313,18 @@ plant"这句要改准：**是 kp=8 等于换 plant**，模式只是间接影响�
 
 | 项 | robotd 要求 | 我们的现状（ID 10 的 EEPROM 备份，2026-11-02） | 怎么改 |
 |---|---|---|---|
-| reg6 波特率 | **1 = 500 kbps**（`feetech.rs:35`，A733 的 UART7 只做得到 24 MHz/16/3） | **0 = 1 Mbps** ✗ 出厂值 | `hd1910_ident.py baud` |
+| reg6 波特率 | 由 `feetech.rs:35 BAUD_RATE` 决定，B 代写的是 **500 kbps** —— 但 `feetech.rs:34` 的原话是 *Exactly representable on the A733's UART7 (24 MHz / 16 / 3). 1 Mbit/s is not.* ⇒ **这是那块板的分频限制，不是舵机的** | **0 = 1 Mbps**（出厂值） | **可能一颗都不用改**，改常量即可（见 §11.5） |
 | reg33 模式 | **0**（纯位置 PD） | **4** ✗ 出厂值 | `hd1910_ident.py mode` |
 | reg9/11 行程 | **0/4095** | 0/4095 ✓ | 不用动 |
+
+**订正（2026-11-04 晚，读完 §11 之后）：上一版这行判"必须逐颗把 reg6 改成 1"，方向反了。**
+500 kbps 的唯一依据是 **A733 那块板**的 UART 分频（`feetech.rs:34` 逐字写了这句话），
+而 A733 是 **B 代（Orange Pi + HL-2915）** 的芯片。我们要用的 **Radxa Zero 3W（RK3566）**：
+Radxa 官方文档说它 debug UART **默认就是 1 500 000 bps**，RK3566 datasheet 写 UART
+"up to 4 Mbps"，上游主仓 `pollen-robotics/microduck` 自己在 Zero 3W 上就跑 **1 Mbps**。
+⇒ 正确动作是把 `BAUD_RATE` 改到 1 Mbps（同时 `BAUD_REGISTER_VALUE` 1 → **0**），
+**15 颗舵机的 EEPROM 一颗都不用写**。⚠️ 在板子定下来之前，**不要动任何一颗的 reg6**
+—— 改了就是"改完就失联"，而且要断电才能验证。
 
 ⚠️ **波特率这一项的杀伤力在"改完就失联"**：我们**全部**台架探针默认 `--baud 1000000`，
 而这颗舵机能被读到，恰恰是因为它是 1 Mbps。改成 500 kbps 之后，旧命令一律超时，
@@ -1419,3 +1428,131 @@ robotd 下一次启动覆盖。真正只能手写的是 EEPROM 那一组（ID、
 ### 10.5 工具
 
 `tools/hd1910/verify_policy_contract.py`（`--selftest` 15 项）。跑一次约 6 s（要 import mjlab）。
+
+---
+
+## 11. 每 tick 的总线预算（2026-11-04 晚，台架实测 + 三处外部对质）
+
+### 11.1 为什么单独查这一项
+
+前两节查的是"数据含义对不对"（§9 配置、§10 契约），这一节查"**这些数据在一条
+500 kbps 的线上来不来得及**"。它属于同一类：**不报错**。总线占满了，每一包都还是合法的。
+
+它的失败长相特别容易认错人：
+
+- `update_gate.min_achieved_hz = 45`（默认，50 Hz 的 90%）。低于这个数，robotd 判
+  **unhealthy**，而 updater 的语义是**自动回滚 release**（`main.rs:726` 注释：
+  *This is what makes the updater roll back a release whose bundle...*）。
+  ⇒ 一个总线预算问题，看起来像发布系统故障。
+- ticker 是 `MissedTickBehavior::Skip`（`main.rs:1481`），丢掉的周期**不补**。
+  ⇒ 超时不会被吸收，只会变成低频。
+- `READ_TIMEOUT = 30 ms`（`feetech.rs:118`）**比一个周期（20 ms）还长**。
+  ⇒ 一次读超时直接吃掉整个 tick。
+
+### 11.2 每 tick 到底发多少字节（从源码算，不估）
+
+| 事务 | 指令帧 | 响应 | 说明 |
+|---|---|---|---|
+| `sync_read` | **24 B** | **336 B** | 16 个设备（15 关节 + IMU `ID 200`），每颗读 `addr 56` 起 **15 字节**；响应 `count+6 = 21 B` |
+| `sync_write` | **53 B** | 0 | `mouth_torque` 默认 **true** ⇒ `limp[9]=false` ⇒ 嘴也写，15 个 ID × (1+2) |
+| **合计** | | | **413 B / tick** |
+
+帧长按 SCS v1 算：`整帧 = 4 + LEN`，`LEN = 参数数 + 2`。
+
+⚠️ 一条容易漏的不对称：`read` 用的是**构造时固定的** `self.ids`（15 + IMU，`feetech.rs:516`），
+**不看 limp**；`write` 走 `driven()`，**按 limp 过滤**（`feetech.rs:435`）。所以嘴不写的时候，
+读仍然是 16 个。
+
+### 11.3 实测（台架 ID 10，CH343，1 Mbps，每组 30 次）
+
+| 事务 | min | p50 |
+|---|---|---|
+| `ping`（发 6 收 6） | 214 µs | 239 µs |
+| `read 2B`（发 8 收 8） | 264 µs | 279 µs |
+| `read 15B`（发 8 收 21） | **410 µs** | 447 µs |
+
+**差分（13 字节）= 149 µs ⇒ 每字节 11.5 µs**（理论 10.0，比值 **1.15**），
+固定开销 78 µs/包（含 USB 批延迟）。
+
+差分法是这里唯一可信的读法：绝对时间里混着 USB 转换器的批延迟，差分里没有。
+⚠️ 跨波特率**只能搬比值，不能搬绝对时间** —— 11.5 µs 是 1 Mbps 的；500 kbps 是
+`20 × 1.15 = 23 µs/字节`。这一版差点把这个 2× 的错发出去（自检里现在有一条负对照）。
+
+**外部对质**：SO-101（6 颗 STS3215）`sync_read` 往返的公开实测 ≈ **900 µs @ 1 Mbps**。
+本台单颗 410 µs ⇒ 增量 ≈ 98 µs/颗。这就是单颗测量**测不出来**的那个"每颗响应间隙"的量级。
+
+### 11.4 外推：16 个设备 @ 500 kbps
+
+| 每颗间隙 | 读合计 | 写入 | 每 tick | 占 20 ms | 余量 |
+|---|---|---|---|---|---|
+| 50 µs | 9.06 ms | 1.06 ms | **10.12 ms** | 51% | 9.88 ms |
+| 100 µs（中心估计） | 9.86 ms | 1.06 ms | **10.92 ms** | 55% | 9.08 ms |
+| 200 µs | 11.46 ms | 1.06 ms | **12.52 ms** | 63% | 7.48 ms |
+| 500 µs（悲观上界） | 16.26 ms | 1.06 ms | **17.32 ms** | 87% | 2.68 ms |
+
+结论：**50 Hz 装得下，但总线要吃掉一半到八成七的周期**，留给"策略推理 + 控制律 + IPC"的
+是 2.7–9.9 ms。而且这还没算任何一次重试。
+
+### 11.5 波特率：500 kbps 是上游那块板的约束，不是我们的 —— 这条推翻了 §9.1 的旧判
+
+`feetech.rs:34` 逐字写着理由：
+
+> *Exactly representable on the **A733's** UART7 (24 MHz / 16 / 3). **1 Mbit/s is not.***
+
+**理由只有时钟分频，与舵机型号无关。** A733 是 B 代（Orange Pi + HL-2915）的芯片。
+我们要用的 **Radxa Zero 3W（RK3566）** 不是它。三条证据：
+
+1. Radxa 官方文档：Zero 3 的 debug UART（UART2_M0）**默认 1 500 000 bps**。
+2. RK3566 datasheet：UART *"Support different input clock for UART operation to get up to **4 Mbps** baud rate"*。
+3. 上游主仓 `pollen-robotics/microduck` 本身就是 Radxa Zero 3W，`/dev/ttyS2` 跑 **1 Mbps**。
+
+⇒ 改法是把 fork 里的**两个常量**改掉，而不是去改 15 颗舵机的 EEPROM：
+
+```rust
+// duck-control/src/feetech.rs:35,39
+pub const BAUD_RATE: u32 = 1_000_000;   // was 500_000
+pub const BAUD_REGISTER_VALUE: u8 = 0;  // was 1  (Feetech: 0=1M/1=500k/2=250k/…)
+```
+
+**收益**：每 tick 总线从 10.92 ms 降到 **6.79 ms**（间隙按 100 µs 估），余量从 9.1 ms 提到 13.2 ms；
+而且 **reg6 保持出厂值 0，15 颗舵机一颗都不用写 EEPROM**（少 15 次"改完就失联 + 要断电验证"）。
+
+⚠️ **陷阱**：`model.rs:177` 有一条 `("baud_rate", 3), // 3 = 1 Mbps, must agree with BAUD_RATE`。
+那是 **Dynamixel** 编码（3=1M），属 `bus.rs` 的 XL330 路径。**Feetech 是 0=1M**。
+把 3 套到 Feetech 上会写成 **128 kbps** ⇒ 上电即失联。两套编码在同一个 crate 里并存，
+这一处比 `fast_sync_read` 更隐蔽 —— 因为它看起来"有源码注释背书"。
+
+**前提（只能上板验）**：适配板/USB 桥的收发器要能吃 1 Mbps。台架 CH343 已经证明可以；
+RS485 适配板还没验过 —— 若误码，症状是 `sync_read` 偶发 `ShortRead` / 状态包解析失败。
+
+### 11.6 rustypot 的两处放大器（读上游源码，不是推测）
+
+`dynamixel_protocol/mod.rs:712`：
+
+```rust
+fn sync_read(...) {
+    self.send_instruction_packet(...)?;
+    for &id in ids {                                  // ← 逐个 ID 阻塞读
+        let sp = self.read_status_packet(port, id)?;  //   且要求响应按 ID 顺序到达
+        result.push(sp.params().to_vec());
+    }
+}
+```
+
+1. **逐 ID 阻塞读，且顺序强制**。IMU（ID 200）在 `ids` 末尾 ⇒ **最后才读到**。
+   策略最需要的 gravity/gyro 是这一串里最晚的一个。任何一颗慢，不只它自己晚，后面全晚。
+2. **写包前 `flush_if_needed`：最多重试 3 次、每次 sleep 5 ms**（`mod.rs:760`）。
+   一次读失败留下残字节 ⇒ 下一 tick 额外 5–15 ms ⇒ 直接掉到 45 Hz 门禁以下。
+   这是一个"越错越慢"的正反馈，而它的触发条件正是"上一 tick 超时过"。
+
+### 11.7 这一节查不到的三件事
+
+1. **16 个设备在真机上的实际 gap**。单颗测不出（只有一个 gap），只能用 SO-101 的 6 颗
+   实测把量级钉在 ~100 µs。要精确，只能等 15 颗到货后跑 `sync_read` 计时。
+2. **适配板在 1 Mbps 下的误码率**。台架走的是 CH343（USB），不是最终那条链路。
+3. **策略推理在目标板上的耗时**。§11.4 的"余量"是留给它的，但那个数只能实测。
+
+### 11.8 工具
+
+`servo_probe/probe_bus_budget.py`（`--selftest` 25 项，含"跨波特率搬绝对值会差 2×"的负对照）。
+只读，不动扭矩。它同时打印 A 静态模型 / B 纯传输 / C 台架实测 / D 外推 / E 判据 / F 波特率证据。
