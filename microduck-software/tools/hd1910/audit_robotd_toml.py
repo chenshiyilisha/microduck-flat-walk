@@ -56,6 +56,9 @@ except ModuleNotFoundError:  # pragma: no cover
 # defaults transcribed from robotd-params/src/lib.rs (line refs in the docstring)
 # ---------------------------------------------------------------------------
 
+# JOINT_NAMES length (duck-control/src/model.rs): 15 servos on the bus, IMU board at ID 200.
+NUM_JOINTS = 15
+
 DEFAULTS: dict[str, dict[str, object]] = {
     "policy": {
         "gain": 200,
@@ -81,7 +84,7 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "limp_fall_arm_ms": 200,
         "battery_empty_shutdown": True,
     },
-    "bus": {"fast_sync_read": True},
+    "bus": {"fast_sync_read": True, "servo": "feetech_hls"},
     "board": {"version": "zero3"},
 }
 
@@ -217,22 +220,44 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     rep.add("ok", "board.version", board,
             "declared, not detected (board.rs:1) -- only gates camera/hw_rev")
 
-    # R7b: which daemon this file is for. The upstream schema has no protocol key at all;
-    # the Feetech build (kissqy) needs protocol="feetech" plus a per-robot calibration file
-    # (robotd-selftrained.toml). Auditing an upstream-shaped file says nothing about whether
-    # a Feetech daemon will accept it -- see docs/active/microduck-HD1910软件方案.md 8.5.6.
-    proto = (cfg.get("bus") or {}).get("protocol")
-    if proto is None:
-        rep.add("WARN", "bus.protocol", "(absent)",
-                "upstream (Dynamixel) schema. The Feetech daemon wants protocol=\"feetech\" + "
-                "feetech_calibration=<per-robot file>; confirm which build you install -- "
-                "the XL330 velocity scale is 3.2x off for HD1910 (bus.rs:40 vs hd1910.rs:15)")
-    elif proto == "feetech":
-        rep.add("ok", "bus.protocol", proto, "Feetech build")
+    # R7b: which servo family. The key is `bus.servo` (robotd-params ServoKind), NOT
+    # `bus.protocol` -- and Bus carries #[serde(deny_unknown_fields)], so a stray protocol=
+    # line makes robotd refuse the whole file at startup. ServoKind's default IS FeetechHls,
+    # so "servo absent" is correct here and must not be warned about.
+    bus_tbl = cfg.get("bus") or {}
+    if "protocol" in bus_tbl:
+        rep.add("FAIL", "bus.protocol", bus_tbl["protocol"],
+                "upstream Bus is #[serde(deny_unknown_fields)] (robotd-params/src/lib.rs:934): "
+                "an unknown key aborts the whole config load. The key is bus.servo = "
+                "\"feetech_hls\". kissqy's robotd-selftrained.toml uses protocol= because it "
+                "targets an older schema -- copying that line here bricks the daemon")
+    servo, servo_set = effective(cfg, "bus", "servo")
+    if servo == "feetech_hls":
+        rep.add("ok", "bus.servo", servo,
+                "Feetech branch: feetech.rs:95 RAD_PER_SEC_PER_COUNT = 0.732 rpm/count. "
+                "BENCH 2026-11-04 (ID 10, 4.6 V): reg46 10/20 -> 49.4/49.3 counts/s per "
+                "count (STS theory 49.97; the XL330 0.229 would give 15.63)"
+                + ("" if servo_set else " (from default -- ServoKind::FeetechHls is #[default])"))
+    elif servo == "dynamixel_xl330":
+        rep.add("FAIL", "bus.servo", servo,
+                "HD1910 is Feetech. bus.rs:31 would scale every joint velocity by 0.229/0.732 "
+                "= 3.15x small and decode sign-magnitude as two's complement: 15 of 61 obs "
+                "dims silently wrong, no error anywhere")
     else:
-        rep.add("FAIL", "bus.protocol", proto,
-                "HD1910 is a Feetech servo: joint_vel would decode at the XL330 scale (3.2x "
-                "small) and negative speeds as sign-magnitude garbage")
+        rep.add("FAIL", "bus.servo", servo,
+                "not a ServoKind variant (feetech_hls / dynamixel_xl330); serde refuses it")
+
+    jids = bus_tbl.get("joint_ids") or []
+    if not jids:
+        rep.add("FAIL", "bus.joint_ids", "(empty)",
+                "the Feetech bus refuses to open without the joint->ID map rather than guess "
+                "which servo is which joint (robotd/src/main.rs:5495). Fill 15 entries in "
+                "JOINT_NAMES order")
+    elif len(jids) != NUM_JOINTS or len(set(jids)) != len(jids):
+        rep.add("FAIL", "bus.joint_ids", f"{len(jids)} ids",
+                f"need exactly {NUM_JOINTS} distinct IDs in JOINT_NAMES order")
+    else:
+        rep.add("ok", "bus.joint_ids", f"{len(jids)} ids", "mapped")
 
     # R8: safety verdicts that are reported, not enforced
     fz, _ = effective(cfg, "safety", "fall_gravity_z")
@@ -263,7 +288,8 @@ def selftest() -> int:
         "policy": {"gain": 8, "action_scale": 1.0, "standing_gain_ratio": 1.0,
                    "head_lowpass": 1.0, "legs_lowpass": 1.0},
         "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
-        "bus": {"port": "/dev/ttyS2", "fast_sync_read": False, "protocol": "feetech"},
+        "bus": {"port": "/dev/ttyS2", "fast_sync_read": False,
+                "servo": "feetech_hls", "joint_ids": list(range(1, 16))},
     }
     r2 = audit(good, 8)
     check("a corrected file passes", r2.fails == 0)
@@ -280,16 +306,35 @@ def selftest() -> int:
     check("fast_sync_read true raises a WARN",
           any(k == "bus.fast_sync_read" and lv == "WARN" for lv, k, _, _ in r5.rows))
 
-    # which daemon: a protocol key naming anything but feetech must be red, and absent must
-    # not be silently green (the upstream schema has no such key at all)
-    dx = dict(good, bus={"port": "/dev/ttyS2", "protocol": "dynamixel"})
+    # which servo family: bus.servo is the real key; bus.protocol does not exist and, because
+    # Bus is deny_unknown_fields, would abort the daemon's config load outright.
+    base_bus = {"port": "/dev/ttyS2", "joint_ids": list(range(1, 16))}
+    dx = dict(good, bus=dict(base_bus, servo="dynamixel_xl330"))
     r6 = audit(dx, 8)
-    check("protocol=dynamixel is a FAIL",
-          any(k == "bus.protocol" and lv == "FAIL" for lv, k, _, _ in r6.rows))
-    nk = dict(good, bus={"port": "/dev/ttyS2"})
+    check("servo=dynamixel_xl330 is a FAIL",
+          any(k == "bus.servo" and lv == "FAIL" for lv, k, _, _ in r6.rows))
+
+    nk = dict(good, bus=dict(base_bus))          # servo absent -> ServoKind default
     r7 = audit(nk, 8)
-    check("absent protocol is a WARN",
-          any(k == "bus.protocol" and lv == "WARN" for lv, k, _, _ in r7.rows))
+    check("absent servo is NOT a warning (default is feetech_hls)",
+          any(k == "bus.servo" and lv == "ok" for lv, k, _, _ in r7.rows)
+          and r7.fails == 0)
+
+    pk = dict(good, bus=dict(base_bus, protocol="feetech"))
+    r8 = audit(pk, 8)
+    check("a stray bus.protocol line is a FAIL (deny_unknown_fields)",
+          any(k == "bus.protocol" and lv == "FAIL" for lv, k, _, _ in r8.rows))
+
+    noids = dict(good, bus={"port": "/dev/ttyS2", "servo": "feetech_hls"})
+    r9 = audit(noids, 8)
+    check("empty joint_ids is a FAIL (bus refuses to open)",
+          any(k == "bus.joint_ids" and lv == "FAIL" for lv, k, _, _ in r9.rows))
+
+    dupids = dict(good, bus=dict(base_bus, servo="feetech_hls",
+                                 joint_ids=[1] * 15))
+    r10 = audit(dupids, 8)
+    check("duplicate joint_ids is a FAIL",
+          any(k == "bus.joint_ids" and lv == "FAIL" for lv, k, _, _ in r10.rows))
 
     # negative control: the gain key absent must not be silently accepted
     r3 = audit({"policy": {}, "safety": {"gain_limp": 3, "limp_fall_pose_gain": 8},
