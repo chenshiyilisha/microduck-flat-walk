@@ -116,10 +116,16 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "limp_fall_arm_ms": 200,
         "battery_empty_shutdown": True,
     },
+    # lib.rs:1100 (Bus::default): current_limit_ma 2925.0 mA is the servos' own power-up
+    # value (lib.rs:989-992). Written to GOAL_CURRENT (register 44) at every startup
+    # (feetech.rs:380,393). validate() (feetech.rs:187) rejects <=0 or >2047*6.5=13305 mA
+    # as IoError::Bus at open (feetech.rs:300) -- a LOUD startup failure. current_limit_counts()
+    # (feetech.rs:197-201) clamps to [1,2047]; MA_PER_COUNT=6.5 (feetech.rs:98).
     "bus": {"servo": "feetech_hls",
             "position_kp": 8, "position_kp_head": 16, "position_kd": 8,
             "mouth_torque": True, "mouth_wake": False,
-            "imu_pitch_trim_deg": 0.0, "imu_roll_trim_deg": 0.0},
+            "imu_pitch_trim_deg": 0.0, "imu_roll_trim_deg": 0.0,
+            "current_limit_ma": 2925.0},
     "control": {"hz": 50},
     "update_gate": {"min_achieved_hz": 45.0, "stall_periods": 25,
                      "max_consecutive_errors": 10},
@@ -1080,6 +1086,35 @@ def audit(cfg: dict, expect_kp: int) -> Report:
                     f"congestion_control disabled, bitrate {br} is within 2x of the {q} default "
                     f"({ref} bit/s, lib.rs:215-222)")
 
+    # R29: [bus] current_limit_ma -- an in-range-but-tiny value starves every servo (2026-11-05)
+    # lib.rs:989-992,1100: current_limit_ma defaults to 2925.0 mA (the servos' own power-up
+    # value) and is written to GOAL_CURRENT (register 44) at every startup (feetech.rs:380,393).
+    # validate() (feetech.rs:187) rejects <=0 or >2047*6.5=13305 mA as IoError::Bus at open
+    # (feetech.rs:300) -- a LOUD startup failure, so those are caught loudly, not silently.
+    # current_limit_counts() (feetech.rs:197-201) divides by MA_PER_COUNT=6.5 (feetech.rs:98) and
+    # clamps to [1,2047]. So a value like 50 mA passes validate, clamps to round(50/6.5)=8
+    # counts, and caps every servo at 8*6.5=52 mA: the robot cannot stand, and the symptom
+    # ("the legs collapse / it won't get up") reads as a motor, gear or zero-position problem,
+    # not a current-limit number. 500 mA is a heuristic floor (~17% of the 2925 default) -- the
+    # source gives the default and the 13305 ceiling but no minimum, so this bound is the author's.
+    cl, _ = effective(cfg, "bus", "current_limit_ma")
+    if isinstance(cl, (int, float)) and not isinstance(cl, bool):
+        if cl <= 0 or cl > 2047 * 6.5:
+            rep.add("WARN", "bus.current_limit_ma", cl,
+                    f"current_limit_ma {cl} is outside the range validate() allows "
+                    f"(feetech.rs:187: >0 and <={2047*6.5:.0f} mA): robotd refuses to open the "
+                    "bus (IoError::Bus) and does not start. A loud failure, but caught here first")
+        elif cl < 500:
+            rep.add("WARN", "bus.current_limit_ma", cl,
+                    f"current_limit_ma {cl} is in range but far below the 2925 mA default "
+                    "(lib.rs:1100): current_limit_counts() (feetech.rs:197-201) clamps it to "
+                    f"~{round(cl/6.5)} counts, capping every servo at ~{round(cl/6.5)*6.5} mA. "
+                    "The robot cannot stand and the symptom reads as a motor/gear/zero fault")
+        else:
+            rep.add("ok", "bus.current_limit_ma", cl,
+                    f"current_limit_ma {cl} is within the validate() range and near the 2925 mA "
+                    "default (lib.rs:1100, feetech.rs:187)")
+
     return rep
 
 
@@ -1605,6 +1640,33 @@ def selftest() -> int:
                                  "bitrate": 100_000})
     check("congestion_control gcc + bitrate 100000 reports no media.bitrate row",
           not any(k == "media.bitrate" for _, k, _, _ in audit(r_cc_gcc, 8).rows))
+
+    # ---- R29: [bus] current_limit_ma ----
+    # a tiny in-range value (50 mA) passes validate, clamps to ~8 counts, starves every
+    # servo: robot cannot stand, symptom reads as a motor/gear/zero fault -> WARN
+    r_cl_tiny = dict(good, bus={"servo": "feetech_hls", "current_limit_ma": 50.0})
+    check("current_limit_ma 50 is a WARN (in-range but starves the servos)",
+          any(k == "bus.current_limit_ma" and lv == "WARN"
+              for lv, k, _, _ in audit(r_cl_tiny, 8).rows))
+    # 0 is rejected by validate() as IoError::Bus -> loud startup failure, still a WARN here
+    r_cl_zero = dict(good, bus={"servo": "feetech_hls", "current_limit_ma": 0.0})
+    check("current_limit_ma 0 is a WARN (validate() rejects it)",
+          any(k == "bus.current_limit_ma" and lv == "WARN"
+              for lv, k, _, _ in audit(r_cl_zero, 8).rows))
+    # over the 2047*6.5 ceiling -> validate() rejects -> WARN
+    r_cl_huge = dict(good, bus={"servo": "feetech_hls", "current_limit_ma": 20000.0})
+    check("current_limit_ma 20000 is a WARN (over the validate() ceiling)",
+          any(k == "bus.current_limit_ma" and lv == "WARN"
+              for lv, k, _, _ in audit(r_cl_huge, 8).rows))
+    # the 2925 default and a mid value are ok
+    r_cl_ok = dict(good, bus={"servo": "feetech_hls", "current_limit_ma": 2925.0})
+    check("current_limit_ma 2925 is ok",
+          any(k == "bus.current_limit_ma" and lv == "ok"
+              for lv, k, _, _ in audit(r_cl_ok, 8).rows))
+    r_cl_mid = dict(good, bus={"servo": "feetech_hls", "current_limit_ma": 1500.0})
+    check("current_limit_ma 1500 is ok",
+          any(k == "bus.current_limit_ma" and lv == "ok"
+              for lv, k, _, _ in audit(r_cl_mid, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
