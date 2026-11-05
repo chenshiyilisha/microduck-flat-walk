@@ -454,6 +454,38 @@ def audit(cfg: dict, expect_kp: int) -> Report:
                 "the reference set, in JOINT_NAMES order -- matches model.rs:15. Still not "
                 "measured on THIS robot: one deflection per joint settles it")
 
+    # R18: joint_signs / joint_offsets -- the zero-position lever's length (2026-11-05)
+    # These are the ONLY two fields that correct a servo's zero (joint_offsets is `raw - 2048`,
+    # joint_signs is +-1). They sit in the same JOINT_NAMES order as joint_ids. If their length
+    # is shorter than NUM_JOINTS, robotd silently truncates: the extra joints fall back to
+    # sign=+1, offset=0 (= servo centre 2048), so a mis-calibrated zero shows up as "the
+    # robot won't stand straight" or "one leg is biased", never an error. If LONGER than
+    # NUM_JOINTS the extra entries are ignored -- also silent.
+    for field in ("joint_signs", "joint_offsets"):
+        vals = bus_tbl.get(field) or []
+        if not vals:
+            # empty is the DEFAULT (all +1 / all 0) and is legitimate, not a warning
+            rep.add("ok", f"bus.{field}", "(empty/default)",
+                    f"empty means all joints use sign=+1 / offset=0 (lib.rs:948-952) -- "
+                    "no correction needed")
+        elif len(vals) != NUM_JOINTS:
+            rep.add("WARN", f"bus.{field}", f"{len(vals)} entries",
+                    f"expected exactly {NUM_JOINTS} (one per joint, JOINT_NAMES order). "
+                    "Shorter -> the tail joints fall back to sign=+1/offset=0 silently; "
+                    "longer -> the extra entries are ignored. Both are silent mis-calibration")
+        else:
+            if field == "joint_signs":
+                bad = [i for i, v in enumerate(vals) if v not in (1, -1, 1.0, -1.0)]
+                if bad:
+                    rep.add("WARN", "bus.joint_signs", f"{len(vals)} entries",
+                            f"entries {bad} are not +1 or -1 (lib.rs:948: +1/-1 per joint)")
+                else:
+                    rep.add("ok", "bus.joint_signs", f"{len(vals)} entries",
+                            "one sign per joint, all +-1 -- well-formed")
+            else:
+                rep.add("ok", "bus.joint_offsets", f"{len(vals)} entries",
+                        f"one offset per joint (counts from servo centre 2048 to joint zero)")
+
     # R9: the pack. The default is cells = [2, 3], and with both accepted a 3S pack reads as
     # a perfectly valid 3S (11.1 V / 3 = 3.7 V a cell) and robotd drives the servos at it.
     # HD-1910s are 4-8.4 V and burn on 3S (lib.rs:52). Nothing about this fails loudly.
@@ -1009,6 +1041,36 @@ def selftest() -> int:
     check("imu_axes with all three the same is a WARN",
           any(k == "bus.imu_axes" and lv == "WARN"
               for lv, k, _, _ in audit(r_axes_same, 8).rows))
+
+    # ---- R18: joint_signs / joint_offsets length ----
+    # a short vector: the tail joints silently fall back to sign=+1/offset=0
+    r_signs_short = dict(good, bus=dict(base_bus, joint_signs=[1, -1, 1]))
+    check("joint_signs shorter than NUM_JOINTS is a WARN",
+          any(k == "bus.joint_signs" and lv == "WARN"
+              for lv, k, _, _ in audit(r_signs_short, 8).rows))
+    # a long vector: the extra entries are silently ignored
+    r_offsets_long = dict(good, bus=dict(base_bus,
+                                         joint_offsets=[0] * (NUM_JOINTS + 3)))
+    check("joint_offsets longer than NUM_JOINTS is a WARN",
+          any(k == "bus.joint_offsets" and lv == "WARN"
+              for lv, k, _, _ in audit(r_offsets_long, 8).rows))
+    # empty is the legitimate default (all +1 / all 0)
+    r_signs_empty = dict(good, bus=dict(base_bus, joint_signs=[]))
+    check("joint_signs empty (default) is ok",
+          any(k == "bus.joint_signs" and lv == "ok"
+              for lv, k, _, _ in audit(r_signs_empty, 8).rows))
+    # a sign that is not +-1
+    r_signs_bad = dict(good, bus=dict(base_bus,
+                                      joint_signs=[1, -1, 0] + [1] * (NUM_JOINTS - 3)))
+    check("joint_signs with a value other than +-1 is a WARN",
+          any(k == "bus.joint_signs" and lv == "WARN"
+              for lv, k, _, _ in audit(r_signs_bad, 8).rows))
+    # a correctly-sized, well-formed set is ok
+    r_signs_ok = dict(good, bus=dict(base_bus,
+                                     joint_signs=[1] * NUM_JOINTS))
+    check("joint_signs well-formed at NUM_JOINTS is ok",
+          any(k == "bus.joint_signs" and lv == "ok"
+              for lv, k, _, _ in audit(r_signs_ok, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
