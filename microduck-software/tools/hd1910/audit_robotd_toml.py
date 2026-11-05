@@ -85,7 +85,12 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "legs_lowpass": 0.7,
         "enabled": True,
         "mode": "walk",
+        "voltage_adapt": False,
+        "nominal_voltage": 7.4,
     },
+    # lib.rs:520-535 (AudioParams::default): pet_enter 0.95 / pet_exit 0.85 is the hysteresis.
+    "audio": {"enabled": True, "pet_enter_threshold": 0.95, "pet_exit_threshold": 0.85,
+              "pet_detect": None},
     "safety": {
         "gain_limp": 50,
         "limp_fall_pose_gain": 160,
@@ -152,6 +157,9 @@ SECTION_KEYS: dict[str, set[str]] = {
     "theremin": {"enabled", "socket", "near_m", "far_m", "min_zones", "statuses", "hold_ms"},
     # lib.rs:338-357 (DetectParams).
     "detect": {"enabled", "model", "hz", "threshold"},
+    # lib.rs:489-518 (AudioParams).
+    "audio": {"enabled", "device", "bank", "greet", "pet_detect", "pet_model",
+              "pet_enter_threshold", "pet_exit_threshold", "denoise", "lipsync"},
 }
 
 # The HD-1910's own overheat latch: reg13 = 80 degC, read from ID 10 on 2026-11-02.
@@ -943,6 +951,77 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             rep.add("ok", "theremin.hold_ms", hm,
                     f"hold_ms {hm} bridges a dropout without holding a stale note (default 250 ms)")
 
+    # R25: [audio] pet_enter_threshold / pet_exit_threshold -- the reversed hysteresis (2026-11-05)
+    # lib.rs:508-510: "Probability above which petting starts, and below which it ends
+    # (hysteresis)." Default enter 0.95 / exit 0.85. A working hysteresis needs enter > exit: the
+    # band [exit, enter] is what keeps the state from flapping when the classifier sits on the
+    # decision boundary. If enter <= exit the band is empty or inverted, so a probability that
+    # hovers there flips the petting state every tick: the robot coos on, coos off, on, off.
+    # Symptom is "the mic is noisy / the room is too loud / it jitters", which reads as a
+    # sensor or environment fault, not a two-number config typo. Both are also probabilities, so
+    # they must lie in (0, 1): enter >= 1 can never fire, exit >= 1 can never stop.
+    pe, _ = effective(cfg, "audio", "pet_enter_threshold")
+    px, _ = effective(cfg, "audio", "pet_exit_threshold")
+    if isinstance(pe, (int, float)) and isinstance(px, (int, float)):
+        if pe <= px:
+            rep.add("WARN", "audio.pet_enter_threshold", pe,
+                    f"pet_enter {pe} <= pet_exit {px}: the hysteresis band is empty or reversed "
+                    "(lib.rs:508-510, default 0.95/0.85). A probability in between flips the "
+                    "petting state every tick -- the robot coos on and off repeatedly. Symptom "
+                    "reads as 'noisy mic / loud room', not a config typo")
+        elif not (0.0 < pe < 1.0):
+            rep.add("WARN", "audio.pet_enter_threshold", pe,
+                    f"pet_enter {pe} is outside (0, 1): it is a probability (lib.rs:508), so "
+                    f"{'>= 1 can never fire' if pe >= 1 else '<= 0 always fires'}")
+        elif not (0.0 < px < 1.0):
+            rep.add("WARN", "audio.pet_exit_threshold", px,
+                    f"pet_exit {px} is outside (0, 1): it is a probability (lib.rs:508), so "
+                    f"{'>= 1 can never stop once fired' if px >= 1 else '<= 0 stops instantly'}")
+        else:
+            rep.add("ok", "audio.pet_enter_threshold", pe,
+                    f"pet_enter {pe} > pet_exit {px}: a real hysteresis band (lib.rs:508-510)")
+
+    # R26: [policy] voltage_adapt + nominal_voltage -- the frozen or blown action scale (2026-11-05)
+    # lib.rs:671-676: voltage_adapt "scales raw policy output ... effective scale × (nominal /
+    # measured). The servos' effective kP tracks their supply, so this holds the robot's response
+    # steady as the pack sags. Off by default." nominal_voltage is "the supply the gains were
+    # identified at" (default 7.4 = 2S nominal, lib.rs:904). lib.rs:56-62: [battery] cells is
+    # [2] for an HD-1910 (2S), [3] for an HL-2915 (3S).
+    #   nominal_voltage <= 0 -> scale = 0/measured = 0 -> every action is zero -> the robot holds
+    #     still. Symptom is "the motors are dead / deadman is stuck", not a voltage reference.
+    #   nominal_voltage matching the WRONG cell count -> scale inflated or deflated by ~1.3x ->
+    #     the robot is too twitchy or too soft, which reads as a loop-gain / motor problem.
+    # The per-cell nominal is 3.7 V (2S = 7.4, 3S = 11.1); 2S LiHV full is 8.7 V (lib.rs:520-522
+    # names 8.7 for a full 2S). We only cross-check when cells is a single, unambiguous count.
+    va, _ = effective(cfg, "policy", "voltage_adapt")
+    nv, _ = effective(cfg, "policy", "nominal_voltage")
+    cells, _ = effective(cfg, "battery", "cells")
+    if va is True and isinstance(nv, (int, float)):
+        if nv <= 0.0:
+            rep.add("FAIL", "policy.nominal_voltage", nv,
+                    f"voltage_adapt is on and nominal_voltage {nv} <= 0: scale = {nv}/measured = 0, "
+                    "so every action is zero and the robot holds still. Symptom reads as 'the "
+                    "motors are dead', not a voltage reference (lib.rs:671-676)")
+        elif not (0.0 < nv < 16.0):
+            rep.add("WARN", "policy.nominal_voltage", nv,
+                    f"nominal_voltage {nv} is outside a plausible pack range (0, 16 V): with "
+                    "voltage_adapt on this multiplies every action by a nonsense factor")
+        elif isinstance(cells, list) and len(cells) == 1 and isinstance(cells[0], int):
+            n = cells[0]
+            nominal_full = {2: 7.4, 3: 11.1}.get(n)
+            if nominal_full is not None and abs(nv - nominal_full) > 1.5:
+                rep.add("WARN", "policy.nominal_voltage", nv,
+                        f"voltage_adapt is on, nominal_voltage {nv} but [battery] cells is [{n}] "
+                        f"(~{nominal_full} V nominal). The scale is nominal/measured, so a "
+                        "reference from the wrong pack multiplies every action ~1.3x off -- the "
+                        "robot reads as too twitchy or too soft, i.e. a loop-gain fault")
+            else:
+                rep.add("ok", "policy.nominal_voltage", nv,
+                        f"nominal_voltage {nv} matches the {n}S pack (lib.rs:671-676, 56-62)")
+        else:
+            rep.add("ok", "policy.nominal_voltage", nv,
+                    f"nominal_voltage {nv} is positive and within a plausible pack range")
+
     return rep
 
 
@@ -1401,6 +1480,44 @@ def selftest() -> int:
     check("theremin.hold_ms 250 is ok",
           any(k == "theremin.hold_ms" and lv == "ok"
               for lv, k, _, _ in audit(r_hold_ok, 8).rows))
+
+    # ---- R25: [audio] pet_enter/pet_exit -- the reversed hysteresis ----
+    # enter <= exit: the band is empty/reversed -> the petting state flaps every tick
+    r_pet_rev = dict(good, audio={"pet_enter_threshold": 0.5, "pet_exit_threshold": 0.9})
+    check("pet_enter <= pet_exit is a WARN",
+          any(k == "audio.pet_enter_threshold" and lv == "WARN"
+              for lv, k, _, _ in audit(r_pet_rev, 8).rows))
+    # enter >= 1: a probability that can never fire
+    r_pet_hi = dict(good, audio={"pet_enter_threshold": 1.0, "pet_exit_threshold": 0.8})
+    check("pet_enter >= 1 is a WARN",
+          any(k == "audio.pet_enter_threshold" and lv == "WARN"
+              for lv, k, _, _ in audit(r_pet_hi, 8).rows))
+    # the default 0.95/0.85 is a real hysteresis band -> ok
+    r_pet_ok = dict(good, audio={"pet_enter_threshold": 0.95, "pet_exit_threshold": 0.85})
+    check("pet_enter 0.95 > pet_exit 0.85 is ok",
+          any(k == "audio.pet_enter_threshold" and lv == "ok"
+              for lv, k, _, _ in audit(r_pet_ok, 8).rows))
+
+    # ---- R26: [policy] voltage_adapt + nominal_voltage ----
+    # voltage_adapt on, nominal_voltage 0: scale = 0 -> every action zero -> the robot holds still
+    r_va_zero = dict(good, policy={"voltage_adapt": True, "nominal_voltage": 0.0})
+    check("voltage_adapt on + nominal_voltage 0 is a FAIL",
+          any(k == "policy.nominal_voltage" and lv == "FAIL"
+              for lv, k, _, _ in audit(r_va_zero, 8).rows))
+    # voltage_adapt on, nominal 7.4 matches the 2S pack in good -> ok
+    r_va_ok = dict(good, policy={"voltage_adapt": True, "nominal_voltage": 7.4})
+    check("voltage_adapt on + nominal_voltage 7.4 (2S) is ok",
+          any(k == "policy.nominal_voltage" and lv == "ok"
+              for lv, k, _, _ in audit(r_va_ok, 8).rows))
+    # voltage_adapt on, nominal 11.1 but the pack is 2S -> scale ~1.5x off -> WARN
+    r_va_wrong = dict(good, policy={"voltage_adapt": True, "nominal_voltage": 11.1})
+    check("voltage_adapt on + nominal_voltage 11.1 on a 2S pack is a WARN",
+          any(k == "policy.nominal_voltage" and lv == "WARN"
+              for lv, k, _, _ in audit(r_va_wrong, 8).rows))
+    # voltage_adapt off (the default): nominal_voltage is inert -> no row
+    r_va_off = dict(good)
+    check("voltage_adapt off (default) reports no nominal_voltage row",
+          not any(k == "policy.nominal_voltage" for _, k, _, _ in audit(r_va_off, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
