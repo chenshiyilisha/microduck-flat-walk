@@ -137,6 +137,8 @@ SECTION_KEYS: dict[str, set[str]] = {
     "battery": {"cells", "max_volts"},
     "thermal": {"warn_c", "walk_max_c", "sit_c", "hysteresis_c", "rest_c", "resume_c",
                 "rest_min_s", "rest_head_c", "deep_sit"},
+    # lib.rs:435-454 (ThereminParams).
+    "theremin": {"enabled", "socket", "near_m", "far_m", "min_zones", "statuses", "hold_ms"},
 }
 
 # The HD-1910's own overheat latch: reg13 = 80 degC, read from ID 10 on 2026-11-02.
@@ -802,6 +804,26 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             rep.add("ok", f"bus.{name}", v,
                     f"±{abs(v):.1f} deg is within the plausible board-mount correction")
 
+    # R21: [theremin] near_m / far_m -- the reversed range (2026-11-05)
+    # lib.rs:442-445: near_m is the nearest playable range, far_m the farthest. If near_m >= far_m
+    # the interval is empty or reversed: no distance falls inside it, so the theremin never
+    # accepts a hand. Symptom: "the instrument does nothing" -- looks like a sensor/wiring problem
+    # or a bad ST status set, not a config typo. A typo (0.30 m entered as 3.0) is the likely cause.
+    near, _ = effective(cfg, "theremin", "near_m")
+    far, _ = effective(cfg, "theremin", "far_m")
+    if isinstance(near, (int, float)) and isinstance(far, (int, float)):
+        if near >= far:
+            rep.add("WARN", "theremin.near_m", near,
+                    f"near_m {near} m >= far_m {far} m: the playable range is empty or reversed, "
+                    "so no hand is ever accepted. Symptom is 'the theremin does nothing', which "
+                    "reads as a sensor problem. Check for a dropped decimal point")
+        elif near <= 0.0 or far <= 0.0:
+            rep.add("WARN", "theremin.near_m", near,
+                    f"near_m {near} / far_m {far}: a non-positive bound makes the range invalid")
+        else:
+            rep.add("ok", "theremin.near_m", near,
+                    f"near_m {near} m < far_m {far} m: a valid playable range")
+
     return rep
 
 
@@ -1162,6 +1184,23 @@ def selftest() -> int:
     check("absent imu_pitch_trim_deg (default 0.0) is ok",
           any(k == "bus.imu_pitch_trim_deg" and lv == "ok"
               for lv, k, _, _ in audit(r_trim_zero, 8).rows))
+
+    # ---- R21: [theremin] near_m / far_m ----
+    # reversed range: near_m >= far_m => empty or reversed interval
+    r_theremin_rev = dict(good, theremin={"near_m": 1.0, "far_m": 0.5})
+    check("theremin near_m >= far_m is a WARN",
+          any(k == "theremin.near_m" and lv == "WARN"
+              for lv, k, _, _ in audit(r_theremin_rev, 8).rows))
+    # a non-positive bound
+    r_theremin_zero = dict(good, theremin={"near_m": 0.0, "far_m": 2.0})
+    check("theremin near_m = 0 is a WARN",
+          any(k == "theremin.near_m" and lv == "WARN"
+              for lv, k, _, _ in audit(r_theremin_zero, 8).rows))
+    # a valid range is ok
+    r_theremin_ok = dict(good, theremin={"near_m": 0.3, "far_m": 2.0})
+    check("theremin near_m < far_m is ok",
+          any(k == "theremin.near_m" and lv == "ok"
+              for lv, k, _, _ in audit(r_theremin_ok, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
