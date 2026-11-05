@@ -712,6 +712,14 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             rep.add("ok", "bus.imu_axes", iax,
                     'three distinct signed axes (one per trunk axis); signs and order matter')
 
+    # NOTE on head_lowpass/legs_lowpass: R7 above already audits this axis and is the correct
+    # verdict. It is based on `grep -r low_pass` over microduck_rl + mjlab 1.3.0 + bam = ZERO
+    # hits, so the policy has NO low-pass and 1.0 (pass-through) is the matching value. An
+    # earlier R17 draft here trusted lib.rs:630's comment ("the value the alpha policies are
+    # trained with") and would have warned on 1.0 -- the opposite of the truth. The comment is
+    # stale (it describes the upstream alpha policy, not this training pipeline). Kept as a
+    # note so nobody re-derives the wrong check a second time.
+
     return rep
 
 
