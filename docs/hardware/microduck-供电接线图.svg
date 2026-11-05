@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="470" viewBox="0 0 780 470" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <!-- 背景白 + 框线 -->
+  <rect x="0" y="0" width="780" height="470" fill="#ffffff"/>
+  <!-- 标题 -->
+  <text x="20" y="34" font-size="20" font-weight="bold" fill="#1a1a1a">MicroDuck HD-1910 供电接线拓扑（父线：2S → 分线板 → 15 舵机 + IMU + HAT）</text>
+  <text x="20" y="56" font-size="12" fill="#555">电池/母线全程 ≥18 AWG；正母线 10 A（阶段 1）设计、阶段 2 按堵转 ~30 A 校核；电容不省（防走路掉电重启）</text>
+
+  <!-- 电池 -->
+  <rect x="30" y="90" width="130" height="70" rx="4" fill="#e8f0fe" stroke="#1a56b7" stroke-width="1.5"/>
+  <text x="45" y="118" font-size="13" font-weight="bold" fill="#1a1a1a">NP-F550</text>
+  <text x="45" y="138" font-size="12" fill="#1a1a1a">2S LiPo 7.4 V</text>
+  <text x="45" y="152" font-size="11" fill="#555">满电 8.4 V（顶格）</text>
+
+  <!-- XT60 -->
+  <rect x="195" y="90" width="70" height="70" rx="4" fill="#ffeedd" stroke="#c77b1a" stroke-width="1.5"/>
+  <text x="206" y="118" font-size="12" font-weight="bold" fill="#1a1a1a">XT60</text>
+  <text x="206" y="136" font-size="11" fill="#555">插头母座</text>
+
+  <!-- 保险 -->
+  <rect x="295" y="90" width="90" height="70" rx="4" fill="#ffe7f0" stroke="#b71a56" stroke-width="1.5"/>
+  <text x="306" y="118" font-size="12" font-weight="bold" fill="#1a1a1a">保险丝</text>
+  <text x="306" y="136" font-size="11" fill="#1a1a1a">15 A 阶段 1</text>
+  <text x="306" y="150" font-size="11" fill="#b71a56">阶段 2：30–40 A 慢断</text>
+
+  <!-- 电容 -->
+  <rect x="425" y="90" width="90" height="70" rx="4" fill="#eefaf1" stroke="#1a8a3a" stroke-width="1.5"/>
+  <text x="437" y="116" font-size="12" font-weight="bold" fill="#1a1a1a">并联电容</text>
+  <text x="437" y="134" font-size="11" fill="#1a1a1a">1000–2200 µF</text>
+  <text x="437" y="148" font-size="11" fill="#555">电解 ×1–2</text>
+
+  <!-- 香蕉 PCB -->
+  <rect x="550" y="90" width="130" height="70" rx="4" fill="#f3eaff" stroke="#7b3aa1" stroke-width="1.5"/>
+  <text x="563" y="116" font-size="12" font-weight="bold" fill="#1a1a1a">香蕉 PCB</text>
+  <text x="563" y="134" font-size="11" fill="#1a1a1a">2.5 mm 母座 ×2</text>
+  <text x="563" y="148" font-size="11" fill="#555">或 XT60 直出免焊</text>
+
+  <!-- 连线 -->
+  <line x1="160" y1="125" x2="195" y2="125" stroke="#333" stroke-width="2.5"/>
+  <line x1="265" y1="125" x2="295" y2="125" stroke="#333" stroke-width="2.5"/>
+  <line x1="385" y1="125" x2="425" y2="125" stroke="#333" stroke-width="2.5"/>
+  <line x1="515" y1="125" x2="550" y2="125" stroke="#333" stroke-width="2.5"/>
+  <line x1="680" y1="125" x2="705" y2="125" stroke="#333" stroke-width="2.5"/>
+  <text x="150" y="118" font-size="11" fill="#555">≥18AWG</text>
+  <text x="535" y="116" font-size="11" fill="#b71a56">5A</text>
+
+  <!-- 导线 电池→XT60 标注电流 -->
+  <text x="175" y="142" font-size="10" fill="#555">7.4V</text>
+
+  <!-- 分线板 -->
+  <rect x="650" y="250" width="120" height="90" rx="6" fill="#f5f5f5" stroke="#444" stroke-width="2"/>
+  <text x="665" y="285" font-size="13" font-weight="bold" fill="#1a1a1a">分线板</text>
+  <text x="665" y="305" font-size="11" fill="#555">铜排并联</text>
+  <text x="665" y="319" font-size="11" fill="#555">≥18AWG 支路</text>
+  <text x="665" y="335" font-size="10" fill="#555">16+ 路端子</text>
+
+  <!-- 从香蕉到分线板连线（竖/拐弯） -->
+  <line x1="680" y1="125" x2="680" y2="250" stroke="#333" stroke-width="2.5"/>
+  <text x="688" y="185" font-size="11" fill="#555">主母线</text>
+
+  <!-- 15 舵机分成两组竖向分支 -->
+  <!-- 第 1 组：7 颗 -->
+  <g>
+    <line x1="650" y1="305" x2="500" y2="305" stroke="#333" stroke-width="2"/>
+    <circle cx="500" cy="305" r="3" fill="#333"/>
+    <text x="520" y="297" font-size="11" fill="#1a1a1a">每颗舵机 Vcc</text>
+    <line x1="500" y1="312" x2="490" y2="348" stroke="#333" stroke-width="2"/>
+    <rect x="465" y="348" width="25" height="20" rx="3" fill="#e8f0fe" stroke="#1a56b7" stroke-width="1"/>
+    <text x="467" y="362" font-size="9" fill="#1a1a1a">ID1</text>
+    <rect x="430" y="380" width="25" height="20" rx="3" fill="#e8f0fe" stroke="#1a56b7" stroke-width="1"/>
+    <text x="432" y="394" font-size="9" fill="#1a1a1a">ID2</text>
+    <rect x="395" y="412" width="25" height="20" rx="3" fill="#e8f0fe" stroke="#1a56b7" stroke-width="1"/>
+    <text x="397" y="426" font-size="9" fill="#1a1a1a">ID3</text>
+  </g>
+  <!-- 更多分支用虚截线 -->
+  <line x1="520" y1="305" x2="535" y2="305" stroke="#333" stroke-width="2" stroke-dasharray="4 2"/>
+  <line x1="535" y1="305" x2="555" y2="305" stroke="#333" stroke-width="2" stroke-dasharray="4 2"/>
+
+  <!-- 右侧竖向支路区：IMU 与 HAT -->
+  <g>
+    <line x1="750" y1="305" x2="720" y2="305" stroke="#333" stroke-width="2"/>
+    <rect x="710" y="348" width="25" height="20" rx="3" fill="#eefaf1" stroke="#1a8a3a" stroke-width="1"/>
+    <text x="712" y="362" font-size="9" fill="#1a1a1a">IMU</text>
+    <text x="700" y="384" font-size="10" fill="#555">AMP2.0 + 5V</text>
+  </g>
+  <g>
+    <line x1="705" y1="305" x2="690" y2="305" stroke="#333" stroke-width="2" stroke-dasharray="4 2"/>
+    <rect x="680" y="348" width="25" height="20" rx="3" fill="#f3eaff" stroke="#7b3aa1" stroke-width="1"/>
+    <text x="682" y="362" font-size="9" fill="#1a1a1a">HAT</text>
+    <text x="670" y="384" font-size="10" fill="#555">电池 6.6–8.4V 进</text>
+  </g>
+
+  <!-- 底部标注 -->
+  <text x="30" y="435" font-size="12" font-weight="bold" fill="#1a1a1a">电流粗算（走路）：</text>
+  <text x="30" y="455" font-size="12" fill="#555">整机 ~5–10 A；堵转峰值 ~30 A（保险 30–40 A 慢断应对）；共地，禁止用 AMP2.0 菊花链供主电（触点 ~3 A）。</text>
+  <text x="445" y="455" font-size="11" fill="#7b3aa1">⚠️ 卡口：分线板→舵机支路必须每根短、粗（≥18 AWG），越短越好，压降是走路掉电大头之一。</text>
+</svg>

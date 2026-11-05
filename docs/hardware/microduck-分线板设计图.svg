@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="460" viewBox="0 0 800 460" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <rect width="800" height="460" fill="#ffffff"/>
+  <text x="20" y="34" font-size="20" font-weight="bold" fill="#1a1a1a">分线板布局（正视图，约 140 × 90 mm 可打样）</text>
+  <text x="20" y="56" font-size="12" fill="#555">两版并存：A=铜排+接线柱免打样；B=按本图嘉立创打样（焊盘已布好 16+ 路）</text>
+
+  <!-- 板框架 -->
+  <rect x="80" y="80" width="380" height="300" rx="6" fill="#f7f7f7" stroke="#666" stroke-width="2"/>
+  <text x="220" y="72" text-anchor="middle" font-size="13" fill="#666">分线板 PCB（FR-4，1.6 mm）</text>
+
+  <!-- 输入区：XT60 焊盘 / 香蕉插座焊盘 -->
+  <rect x="100" y="100" width="100" height="40" rx="4" fill="#ffeedd" stroke="#c77b1a" stroke-width="1.5"/>
+  <text x="115" y="125" font-size="11" font-weight="bold" fill="#1a1a1a">输入 XT60 / 香蕉 ×2</text>
+  <text x="115" y="138" font-size="10" fill="#555">电池正/负焊盘</text>
+
+  <!-- 电容区 -->
+  <rect x="100" y="155" width="100" height="40" rx="4" fill="#eefaf1" stroke="#1a8a3a" stroke-width="1.5"/>
+  <text x="115" y="178" font-size="11" font-weight="bold" fill="#1a1a1a">1000–2200 µF ×1–2</text>
+  <text x="115" y="190" font-size="10" fill="#555">电解并联在母线入口</text>
+
+  <!-- 正母线铜排（粗） -->
+  <rect x="200" y="100" width="240" height="20" fill="#e8b84a" stroke="#b8860b" stroke-width="1"/>
+  <text x="208" y="114" font-size="11" font-weight="bold" fill="#1a1a1a">+ 母线（铜排，≥10A，阶段2校核 30A）</text>
+
+  <!-- 负母线铜排 -->
+  <rect x="200" y="200" width="240" height="20" fill="#c9c9c9" stroke="#666" stroke-width="1"/>
+  <text x="208" y="214" font-size="11" font-weight="bold" fill="#1a1a1a">− 母线</text>
+
+  <!-- 每路端子焊盘（AMP2.0-2P 母座） vcc/gnd 两排 -->
+  <g>
+    <rect x="90" y="140" width="70" height="22" rx="2" fill="#dbe8f7" stroke="#1a56b7" stroke-width="1"/>
+    <text x="100" y="155" font-size="10" fill="#1a1a1a">Vcc 焊盘 15×6</text>
+
+    <!-- 15 个出线焊盘 + IMU 备用，两列排列 -->
+    <g fill="#1a56b7">
+      <rect x="100" y="180" width="20" height="8"/><rect x="130" y="180" width="20" height="8"/><rect x="160" y="180" width="20" height="8"/><rect x="190" y="180" width="20" height="8"/>
+      <rect x="220" y="180" width="20" height="8"/><rect x="250" y="180" width="20" height="8"/><rect x="280" y="180" width="20" height="8"/><rect x="310" y="180" width="20" height="8"/>
+      <rect x="340" y="180" width="20" height="8"/><rect x="370" y="180" width="20" height="8"/><rect x="400" y="180" width="20" height="8"/><rect x="430" y="180" width="20" height="8"/>
+      <rect x="100" y="240" width="20" height="8"/><rect x="130" y="240" width="20" height="8"/><rect x="160" y="240" width="20" height="8"/>
+    </g>
+    <g fill="#666">
+      <rect x="100" y="220" width="20" height="8"/><rect x="130" y="220" width="20" height="8"/><rect x="160" y="220" width="20" height="8"/><rect x="190" y="220" width="20" height="8"/>
+      <rect x="220" y="220" width="20" height="8"/><rect x="250" y="220" width="20" height="8"/><rect x="280" y="220" width="20" height="8"/><rect x="310" y="220" width="20" height="8"/>
+      <rect x="340" y="220" width="20" height="8"/><rect x="370" y="220" width="20" height="8"/><rect x="400" y="220" width="20" height="8"/><rect x="430" y="220" width="20" height="8"/>
+      <rect x="100" y="280" width="20" height="8"/><rect x="130" y="280" width="20" height="8"/><rect x="160" y="280" width="20" height="8"/>
+    </g>
+    <text x="100" y="172" font-size="10" fill="#1a1a1a">Vcc 焊盘（AMP2.0 母座）</text>
+    <text x="100" y="212" font-size="10" fill="#666">GND 焊盘（AMP2.0 母座）</text>
+    <text x="250" y="260" font-size="10" fill="#1a1a1a" text-anchor="middle">15 路舵机支路 → 每路 ≥18AWG 短线</text>
+    <text x="250" y="275" font-size="10" fill="#1a1a1a" text-anchor="middle">IMU 备用 1 路（AMP2.0 母座）</text>
+    <text x="250" y="295" font-size="10" fill="#7b3aa1" text-anchor="middle">HAT 电池输入单独 2P 焊盘（AMP2.0 母座）</text>
+  </g>
+
+  <!-- 板右边细节标注 -->
+  <text x="480" y="120" font-size="11" fill="#333">① 入口：正/负镀金焊盘 ×2</text>
+  <text x="480" y="140" font-size="11" fill="#333">② 并电解电容 ×1–2（1000–2200µF）</text>
+  <text x="480" y="160" font-size="11" fill="#333">③ 正/负铜排粗走线（双面铺铜）</text>
+  <text x="480" y="180" font-size="11" fill="#333">④ 16×AMP2.0 母座焊盘（舵机 15 + IMU）</text>
+  <text x="480" y="200" font-size="11" fill="#333">⑤ HAT 供电单独 AMP2.0 母座 ×1</text>
+  <text x="480" y="220" font-size="11" fill="#333">⑥ 每个支路焊位旁丝印 ID/编号</text>
+  <text x="480" y="240" font-size="11" fill="#333">⑦ 板边大焊盘：电池负极共地（粗）</text>
+  <text x="480" y="260" font-size="11" fill="#555">可选：泄放电阻 10k/2W 并电容两端</text>
+  <text x="480" y="280" font-size="11" fill="#555">（插电瞬间保护逻辑电路）</text>
+
+  <!-- 右下：免打样替代 A -->
+  <rect x="80" y="400" width="660" height="48" fill="#f3eaff" stroke="#7b3aa1" stroke-width="1.2"/>
+  <text x="95" y="420" font-size="12" font-weight="bold" fill="#1a1a1a">免焊接替代 A（阶段 1 单腿过渡）：</text>
+  <text x="95" y="440" font-size="11" fill="#555">2×5.08mm 铜排/接线柱排焊在铜排引脚上 + 每路螺接 AMP2.0 母座 → 2.5mm 弹簧头出线；缺点：整机电流大时端子排发热/松脱，阶段 2 前改打样。</text>
+
+  <!-- 底部尺寸注 -->
+  <text x="80" y="452" text-anchor="start" font-size="13" fill="#444">净尺寸建议 140×90 mm，铜排宽度 ≥15 mm（30A 校核），端子间距 2.0 mm 同 AMP2.0。</text>
+</svg>
