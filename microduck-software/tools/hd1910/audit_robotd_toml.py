@@ -564,6 +564,37 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     dm, _ = effective(cfg, "safety", "deadman_ms")
     rep.add("ok", "safety.deadman_ms", dm, "zeroes twist only; torque stays on")
 
+    # R9: limp_fall (FallPredictor) internal consistency (2026-11-04)
+    # The predictor has three conditions: already tilted past tilt_z, extrapolating past
+    # predict_z in lookahead, held together for debounce. Each must be consistent with the
+    # SafetyConfig fall verdict, or the limp either never fires or fires on a standing robot.
+    #
+    # gravity_z goes from -1.0 (upright) to 0 (flat). "Tilted" = already past tilt_z
+    # (more negative than tilt_z). "Predicted fallen" = extrapolation reaches predict_z.
+    # tilt_z MUST be more negative than predict_z (already-tilted is a prerequisite for
+    # prediction; if tilt_z >= predict_z, the "already tilted" gate blocks every prediction).
+    # debounce MUST be shorter than fall_debounce: the predictor fires before the actual
+    # fall verdict, so it can't wait longer than the thing it predicts.
+    lf_tilt, _ = effective(cfg, "safety", "limp_fall_tilt_z")
+    lf_pred, _ = effective(cfg, "safety", "limp_fall_predict_z")
+    lf_deb, _ = effective(cfg, "safety", "limp_fall_debounce_ms")
+    fd_ms, _ = effective(cfg, "safety", "fall_debounce_ms")
+    if (isinstance(lf_tilt, (int, float)) and isinstance(lf_pred, (int, float))
+            and lf_tilt > lf_pred):
+        rep.add("WARN", "safety.limp_fall_tilt_z", lf_tilt,
+                f"more negative than predict_z {lf_pred}: the 'already tilted' gate blocks "
+                f"every prediction, so the limp never fires while the robot is falling")
+    if (isinstance(lf_pred, (int, float)) and isinstance(fz, (int, float))
+            and abs(lf_pred - fz) > 0.01 and not isinstance(fz, bool)):
+        rep.add("ok", "safety.limp_fall_predict_z", lf_pred,
+                f"differs from fall_gravity_z {fz} -- deliberate? (default is the same number)")
+    if (isinstance(lf_deb, (int, float)) and isinstance(fd_ms, (int, float))
+            and lf_deb >= fd_ms):
+        rep.add("WARN", "safety.limp_fall_debounce_ms", lf_deb,
+                f"at or above fall_debounce_ms {fd_ms}: the predictor waits longer than the "
+                f"fall verdict it predicts, so the limp fires after the robot has already "
+                f"landed (fall.rs:38-46, safety.rs:180-210)")
+
     # R11: [update_gate] must match the control rate (2026-11-04)
     # The defaults are calibrated against 50 Hz: min_achieved_hz = 45 (90%),
     # stall_periods = 25 (500 ms at 50 Hz). If [control] hz is changed without
@@ -631,6 +662,7 @@ def selftest() -> int:
         "bus": dict(base_bus),
         "battery": {"cells": [2], "max_volts": 8.4},
         "thermal": {"walk_max_c": 70.0},
+        "safety": {},
     }
     r2 = audit(good, 8)
     check("a default file (gain 200, position_kp 8) passes", r2.fails == 0)
@@ -811,6 +843,25 @@ def selftest() -> int:
     check("deep_sit = false is a WARN",
           any(k == "thermal.deep_sit" and lv == "WARN"
               for lv, k, _, _ in audit(r_no_lie, 8).rows))
+
+    # ---- limp_fall (FallPredictor) consistency: negative controls ----
+    # tilt_z > predict_z (i.e. not more negative): the "already tilted" gate blocks predictions
+    r_lf_tilt = dict(good, safety=dict(good["safety"],
+                                       limp_fall_tilt_z=-0.40, limp_fall_predict_z=-0.50))
+    check("limp_fall_tilt_z > predict_z is a WARN",
+          any(k == "safety.limp_fall_tilt_z" and lv == "WARN"
+              for lv, k, _, _ in audit(r_lf_tilt, 8).rows))
+    # limp_fall_debounce_ms >= fall_debounce_ms: predictor waits longer than the fall verdict
+    r_lf_deb = dict(good, safety=dict(good["safety"],
+                                      limp_fall_debounce_ms=250, fall_debounce_ms=200))
+    check("limp_fall_debounce_ms >= fall_debounce_ms is a WARN",
+          any(k == "safety.limp_fall_debounce_ms" and lv == "WARN"
+              for lv, k, _, _ in audit(r_lf_deb, 8).rows))
+    # default limp_fall values pass
+    r_lf_ok = dict(good)
+    check("default limp_fall values are ok",
+          not any(k.startswith("safety.limp_fall_tilt_z") and lv == "WARN"
+                  for lv, k, _, _ in audit(r_lf_ok, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
