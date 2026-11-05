@@ -634,6 +634,18 @@ def audit(cfg: dict, expect_kp: int) -> Report:
                 "0 tolerates NO bus error: a single dropped transaction (ordinary on a "
                 "bus) is enough to report unhealthy and trigger auto-rollback")
 
+    # R13: [control] heading_hold_gain -- the policy was never trained with it (2026-11-05)
+    # The default is 0.0 (off). Turning it on adds a heading PD loop around the policy's
+    # own heading command; the robot veers or drifts, and the symptom reads as "unbalanced
+    # motors" or "the policy doesn't walk straight", not as a config error.
+    hh, _hh_set = effective(cfg, "control", "heading_hold_gain")
+    if isinstance(hh, (int, float)) and hh > 0:
+        rep.add("WARN", "control.heading_hold_gain", hh,
+                "nonzero: an extra heading PD the policy was never trained with. "
+                "Symptom is a robot that veers or drifts, not an error")
+    else:
+        rep.add("ok", "control.heading_hold_gain", hh, "off (matches training)")
+
     return rep
 
 
@@ -862,6 +874,16 @@ def selftest() -> int:
     check("default limp_fall values are ok",
           not any(k.startswith("safety.limp_fall_tilt_z") and lv == "WARN"
                   for lv, k, _, _ in audit(r_lf_ok, 8).rows))
+
+    # ---- heading_hold_gain (R13): nonzero is a silent veer ----
+    r_heading = dict(good, control={"hz": 50, "heading_hold_gain": 0.5})
+    check("heading_hold_gain > 0 is a WARN",
+          any(k == "control.heading_hold_gain" and lv == "WARN"
+              for lv, k, _, _ in audit(r_heading, 8).rows))
+    r_heading_off = dict(good, control={"hz": 50, "heading_hold_gain": 0.0})
+    check("heading_hold_gain = 0 is ok (off)",
+          any(k == "control.heading_hold_gain" and lv == "ok"
+              for lv, k, _, _ in audit(r_heading_off, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
