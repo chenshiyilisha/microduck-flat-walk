@@ -70,6 +70,11 @@ except ModuleNotFoundError:  # pragma: no cover
 # JOINT_NAMES length (duck-control/src/model.rs): 15 servos on the bus, IMU board at ID 200.
 NUM_JOINTS = 15
 
+# The ToF grid (kinematics/src/tof.rs:28-30): ROWS * COLS = 8 * 8 zones. This is the upper
+# bound on how many zones a hand can ever cover, which is what makes an over-large
+# theremin.min_zones unreachable.
+N_ZONES = 64
+
 DEFAULTS: dict[str, dict[str, object]] = {
     "policy": {
         "gain": 200,
@@ -102,6 +107,12 @@ DEFAULTS: dict[str, dict[str, object]] = {
     "control": {"hz": 50},
     "update_gate": {"min_achieved_hz": 45.0, "stall_periods": 25,
                      "max_consecutive_errors": 10},
+    # lib.rs:359-368 (DetectParams::default): enabled off, 2 Hz, threshold 0.35.
+    "detect": {"enabled": False, "hz": 2.0, "threshold": 0.35},
+    # lib.rs:456-469 + kinematics/src/hand.rs:62-76 (ThereminParams::default): on, 0.10-0.70 m,
+    # 2 zones, the 7 ST codes, 250 ms hold.
+    "theremin": {"enabled": True, "near_m": 0.10, "far_m": 0.70, "min_zones": 2,
+                 "statuses": [4, 5, 6, 9, 10, 12, 13], "hold_ms": 250},
 }
 
 # ---------------------------------------------------------------------------
@@ -843,6 +854,95 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             rep.add("ok", "detect.threshold", thr,
                     f"threshold {thr} is within the plausible INT8 range")
 
+    # R23: [detect] hz -- the thermal / control-starvation trap (2026-11-05)
+    # lib.rs:331-335: the detector is read by `mediad`, NOT robotd -- it runs on the same board
+    # as the control loop and competes for the same CPU. lib.rs:339: each frame costs "~50 ms of
+    # CPU". lib.rs:347-349: "2 Hz is a thermal number, not a taste. Flat out on a Radxa Zero 3
+    # this reaches 95 C and the CPU throttles to 408 MHz, which is a robot that walks badly to
+    # see well... Two looks a second is plenty... and costs about a tenth of one core."
+    # So hz * 0.050 is the fraction of one core the detector eats: 2 Hz = 0.10 (matches the
+    # comment), 20 Hz = 1.0 (a whole core), 30 Hz = 1.5. A "video rate" hz set by someone wanting
+    # "better detection" starves the control loop; the symptom is "the robot walks badly /
+    # stutters", which reads as a motor, zero-position or loop-gain problem. The board here is an
+    # Orange Pi A733 (faster than the Radxa Zero 3 the comment names), so the exact thermal point
+    # is higher -- but a whole core spent on duck detection is wasteful on any board. The >= 20
+    # bound (a whole core) is OUR heuristic, not a spec; the check is a WARN, and only when the
+    # detector is enabled (lib.rs:362: enabled defaults to false, in which case hz is inert).
+    det_en, _ = effective(cfg, "detect", "enabled")
+    dhz, _ = effective(cfg, "detect", "hz")
+    if det_en is True and isinstance(dhz, (int, float)):
+        cores = dhz * 0.050
+        if dhz <= 0.0:
+            rep.add("WARN", "detect.hz", dhz,
+                    f"detect.hz {dhz} is not positive: the detector never runs a frame")
+        elif cores >= 1.0:
+            rep.add("WARN", "detect.hz", dhz,
+                    f"detect.hz {dhz} burns ~{cores:.1f} cores (50 ms/frame, lib.rs:339) on the "
+                    "same board as the control loop. lib.rs:347-349 calls 2 Hz the thermal number "
+                    "-- flat out the CPU throttles and 'a robot walks badly to see well'. The "
+                    "symptom reads as a motor/loop problem, not a detection one")
+        else:
+            rep.add("ok", "detect.hz", dhz,
+                    f"detect.hz {dhz} costs ~{cores:.2f} of a core -- within the thermal budget "
+                    "(lib.rs:347-349 recommends 2 Hz)")
+
+    # R24: [theremin] min_zones / statuses / hold_ms -- the dead or chopped instrument (2026-11-05)
+    # All three decide "what counts as a hand", and each has a setting that makes the instrument
+    # silent or gravelly while looking like a sensor/wiring fault:
+    #   min_zones (hand.rs:51-53): "How many zones in the band make a hand. Low: a hand at the far
+    #     end of the band is a handful of zones." Default 2. The grid is 8x8 = 64 zones
+    #     (tof.rs:28-30). A min_zones above half the grid is unreachable: no hand covers that many
+    #     zones, so the theremin never plays.
+    #   statuses (hand.rs:54-55, 73): the ST status bytes whose distance is believed. Default
+    #     [4,5,6,9,10,12,13]. hand.rs:22-27: ST calls only 5 and 9 "valid", and "accepting only
+    #     the two ST calls 'valid' is what made the first version stop working at 30 cm" -- a
+    #     moving hand past ~30 cm comes back as 4 or 13 (consistency failed). A statuses set
+    #     confined to {5,9} is that known-broken config; the symptom is "it dies at 30 cm", which
+    #     reads as a range/sensor problem.
+    #   hold_ms (hand.rs:57-59, 74): how long the last hand is held through a dropout. Default
+    #     250 ms. 0 disables the anti-chop entirely (a flickering zone chops the note into
+    #     gravel); a huge value keeps a stale note playing long after the hand is withdrawn.
+    mz, _ = effective(cfg, "theremin", "min_zones")
+    if isinstance(mz, int) and not isinstance(mz, bool):
+        if mz > N_ZONES // 2:
+            rep.add("WARN", "theremin.min_zones", mz,
+                    f"min_zones {mz} needs a hand covering more than half the {N_ZONES}-zone grid; "
+                    "hand.rs:51-53 says a far-end hand is 'a handful of zones' and the default is "
+                    "2. Unreachable -> the theremin never plays. Symptom reads as a sensor fault")
+        else:
+            rep.add("ok", "theremin.min_zones", mz,
+                    f"min_zones {mz} is within reach of a real hand (default 2, grid {N_ZONES})")
+
+    st, _ = effective(cfg, "theremin", "statuses")
+    if isinstance(st, list):
+        if len(st) == 0:
+            rep.add("WARN", "theremin.statuses", st,
+                    "statuses is empty: no ST code is believed, so no hand is ever accepted and "
+                    "the theremin never plays")
+        elif set(st) <= {5, 9}:
+            rep.add("WARN", "theremin.statuses", st,
+                    "statuses confined to {5,9}: hand.rs:22-27 records this is exactly what made "
+                    "the first version stop working at 30 cm (a moving hand past ~30 cm comes back "
+                    "as 4 or 13). Symptom 'it dies at 30 cm' reads as a range/sensor fault")
+        else:
+            rep.add("ok", "theremin.statuses", st,
+                    f"statuses accepts {len(st)} codes including the consistency-failure codes "
+                    "(4/13) the default keeps in (hand.rs:73)")
+
+    hm, _ = effective(cfg, "theremin", "hold_ms")
+    if isinstance(hm, int) and not isinstance(hm, bool):
+        if hm == 0:
+            rep.add("WARN", "theremin.hold_ms", hm,
+                    "hold_ms 0 disables the anti-chop: hand.rs:57-59 says the hold bridges the "
+                    "sensor's flicker, so with it off a flickering zone chops the note into gravel")
+        elif hm > 5000:
+            rep.add("WARN", "theremin.hold_ms", hm,
+                    f"hold_ms {hm} keeps the last hand for {hm/1000:.1f}s after it leaves "
+                    "(default 250 ms, hand.rs:74): a stale note, not an instrument")
+        else:
+            rep.add("ok", "theremin.hold_ms", hm,
+                    f"hold_ms {hm} bridges a dropout without holding a stale note (default 250 ms)")
+
     return rep
 
 
@@ -1237,6 +1337,70 @@ def selftest() -> int:
     check("detect.threshold 0.35 is ok",
           any(k == "detect.threshold" and lv == "ok"
               for lv, k, _, _ in audit(r_det_ok, 8).rows))
+
+    # ---- R23: [detect] hz -- the thermal / control-starvation trap ----
+    # enabled + a video rate: ~1.5 cores of duck detection starves the control loop, and the
+    # symptom ("walks badly / stutters") reads as a motor or loop-gain problem
+    r_det_hz_hi = dict(good, detect={"enabled": True, "hz": 30.0})
+    check("detect enabled + hz 30 is a WARN",
+          any(k == "detect.hz" and lv == "WARN"
+              for lv, k, _, _ in audit(r_det_hz_hi, 8).rows))
+    # enabled + the recommended 2 Hz: a tenth of a core, ok
+    r_det_hz_lo = dict(good, detect={"enabled": True, "hz": 2.0})
+    check("detect enabled + hz 2 is ok",
+          any(k == "detect.hz" and lv == "ok"
+              for lv, k, _, _ in audit(r_det_hz_lo, 8).rows))
+    # disabled (the default): hz is inert, so no row at all
+    r_det_hz_off = dict(good)
+    check("detect disabled (default) reports no detect.hz row",
+          not any(k == "detect.hz" for _, k, _, _ in audit(r_det_hz_off, 8).rows))
+    # enabled + non-positive hz
+    r_det_hz_zero = dict(good, detect={"enabled": True, "hz": 0.0})
+    check("detect enabled + hz 0 is a WARN",
+          any(k == "detect.hz" and lv == "WARN"
+              for lv, k, _, _ in audit(r_det_hz_zero, 8).rows))
+
+    # ---- R24: [theremin] min_zones / statuses / hold_ms ----
+    # min_zones above half the 64-zone grid: unreachable, the theremin never plays
+    r_minz_hi = dict(good, theremin={"min_zones": 40})
+    check("theremin.min_zones > 32 is a WARN",
+          any(k == "theremin.min_zones" and lv == "WARN"
+              for lv, k, _, _ in audit(r_minz_hi, 8).rows))
+    # the default 2 is ok
+    r_minz_ok = dict(good, theremin={"min_zones": 2})
+    check("theremin.min_zones 2 is ok",
+          any(k == "theremin.min_zones" and lv == "ok"
+              for lv, k, _, _ in audit(r_minz_ok, 8).rows))
+    # empty statuses: no code believed -> never plays
+    r_stat_empty = dict(good, theremin={"statuses": []})
+    check("theremin.statuses empty is a WARN",
+          any(k == "theremin.statuses" and lv == "WARN"
+              for lv, k, _, _ in audit(r_stat_empty, 8).rows))
+    # only the two ST "valid" codes: the known config that died at 30 cm
+    r_stat_valid = dict(good, theremin={"statuses": [5, 9]})
+    check("theremin.statuses [5,9] is a WARN",
+          any(k == "theremin.statuses" and lv == "WARN"
+              for lv, k, _, _ in audit(r_stat_valid, 8).rows))
+    # the full default set is ok
+    r_stat_ok = dict(good, theremin={"statuses": [4, 5, 6, 9, 10, 12, 13]})
+    check("theremin.statuses default set is ok",
+          any(k == "theremin.statuses" and lv == "ok"
+              for lv, k, _, _ in audit(r_stat_ok, 8).rows))
+    # hold_ms 0: anti-chop off, flicker chops the note
+    r_hold_zero = dict(good, theremin={"hold_ms": 0})
+    check("theremin.hold_ms 0 is a WARN",
+          any(k == "theremin.hold_ms" and lv == "WARN"
+              for lv, k, _, _ in audit(r_hold_zero, 8).rows))
+    # hold_ms huge: stale note
+    r_hold_huge = dict(good, theremin={"hold_ms": 10000})
+    check("theremin.hold_ms 10000 is a WARN",
+          any(k == "theremin.hold_ms" and lv == "WARN"
+              for lv, k, _, _ in audit(r_hold_huge, 8).rows))
+    # the default 250 ms is ok
+    r_hold_ok = dict(good, theremin={"hold_ms": 250})
+    check("theremin.hold_ms 250 is ok",
+          any(k == "theremin.hold_ms" and lv == "ok"
+              for lv, k, _, _ in audit(r_hold_ok, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
