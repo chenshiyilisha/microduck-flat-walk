@@ -128,6 +128,31 @@ KP_FW_DEPLOY = 8       # 部署档 reg50 = 8（plant `hd1910_kp8`；32 只是出
 #   2026-11-04 改：原值写作 5（P3 裁决），但部署已定 kp_fw=8 —— P8 在 kp8 上 vx 0.2069、
 #   P5 线只有 0.1129，且 P8 在 kp5 上 7/8 摔（无降级模式）。台架读数只有对齐 8 才代表部署。
 
+# ---- 15 关节标称角（duck-control/src/model.rs:39 DEFAULT_POSITION，弧度）----
+# 台架单颗舵机预验：把这颗当成每个关节，命令到它的标称角，验证能到达。
+JOINT_NAMES_HOME = [
+    "left_hip_yaw", "left_hip_roll", "left_hip_pitch", "left_knee", "left_ankle",
+    "neck_pitch", "head_pitch", "head_yaw", "head_roll", "mouth",
+    "right_hip_yaw", "right_hip_roll", "right_hip_pitch", "right_knee", "right_ankle",
+]
+HOME_POSITION = [
+    0.0, -0.0873, -0.4579, -0.0049, 0.4530,
+    0.3491, 0.3491, 0.0, 0.0, 0.0,
+    0.0, 0.0873, 0.4579, 0.0049, -0.4530,
+]
+CENTER = 2048
+# 台架 ID10 实测行程（calibrate_offsets.py）：命令 clamp 到这个范围，避免撞机械限位。
+TRAVEL_LO, TRAVEL_HI = 1213, 2816
+
+
+def angle_to_raw(angle_rad: float, sign: int = 1, offset: int = 0) -> int:
+    """关节角（弧度）→ 舵机 counts。`counts_to_rad` 的逆。
+
+    `counts_to_rad(raw) = sign × (raw − 2048 − offset) × 2π/4096`（feetech.rs / calibrate_offsets.py）
+    ⇒ `raw = 2048 + offset + sign × angle × 4096/(2π)`。台架裸舵机 sign=+1、offset=0。
+    """
+    return round(CENTER + offset + sign * angle_rad * STEPS_PER_REV / (2 * math.pi))
+
 
 # ---------------------------------------------------------------- 数据链路
 
@@ -1237,6 +1262,92 @@ def cmd_psweep(bus: Bus, sid: int, args):
     return out
 
 
+def cmd_poses(bus: Bus, sid: int, args):
+    """把台架这颗舵机当成 15 个关节，逐个命令到标称角并验证到达。
+
+    这是「一颗舵机预验其他 14 颗」的测试：在 15 颗到货前，用这颗验证舵机能
+    物理到达每个关节的标称角、到达误差小、电流正常。
+
+    ★ 安全（mode=4）：写 goal 立即执行、reg40 拦不住 ⇒ 先 `_arm`（限速/限流），
+      每个目标 clamp 到台架行程 [TRAVEL_LO, TRAVEL_HI]，收尾 `_disarm`（goal=当前位置）。
+    ★ 台架电压若低于额定（HD-1910 额定 4.8–8.4 V），读数只作量级参考，不代表部署后行为。
+    ★ 只读标称角，不扫全行程：全行程（如 head_yaw ±170°）会超出台架这颗的机械行程，
+      命令过去就是堵转。标称角全部落在行程内（见 dry-run 表）。
+    """
+    if args.dry_run:
+        print("dry-run：不开串口。计划命令的 15 个目标（台架裸舵机 sign=+1 offset=0）：")
+        print(f"{'关节':<16} {'标称角°':>8} {'目标raw':>8} {'在行程内':>10}")
+        print("-" * 46)
+        for i, name in enumerate(JOINT_NAMES_HOME):
+            deg = math.degrees(HOME_POSITION[i])
+            goal = angle_to_raw(HOME_POSITION[i])
+            inr = "✓" if TRAVEL_LO <= goal <= TRAVEL_HI else "✗ clamp"
+            print(f"{name:<16} {deg:>8.2f} {goal:>8} {inr:>10}")
+        return
+
+    tel0 = telemetry(bus, sid)
+    if tel0 is None:
+        sys.exit("读不到遥测，先跑 telem 确认通信")
+    print(f"起始：pos={tel0['pos']} ({tel0['pos']*360/STEPS_PER_REV:.1f}°) "
+          f"V={tel0['volt']:.1f} T={tel0['temp']}°C cur={tel0['cur_ma']:.0f}mA")
+    if tel0["volt"] < 4.8:
+        print(f"  ⚠️ 电压 {tel0['volt']:.1f} V 低于 HD-1910 额定下限 4.8 V："
+              f"读数只作量级参考，不代表部署后行为")
+
+    _arm(bus, sid, args)
+    print(f"已限速 reg46={args.speed} reg41={args.accel} reg48={args.torque_limit}")
+
+    rows = []
+    try:
+        for i, name in enumerate(JOINT_NAMES_HOME):
+            deg = math.degrees(HOME_POSITION[i])
+            goal = angle_to_raw(HOME_POSITION[i])
+            clamped = False
+            if goal < TRAVEL_LO:
+                goal, clamped = TRAVEL_LO, True
+            elif goal > TRAVEL_HI:
+                goal, clamped = TRAVEL_HI, True
+            move_and_settle(bus, sid, goal, timeout_s=args.settle)
+            tel = telemetry(bus, sid)
+            pos = tel["pos"] if tel else None
+            cur = tel["cur_ma"] if tel else None
+            err = abs(pos - goal) if pos is not None else None
+            rows.append({
+                "joint": name, "angle_deg": round(deg, 3), "goal": goal,
+                "pos": pos, "err_steps": err,
+                "err_deg": round(err * 360 / STEPS_PER_REV, 2) if err is not None else None,
+                "cur_ma": round(cur, 1) if cur is not None else None,
+                "clamped": clamped,
+            })
+            reached = err is not None and err <= args.tol
+            flag = "✓" if reached else "✗"
+            cn = " (clamped!)" if clamped else ""
+            es = f"{err} 步 ({err*360/STEPS_PER_REV:.2f}°)" if err is not None else "读不到"
+            print(f"{flag} {name:<16} 目标 {goal:>5} ({deg:>7.2f}°) → 实际 {pos} "
+                  f"误差 {es} 电流 {cur:.0f}mA{cn}")
+            time.sleep(args.gap)
+    finally:
+        _disarm(bus, sid)
+        print("\n收尾：已写 goal=当前位置（mode=4 下唯一可靠的停法）")
+
+    reached = [r for r in rows
+               if r["err_steps"] is not None and r["err_steps"] <= args.tol]
+    print(f"\n{'=' * 64}")
+    print(f"到达 {len(reached)}/{len(rows)}（阈值 {args.tol} 步 ≈ {args.tol*360/STEPS_PER_REV:.1f}°）")
+    errs = [r["err_steps"] for r in rows if r["err_steps"] is not None]
+    curs = [r["cur_ma"] for r in rows if r["cur_ma"] is not None]
+    if errs:
+        print(f"最大误差 {max(errs)} 步 ({max(errs)*360/STEPS_PER_REV:.2f}°)　"
+              f"最大电流 {max(curs):.0f} mA")
+    if args.json:
+        Path(args.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json).write_text(
+            json.dumps({"rows": rows, "sid": sid, "volt0": tel0["volt"],
+                        "reached": len(reached)}, ensure_ascii=False, indent=1),
+            encoding="utf-8")
+        print(f"结果 → {args.json}")
+
+
 def cmd_selftest(_bus, _sid, args):
     """不碰硬件：合成曲线验证 step_metrics，含负对照。"""
     print("=== 正例：欠阻尼（zeta=0.35）应有超调 ===")
@@ -1380,7 +1491,7 @@ def cmd_selftest(_bus, _sid, args):
 def main() -> int:
     ap = argparse.ArgumentParser(description="HD-1910 辨识台架")
     ap.add_argument("cmd", choices=["telem", "step", "sine", "psweep", "deadzone",
-                                     "backlash", "set-id", "baud", "mode", "selftest"])
+                                     "backlash", "set-id", "baud", "mode", "poses", "selftest"])
     ap.add_argument("--port", default="COM3")
     ap.add_argument("--baud", type=int, default=1_000_000)
     ap.add_argument("--id", type=int, default=1)
@@ -1400,6 +1511,12 @@ def main() -> int:
     # 于是 --help 整个崩在 _expand_help（这里曾经写成 "1000=100%"，帮助页打不出来）。
     ap.add_argument("--torque-limit", type=int, default=500,
                     help="reg48 扭矩上限（1000 = 满量程）")
+    ap.add_argument("--settle", type=float, default=3.0,
+                    help="poses：move_and_settle 等待到达的超时秒数")
+    ap.add_argument("--tol", type=int, default=20,
+                    help="poses：判定「到达」的误差上限（步）；20 步 ≈ 1.8°")
+    ap.add_argument("--gap", type=float, default=0.2,
+                    help="poses：每个关节之间的间隔秒数")
     ap.add_argument("--new-id", type=int, default=None,
                     help="set-id：新总线 ID（0-253）")
     ap.add_argument("--kp", type=int, default=None,
@@ -1440,6 +1557,9 @@ def main() -> int:
     if serial is None:
         sys.exit("缺 pyserial：pip install pyserial")
     if args.dry_run:
+        if args.cmd == "poses":
+            # poses 的 dry-run 只打印计划表，不碰硬件（不需要 bus）。
+            return cmd_poses(None, args.id, args)
         print("dry-run：不开串口")
         return 0
 
@@ -1448,7 +1568,7 @@ def main() -> int:
         if not bus.ping(args.id):
             sys.exit(f"ID {args.id} 无应答：查线序（1=信号 2=V 3=G）、供电、波特率")
         print(f"✔ PING {args.id} @ {args.port}")
-        if args.cmd in ("step", "sine", "psweep", "deadzone", "backlash"):
+        if args.cmd in ("step", "sine", "psweep", "deadzone", "backlash", "poses"):
             mode = bus.read_u8(args.id, REG_MODE)
             print(f"  reg33 mode = {mode}（本脚本所有实测结论基于 mode=4）")
             if mode != 4:
@@ -1461,7 +1581,7 @@ def main() -> int:
         {"telem": cmd_telem, "step": cmd_step, "sine": cmd_sine,
          "psweep": cmd_psweep, "deadzone": cmd_deadzone, "backlash": cmd_backlash,
          "set-id": cmd_set_id, "baud": cmd_set_baud,
-         "mode": cmd_set_mode}[args.cmd](bus, args.id, args)
+         "mode": cmd_set_mode, "poses": cmd_poses}[args.cmd](bus, args.id, args)
     finally:
         bus.close()
     return 0
