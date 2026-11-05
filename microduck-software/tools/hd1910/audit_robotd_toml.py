@@ -96,7 +96,8 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "battery_empty_shutdown": True,
     },
     "bus": {"servo": "feetech_hls",
-            "position_kp": 8, "position_kp_head": 16, "position_kd": 8},
+            "position_kp": 8, "position_kp_head": 16, "position_kd": 8,
+            "mouth_torque": True, "mouth_wake": False},
     "control": {"hz": 50},
     "update_gate": {"min_achieved_hz": 45.0, "stall_periods": 25,
                      "max_consecutive_errors": 10},
@@ -752,6 +753,27 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     # stale (it describes the upstream alpha policy, not this training pipeline). Kept as a
     # note so nobody re-derives the wrong check a second time.
 
+    # R19: [bus] mouth_torque / mouth_wake -- the dead-mouth trap (2026-11-05)
+    # main.rs:1159   initial limp mask: j == 9 && !mouth_torque && !mouth_wake
+    # main.rs:1526   mouth_wakes = !mouth_torque && mouth_wake
+    # main.rs:2890   the wake/sleep loop only runs `if mouth_wakes`
+    # So mouth_torque=false + mouth_wake=false => mouth starts limp AND never wakes:
+    # permanently dead. Symptom: "the beak never moves", looks like a wiring/ID problem.
+    mt, _ = effective(cfg, "bus", "mouth_torque")
+    mw, _ = effective(cfg, "bus", "mouth_wake")
+    if mt is False and mw is False:
+        rep.add("WARN", "bus.mouth_wake", mw,
+                "mouth_torque=false and mouth_wake=false: the mouth starts limp (main.rs:1159) "
+                "and mouth_wakes is false (main.rs:1526), so the wake loop never runs and the "
+                "mouth never moves -- looks like a wiring/ID problem, not a config one. Set one "
+                "of them to true")
+    elif mt is True:
+        rep.add("ok", "bus.mouth_torque", mt,
+                "mouth holds its pose; mouth_wake is inert while mouth_torque is on")
+    else:
+        rep.add("ok", "bus.mouth_torque", mt,
+                "mouth_wake powers the mouth only while speaking (lip sync / open intent)")
+
     return rep
 
 
@@ -1071,6 +1093,25 @@ def selftest() -> int:
     check("joint_signs well-formed at NUM_JOINTS is ok",
           any(k == "bus.joint_signs" and lv == "ok"
               for lv, k, _, _ in audit(r_signs_ok, 8).rows))
+
+    # ---- R19: mouth_torque / mouth_wake ----
+    # both false: the mouth starts limp and never wakes -- looks like a wiring/ID problem
+    r_mouth_dead = dict(good, bus=dict(base_bus,
+                                       mouth_torque=False, mouth_wake=False))
+    check("mouth_torque=false + mouth_wake=false is a WARN",
+          any(k == "bus.mouth_wake" and lv == "WARN"
+              for lv, k, _, _ in audit(r_mouth_dead, 8).rows))
+    # mouth_torque=true (default) is ok
+    r_mouth_hold = dict(good, bus=dict(base_bus, mouth_torque=True))
+    check("mouth_torque=true is ok",
+          any(k == "bus.mouth_torque" and lv == "ok"
+              for lv, k, _, _ in audit(r_mouth_hold, 8).rows))
+    # mouth_torque=false + mouth_wake=true is the intended wake-to-speak config
+    r_mouth_wake = dict(good, bus=dict(base_bus,
+                                       mouth_torque=False, mouth_wake=True))
+    check("mouth_torque=false + mouth_wake=true is ok",
+          any(k == "bus.mouth_torque" and lv == "ok"
+              for lv, k, _, _ in audit(r_mouth_wake, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
