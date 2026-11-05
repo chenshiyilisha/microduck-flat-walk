@@ -672,6 +672,46 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             rep.add("ok", "policy.standing_action_scale", sas,
                     f"matches action_scale {scale}")
 
+    # R16: [bus] imu_axes -- how the IMU chip sits in the trunk (2026-11-05)
+    # Format: "z,y,-x" = trunk x <- sensor z, trunk y <- sensor y, trunk z <- sensor -x.
+    # Three entries, each a signed axis (+x/-x/+y/-y/+z/-z), mutually distinct, signs matter.
+    # The policies' IMU randomization is zero-centred, so they cannot learn a systematic
+    # orientation error: a wrong map here reads as "the robot can't stand straight" and looks
+    # like a joint-zero or motor problem, not a configuration typo. No error is raised.
+    iax, _iax_set = effective(cfg, "bus", "imu_axes")
+    if isinstance(iax, str):
+        ok_axes = False
+        problems = []
+        parts = [p.strip().lower() for p in iax.split(",")]
+        if len(parts) != 3:
+            problems.append(f"expected 3 entries (one per trunk axis), got {len(parts)}")
+        else:
+            valid = {"+x", "-x", "+y", "-y", "+z", "-z",
+                     "x", "y", "z"}  # a sign is optional: upstream default is "z,y,-x"
+            seen = []
+            for i, p in enumerate(parts):
+                if p not in valid:
+                    problems.append(f"entry {i} '{p}' is not a signed axis "
+                                    f"(expected one of +x/-x/+y/-y/+z/-z)")
+                elif p in seen:
+                    problems.append(f"entry {i} '{p}' is a duplicate of entry {seen.index(p)}")
+                else:
+                    seen.append(p)
+            if not problems:
+                # a rotation must map distinct axes to distinct axes: the three bare axes
+                # (signs may flip) must be x, y and z
+                bare = {p.lstrip("+-") for p in parts}
+                if bare != {"x", "y", "z"}:
+                    problems.append(f"the three axes must be x, y and z (signs may flip), got {sorted(bare)}")
+        if problems:
+            rep.add("WARN", "bus.imu_axes", iax,
+                    "; ".join(problems) +
+                    '. Format "z,y,-x" = trunk x <- sensor z, y <- sensor y, z <- sensor -x. '
+                    "A wrong map reads as a bad stand, not an error")
+        else:
+            rep.add("ok", "bus.imu_axes", iax,
+                    'three distinct signed axes (one per trunk axis); signs and order matter')
+
     return rep
 
 
@@ -930,6 +970,37 @@ def selftest() -> int:
     check("standing_action_scale == action_scale is ok",
           any(k == "policy.standing_action_scale" and lv == "ok"
               for lv, k, _, _ in audit(r_sas_match, 8).rows))
+
+    # ---- R16: imu_axes format negative controls ----
+    r_axes_ok = dict(good, bus=dict(base_bus, imu_axes="z,y,-x"))
+    check("imu_axes 'z,y,-x' is ok",
+          any(k == "bus.imu_axes" and lv == "ok"
+              for lv, k, _, _ in audit(r_axes_ok, 8).rows))
+    # two entries instead of three: one trunk axis has no sensor axis -> orientation wrong
+    r_axes_short = dict(good, bus=dict(base_bus, imu_axes="z,y"))
+    check("imu_axes with 2 entries is a WARN",
+          any(k == "bus.imu_axes" and lv == "WARN"
+              for lv, k, _, _ in audit(r_axes_short, 8).rows))
+    # duplicate: two trunk axes read the same sensor axis
+    r_axes_dup = dict(good, bus=dict(base_bus, imu_axes="z,z,-x"))
+    check("imu_axes with a duplicate is a WARN",
+          any(k == "bus.imu_axes" and lv == "WARN"
+              for lv, k, _, _ in audit(r_axes_dup, 8).rows))
+    # bare axes with no sign: the sign is optional, so "x,y,z" is valid
+    r_axes_nosign = dict(good, bus=dict(base_bus, imu_axes="x,y,z"))
+    check("imu_axes with bare (unsigned) axes is ok",
+          any(k == "bus.imu_axes" and lv == "ok"
+              for lv, k, _, _ in audit(r_axes_nosign, 8).rows))
+    # an entry that is neither an axis nor signed: rejects
+    r_axes_junk = dict(good, bus=dict(base_bus, imu_axes="z,q,-x"))
+    check("imu_axes with a junk axis is a WARN",
+          any(k == "bus.imu_axes" and lv == "WARN"
+              for lv, k, _, _ in audit(r_axes_junk, 8).rows))
+    # all three the same axis: not a rotation at all
+    r_axes_same = dict(good, bus=dict(base_bus, imu_axes="x,x,x"))
+    check("imu_axes with all three the same is a WARN",
+          any(k == "bus.imu_axes" and lv == "WARN"
+              for lv, k, _, _ in audit(r_axes_same, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
