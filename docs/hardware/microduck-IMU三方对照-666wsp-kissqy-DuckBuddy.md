@@ -4,7 +4,18 @@ _2026-11-05。三方定位：**666wsp** = 通用 IMU 板厂商（IMU_TO_DXL）�
 
 **一句话结论：IMU 板固件决定了同步读里 IMU 的排队位置，而 666wsp 与 kissqy 的固件都要求「IMU 排第一位」，DuckBuddy 的 robotd（HD1910/feetech 后端）却硬编码「IMU 排最后」且总线跑 500k。两者不能直接对接——要么改 robotd 的排队顺序，要么用 DuckBuddy 自己的 IMU 固件/板。原生匹配只有 DuckBuddy 的 PDB/IMU 板。**
 
-## 0. 关键判据：同步读顺序是固件属性，不是总线属性
+## 0. 先澄清一个常见误判：A733 的 UART7 上不了真 1 Mbps ≠ 性能不如 Radxa
+
+DuckBuddy INTERFACE-CN.md 注明「A733 的 UART7 设 1 Mbps 实际只有约 750 kbps，所以统一用 500k」。这**不是 A733 的劣势**：
+
+- **总线根本不需要 1 Mbps**。每 tick（50 Hz）一次同步读 16 设备 ≈ 295 字节，500 kbps 下占线 ~4.7 ms / 20 ms = **~24%**，余量 4 倍。DuckBuddy 整套（含自己的 IMU 固件 imu-feetech）就是跑 500k。
+- **Radxa 上也是跑 500k**，不是 1M。1M 在两家平台上都没被用上，A733 少一个用不到的 capability 不构成劣势。
+- **1 Mbps 只是第三方 IMU 固件的出厂默认**：666wsp 板可用 FD.exe 改；kissqy FT6 锁 1M；DuckBuddy 自己的 IMU 固件就是 500k。
+- 且 A733 在 CPU（2×A76+6×A55@2.0GHz 八核 vs 4×A55@1.8GHz）、NPU（3 TOPS vs 0.8）、内存（LPDDR5 vs LPDDR4）上全面更强；DuckBuddy upstream 主控就是香橙派 Zero 3W（已验证整机运行）。
+
+**唯一 relevant 的情形**：硬要用锁 1M 的第三方 IMU 固件时，A733 喂不饱 → 把板降到 500k 或换 DuckBuddy IMU 固件，三条路都通。
+
+## 1. 关键判据：同步读顺序是固件属性，不是总线属性
 
 这是整个对照的核心。DuckBuddy 在 feetech.rs 里注释的实测：
 
