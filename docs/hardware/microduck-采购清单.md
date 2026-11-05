@@ -351,11 +351,15 @@ D+45 起     → warm start 微调（改 7.2 那 4 个数）→ 实机步态验�
 | 存储 | eMMC/TF 可选 | eMMC/TF 可选（下单确认 eMMC SKU） |
 | **价格** | ¥237–310 | 1 GB/无 eMMC ≈¥169；4 GB ≈$50（≈¥360） |
 
-**为什么香橙派 Zero 3W 是更优解**：规格全面更强（八核含 2×A76 大核、3 TOPS NPU）、40-pin RPi 兼容所以 HAT+IMU 板直插体验和 Radxa 一致、价格更低。软件可自己开发（不依赖 Radxa 官方 BSP），所以它的主要风险点只剩一个。
+**为什么香橙派 Zero 3W 是更优解**：规格全面更强（八核含 2×A76 大核、3 TOPS NPU）、40-pin RPi 兼容所以 HAT+IMU 板直插体验和 Radxa 一致、价格更低。软件可自己开发（不依赖 Radxa 官方 BSP）。
 
-**唯一要上板实测的**：A733 的 UART 能否**精确分出 500 k/1 M 波特率**（舵机总线硬要求）。A733 是 1.2 GHz 级芯片，分频能力一般没问题，但和 Radxa 一样**不能盲信**——`lib.rs:1024` 明说「50 Hz 是从 Pi Zero 2W 继承的，在 Radxa 上都要重新推，别直接信」。上板第一件事就是实测控制环是否真稳在 50 Hz（`[update_gate] min_achieved_hz` 会盯）。
+**关键实测证据**：DuckBuddy（本仓库 upstream `DuckBuddy-main`）**就是用 Orange Pi Zero 3W（A733）做的**，已验证 **4 GB + 15×HL-2915 + 3S 整机日常运行**；现正在做 HD-1910 + 2S 版。舵机总线走 **UART7 @ 500 kbps**（经 HAT 的半双工收发器）。项目接口文档 `docs/hardware/INTERFACE-CN.md` 已实测给出：
 
-**结论**：优先买 **香橙派 Zero 3W（A733）4 GB + eMMC + 带 40-pin 排针**；买不到再回 Radxa Zero 3W。两者 `[bus] port` / `[battery] cells=[2]+max_volts=8.4` 的配置改法一样。
+- **引脚**：pin 16 = TX、pin 18 = RX（UART7 = `/dev/ttyS7`）
+- **波特率陷阱**：**A733 的 UART7 设 1 Mbps 实际只有约 750 kbps，所以必须统一用 500k**——这是实测结论，不是推测。之前的「要上板实测波特率」担忧已被 DuckBuddy 闭合。
+- 其余：I2S（pin 7/12/35/38/40）、I²C codec+ToF（pin 19/23）、5 V 由 HAT 降压供给、GND（pin 6/9/14/20/25/30/34/39）
+
+**结论**：优先买 **香橙派 Zero 3W（A733）4 GB + eMMC + 带 40-pin 排针**；买不到再回 Radxa Zero 3W。**UART 用 UART7（pin 16/18）配 500k，别用 1M。** 2S 电池配 `[battery] cells=[2]+max_volts=8.4`。
 
 ---
 
