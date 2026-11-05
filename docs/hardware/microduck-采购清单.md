@@ -361,6 +361,23 @@ D+45 起     → warm start 微调（改 7.2 那 4 个数）→ 实机步态验�
 
 **结论**：优先买 **香橙派 Zero 3W（A733）4 GB + eMMC + 带 40-pin 排针**；买不到再回 Radxa Zero 3W。**UART 用 UART7（pin 16/18）配 500k，别用 1M。** 2S 电池配 `[battery] cells=[2]+max_volts=8.4`。
 
+#### 7.9.1 具体买哪个 SKU（2026-11-05 按官网 + cnx-software 核价）
+
+官方内存档：1 / 2 / 4 / 6 / 8 / 12 GB（LPDDR5 4800MT/s，**1 GB 那档是 LPDDR4/4X 降级**）；eMMC 8/16/32 GB **默认空贴**（要选带 eMMC 的 SKU）；入门 1 GB 档**无板载存储**。官方定价（美元，代理/淘宝有加价）：
+
+| SKU | 价格 | 判定 |
+|---|---|---|
+| 1 GB（LPDDR4，无 eMMC） | $25 ≈¥169 | ✗ 内存降档 + 无存储 + 跑 detect/mediad 吃紧（你硬件清单 §1 已定 1 GB 不够） |
+| 2 GB | $35 | △ 临界，不省那点钱 |
+| **4 GB**（DuckBuddy 实测档） | $50 ≈¥360 | ✅ **就买这个**——DuckBuddy 官方 README「the 4 GB version recommended」且整机日常运行验证通过 |
+| 6 / 8 / 12 GB | $60 / $80 / $99.9 | ✗ 本负载用不满，纯浪费 |
+
+**存储选 eMMC 还是 TF**：DuckBuddy 的部署/更新文档通篇假设 **eMMC**（`updater-design.md`「Logs land on the eMMC」「rewrites the eMMC」），且整机工况有振动，eMMC 比 TF 稳。所以**优先 4 GB + eMMC 8 GB 的 SKU**；若该 SKU 缺货/加价太多，退而求其次 4 GB + TF 卡（A2 32–64 GB），只是抗震差、换卡要重刷。
+
+**40-pin 排针**：Orange Pi Zero 3W 官网规格把 40PIN 列为**标配**（不像 Radxa Zero 3W 分带/不带排针两个 SKU），官方参数页未见 Headerless 版——下单仍以实页为准，认准「40PIN 功能扩展接口」。
+
+≤¥360 一块（4 GB 档美元价），整机主控成本与基线 Radxa（¥237–310）同量级。
+
 ---
 
 ## 8. 下单顺序与时间线
