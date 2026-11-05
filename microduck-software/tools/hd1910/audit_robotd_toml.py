@@ -75,6 +75,17 @@ NUM_JOINTS = 15
 # theremin.min_zones unreachable.
 N_ZONES = 64
 
+# The one video mode a robot streams in, as a name rather than four numbers (lib.rs:141-163).
+# These are the ONLY spellings serde will accept for [media] quality: a value outside this set
+# makes the whole file fail to load (robotd does not start), which reads as a broken daemon.
+QUALITY_LABELS = ["1080p30", "720p30", "720p15", "360p30"]
+
+# lib.rs:215-222 (Quality::default_bitrate): what each rung streams at when [media] bitrate is
+# unset, bits per second. 720p30 is the measured 2 Mb/s; the others are that number times their
+# share of the pixels per second.
+DEFAULT_BITRATE = {"1080p30": 4_000_000, "720p30": 2_000_000,
+                   "720p15": 1_000_000, "360p30": 800_000}
+
 DEFAULTS: dict[str, dict[str, object]] = {
     "policy": {
         "gain": 200,
@@ -118,6 +129,10 @@ DEFAULTS: dict[str, dict[str, object]] = {
     # 2 zones, the 7 ST codes, 250 ms hold.
     "theremin": {"enabled": True, "near_m": 0.10, "far_m": 0.70, "min_zones": 2,
                  "statuses": [4, 5, 6, 9, 10, 12, 13], "hold_ms": 250},
+    # lib.rs:313-327 (MediaParams::default): camera on, 720p30, bitrate unset (follows quality),
+    # congestion_control gcc. lib.rs:240-252: CongestionControl::Gcc is the default.
+    "media": {"camera": True, "quality": "720p30", "bitrate": None,
+              "congestion_control": "gcc"},
 }
 
 # ---------------------------------------------------------------------------
@@ -160,6 +175,8 @@ SECTION_KEYS: dict[str, set[str]] = {
     # lib.rs:489-518 (AudioParams).
     "audio": {"enabled", "device", "bank", "greet", "pet_detect", "pet_model",
               "pet_enter_threshold", "pet_exit_threshold", "denoise", "lipsync"},
+    # lib.rs:296-311 (MediaParams).
+    "media": {"camera", "quality", "bitrate", "congestion_control"},
 }
 
 # The HD-1910's own overheat latch: reg13 = 80 degC, read from ID 10 on 2026-11-02.
@@ -1022,6 +1039,47 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             rep.add("ok", "policy.nominal_voltage", nv,
                     f"nominal_voltage {nv} is positive and within a plausible pack range")
 
+    # R27: [media] quality -- a value outside the enum makes the whole file fail to load (2026-11-05)
+    # lib.rs:141-163: Quality is a serde enum with `rename` per variant, so the file may only name
+    # "1080p30"/"720p30"/"720p15"/"360p30" (QUALITY_LABELS, lib.rs:163). Any other string fails
+    # deserialisation, and because Params is `deny_unknown_fields` + `default`, a bad enum value
+    # aborts the ENTIRE config load: robotd does not start. Symptom is "the daemon is broken /
+    # exits immediately", which reads as a bad binary or a missing dependency, not a one-word
+    # typo in a video rung.
+    q, _ = effective(cfg, "media", "quality")
+    if isinstance(q, str) and q not in QUALITY_LABELS:
+        rep.add("WARN", "media.quality", q,
+                f"quality {q!r} is not one of {QUALITY_LABELS} (lib.rs:141-163): serde refuses "
+                "the value, so the whole file fails to load and robotd does not start. Symptom "
+                "reads as 'the daemon is broken', not a typo in a video rung")
+    elif isinstance(q, str):
+        rep.add("ok", "media.quality", q,
+                f"quality {q} is a valid rung (lib.rs:163)")
+
+    # R28: [media] congestion_control=disabled + bitrate far from the rung's default (2026-11-05)
+    # lib.rs:305-307: bitrate is "a *starting* point unless congestion_control is disabled, which
+    # is the one setting that makes this the rate." lib.rs:215-222: default_bitrate is the
+    # measured 2 Mb/s for 720p30, scaled by pixel share for the other rungs. So with congestion
+    # control ON (the default, gcc) a bitrate far from the default is a starting point gcc ramps
+    # away from in seconds -- not a fault. With it DISABLED, bitrate IS the rate: a value far off
+    # the rung's default means a smeared picture (too low) or wasted link headroom (too high), and
+    # the symptom ("the video is soft / stutters") reads as a network/bandwidth problem, not two
+    # numbers set against each other. We only judge when congestion_control is disabled.
+    cc, _ = effective(cfg, "media", "congestion_control")
+    br, _ = effective(cfg, "media", "bitrate")
+    if cc == "disabled" and isinstance(br, (int, float)) and isinstance(q, str) and q in DEFAULT_BITRATE:
+        ref = DEFAULT_BITRATE[q]
+        if br > 2 * ref or br < ref / 2:
+            rep.add("WARN", "media.bitrate", br,
+                    f"congestion_control is disabled, so bitrate {br} IS the rate, but it is "
+                    f"{br/ref:.1f}x the {q} default ({ref} bit/s, lib.rs:215-222). A picture that "
+                    "far off the rung is a smear (too low) or wasted headroom (too high) -- the "
+                    "symptom reads as a network problem, not a bitrate typo")
+        else:
+            rep.add("ok", "media.bitrate", br,
+                    f"congestion_control disabled, bitrate {br} is within 2x of the {q} default "
+                    f"({ref} bit/s, lib.rs:215-222)")
+
     return rep
 
 
@@ -1518,6 +1576,35 @@ def selftest() -> int:
     r_va_off = dict(good)
     check("voltage_adapt off (default) reports no nominal_voltage row",
           not any(k == "policy.nominal_voltage" for _, k, _, _ in audit(r_va_off, 8).rows))
+
+    # ---- R27: [media] quality -- a value outside the enum fails the whole load ----
+    r_q_bad = dict(good, media={"quality": "1080p60"})
+    check("media.quality 1080p60 is a WARN",
+          any(k == "media.quality" and lv == "WARN"
+              for lv, k, _, _ in audit(r_q_bad, 8).rows))
+    r_q_ok = dict(good, media={"quality": "720p30"})
+    check("media.quality 720p30 is ok",
+          any(k == "media.quality" and lv == "ok"
+              for lv, k, _, _ in audit(r_q_ok, 8).rows))
+
+    # ---- R28: [media] congestion_control=disabled + bitrate far from the rung ----
+    # disabled + a bitrate 50x the 720p30 default: the rate is the rate -> smeared/wasted
+    r_cc_dis_hi = dict(good, media={"congestion_control": "disabled", "quality": "720p30",
+                                    "bitrate": 100_000})
+    check("congestion_control disabled + bitrate 100000 on 720p30 is a WARN",
+          any(k == "media.bitrate" and lv == "WARN"
+              for lv, k, _, _ in audit(r_cc_dis_hi, 8).rows))
+    # disabled + the default bitrate: within 2x -> ok
+    r_cc_dis_ok = dict(good, media={"congestion_control": "disabled", "quality": "720p30",
+                                    "bitrate": 2_000_000})
+    check("congestion_control disabled + bitrate 2000000 on 720p30 is ok",
+          any(k == "media.bitrate" and lv == "ok"
+              for lv, k, _, _ in audit(r_cc_dis_ok, 8).rows))
+    # gcc (the default) + a far-off bitrate: gcc ramps away from it -> no row (inert)
+    r_cc_gcc = dict(good, media={"congestion_control": "gcc", "quality": "720p30",
+                                 "bitrate": 100_000})
+    check("congestion_control gcc + bitrate 100000 reports no media.bitrate row",
+          not any(k == "media.bitrate" for _, k, _, _ in audit(r_cc_gcc, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
