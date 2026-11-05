@@ -527,6 +527,33 @@ def audit(cfg: dict, expect_kp: int) -> Report:
                 f"at or below rest_c {sr}: sit (keeps torque) fires before rest (drops it), "
                 f"so the robot sits down and then immediately goes limp on top of it")
 
+    # R10c: rest_head_c consistency (2026-11-04)
+    # `rest_head_c > 0` makes a hot head limp along with the legs in a deep rest. It must
+    # fire before walk_max_c (a servo that hot would already have walk-blocked the robot)
+    # and after warn_c (a head limping at a temperature that hasn't even warned is too eager).
+    rhc, _ = effective(cfg, "thermal", "rest_head_c")
+    if isinstance(rhc, (int, float)) and rhc > 0 and isinstance(wm, (int, float)) and rhc >= wm:
+        rep.add("WARN", "thermal.rest_head_c", rhc,
+                f"at or above walk_max_c {wm}: by the time the head is this hot the robot "
+                f"is already walk-blocked, so a deep rest for the head never fires")
+    if isinstance(rhc, (int, float)) and rhc > 0 and isinstance(warn_c, (int, float)) and rhc <= warn_c:
+        rep.add("WARN", "thermal.rest_head_c", rhc,
+                f"at or below warn_c {warn_c}: the head limps in a deep rest before it has "
+                f"even warned, so the deep-rest trigger fires too eagerly")
+    if isinstance(rhc, (int, float)) and rhc == 0:
+        rep.add("ok", "thermal.rest_head_c", rhc, "0 = off (the head never limps in a rest)")
+
+    # R10d: deep_sit without a lie policy (2026-11-04)
+    # `deep_sit = false` means a deep rest lies down (the lie policy). Without one the
+    # deep rest is silently skipped (main.rs:3623) -- the legs go limp but the body
+    # cannot get down. This is not a config error per se, but worth flagging.
+    ds, ds_set = effective(cfg, "thermal", "deep_sit")
+    if ds_set and ds is False:
+        rep.add("WARN", "thermal.deep_sit", ds,
+                "false means a deep rest lies down (the lie policy). Without a lie policy "
+                "the deep rest is silently skipped -- the legs go limp but the body cannot "
+                "get down (main.rs:3623). Set true to sit instead, or provide a lie policy")
+
     # R8: safety verdicts that are reported, not enforced
     fz, _ = effective(cfg, "safety", "fall_gravity_z")
     rep.add("ok", "safety.fall_gravity_z", fz,
@@ -722,6 +749,26 @@ def selftest() -> int:
     check("rest_min_s negative is a WARN",
           any(k == "thermal.rest_min_s" and lv == "WARN"
               for lv, k, _, _ in audit(r_neg_min, 8).rows))
+    # rest_head_c >= walk_max_c: by the time the head is this hot, walk is already blocked
+    r_head_late = dict(good, thermal={"walk_max_c": 70.0, "rest_head_c": 70.0})
+    check("rest_head_c == walk_max_c is a WARN",
+          any(k == "thermal.rest_head_c" and lv == "WARN"
+              for lv, k, _, _ in audit(r_head_late, 8).rows))
+    # rest_head_c <= warn_c: head limps before it even warns
+    r_head_early = dict(good, thermal={"walk_max_c": 70.0, "warn_c": 55.0, "rest_head_c": 55.0})
+    check("rest_head_c == warn_c is a WARN",
+          any(k == "thermal.rest_head_c" and lv == "WARN"
+              for lv, k, _, _ in audit(r_head_early, 8).rows))
+    # rest_head_c = 0 (off) is ok
+    r_head_off = dict(good, thermal={"walk_max_c": 70.0, "rest_head_c": 0.0})
+    check("rest_head_c = 0 is ok (off)",
+          any(k == "thermal.rest_head_c" and lv == "ok"
+              for lv, k, _, _ in audit(r_head_off, 8).rows))
+    # deep_sit = false (no lie policy) is a WARN
+    r_no_lie = dict(good, thermal={"deep_sit": False})
+    check("deep_sit = false is a WARN",
+          any(k == "thermal.deep_sit" and lv == "WARN"
+              for lv, k, _, _ in audit(r_no_lie, 8).rows))
 
     # ---- joint_ids: a distinct-but-different map is a WARN, not a pass ----
     ref = dict(good, bus=dict(base_bus, joint_ids=list(REFERENCE_JOINT_IDS)))
