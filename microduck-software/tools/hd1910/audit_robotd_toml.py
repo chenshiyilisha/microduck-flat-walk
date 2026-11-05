@@ -97,6 +97,9 @@ DEFAULTS: dict[str, dict[str, object]] = {
     },
     "bus": {"servo": "feetech_hls",
             "position_kp": 8, "position_kp_head": 16, "position_kd": 8},
+    "control": {"hz": 50},
+    "update_gate": {"min_achieved_hz": 45.0, "stall_periods": 25,
+                     "max_consecutive_errors": 10},
 }
 
 # ---------------------------------------------------------------------------
@@ -561,6 +564,45 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     dm, _ = effective(cfg, "safety", "deadman_ms")
     rep.add("ok", "safety.deadman_ms", dm, "zeroes twist only; torque stays on")
 
+    # R11: [update_gate] must match the control rate (2026-11-04)
+    # The defaults are calibrated against 50 Hz: min_achieved_hz = 45 (90%),
+    # stall_periods = 25 (500 ms at 50 Hz). If [control] hz is changed without
+    # retuning these, the consequences are silent:
+    #   hz dropped (say 20) but min_achieved_hz still 45 -> the loop can NEVER
+    #   reach 45 Hz so robotd reports unhealthy forever -> silent auto-rollback.
+    #   hz raised (say 100) but stall_periods still 25 -> 250 ms window, ordinary
+    #   scheduler jitter trips the dead-loop detector on a healthy robot.
+    ct, _ct_set = effective(cfg, "control", "hz")
+    ua, _ua_set = effective(cfg, "update_gate", "min_achieved_hz")
+    sp, _sp_set = effective(cfg, "update_gate", "stall_periods")
+    me, _me_set = effective(cfg, "update_gate", "max_consecutive_errors")
+    if (isinstance(ct, (int, float)) and ct > 0
+            and isinstance(ua, (int, float))):
+        rep.add("ok", "update_gate.min_achieved_hz", ua,
+                f"{ua:.0f} Hz vs control.hz {ct:.0f} ({ua/ct:.0%} of the target rate)")
+        if ua >= ct:
+            rep.add("WARN", "update_gate.min_achieved_hz", ua,
+                    f"at or above control.hz {ct}: the loop can never reach this rate. "
+                    f"robotd reports unhealthy forever and silently auto-rolls back")
+    if (isinstance(ct, (int, float)) and ct > 0
+            and isinstance(sp, (int, float))):
+        stall_ms = sp / ct * 1000.0
+        rep.add("ok", "update_gate.stall_periods", f"{sp} ({stall_ms:.0f} ms)",
+                f"at control.hz {ct:.0f}, 500 ms is the default window")
+        if stall_ms < 300.0:
+            rep.add("WARN", "update_gate.stall_periods", sp,
+                    f"{stall_ms:.0f} ms at {ct:.0f} Hz -- ordinary scheduler jitter on a "
+                    f"loaded board is 80 ms, so the dead-loop detector trips on a healthy "
+                    f"robot and rolls back a good release")
+        if stall_ms > 2000.0:
+            rep.add("WARN", "update_gate.stall_periods", sp,
+                    f"{stall_ms:.0f} ms at {ct:.0f} Hz -- a genuinely wedged loop takes this "
+                    f"long to detect; the dead-loop detector fires too late")
+    if isinstance(me, (int, float)) and me == 0:
+        rep.add("WARN", "update_gate.max_consecutive_errors", me,
+                "0 tolerates NO bus error: a single dropped transaction (ordinary on a "
+                "bus) is enough to report unhealthy and trigger auto-rollback")
+
     return rep
 
 
@@ -769,6 +811,36 @@ def selftest() -> int:
     check("deep_sit = false is a WARN",
           any(k == "thermal.deep_sit" and lv == "WARN"
               for lv, k, _, _ in audit(r_no_lie, 8).rows))
+
+    # ---- [update_gate] must match [control] hz: negative controls ----
+    # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
+    r_gate_impossible = dict(good, control={"hz": 20.0},
+                             update_gate={"min_achieved_hz": 45.0})
+    check("min_achieved_hz >= control.hz is a WARN",
+          any(k == "update_gate.min_achieved_hz" and lv == "WARN"
+              for lv, k, _, _ in audit(r_gate_impossible, 8).rows))
+    # stall_periods at a high hz: 25 periods at 200 Hz = 125 ms < 300 ms
+    r_gate_jitter = dict(good, control={"hz": 200.0},
+                         update_gate={"stall_periods": 25})
+    check("stall_periods too tight at 200 Hz is a WARN",
+          any(k == "update_gate.stall_periods" and lv == "WARN"
+              for lv, k, _, _ in audit(r_gate_jitter, 8).rows))
+    # stall_periods at a low hz: 25 periods at 2 Hz = 12.5 s > 2 s
+    r_gate_late = dict(good, control={"hz": 2.0},
+                       update_gate={"stall_periods": 25})
+    check("stall_periods too loose at 2 Hz is a WARN",
+          any(k == "update_gate.stall_periods" and lv == "WARN"
+              for lv, k, _, _ in audit(r_gate_late, 8).rows))
+    # max_consecutive_errors = 0: one dropped transaction trips it
+    r_gate_no_err = dict(good, update_gate={"max_consecutive_errors": 0})
+    check("max_consecutive_errors = 0 is a WARN",
+          any(k == "update_gate.max_consecutive_errors" and lv == "WARN"
+              for lv, k, _, _ in audit(r_gate_no_err, 8).rows))
+    # default hz (50) + default gate -> ok
+    r_gate_ok = dict(good)
+    check("default 50 Hz + default gate passes",
+          any(k == "update_gate.min_achieved_hz" and lv == "ok"
+              for lv, k, _, _ in audit(r_gate_ok, 8).rows))
 
     # ---- joint_ids: a distinct-but-different map is a WARN, not a pass ----
     ref = dict(good, bus=dict(base_bus, joint_ids=list(REFERENCE_JOINT_IDS)))
