@@ -97,7 +97,8 @@ DEFAULTS: dict[str, dict[str, object]] = {
     },
     "bus": {"servo": "feetech_hls",
             "position_kp": 8, "position_kp_head": 16, "position_kd": 8,
-            "mouth_torque": True, "mouth_wake": False},
+            "mouth_torque": True, "mouth_wake": False,
+            "imu_pitch_trim_deg": 0.0, "imu_roll_trim_deg": 0.0},
     "control": {"hz": 50},
     "update_gate": {"min_achieved_hz": 45.0, "stall_periods": 25,
                      "max_consecutive_errors": 10},
@@ -774,6 +775,33 @@ def audit(cfg: dict, expect_kp: int) -> Report:
         rep.add("ok", "bus.mouth_torque", mt,
                 "mouth_wake powers the mouth only while speaking (lip sync / open intent)")
 
+    # R20: [bus] imu_pitch_trim_deg / imu_roll_trim_deg -- the board-mount correction (2026-11-05)
+    # lib.rs:962-973: "The policies cannot learn a systematic offset -- their IMU randomization is
+    # zero-centred -- so it is corrected here." The comment records what it took on the HL-2915:
+    # 1.6-4.5 deg (mean 3.3) pitch, ~2 deg roll. These are f64 with default 0.0 and the Rust side
+    # validates NO range: a typo (3.3 -> 33.0) makes the trunk tilt 10x what it should. Symptom:
+    # "the robot won't stand straight" / "it yaws and shuffles" -- the same symptom as a bad
+    # zero calibration or an unbalanced joint. The ±90 and ±15 bounds below are OUR sanity
+    # heuristic, not a spec: ±90 is where the perceived gravity direction flips (this is the
+    # author's reasoning, not something read in the source) and ±15 is ~4x the largest value
+    # recorded anywhere on the HL-2915.
+    for name in ("imu_pitch_trim_deg", "imu_roll_trim_deg"):
+        v, _v_set = effective(cfg, "bus", name)
+        if not isinstance(v, (int, float)):
+            continue  # absent -> 0.0, the neutral correction: legitimate
+        if abs(v) > 90.0:
+            rep.add("WARN", f"bus.{name}", v,
+                    f"±{abs(v):.0f} deg: past ±90 the perceived gravity direction flips. "
+                    f"lib.rs:962-973 records what it took on the HL-2915 was 1.6-4.5 deg (mean "
+                    f"3.3) -- check for a dropped decimal point or a sign error")
+        elif abs(v) > 15.0:
+            rep.add("WARN", f"bus.{name}", v,
+                    f"±{abs(v):.0f} deg is far outside the 1.6-4.5 deg range recorded on the "
+                    f"HL-2915 (lib.rs:962-973). Verify the sign and the magnitude")
+        else:
+            rep.add("ok", f"bus.{name}", v,
+                    f"±{abs(v):.1f} deg is within the plausible board-mount correction")
+
     return rep
 
 
@@ -1112,6 +1140,28 @@ def selftest() -> int:
     check("mouth_torque=false + mouth_wake=true is ok",
           any(k == "bus.mouth_torque" and lv == "ok"
               for lv, k, _, _ in audit(r_mouth_wake, 8).rows))
+
+    # ---- R20: imu_pitch_trim_deg / imu_roll_trim_deg ----
+    # past ±90 deg: gravity perception flips -- a sign/decimal typo
+    r_trim_huge = dict(good, bus=dict(base_bus, imu_pitch_trim_deg=-95.0))
+    check("imu_pitch_trim_deg past ±90 is a WARN",
+          any(k == "bus.imu_pitch_trim_deg" and lv == "WARN"
+              for lv, k, _, _ in audit(r_trim_huge, 8).rows))
+    # far outside the recorded HL-2915 range (1.6-4.5 deg) but plausible-looking
+    r_trim_big = dict(good, bus=dict(base_bus, imu_roll_trim_deg=20.0))
+    check("imu_roll_trim_deg at 20 deg is a WARN",
+          any(k == "bus.imu_roll_trim_deg" and lv == "WARN"
+              for lv, k, _, _ in audit(r_trim_big, 8).rows))
+    # within the recorded range is ok
+    r_trim_ok = dict(good, bus=dict(base_bus, imu_pitch_trim_deg=3.3))
+    check("imu_pitch_trim_deg at 3.3 deg is ok",
+          any(k == "bus.imu_pitch_trim_deg" and lv == "ok"
+              for lv, k, _, _ in audit(r_trim_ok, 8).rows))
+    # absent (default 0.0) is neutral and ok
+    r_trim_zero = dict(good, bus=dict(base_bus))
+    check("absent imu_pitch_trim_deg (default 0.0) is ok",
+          any(k == "bus.imu_pitch_trim_deg" and lv == "ok"
+              for lv, k, _, _ in audit(r_trim_zero, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
