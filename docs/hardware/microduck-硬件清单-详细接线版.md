@@ -10,7 +10,7 @@
 
 | 模块 | 型号 / 规格 | 数量 | 关键接口 |
 |------|------------|------|---------|
-| 主控 | Radxa Zero 3W（RK3566）4GB + TF，**带 40 针排针** | 1 | UART×5 / I2C / MIPI CSI |
+| 主控 | **香橙派 Zero 3W（A733）4GB + eMMC**，带 40 针排针 | 1 | UART×4 / I2C×3 / MIPI CSI×2 / I2S |
 | 舵机 | Feetech **HD-1910-C001** | 15（+1 备） | AMP2.0-3P，15 cm 自带线 |
 | HAT+IMU | kissqy 淘宝成品板（AMP2.0） | 1 | 3.3V/5V，TTL，I2C |
 | 调试板 | 飞特 **URT-2**（FE-URT2） | 1 | TTL，2.5 mm 白座，5.08 端子 |
@@ -22,21 +22,25 @@
 
 ---
 
-## 1. 主控板：Radxa Zero 3W
+## 1. 主控板：香橙派 Zero 3W（A733）
+
+> 2026-11-05 选定：见采购清单 §7.9.1。Radxa Zero 3W 退为备选。
 
 | 项 | 规格 | 备注 |
 |----|------|------|
-| SoC | RK3566，四核 A55 @1.6 GHz | |
-| RAM | **4 GB** LPDDR4（采购清单阶段 2）/ 2 GB 亦可 | 1 GB 不够（开 detect/mediad 吃紧） |
-| 存储 | TF 卡（BOM/采购清单）/ **建议 16 G eMMC**（长期部署更稳） | eMMC 版需选带 eMMC 的 SKU |
-| Wi-Fi/BT | **必须 3W 版**（3E 无 Wi-Fi） | 采购清单 §7.5 强调 |
-| 排针 | **必须带 40-Pin GPIO Header**（不能买 Headerless） | Radxa 官方两 SKU：40-Pin Header / Headerless |
-| 价格 | 官方 ~¥237；国内淘宝 ~¥205–309 | 走瑞莎官方渠道，别买淘宝溢价套餐 |
+| SoC | 全志 **A733**：2×Cortex-A76 + 6×Cortex-A55 @2.0 GHz（八核）+ 玄铁 E902 实时核 | 比 Radxa 的 RK3566（4×A55@1.8GHz）强 |
+| RAM | **4 GB** LPDDR5（DuckBuddy 官方验证档）/ 2 GB 亦可 | ❌ 别买 1GB（LPDDR4 降档 + 无板载存储，跑 detect/mediad 吃紧） |
+| 存储 | **eMMC 8GB（优先）**，缺货退 TF 卡（A2 32–64GB） | eMMC **默认空贴**，要选带的；整机有振动，eMMC 比 TF 稳 |
+| Wi-Fi/BT | Wi-Fi 6 + 蓝牙 5.4（BLE） | |
+| 排针 | **40PIN 功能扩展接口**（GPIO/UART/I²C/SPI/PWM），**标配** | 不存在 Headerless SKU，认准「40PIN 功能扩展接口」 |
+| 尺寸 | 65 × 32 × 1.2 mm，~14 g | **与树莓派 Zero 同 footprint**，DuckBuddy HAT（65×30，孔距 58×23）直接叠插，HAT 就是照它设计的 |
+| 供电 | Type-C 5V/3A；**HAT 经排针 2/4 供 5V** 给主控 | 调试时可单独 USB 供电 |
+| 价格 | 4GB≈$50≈¥360；1GB≈¥169 | 走香橙派官方渠道 |
 
 **上板必改配置**（`robotd.toml`）：
-- `[bus] port` → 对应 UART（如 `/dev/ttyS1`）
+- `[bus] port` → **`/dev/ttyS7`**（UART7 = pin16(PL2 TX)/pin18(PL3 RX)，HAT J1 信号表原生对齐）
+- `[bus] baud` → 500k 固定（A733 UART7 上不了真 1M，见三方对照 §0）
 - `[battery] cells = [2]` + `max_volts = 8.4`（HD-1910 是 2S）
-- `[detect]` 若开 → 先刷 NPU overlay 再测 50 Hz
 
 ---
 

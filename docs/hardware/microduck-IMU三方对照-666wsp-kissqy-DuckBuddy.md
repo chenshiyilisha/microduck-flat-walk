@@ -15,6 +15,35 @@ DuckBuddy INTERFACE-CN.md 注明「A733 的 UART7 设 1 Mbps 实际只有约 750
 
 **唯一 relevant 的情形**：硬要用锁 1M 的第三方 IMU 固件时，A733 喂不饱 → 把板降到 500k 或换 DuckBuddy IMU 固件，三条路都通。
 
+## 0.5 以 A733 为主控 · 结合三家的长处（2026-11-05 本轮结论）
+
+你的整机配置：**香橙派 Zero 3W（A733）+ 15×HD-1910 + 2S**。软件可自己改，所以「同步读顺序 / 波特率这类软件冲突」不再是阻塞项；真正定生死的只剩**硬件物理层**。本轮逐一核实如下。
+
+### 本轮确认的硬件底线
+
+1. **A733 与树莓派 Zero 同 footprint**（65×32 mm、40 针同布局，第三方实测「compatible with existing Pi Zero HATs」）。DuckBuddy HAT（65×30 mm、58×23 mm 孔距、四角 Ø2.75 安装孔）可直接叠插。→ **HAT 物理兼容：通过**。（且 DuckBuddy `INTERFACE-CN.md` 架构图标题就是「Orange Pi Zero 3W」——这块板子本来就是照着它设计的。）
+2. **A733 的 UART7 = pin16(PL2 TX)/pin18(PL3 RX)**，DuckBuddy HAT 的 J1 信号表正好是「16/18 = UART7(`/dev/ttyS7`)」。→ **总线引脚：原生对齐，零适配**。
+3. **DuckBuddy PDB 分 2S / 3S 两个版本**：2S 版配 HD-1910（启动≈6.3 V，背面标「2S」），3S 版配 HL-2915（启动≈8.5 V）。**2S 版不能装到 3S 机器人**，否则欠压锁定失效。→ **买 HD-1910+2S 必须认准 2S 版 PDB**。HAT 由 5 V 降压给 A733 供电（引脚 2/4），无需单独 USB 供电。
+
+### 三家长处 × A733 兼容性矩阵
+
+| 板 + 固件 | 与 A733 配不配 | 关键约束 | 判定 |
+|---|---|---|---|
+| **DuckBuddy PDB/IMU + imu-feetech**（STM32G031，500k，IMU 后） | ✅ 原生 | 无 | **最贴合，零改动** |
+| 666wsp IMU_TO_DXL（CH32V203，1M，IMU 前） | ⚠️ 需改软件 | FD.exe 把 1M 调到 500k（**需实测确认**）+ 改 robotd 把 IMU 放首位 | 可达成，改动中等 |
+| **kissqy RevA + FT6**（STM32G031，**1M 固定**，IMU 前） | ❌ **硬件制约** | **FT6 固件锁 1 Mbps，A733 UART7 设 1M 实际只有 ≈750 kbps，喂不起真 1M** | **直接不兼容，除非重刷固件** |
+
+> **本轮最关键的新结论**：kissqy 的方案要分两种固件看待——它的 **FT6 固件锁 1M**，在 A733 上**物理上跑不起来**；但 kissqy 板本身是 **STM32G031 + LSM6DSV16X**（和 DuckBuddy PDB/IMU 同芯片同传感器），**刷成 DuckBuddy 的 imu-feetech（500k）就变成原生匹配**。所以 kissqy 板能用，前提是重刷固件 + 逐脚核对引脚（见 §5）。
+
+### 「结合三家长处」到底怎么结合
+
+三方的真实长处各是一条：
+- **DuckBuddy**：主控软件栈 + 原生 A733 的 HAT/PDB 参考设计（软硬件最匹配，且是你能直接抄的板级方案）。
+- **666wsp**：IMU 板自带的诊断最全（`status`/`sequence` 字节、READER_SLOW 告警、SELF_TEST 位），FD.exe 可改波特率、总线 OTA。
+- **kissqy**：淘宝成品 HAT+IMU（≈¥150，AMP2.0 到手即用）+ 完整的 HD1910 复刻社区资料。
+
+**最务实的组合**：以 **DuckBuddy HAT + PDB(2S 版) + robotd** 为骨架（原生匹配、你一直审它的 TOML，最省事）；想要 IMU 板自带的丰富诊断位，就把 IMU 换成 **666wsp**（FD.exe 调 500k + 改 robotd 把 IMU 放首位）；**kissqy 只在「想要到手即用且不介意重刷 IMU 固件」时选**。
+
 ## 1. 关键判据：同步读顺序是固件属性，不是总线属性
 
 这是整个对照的核心。DuckBuddy 在 feetech.rs 里注释的实测：
