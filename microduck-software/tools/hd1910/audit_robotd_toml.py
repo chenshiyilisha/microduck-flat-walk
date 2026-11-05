@@ -139,6 +139,8 @@ SECTION_KEYS: dict[str, set[str]] = {
                 "rest_min_s", "rest_head_c", "deep_sit"},
     # lib.rs:435-454 (ThereminParams).
     "theremin": {"enabled", "socket", "near_m", "far_m", "min_zones", "statuses", "hold_ms"},
+    # lib.rs:338-357 (DetectParams).
+    "detect": {"enabled", "model", "hz", "threshold"},
 }
 
 # The HD-1910's own overheat latch: reg13 = 80 degC, read from ID 10 on 2026-11-02.
@@ -824,6 +826,23 @@ def audit(cfg: dict, expect_kp: int) -> Report:
             rep.add("ok", "theremin.near_m", near,
                     f"near_m {near} m < far_m {far} m: a valid playable range")
 
+    # R22: [detect] threshold -- the INT8 saturation (2026-11-05)
+    # lib.rs:351-356: "the INT8 scores of the shipped model saturate around 1.4". The default is
+    # 0.35. A threshold > 1.4 means NO detection can ever fire: the detector always reports
+    # nothing. Symptom: "the duck detector never fires" -- looks like a model/NPU problem or a
+    # sensor issue, not a one-line config typo. The bound 1.4 comes from the comment, not from
+    # a spec; the check is a WARN, not a FAIL.
+    thr, _thr_set = effective(cfg, "detect", "threshold")
+    if isinstance(thr, (int, float)):
+        if thr <= 0.0 or thr > 1.4:
+            rep.add("WARN", "detect.threshold", thr,
+                    f"threshold {thr} is outside (0, 1.4]: a quantised model's INT8 scores "
+                    "saturate around 1.4 (lib.rs:351-356), so nothing can ever fire above that. "
+                    "Symptom is 'the detector never fires', which reads as a model/NPU problem")
+        else:
+            rep.add("ok", "detect.threshold", thr,
+                    f"threshold {thr} is within the plausible INT8 range")
+
     return rep
 
 
@@ -1201,6 +1220,23 @@ def selftest() -> int:
     check("theremin near_m < far_m is ok",
           any(k == "theremin.near_m" and lv == "ok"
               for lv, k, _, _ in audit(r_theremin_ok, 8).rows))
+
+    # ---- R22: [detect] threshold ----
+    # above the INT8 saturation (1.4): nothing can ever fire
+    r_det_huge = dict(good, detect={"threshold": 1.5})
+    check("detect.threshold > 1.4 is a WARN",
+          any(k == "detect.threshold" and lv == "WARN"
+              for lv, k, _, _ in audit(r_det_huge, 8).rows))
+    # a non-positive threshold
+    r_det_zero = dict(good, detect={"threshold": 0.0})
+    check("detect.threshold = 0 is a WARN",
+          any(k == "detect.threshold" and lv == "WARN"
+              for lv, k, _, _ in audit(r_det_zero, 8).rows))
+    # within the plausible range is ok
+    r_det_ok = dict(good, detect={"threshold": 0.35})
+    check("detect.threshold 0.35 is ok",
+          any(k == "detect.threshold" and lv == "ok"
+              for lv, k, _, _ in audit(r_det_ok, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
