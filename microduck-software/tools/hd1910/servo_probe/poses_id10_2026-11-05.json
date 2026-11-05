@@ -1,0 +1,157 @@
+{
+ "rows": [
+  {
+   "joint": "left_hip_yaw",
+   "angle_deg": 0.0,
+   "goal": 2048,
+   "pos": 2049,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": 0.0,
+   "clamped": false
+  },
+  {
+   "joint": "left_hip_roll",
+   "angle_deg": -5.002,
+   "goal": 1991,
+   "pos": 1992,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": 0.0,
+   "clamped": false
+  },
+  {
+   "joint": "left_hip_pitch",
+   "angle_deg": -26.236,
+   "goal": 1749,
+   "pos": 1970,
+   "err_steps": 221,
+   "err_deg": 19.42,
+   "cur_ma": 143.0,
+   "clamped": false
+  },
+  {
+   "joint": "left_knee",
+   "angle_deg": -0.281,
+   "goal": 2045,
+   "pos": 2044,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": -6.5,
+   "clamped": false
+  },
+  {
+   "joint": "left_ankle",
+   "angle_deg": 25.955,
+   "goal": 2343,
+   "pos": 2066,
+   "err_steps": 277,
+   "err_deg": 24.35,
+   "cur_ma": -84.5,
+   "clamped": false
+  },
+  {
+   "joint": "neck_pitch",
+   "angle_deg": 20.002,
+   "goal": 2276,
+   "pos": 2277,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": 0.0,
+   "clamped": false
+  },
+  {
+   "joint": "head_pitch",
+   "angle_deg": 20.002,
+   "goal": 2276,
+   "pos": 2277,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": -6.5,
+   "clamped": false
+  },
+  {
+   "joint": "head_yaw",
+   "angle_deg": 0.0,
+   "goal": 2048,
+   "pos": 2049,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": 0.0,
+   "clamped": false
+  },
+  {
+   "joint": "head_roll",
+   "angle_deg": 0.0,
+   "goal": 2048,
+   "pos": 2049,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": 0.0,
+   "clamped": false
+  },
+  {
+   "joint": "mouth",
+   "angle_deg": 0.0,
+   "goal": 2048,
+   "pos": 2050,
+   "err_steps": 2,
+   "err_deg": 0.18,
+   "cur_ma": 78.0,
+   "clamped": false
+  },
+  {
+   "joint": "right_hip_yaw",
+   "angle_deg": 0.0,
+   "goal": 2048,
+   "pos": 2049,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": 0.0,
+   "clamped": false
+  },
+  {
+   "joint": "right_hip_roll",
+   "angle_deg": 5.002,
+   "goal": 2105,
+   "pos": 2070,
+   "err_steps": 35,
+   "err_deg": 3.08,
+   "cur_ma": -58.5,
+   "clamped": false
+  },
+  {
+   "joint": "right_hip_pitch",
+   "angle_deg": 26.236,
+   "goal": 2347,
+   "pos": 2346,
+   "err_steps": 1,
+   "err_deg": 0.09,
+   "cur_ma": 0.0,
+   "clamped": false
+  },
+  {
+   "joint": "right_knee",
+   "angle_deg": 0.281,
+   "goal": 2051,
+   "pos": 2324,
+   "err_steps": 273,
+   "err_deg": 23.99,
+   "cur_ma": 104.0,
+   "clamped": false
+  },
+  {
+   "joint": "right_ankle",
+   "angle_deg": -25.955,
+   "goal": 1753,
+   "pos": 1755,
+   "err_steps": 2,
+   "err_deg": 0.18,
+   "cur_ma": 78.0,
+   "clamped": false
+  }
+ ],
+ "sid": 10,
+ "volt0": 4.5,
+ "reached": 11
+}
