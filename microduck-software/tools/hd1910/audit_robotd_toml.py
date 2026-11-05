@@ -646,6 +646,32 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     else:
         rep.add("ok", "control.heading_hold_gain", hh, "off (matches training)")
 
+    # R14: [bus] imu_median -- median over the frame = one full beat of latency (2026-11-05)
+    # Upstream defaults to true. But the training-side IMU latency envelope is 0–20 ms with
+    # HALF the envs at 0 (no filter), so a median adds an unmodelled full-frame delay. The
+    # symptom is a policy that works in sim and wobbles on the robot, not an error.
+    im, _im_set = effective(cfg, "bus", "imu_median")
+    if isinstance(im, bool):
+        if im:
+            rep.add("WARN", "bus.imu_median", im,
+                    "true = a median over the frame = ~20 ms of pure latency. Training's IMU "
+                    "envelope is 0–20 ms with half the envs at 0; set false to match")
+        else:
+            rep.add("ok", "bus.imu_median", im, "false -- matches the training-side envelope")
+
+    # R15: [policy] standing_action_scale -- if it differs from action_scale, the robot acts
+    # at a different scale when standing than when walking. Both default to 1.0; training used
+    # 1.0. A mismatch means the standing pose is scaled differently from the walking motion.
+    sas, _sas_set = effective(cfg, "policy", "standing_action_scale")
+    if isinstance(sas, (int, float)):
+        if scale is not None and abs(sas - scale) > 1e-9:
+            rep.add("WARN", "policy.standing_action_scale", sas,
+                    f"differs from action_scale {scale}: the standing pose is scaled "
+                    f"differently from the walking motion. Training used 1.0 for both")
+        else:
+            rep.add("ok", "policy.standing_action_scale", sas,
+                    f"matches action_scale {scale}")
+
     return rep
 
 
@@ -884,6 +910,26 @@ def selftest() -> int:
     check("heading_hold_gain = 0 is ok (off)",
           any(k == "control.heading_hold_gain" and lv == "ok"
               for lv, k, _, _ in audit(r_heading_off, 8).rows))
+
+    # ---- R14: imu_median negative controls ----
+    r_imu_med = dict(good, bus=dict(base_bus, imu_median=True))
+    check("imu_median = true is a WARN",
+          any(k == "bus.imu_median" and lv == "WARN"
+              for lv, k, _, _ in audit(r_imu_med, 8).rows))
+    r_imu_off = dict(good, bus=dict(base_bus, imu_median=False))
+    check("imu_median = false is ok",
+          any(k == "bus.imu_median" and lv == "ok"
+              for lv, k, _, _ in audit(r_imu_off, 8).rows))
+
+    # ---- R15: standing_action_scale negative controls ----
+    r_sas_diff = dict(good, policy=dict(good["policy"], standing_action_scale=0.8))
+    check("standing_action_scale != action_scale is a WARN",
+          any(k == "policy.standing_action_scale" and lv == "WARN"
+              for lv, k, _, _ in audit(r_sas_diff, 8).rows))
+    r_sas_match = dict(good, policy=dict(good["policy"], standing_action_scale=1.0))
+    check("standing_action_scale == action_scale is ok",
+          any(k == "policy.standing_action_scale" and lv == "ok"
+              for lv, k, _, _ in audit(r_sas_match, 8).rows))
 
     # ---- [update_gate] must match [control] hz: negative controls ----
     # min_achieved_hz >= control.hz: loop can never reach it -> permanent unhealthy
