@@ -14,7 +14,15 @@ _2026-11-06（多次更正）。资料源：本地 `fanhao375/microduck-replica-
 > 2. 第 1 次更正：读 README+躯干图发现 `trunk_base` 是髋 yaw 舵机位、SBC 在**躯干主壳型腔**；并误以为"40-pin 不兼容 HAT = 电气死穴"。
 > 3. 第 2 次更正（关键）：拉官方引脚定义，40-pin **功能与 RPi 一致**，HAT 可直插；电气关不存在，真约束收敛到**腔体深度 ~32mm** 这一项机械量。
 > 4. **第 3 次更正（本次，关键）**：核对 Orange Pi Zero 3W 官方尺寸，发现它明确是 **Raspberry Pi Zero 兼容板型（65×30）**，结合 40-pin 同脚位强证据 → 腔体本按此板型挖，**零机械改动**。"腔体深度 +2mm 放宽"的前提（Orange Pi 比 Pi Zero 宽 2mm）不成立，**该任务取消**。
-> 5. 另：GitHub Releases **没有** 418MB STEP 包（只有软件更新 ~10–62MB 与 755MB 系统镜像 .img.xz），故腔体尺寸改从本地 3MF 网格实测；但网格是壳+腔结构、纯顶点包络**测不准腔体净深**（见 §5），最终以实物/Pi Zero 板型为准。
+> 5. ~~GitHub Releases **没有** 418MB STEP 包~~ → **本轮已证伪并更正（2026-11-06 晚）**：包就在
+>    **`v2.2` release**（`SolidWorks-FT2026-10-20.zip`，417,656,282 B；另有 21.7MB 单件 STEP 包），
+>    此前查询漏了分页/旧 tag。github.com 直连被本地代理 502 挡，但 **`gh-proxy.com` 镜像**与
+>    **`api.github.com` asset 端点**都通，整包 88 秒下载完成、zip 完整性 OK。
+>    包内为 18 `.SLDASM` + 59 `.SLDPRT` + 10 个**单件** `.STEP`，**没有整机 STEP/STL**；
+>    总装 `.SLDASM` 是专有二进制（非 OLE2 / 非 ZIP，无可提取的装配位姿）。
+>    另：**3MF 网格中心全为 (0,0,0)、是零件局部坐标**，此前「从网格实测腔体、保留世界坐标」
+>    的口径不成立——Z 剖面只能当该壳件的自身截面参考，不能当整机腔体判据。
+>    详见 `microduck-两版整机装配完整性核对-2026-11-06.md`。
 
 > 顺带收口一个矛盾：作者 CAD 的板模型命名 `pcb__raspberry_pi_zero_2_w`，但仓库 README 明说「实机主控是 **Radxa Zero 3W（RK3566）**」。也就是说 **fanhao375 这套事实标准机械件，本来就按 Radxa Zero 3W 建**——跟"最优方案 = Radxa Zero 3W + 官方 Apache-2.0 fork"完全对齐。Orange Pi 分支只在你明确要 A733 的 NPU 时才值得。
 
@@ -50,7 +58,7 @@ BOM 第 3 项「树莓派机器人HAT电路板」按 RPi 40-pin 设计，**Orang
 
 | 项 | 内容 | 性质 |
 |---|---|---|
-| **A（机械·已闭）** | `01 躯干主体` 主控腔按 Pi Zero 2W 板型设计，Orange Pi 同板型（65×30）→ **零改动**。仅当实物试装测得 Orange Pi 真 32mm 且板边卡死时才需小改；但网格版 CAD 无法参数化编辑（无 418MB STEP 源、本机无 OpenSCAD/cadquery），届时需从 STEP 源或实物重做该件，**当前阶段按零改动处理** | 条件项，大概率不发生 |
+| **A（机械·已闭）** | `01 躯干主体` 主控腔按 Pi Zero 2W 板型设计，Orange Pi 同板型（65×30）→ **零改动**。仅当实物试装测得 Orange Pi 真 32mm 且板边卡死时才需小改；但本轮虽已下到 417MB SolidWorks 源包，其为专有二进制、本机无 SolidWorks/OpenSCAD/cadquery 可参数化编辑，届时需从源或实物重做该件，**当前阶段按零改动处理** | 条件项，大概率不发生 |
 | **B（软件）** | Orange Pi 上需启用 UART0（舵机总线，Pin8/10）+ TWI0/I2C（IMU，Pin3/5），通常 armbian-config 开 overlay；核对设备名（如 `/dev/ttyS*`）与 robotd 配置一致 | Linux 配置 |
 | **C（电源预算）** | Orange Pi 40-pin 5V(2/4) 与 RPi 同，但 A733 功耗/NPU 负载下 5V 轨带载能力需实测，HAT 伺服 5V 由板供 | 上电实测 |
 
@@ -72,7 +80,7 @@ BOM 第 3 项「树莓派机器人HAT电路板」按 RPi 40-pin 设计，**Orang
 - **真实安装孔数/孔径**：评测仅确认"孔距一致"，待实物或官方机械图二次确认。
 - **板角倒圆半径**：官方未给，暂估 2.0。
 
-> 📦 **已提取可查看件**：`out/microduck_replica/01_躯干主体_torso_shell.stl`（从 3MF 提取的 `01 躯干主体` 独立网格，24362 面，保留世界坐标，可在查看器确认腔体形态）；同目录 `torso_cavity_profile.txt` 为胸高区外壳 Z 范围剖面（仅供形态参考，非腔体净深）。
+> 📦 **已提取可查看件**：`out/microduck_replica/01_躯干主体_torso_shell.stl`（从 3MF 提取的 `01 躯干主体` 独立网格，24362 面，**零件局部坐标、中心在原点**，可在查看器确认该壳件形态）；同目录 `torso_cavity_profile.txt` 为该件自身高度的 Z 范围剖面（**非整机腔体坐标**，仅供形态参考，净深以实物为准）。
 
 ## 6. 下一步
 

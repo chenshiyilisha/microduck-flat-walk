@@ -27,7 +27,7 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 
 - 作者飞特版按 Radxa（Pi Zero 板型 65×30）建模；Orange Pi **同为 Pi Zero 兼容板型（65×30，58×23 安装孔一致）** → 腔体本就按此板型挖，**33 件零改动直接通用**（躯干/腿/壳/头/电池全通用）。"Orange Pi 宽 2mm 需改腔体"经核查不成立（参数页"32mm"为含边外包）。
 - 本仓 `cad/orangepi_zero3w_carrier.scad` + `cad/orangepi_zero3w_carrier.stl` 是按"外挂固定"思路建的，**已降级为草模参考**（HAT 已直插、SBC 应整栈进腔，外挂载板不再必需）。若最终确需外挂固定，再据此重做。
-- 已提取 `01 躯干主体` 独立网格 `out/microduck_replica/01_躯干主体_torso_shell.stl`（可查看腔体形态）；胸高腔体外壳 Z 范围剖面见 `torso_cavity_profile.txt`（仅供形态参考，净深以实物为准）。
+- 已提取 `01 躯干主体` 独立网格 `out/microduck_replica/01_躯干主体_torso_shell.stl`（可查看该壳件形态）。⚠️ **2026-11-06 晚更正**：3MF 网格中心全为 `(0,0,0)`、是**零件局部坐标**，不是世界/装配坐标；`torso_cavity_profile.txt` 只是该壳件自身高度的 Z 截面，**不能当整机腔体判据**，净深一律以实物为准。详见 `microduck-两版整机装配完整性核对-2026-11-06.md`。
 
 ### 2.2 电气兼容性（已查，已闭环）
 
@@ -40,6 +40,7 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 - ✅ 载板 scad + 效果图完成（连接耳已升级为通用长圆孔耳）。
 - ✅ **可打印 STL 已生成**：本机 Windows 沙箱无 OpenSCAD（files.openscad.org 的 Linux 包跑不了），改用纯 Python 网格构造器 `cad/build_carrier_stl.py` 直接写二进制 STL → `cad/orangepi_zero3w_carrier.stl`（896 面，bbox X[-44.5,44.5]×Y[-18,18]×Z[0,4.2]，与 scad 同参）。与 scad 的偏差（可接受简化）：底板实心不贯穿 M2 孔、连接耳长圆孔用矩形框实现、边轨用 4 盒近似。
 - ✅ **418 MB STEP 不再必需**：连接耳长圆孔 ±4 mm 可调 + 框式结构不依赖精确螺接位即可打样；仅当要"精确拧到飞特版躯干原孔"时才拉 `SolidWorks-FT2026-10-20.zip` 定准。
+  - 📦 **2026-11-06 晚更新**：该包确实在 `v2.2` release（此前误判"不在 Releases"已更正），并已通过 `gh-proxy.com` 镜像完整下载到本地（417,656,282 B，zip 完整性 OK）。但包内是 18 `.SLDASM` + 59 `.SLDPRT` + 10 个**单件** STEP，**无整机 STEP/STL**，总装 `.SLDASM` 为专有二进制，本机仍无法参数化编辑或还原整机位姿。
 - ✅ Orange Pi 经核查**机械零改动 + HAT 可直插 + IMU I2C 同脚位**；唯一差异 A733 总线 500k（软件配置）。下一步：① 软件开 UART0/TWI0 overlay；② 上电按 Radxa 验收清单同类项核对（节点名、I2C、500k 扫舵机）；③ 实物试装核板宽 30/32（大概率不卡）。
 
 ## 3. Radxa Zero 3W 版（RK3566）
