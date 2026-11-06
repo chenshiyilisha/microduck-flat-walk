@@ -120,6 +120,48 @@ A733 UART7 上限      锁 500k             ⇒ IMU 固件必须 imu-feetech(500
 - **H8**：`set_torque(true)` 之前必须 **先写机器人当前姿态到 goal → 回读验证 → 再上扭矩**，且封装在一次调用内；否则 15 颗 × 最多 26° 误差的 inrush 会触发欠压锁定（community-kit 实机记录 8 分钟内 4 次 SBC 重启）。`reg40` 必须逐台带 ACK 的 WRITE，`sync_write` 会造成「假释放成功」。
 - 装配三段：单颗台架 → 单腿吊架 → 整机；每段的 Go 判据见 §4。
 
+### 2.6 备选主控评估：Radxa Cubie A7Z（2026-11-06 判决：**不换**）
+
+**一句话：同 SoC、同 footprint，但 40-pin 复用表不同 ⇒ 不是平替，是换平台。** 它是目前找到的
+「最近亲」，但当前方案要的是**能直插现成 HAT**，这一条它不满足。
+
+| 项 | Orange Pi Zero 3W（方案定案） | Radxa Cubie A7Z | 判决 |
+|---|---|---|---|
+| SoC | Allwinner A733 | **Allwinner A733** | ✅ 完全同一颗：2×A76+6×A55、3 TOPS、同一 UART 时钟域 ⇒ 500k 可精确分频、1M 同样到不了 |
+| 尺寸 | 65 × 32 × 1.2 mm | 65 × 30 mm | ✅ Pi Zero footprint，物理塞得进头部 |
+| 40-pin pin16 / 18 | **PL2 / PL3 = UART7 TX/RX = `/dev/ttyS7`** | **PJ24 / PJ25 = UART4 TX/RX**；官方 40-pin 复用表只列 UART0–4，**没有 UART7** | 🔴 舵机总线落在另一个 UART 控制器上 |
+| pin7 / pin19 / 23 | PB4（I2S0 MCLK）/ PE2·PE1（TWI2 SDA·SCL） | PB0（UART2 TX）/ PD12·PD11（SPI1·PWM）；TWI2 挪到 pin27/28，PB4 挪到 pin36 | 🔴 HAT 的 audio codec、ToF、功放全部接错脚 |
+| 内存 | LPDDR5（1 GB 档才 LPDDR4/4X） | LPDDR4/4X | ⚠️ 对 50 Hz 小 ONNX 影响不大，但最坏档只剩 2.59–3.32 ms 给推理，非零风险 |
+| 板载存储 | **eMMC** 8/16/32 GB + UFS 可选 + TF | **无 eMMC**，只有 UFS 可选 + TF | ⚠️ 方案定的是 eMMC 8 GB；microSD 长期 50 Hz 写入可靠性弱于 eMMC |
+| 供电 | Type-C 5 V / 3 A | Type-C 5 V / **1 A**，或 GPIO pin2/4 5 V；第三方实测满载 6.2 W > 5 W | ⚠️ HAT 的 LMR51450 需按 ≥1.5 A 复核 |
+| 软件 / 实机证据 | Debian + `orangepiEnv.txt` / `sun60iw2` / `ttyS7`；DuckBuddy README 明写 **4 GB + 15×HL-2915 + 3S ✅ 整机日常运行**，HD-1910+2S 版 🚧 在焊 | Debian/Buildroot/Tina/Android 13，Radxa BSP；**未找到任何 microduck / robotd 用例** | 🔴 全套 TOML 审计 R1–R29、设备树说明、checklist 都绑在 Orange Pi 上，换板等于重新验证一遍 |
+
+资料：Radxa 官方产品页与 Product Brief v1.1 §5.1.1（40-pin 复用表，官方原理图 v1.11 sheet 14
+`PCIE_40PIN_CONNECT`）、Orange Pi Zero 3W 官方规格与公开 pinout；本仓
+`.upstream/DuckBuddy-main/docs/hardware/INTERFACE-CN.md` §2.1（HAT J1 逐针表）、
+`deploy/robotd.toml:19`（`port = "/dev/ttyS7"`）、`deploy/audio/README-A733-CN.md:16`。
+🔑 这条判决靠的是**两个一手来源互相矛盾**：上游源码说 pin16/18 是 UART7，Radxa 官方表说同一对
+物理针是 UART4 —— 同 SoC 不等于同引脚复用。
+
+分场景结论：
+
+- **用现成 HAT（当前方案）⇒ ❌ 不合适。** 改一个 `port` 救不了，I²C/I2S/codec 复位也全错位，
+  等于要重画 HAT 或飞线，还丢掉唯一有整机实机证据的平台。
+- **自绘最小载板**（只要半双工收发 + 5 V 降压，砍掉音频 / ToF / 摄像头）⇒ ✅ 技术上可行，
+  且属用户已接受的「软件可自己改」：总线迁到 UART4，改 `port = "/dev/ttyS4"` + 使能对应
+  overlay。**但这是换平台**，须先验三件事：① UART4 是否同样能精确输出 500 kbps（同 24 MHz/16
+  时钟源，推断可行，**未实测**）；② Radxa Debian 的 UART overlay 与 50 Hz 实时性；
+  ③ ONNX 在这块板上的推理耗时能否塞进 2.59–3.32 ms。
+- **当第二供应商 / 更便宜平替** ⇒ 现在没有理由启动。价格口径**未核实**：官方 Allnet China
+  1 GB 版 $34.99（2026-11-03，缺货），宣传起价 $15 是 1 GB 且**不带 GPIO 排针**；
+  淘宝聚合页 ¥888–1291 很可能是 16 GB+UFS 高配或套装，不是 4 GB 档，登录墙无法确认。
+  方案里 Orange Pi 4 GB+eMMC ≈ ¥360。⇒ **不能断言它更贵**，但也不能据此改判。
+
+> 结论：保持 Orange Pi Zero 3W。Cubie A7Z 记为「同 SoC 备选」，仅在 Orange Pi 供货/价格出问题时
+> 重启评估，重启时先问淘宝「4 GB + 已焊 40-pin 排针 + 无 UFS」的单价，再按上面三条闸门验收。
+> **不重训**（§3.6）：换主控载板不进 MDP / obs / plant；但若 UART4 拿不到 500k 而改总线速率，
+> 就触及 domain 改动，须重新判。
+
 ---
 
 ## 3. 软件轴（由硬件推出的代价，用户已明确「软件可自己改」）
@@ -420,3 +462,4 @@ C9 再次被现场印证：照搬 esp-duck 的 `maxabs ≤ 2% of S` 会**误杀�
 | 硬件 | `docs/hardware/microduck-硬件清单-详细接线版.md` §1–§9；`docs/hardware/microduck-IMU三方对照-666wsp-kissqy-DuckBuddy.md` §0 / §0.5 / §5；`docs/hardware/microduck-IMU板对照-666wsp-vs-DuckBuddy.md` §4–§6；`docs/hardware/microduck-供电接线图.svg` / `microduck-分线板设计图.svg`（已降为备用） |
 | 软件 | `microduck-software/tools/hd1910/deploy_import_checklist.md` A/B/H/C/D/E 全段；`microduck-software/tools/hd1910/audit_robotd_toml.py` R1–R29；`microduck-software/tools/hd1910/sts_bench.py`（G0 五闸门 + 负对照）；`microduck-software/tools/hd1910/servo_probe/hd1910_ident.py`（56..70 寄存器表）；`docs/reference/microduck-软件到硬件全链路资料地图-2026-11-06.md` §2；`docs/reference/microduck-未核实项核查报告-2026-11-06.md` §2 / §3 / §5；`microduck-software/tools/hd1910/servo_probe/probe_bus_budget.py`（25/25 自检 + §4.3 台架实测）；`microduck-software/out/robotd_hd1910_mode0.toml`（§4.3 审计对象）；`verify_policy_contract.py` / `verify_policy_bundle.py` / `policy_numeric_gate.py`（§4.3(4) G4 预检） |
 | 上游源码 | `.upstream/DuckBuddy-main/`（`feetech.rs` / `model.rs` / `obs.rs` / `lib.rs`）、`.upstream/community-kit/`（KiCad + `boot_regs.c`）、`.upstream/replica/`（`directions.json`）、`.upstream/kissqy/`（`imu-source/src/main.c`）、`.upstream/666wsp-microduck-hd1910/`（原理图 PDF） |
+| §2.6 主控备选（外部一手，2026-11-06） | Radxa `docs.radxa.com/en/cubie/a7z`、Product Brief v1.1 §5.1.1（40-pin 复用表）、官方原理图 v1.11 sheet 14 `PCIE_40PIN_CONNECT`；Orange Pi `orangepi.org` Zero 3W 规格与公开 pinout；DuckBuddy README「已验证的平台」；本仓 `deploy/robotd.toml:19` 与 `docs/hardware/INTERFACE-CN.md` §2.1。价格为 Allnet China / sbc.compare / 淘宝聚合页，**SKU 未核实，不作定案** |
