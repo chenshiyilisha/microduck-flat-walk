@@ -19,6 +19,13 @@
 用法:
   python cad/build_two_version_kits.py
   python cad/build_two_version_kits.py --3mf <path> --bom <path> --out <dir>
+  python cad/build_two_version_kits.py --variant roller   # 轮滑变体清单（几何与 walk 同源）
+
+--variant roller：43 实例 + 占位体几何与 walk 版完全一致（3MF 33 网格已含轮滑件
+印刷网格≈物元），差异在清单层：
+  * manifest 增"轮滑角色"列：停用 / 替换备选 / 轮滑本体 / 通用
+  * 追加 2 行 roll-only 外购占位（合体轮×4、叶片×2，尺寸=object_297/301 bbox）
+  口径详见 docs/hardware/microduck-两版轮滑变体组件与装配计划-2026-11-06.md §2
 """
 
 import argparse
@@ -242,6 +249,84 @@ CONFIG_DIFF = [
 ]
 
 
+# 轮滑变体角色（依据 docs/hardware/microduck-两版轮滑变体组件与装配计划 §2.1）
+def roller_status(no, category):
+    """按 BOM 号 + 类别给出该件在轮滑变体中的角色（walk 变体返回空串）。
+    注意：打印件与外购件编号空间重叠（外购 20=螺丝 ≠ 打印 20=左脚），必须带类别。"""
+    if category == "printed":
+        if no in (20, 21):
+            return "停用（轮滑版不装左/右脚，由 26/27 V1 踝 + 叶片+轮组取代）"
+        if no in (22, 23):
+            return "停用（轮滑版保留轮组几何，脚底件退出）"
+        if no in (24, 25):
+            return "被 26/27 替换（走路踝仅在走路版使用）"
+        if no in (26, 27):
+            return "轮滑必装（替换走路踝，踝下须配叶片+轮组）"
+        if no == 28:
+            return "轮滑必装（合体轮胎 TPU×4；轮辋/轮胎合并状态以 3MF 对号为准）"
+        if no == 29:
+            return "轮滑必装（滚轮叶片×2）"
+        if no in (30, 31, 32, 33):
+            return "通用（轮滑版沿用）"
+    else:  # purchased
+        if no == 16:
+            return "轮滑必装（轮轴轴承 6×12×3 ×4，外购的轮滑鞋轴承）"
+    return "通用"
+
+
+def build_manifest_rows(printed, purchased, cn, roller_mode):
+    """57 项逐行 + 配置差异补充行；roller_mode 时追加「轮滑角色」列。"""
+    rows = []
+    def col(row, st):
+        # 行宽对齐：walk=10 列，roller=11 列（末列空串不写）
+        if roller_mode:
+            row.append(st)
+        return row
+    for p in printed:
+        st = roller_status(p["no"], "printed") if roller_mode else ""
+        rows.append(col(["打印件", p["no"], p["name"], p["qty"], "件",
+                     "飞特版 v2.2 通用", "飞特版 v2.2 通用",
+                     "真实网格（3MF 33 唯一件 / 43 实例）",
+                     "BOM 11-02 版", p["note"] or p["file"]], st))
+    for p in purchased:
+        no = p["no"]
+        rad = cn if no == 1 else p["name"]
+        opi = ("Orange Pi Zero 3W（A733）" if no == 1 else p["name"])
+        if no in NO_GEOM:
+            state, why = NO_GEOM[no]
+            src = "不做几何：%s" % why
+        elif no == 1:
+            state = "占位几何（主控板，两版尺寸不同）"
+            src = ("Radxa 65×30 / Orange Pi 65×32（官方中文参数页上限）")
+        else:
+            state = "占位几何"
+            hit = [x for x in PLACEHOLDERS if x[0] == no]
+            src = hit[0][5] if hit else "占位"
+        st = roller_status(no, "purchased") if roller_mode else ""
+        rows.append(col(["外购件", p["no"], p["name"], p["qty"], "件/包",
+                     rad, opi, state, src, p["note"]], st))
+    for k, (name, r, o, why) in enumerate(CONFIG_DIFF, 1):
+        rows.append(col(["配置差异(补充,不计57项)", f"C{k}", name, "-", "-",
+                     r, o, "非几何项", why, "软件/电气层，不占 STL 实体"],
+                        "轮滑变体：软件 usage 不变"))
+    if roller_mode:
+        rows.append(["轮滑变体配置(补充)", "Δ1", "走路踝→V1 踝（24/25→26/27）",
+                     "1对1", "代换", cn, cn,
+                     "非几何项（几何已在 43 实例中）",
+                     "轮滑计划 §2.1；禁止与走路件混装",
+                     "机械零改动换件", "见各打印行角色"])
+        rows.append(["轮滑变体配置(补充)", "Δ2", "action_scale 0.9→0.8 + 轮滑策略",
+                     "—", "—", "同左", "同左",
+                     "非几何项", "docs/hardware-teardown.en.md:564",
+                     "换策略即用，部署链不变", "软件层"])
+    return rows
+
+
+HEADER_WALK = ["类别", "序号", "名称", "数量", "单位",
+               "Radxa版", "OrangePi版", "几何状态", "尺寸/依据", "备注"]
+HEADER_ROLLER = HEADER_WALK + ["轮滑角色"]
+
+
 def build_placeholder_mesh(version, include_main=True):
     m = Mesh()
     # 主控板占位体：唯一的两版几何差异（Radxa 65×30 / OrangePi 保守取 65×32）
@@ -289,7 +374,9 @@ def main():
     ap.add_argument("--3mf", dest="p3mf", default=D_3MF)
     ap.add_argument("--bom", default=D_BOM)
     ap.add_argument("--out", default=D_OUT)
+    ap.add_argument("--variant", choices=["walk", "roller"], default="walk")
     a = ap.parse_args()
+    roller_mode = (a.variant == "roller")
     os.makedirs(a.out, exist_ok=True)
     os.makedirs(os.path.join(a.out, "parts"), exist_ok=True)
 
@@ -340,38 +427,15 @@ def main():
                                       triangles=ntri, placeholder_entities=nslot,
                                       size_MB=round(os.path.getsize(out)/1e6, 2))
 
-        # 3) manifest：57 项逐项 + 配置差异补充行
-        rows = []
-        for p in printed:
-            rows.append(["打印件", p["no"], p["name"], p["qty"], "件",
-                         "飞特版 v2.2 通用", "飞特版 v2.2 通用",
-                         "真实网格（3MF 33 唯一件 / 43 实例）",
-                         "BOM 11-02 版", p["note"] or p["file"]])
-        for p in purchased:
-            no = p["no"]
-            rad = cn if no == 1 else p["name"]
-            opi = ("Orange Pi Zero 3W（A733）" if no == 1 else p["name"])
-            if no in NO_GEOM:
-                state, why = NO_GEOM[no]
-                src = "不做几何：%s" % why
-            elif no == 1:
-                state = "占位几何（主控板，两版尺寸不同）"
-                src = ("Radxa 65×30 / Orange Pi 65×32（官方中文参数页上限）")
-            else:
-                state = "占位几何"
-                hit = [x for x in PLACEHOLDERS if x[0] == no]
-                src = hit[0][5] if hit else "占位"
-            rows.append(["外购件", p["no"], p["name"], p["qty"], "件/包",
-                         rad, opi, state, src, p["note"]])
-        for k, (name, r, o, why) in enumerate(CONFIG_DIFF, 1):
-            rows.append(["配置差异(补充,不计57项)", f"C{k}", name, "-", "-",
-                         r, o, "非几何项", why, "软件/电气层，不占 STL 实体"])
+        # 3) manifest：57 项逐项 + 配置差异补充行（+ roller 轮滑角色列）
+        rows = build_manifest_rows(printed, purchased, cn, roller_mode)
         write_csv(os.path.join(a.out, f"manifest_{version}.csv"),
-                  ["类别", "序号", "名称", "数量", "单位",
-                   "Radxa版", "OrangePi版", "几何状态", "尺寸/依据", "备注"], rows)
+                  HEADER_ROLLER if roller_mode else HEADER_WALK, rows)
 
     # 4) 完整性与边界判定
     check = {
+        "variant": a.variant,
+        "variant_note": "roller=轮滑变体清单：几何与 walk 完全同源（3MF 33 网格已含轮件），差异在 manifest 轮滑角色列与 Δ1/Δ2 配置行",
         "source": {
             "3mf": os.path.relpath(a.p3mf, ROOT).replace("\\", "/"),
             "bom": os.path.relpath(a.bom, ROOT).replace("\\", "/"),
