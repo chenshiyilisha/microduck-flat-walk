@@ -43,7 +43,7 @@ A733 UART7 上限      锁 500k             ⇒ IMU 固件必须 imu-feetech(500
 
 | 阶段 | 现在要付 | 内容 | 不通过就停 |
 |---|---|---|---|
-| **阶段 0（此刻）** | **¥0–5** | 已有 1 颗舵机 + 调试板；**台架 PC + URT-2 本身就是 50 Hz 仪器**，只可能补一条 2.0→2.5 3P 转接线（¥3–5） | 单颗 48 h 四步：ping／改 ID 与波特率／读写电压温度位置负载／50 Hz 连续 1 h 零 CRC；**事务 ≤5 ms** |
+| **阶段 0（此刻）** | **¥0–5** | 已有 1 颗舵机 + 调试板；**台架 PC + URT-2 本身就是 50 Hz 仪器**，只可能补一条 2.0→2.5 3P 转接线（¥3–5） | 到货 **48 h 内**跑完 G0 五道闸门（§4）：ping／事务 ≤5 ms／遥测合理值／50 Hz 长跑 0 错误且温度不越限／运行时 P=8 |
 | 阶段 1（单腿） | **≈¥733** | 5 颗 ¥495 + NP-F550×2 ¥118 + 15 A 慢断保险座 ¥10 + PLA/热熔螺母 ¥120 | 5 颗同步读、零位重复性 <1°、吊架 ±10° 正弦 10 min 无丢包 |
 | 阶段 2（整机） | **≈¥1,596** | 9 颗 ¥891 + 1 备 ¥99 + A733 4GB+eMMC ≈¥360 + HAT+IMU ¥218 + IMX219 ¥30 + VL53L8CX ¥66 + 电池/线材/结构件余项 | 一次 sync_read 读到 15 舵机 + IMU 200；母线 ≥6.6 V 不掉 |
 | **整机合计** | **≈¥2,574–2,653** | 路线 B 原表 ≈¥2,419–2,498，主控从 Radxa ¥205 换 A733 ≈¥360 后 +¥155 | — |
@@ -182,12 +182,47 @@ export.py → ONNX（单文件、initializer 无 EXTERNAL）
 
 | 闸门 | 属于 | 判据 | 不过的动作 |
 |---|---|---|---|
-| **G0** | 价格 | 阶段 0 单颗 48 h 四步 + **事务 ≤5 ms** + 零 CRC/丢包、温度 <55 °C | 停，联系卖家换货，不买后面任何东西 |
+| **G0** | 价格 | `sts_bench.py` 五道闸门全绿：ping／事务 ≤5 ms／遥测合理值／50 Hz 长跑 0 错误且温度 ≤55 °C／运行时 P=8；**先跑 `--selftest` 12/12 负对照** | 停，联系卖家换货，不买后面任何东西 |
 | **G1** | 价格 | 5 颗同步读、零位 <1°、吊架 10 min 无丢包 | 停，回到单颗 |
 | **G2** | 硬件 | 15 舵机 + IMU 200 一次 sync_read 全到；bus 绿、loop **50 Hz 0 missed**；母线 ≥6.6 V 不掉 | 查 H8 上电姿态顺序 / H1 上电顺序 / 配电载流 |
 | **G3** | 硬件 | 上电静止站立、SFLP 收敛 0.5 s；IMU 落脚乱跳判据一轮；H2 方向逐颗核对 | 记入软件修复队列，**不重训** |
 | **G4** | 软件 | 契约三检 + C9 数值 gate + `--selftest` 全绿；ONNX 无 EXTERNAL | 停，不上策略 |
 | **G5** | 软件 | 先站稳 → ≥0.3 m/s 短走 → 不摔、体坐标前向（勿只报世界系 dx） | 先排查 plant / HOME / joint_offsets，不改奖励 |
+
+### 4.1 G0 现成执行器（2026-11-06 补齐，不另造协议层）
+
+`microduck-software/tools/hd1910/sts_bench.py` 原本只覆盖 ping 与 50 Hz 事务计时；本次
+**在原有 `StsBus` / `SerialStsBus` 上纯扩展**，帧实现继续复用 `hd1910_readonly.py`、
+寄存器表继续对齐 `hd1910_ident.py`（56..70 共 15 B），没有重写第二套协议：
+
+```bash
+# 无硬件：先证明门禁本身有效（负对照），再做合成彩排（彩排不是证据）
+python microduck-software/tools/hd1910/sts_bench.py --selftest
+python microduck-software/tools/hd1910/sts_bench.py --dry-run
+
+# 有硬件：URT-2 + 1 颗，先插 USB 后上电，三档开关拨 5V
+python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 1 --soak-seconds 60
+python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 1 \
+    --soak-seconds 3600 --write-goal-echo --out out/g0_1h.json
+```
+
+五道闸门：`0.1` ping；`0.2` 50 Hz 单字节事务 median ≤5 ms 且 0 错误；`0.3` 遥测块
+（位置/电压/温度量级 + 可选「把当前位置原样写回 goal 再读镜像」，**不开扭矩、不产生位移**，
+因此不触发 H8 的 inrush）；`0.4` 50 Hz 长跑（默认 60 s，1 h 用 3600）0 错误 + 温度峰值；
+`0.5` 运行时 P == 部署档 8。
+
+三条纪律已落进脚本：
+- **负对照**：`--selftest` 的 12 条断言里，每个被故意改坏的量（ping 沉默 / 事务 6 ms /
+  电压 0 / 温度 255 / 位置越 4095 / 温度 60 °C / CRC 每 3 次丢一次 / P=32 / goal 镜像不跟随）
+  都必须让对应闸门变红，健康总线必须全绿。其中 **60 °C 特意选在闸门 0.3 的合理区间内、
+  却越过闸门 0.4 的 55 °C**，用来证明两个阈值互不依赖。
+- **阈值不取自被测量**：电压/温度/位置窗全是固定物理量级，自检先断言健康读数严格落在窗内且不贴边。
+- **负载/电流只记录不判**：台架 reg60 恒 0、reg69 读到 16000 量级，读数与物理上下界矛盾 ⇒ 错的是读数。
+
+顺带修了脚本里两处过时结论：`KP_FW_TARGET` 从 **5（P3 裁决）改为 8（部署档 `hd1910_kp8`）**，
+与 `hd1910_ident.py:127` 的 `KP_FW_DEPLOY=8` 对齐；URT-2 供电说明从「V1 留空、外电直供舵机」
+改为 **「V1/G 本就是外电输入，三档开关拨 5V，需 2.0→2.5 3P 转接线」**（2026-11-03 改判）。
+⚠️ kt/R / 齿隙 / 最高速辨识**不在本脚本**，仍走 `servo_probe/hd1910_ident.py` 与 `bam_param_compare.md`。
 
 ---
 
@@ -199,6 +234,9 @@ export.py → ONNX（单文件、initializer 无 EXTERNAL）
 4. **`banana_pcb` 3–5 A 上限**与整机 30 A 峰值设计的差距：站起/跌倒恢复压降需上板实测。
 5. **`position_kp = 16` 分支**的电流/发热代价：这颗舵机 `reg60` 恒 0、`reg62` 会拼进温度，电流回读坏，只能用真机 per-joint 温度验收。
 6. 官方 3D 模型衍生件带 **CC BY-NC-SA 4.0** 非商用限制，不满足 OSHWA 开源硬件定义；打印件不等于可制造套件。
+7. **G0 脚本只在合成总线上验过**：`--selftest` 12/12 与 `--dry-run` 全绿只证明门禁逻辑有效，
+   **不是台架证据**。真机 URT-2 的帧时序、`goal` 镜像是否即时更新、60 s 长跑的实际温度曲线
+   都还没跑；`--write-goal-echo` 若在某版固件上失败，先记 firmware 版本再判，别直接改阈值放行。
 
 ---
 
@@ -208,5 +246,5 @@ export.py → ONNX（单文件、initializer 无 EXTERNAL）
 |---|---|
 | 价格 | `docs/hardware/microduck-采购清单.md` §7 / §7.5 / §7.9.1 / §9；`docs/active/microduck-板子设计备忘.md` §5.4；`docs/archive/microduck-低成本方案.md` §阶段 0 |
 | 硬件 | `docs/hardware/microduck-硬件清单-详细接线版.md` §1–§9；`docs/hardware/microduck-IMU三方对照-666wsp-kissqy-DuckBuddy.md` §0 / §0.5 / §5；`docs/hardware/microduck-IMU板对照-666wsp-vs-DuckBuddy.md` §4–§6；`docs/hardware/microduck-供电接线图.svg` / `microduck-分线板设计图.svg`（已降为备用） |
-| 软件 | `microduck-software/tools/hd1910/deploy_import_checklist.md` A/B/H/C/D/E 全段；`microduck-software/tools/hd1910/audit_robotd_toml.py` R1–R29；`docs/reference/microduck-软件到硬件全链路资料地图-2026-11-06.md` §2；`docs/reference/microduck-未核实项核查报告-2026-11-06.md` §2 / §3 / §5 |
+| 软件 | `microduck-software/tools/hd1910/deploy_import_checklist.md` A/B/H/C/D/E 全段；`microduck-software/tools/hd1910/audit_robotd_toml.py` R1–R29；`microduck-software/tools/hd1910/sts_bench.py`（G0 五闸门 + 负对照）；`microduck-software/tools/hd1910/servo_probe/hd1910_ident.py`（56..70 寄存器表）；`docs/reference/microduck-软件到硬件全链路资料地图-2026-11-06.md` §2；`docs/reference/microduck-未核实项核查报告-2026-11-06.md` §2 / §3 / §5 |
 | 上游源码 | `.upstream/DuckBuddy-main/`（`feetech.rs` / `model.rs` / `obs.rs` / `lib.rs`）、`.upstream/community-kit/`（KiCad + `boot_regs.c`）、`.upstream/replica/`（`directions.json`）、`.upstream/kissqy/`（`imu-source/src/main.c`）、`.upstream/666wsp-microduck-hd1910/`（原理图 PDF） |
