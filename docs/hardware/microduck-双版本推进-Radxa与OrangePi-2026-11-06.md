@@ -17,9 +17,9 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 | 40-pin GPIO | 官方确认「compatible with most SBC accessories」（docs.radxa.com）；GPIO 3.3 V | 引脚定义 ≠ 树莓派（第三方评测确认孔距一致但电气定义不同） |
 | 舵机总线波特率 | RK3566 UART 支持 1 Mbps（kissqy 实机跑 1 Mbps，上游主仓在 Zero 3W 上跑 1 Mbps） | A733 UART7 分频限制（`feetech.rs:34` 原话 *1 Mbit/s is not*）→ 只能 500 kbps |
 | 机械件 | **零改动**：fanhao375 飞特版 CAD 实机即 Radxa（README 第 357 行） | 主板托架/HAT 支架/摄像头支架需自建（本仓 `cad/orangepi_zero3w_carrier.scad`） |
-| HAT | 可直插 RPi 形态 kissqy HAT（40-pin 物理兼容） | 不能直插（40-pin 定义不同）；需转接或绕开 |
+| HAT | 可直插 RPi 形态 kissqy HAT（40-pin 物理兼容）；舵机总线=J4 Pin8/10=RPi GPIO14/15=UART，插上即用 | 舵机总线物理也能用（Pin8/10 同为 UART），**但 IMU 的 I2C 在 Orange Pi Pin3/5 非 I2C ⇒ IMU 可能失效**，需飞线或换 I2C 引脚 |
 | 现有软件镜像 | kissqy V167/ fanhao 镜像本就是 Radxa，开箱即用 | 需验证或自建；总线 500k 需改 `BAUD_RATE` 常量 |
-| 主要风险 | HAT 舵机总线 UART 需避开 Pin 8/10 调试串口 | HAT 出路（转接/绕开）+ 连接耳螺接位待定 |
+| 主要风险 | ~~HAT 舵机总线 UART 需避开 Pin 8/10 调试串口~~ → **已闭环**：Pin8/10=UART2_M0，主仓正是把它当舵机总线跑 1 Mbps，HAT 的 DE 还由板内自动产生（不占 SBC GPIO） | HAT 出路（转接/绕开）+ IMU I2C 落点 + 连接耳螺接位待定 |
 
 ## 2. Orange Pi Zero 3W 版（A733）
 
@@ -57,8 +57,9 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 
 ### 3.3 当前进度与下一步
 
-- ✅ 机械零改动确认 + 40-pin 兼容确认 + 1 Mbps 可行确认 + EEPROM 免写确认。
-- ⏳ 下一步：① 核 **kissqy HAT 的舵机总线接到 Radxa 哪个物理 UART**（避开 Pin 8/10 调试串口；本地 kissqy 资料只有 docs 无 PCB 引脚表，需查其硬件工程）；② 备料：Radxa ZERO 3W 2GB + kissqy HAT + fanhao375 飞特版打印件。
+- ✅ 机械零改动确认 + 40-pin 兼容确认 + 1 Mbps 可行确认 + EEPROM 免写确认 + **HAT 舵机总线 UART 引脚已核**（见下）。
+- ✅ **HAT 舵机总线 UART 已闭环**：kissqy `elec_RPI_Robot_HAT` PCB 解析确认 —— 舵机 TTL 接 J4 Pin 8/10（RPi GPIO14/15 = UART），经 U7/U8 电平转换去 J3/J11（Dynamixel 输出）；**DE 方向(net45) 仅连 HAT 板内 Q1/U6/U7/U8，不连 J4** ⇒ SBC 无需提供 DE GPIO。Radxa Pin 8/10 = UART2_M0（官方 brief 确认）= `/dev/ttyS2`，与主仓 robotd 配置零差异，**插上即用**。详见 `microduck-kissqy HAT引脚分析-Radxa闭环-2026-11-06.md`。
+- ⏳ 下一步：① 备料：Radxa ZERO 3W 2GB + kissqy HAT + fanhao375 飞特版打印件；② 上电后 `dmesg|grep tty` 确认节点、`i2cdetect -y 3` 确认 IMU 在 I2C3、`sts_bench.py` 扫 ID×1Mbps 复验（非阻塞）。
 
 ## 4. 决策建议
 
@@ -70,4 +71,4 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 
 - 拉 418 MB `SolidWorks-FT2026-10-20.zip`（GitHub Releases），只读 `pcb__raspberry_pi_zero_2_w` 相关 STEP / 原 RPi 托架，定准 Orange Pi 连接耳螺接位。
 - 本机装 OpenSCAD，把 `cad/orangepi_zero3w_carrier.scad` 渲染导出可打印 STL。
-- 查 kissqy 硬件工程确认 HAT 舵机总线 UART 引脚（Radxa 路线落地必查）。
+- ~~查 kissqy 硬件工程确认 HAT 舵机总线 UART 引脚~~ → **已完成**：`microduck-kissqy HAT引脚分析-Radxa闭环-2026-11-06.md`。
