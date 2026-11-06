@@ -19,6 +19,9 @@ _2026-11-06。回应「两个类型主板的版本都组装一下，零件不要
 | 1 | 「33 个打印件网格**已带世界坐标**，直接合并 = 完整鸭子」 | **33 个网格中心全部是 (0,0,0)**，是「以零件自身中心为原点」的局部坐标。之前 `microduck_assembled.stl` 实为 **33 件全部重叠堆在原点的一坨**；所谓「bbox 91.8×122.7×83.5 三轴铺开＝整机」是把各零件包围盒的**并集**误当装配占位 | 该 STL **作废**；`microduck-拼出完整鸭子-*.md` 加更正横幅 |
 | 2 | 「GitHub Releases **没有** 418 MB STEP 包」 | 它就在 **v2.2 release**：`SolidWorks-FT2026-10-20.zip`（417,656,282 B），另有 `STEP-changed-parts-FT-2026-10-20.zip`（21.7 MB）。此前查询漏了分页/旧 tag | 更正适配清单 §0 时间线第 5 条 |
 | 3 | 「本机代理挡 release asset，拉不到 CAD 源」 | 直连 `github.com/releases/download` 确实 502，但 **`gh-proxy.com` 镜像**与 **`api.github.com` asset 端点**都通；整包 88 秒 / 4.7 MB/s 下载完成，zip 完整性 OK | 已落地本地，见 §5 |
+| 4 | 「`.SLDASM` 专有二进制 ⇒ 整机位姿**无法还原**」 | **没查资料就下的结论，且说过头**。格式专有（实测）≠ 不可解析：eDrawings（官方免费）/ Onshape / Fusion 360 都能读并导出整机 STEP/STL；本机是**缺工具** | §5.2 已收敛；资料溯源见 `microduck-资料溯源与结论审计-2026-11-06.md` |
+| 5 | 「3MF 的 transform 是打印排布、无整机位姿」 | 当初是**自己看 bbox 推的**；补查 **3MF Core Spec v1.3.0 §3.4.3.1** 后获规范级背书（`<item>` 可被重排、装配关系应写 `<component>`），且实测 43 个 component 变换全为单位阵 | 由「推的」升级为**规范+实测双证**，见 §5.1 |
+| 6 | 「可找作者 MakerWorld 的装配版 3MF」 | 上轮**只写在下一步、根本没查**；实查页面只有 1 个 6 盘打印配置 + 1 份组装指南 PDF，**无整机装配 3MF/STL** | 该路已排除，见 §5.3 |
 
 > 顺带修正：`01_躯干主体_torso_shell.stl` 的说明里「保留世界坐标」也不成立——它是**零件局部坐标**，`torso_cavity_profile.txt` 的 Z 剖面是该壳件自身截面，不是整机腔体坐标。作为「单件截面形态」可参考，作为「整机腔体判据」无效。
 
@@ -77,16 +80,47 @@ _2026-11-06。回应「两个类型主板的版本都组装一下，零件不要
 
 ## 5. 为什么几何层「拼不出精确整机」
 
-逐项排除，全部实测：
+逐项排除，全部实测，**并有 3MF 官方核心规范背书**（2026-11-06 补查，见 §5.1）：
 
 1. **3MF 零件网格**：33 个网格中心全 `(0,0,0)` → 只有局部几何，无装配位姿。
-2. **3MF `<build>` 43 个 transform**：应用后 bbox `X[17,816] Y[-287,238] Z[-17,122]`，16 个实例 Z<0 → 是 Bambu 的**摊开陈列位姿**，既不是整机也不是可切片打印盘布局。
-3. **`assembly_model.json`**：34 个组的 `assemble_transform` 平移 X=49…798 mm；`offset_to_assembly` **全部 `[0,0,0]`**；`assembly_step.json` 的 keyframes 全空 → 无整机位姿。
-4. **417 MB SolidWorks 包**（本轮下载成功）：整机总装是 `00-microduck装配体-FT2026.9.23.SLDASM`（66 MB），**专有二进制**：非 OLE2、非 ZIP，全文搜不到 `xml` / `transform` / `Matrix` / `.SLDPRT` 等可读串；10 个 `.STEP` 全是**单件**局部坐标（AP203），无整机装配 STEP/STL。
+2. **3MF `<component>` 43 个 transform**：**全部为单位阵**（逐个比对 12 元矩阵，非单位阵 0 个）→ 按规范，若作者想把装配关系固化进 3MF，应写在 component 变换里；实测没有。
+3. **3MF `<build>` 43 个 transform**：应用后 bbox `X[17,816] Y[-287,238] Z[-17,122]`，16 个实例 Z<0 → 是 Bambu 的**摊开陈列位姿**。规范 §3.4.3.1 明写 `<item>` 的排布「is considered a default; consumers MAY rearrange the items」→ **按定义就不是整机装配位姿**，而是可被切片软件重排的打印排布。
+4. **`assembly_model.json`**：34 个组的 `assemble_transform` 平移 X=49…798 mm；`offset_to_assembly` **全部 `[0,0,0]`**；`assembly_step.json` 的 keyframes 全空 → 无整机位姿。
+5. **417 MB SolidWorks 包**（本轮下载成功）：整机总装是 `00-microduck装配体-FT2026.9.23.SLDASM`（66 MB），**专有二进制**（magic `58 8f 9a 95…`，非 OLE2 `D0CF11E0`、非 ZIP `PK`，全文无可读 `xml` / `transform` / `Matrix` 串）；10 个 `.STEP` 全是**单件**局部坐标，无整机装配 STEP/STL。
 
-→ 整机精确位姿只存在于需要 SolidWorks 才能打开的 `.SLDASM` 里。**本机无法还原，故不生成「看起来像鸭子」的假整机**；本轮只交付可验证的零件包。
+→ 整机精确位姿只存在于 `.SLDASM` 的**配合定义（mates）**里，需要 SolidWorks 求解器或兼容查看器解算。**本机未装这类工具，所以本机还原不了**——这是工具缺失，不是「格式不可解析」（此前把话说过头了，见 §5.2）。故本轮不生成「看起来像鸭子」的假整机，只交付可验证的零件包。
 
-若要真整机几何，只有三条路：① 用 SolidWorks 打开总装另存为整机 STEP/STL；② 找作者 MakerWorld 上的装配版 3MF；③ 实物三维扫描/逆向。
+### 5.1 3MF 官方规范原文（一手依据，2026-11-06 补查）
+
+来源：**3MF Consortium, 3MF Core Specification v1.3.0**（3mf.io，40 页，本地存 `out/microduck_replica/3MF_Core_Spec_v1.3.0.pdf`），§3.4.3.1 Item Element，逐字引用：
+
+> "A consumer MUST apply the transform prior to outputting the object. … **The arrangement of these items in the build is considered a default; consumers MAY rearrange the items for manufacturing in order to better pack the build volume.** Sometimes objects are arranged in the coordinate space so as to be manufactured in an interlocking fashion; **producers of these objects SHOULD collect them as components (see 4.2. Components), as 3D manufacturing devices MUST NOT transform components of an object relative to each other.**"
+
+→ 规范把两种变换分得清清楚楚：`<item>` = 打印排布（可重排），`<component>` = 对象内部的装配关系（不可重排）。本文件 43 个 component 变换全为单位阵、43 个 item 变换是摊开陈列 → **按规范它就不是整机装配文件**。作者 README 也自称「Bambu Studio 排好盘的打印工程」「5 盘，52 个对象」，两者一致。
+
+### 5.2 SLDASM 的免费读取路径（此前漏查，2026-11-06 补）
+
+此前写「专有二进制 ⇒ 无法还原位姿」**属于没查资料就下的结论**。查到的路径：
+
+| 工具 | 能否读 `.SLDASM` | 备注 |
+|---|---|---|
+| **eDrawings Viewer**（Dassault 官方免费，Win/Mac） | ✅ 直接打开，可旋转/爆炸/测量 | 官方查看器，无需 SolidWorks 许可 |
+| **Onshape**（免费 Public 账户） | ✅ 导入后可导出 STEP/STL | 云端；免费档文档公开 |
+| **Autodesk Fusion 360** | ✅ 导入后再导出 STL/STEP | 桌面端 |
+| **FreeCAD / OpenCascade** | ⚠️ 主要能读 `.SLDPRT` 的 B-Rep | 对 `.SLDASM` 支持有限，且新版本 SolidWorks 文件常读不了 |
+
+`.SLDASM` 存的是 **mates 配合定义**（不是单纯的解算位置），且容器内**内嵌渲染预览与细分显示图形**——所以位姿确实在文件里，只是需要对应求解器。**本机这些工具一个都没装**，故准确说法是「本机缺工具」，不是「格式无法解析」。
+
+### 5.3 MakerWorld 已核查（此前只提未查）
+
+作者本人上传的 [MakerWorld 飞特版页面](https://makerworld.com.cn/zh/models/2963569-microduck#profileId-3478428)（2026-09-13）提供：**1 个打印配置**（6 盘 / PLA 367 g / 20.7 h）+ **1 份 `microduck装配安装说明书.pdf` 组装指南**。**没有整机装配版 3MF，也没有整机 STL** → 这条「找装配版 3MF」的路已排除，不必再找。
+
+### 5.4 若要真整机几何（收敛后）
+
+1. 本机装 **eDrawings Viewer**（免费）打开 `00-microduck装配体...SLDASM` 看整机；或用 **Onshape / Fusion 360** 导入后另存为整机 STEP/STL。
+2. 装有 SolidWorks 的机器直接打开总装另存整机 STEP/STL（最保真）。
+3. 实物三维扫描 / 逆向。
+4. ~~找 MakerWorld 装配版 3MF~~ → 已核查不存在。
 
 ---
 
