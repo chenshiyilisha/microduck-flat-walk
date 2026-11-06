@@ -47,11 +47,15 @@ standoffs = [
   [  (BOARD_L/2 - 6.0),  (BOARD_W/2 - 6.0) ]
 ];
 
-// 与机身连接耳: 左右伸出, 居中 (y=0). 位置 TBD, 见末尾 CHECKLIST. 默认左右各一, M3
-lug_d = 3.2;      // M3 孔
+// 与机身连接耳: 左右伸出, 居中 (y=0). 通用可调耳 —— 长圆孔沿 x 方向 ±lug_slot/2 调节,
+// 装机时微调后用 M3 螺丝或扎带固定到飞特版躯干. 精确螺接位待拉 418MB STEP 确认.
+lug_d     = 3.2;   // M3 孔
+lug_slot  = 8.0;   // 长圆孔长度 (x 方向调节量 ±4mm)
+lug_w     = 9.0;   // 耳宽 (y 方向)
+lug_ext   = 10.0;  // 耳伸出底板外的长度 (x)
 lugs = [
-  [ -(BOARD_L/2 + wall + 4.0), 0 ],
-  [  (BOARD_L/2 + wall + 4.0), 0 ]
+  [ -(BOARD_L/2 + wall + lug_ext/2), 0 ],
+  [  (BOARD_L/2 + wall + lug_ext/2), 0 ]
 ];
 
 // ---------- 基础形状 ----------
@@ -69,6 +73,23 @@ module board_ref() {
     linear_extrude(BOARD_T) rounded_rect(BOARD_L, BOARD_W, BOARD_R);
 }
 
+// 长圆孔 (2D): 沿 x 方向, 中心 (x,y), 长度 len, 宽 d
+module slot_2d(x, y, len, d) {
+  hull() {
+    translate([x - len/2, y]) circle(d = d, $fn = 16);
+    translate([x + len/2, y]) circle(d = d, $fn = 16);
+  }
+}
+
+// 连接耳: 矩形耳 + 长圆孔, 沿 x 方向可调
+module lug_ear(g) {
+  x = g[0]; y = g[1];
+  difference() {
+    linear_extrude(base_t) translate([x, y, 0]) rounded_rect(lug_ext, lug_w, 2.0);
+    linear_extrude(base_t + 0.2) slot_2d(x, y, lug_slot, lug_d);
+  }
+}
+
 // ---------- 载板主体 ----------
 module carrier() {
   // 底板 + 定位边轨 (开顶, 板从上方落入, 不挡接插件)
@@ -84,9 +105,6 @@ module carrier() {
     // 支柱 M2 通孔
     for (s = standoffs)
       translate([s[0], s[1], -0.1]) cylinder(d = screw_d, h = base_t + stand_h + 0.2, $fn = 16);
-    // 连接耳 M3 通孔
-    for (g = lugs)
-      translate([g[0], g[1], -0.1]) cylinder(d = lug_d, h = base_t + 0.2, $fn = 16);
   }
   // 支柱实体 (带通孔)
   for (s = standoffs)
@@ -94,12 +112,8 @@ module carrier() {
       translate([s[0], s[1], base_t]) cylinder(d = 5.0, h = stand_h, $fn = 20);
       translate([s[0], s[1], base_t - 0.1]) cylinder(d = screw_d, h = stand_h + 0.2, $fn = 16);
     }
-  // 连接耳实体 (带通孔)
-  for (g = lugs)
-    difference() {
-      translate([g[0], g[1], 0]) cylinder(d = 8.0, h = base_t, $fn = 24);
-      translate([g[0], g[1], -0.1]) cylinder(d = lug_d, h = base_t + 0.2, $fn = 16);
-    }
+  // 连接耳实体 (通用长圆孔耳, 沿 x 方向可调)
+  for (g = lugs) lug_ear(g);
 }
 
 // ---------- 预览 ----------
@@ -115,8 +129,9 @@ board_ref();
 //        => 机械层大概率免改; 本载板仅在 trunk_base 卡位放不下 32mm 板时才需要.
 //        若要用真实孔位: 把 standoffs 改到 Pi Zero 四孔坐标, 并确认 Orange Pi 孔数/孔径 (待实物核).
 //        无孔时当前四角摩擦+支柱方案可用, 但需实测紧固.
-// [ ] 3. 机身接口: 拉取 fanhao375/microduck-replica-cad Releases 的 SolidWorks-FT2026-10-20.zip,
-//        读原 RPi 托架的螺接位, 据此定 lugs 的位置/数量/孔径, 使本载板能拧到飞特版躯干.
+// [ ] 3. 机身接口: 连接耳已改为通用长圆孔耳 (沿 x 方向 ±4mm 可调, M3 或扎带固定), 不依赖精确螺接位即可打样.
+//        若要定准: 拉取 fanhao375/microduck-replica-cad Releases 的 SolidWorks-FT2026-10-20.zip,
+//        读原 RPi 托架的螺接位, 把 lugs 位置/数量/孔径对齐, 使本载板精确拧到飞特版躯干.
 // [ ] 4. 接插件禁布: 若后续要加侧开口 (Mini HDMI/USB-C/TF/CSI/PCIe), 依官方顶视图补 cutout,
 //        位置坐标填到对应 translate 处.
 // [ ] 5. HAT 决策(真正的不兼容在电气层, 不在机械): Orange Pi 40-pin 定义 != RPi => 树莓派机器人HAT
