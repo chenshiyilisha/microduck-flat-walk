@@ -6,41 +6,41 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 
 - **两版都值得推进，不是二选一**：
   - **Radxa 版** = 与作者 CAD（fanhao375 飞特版）+ kissqy 镜像**完全对齐**，机械件零改动、舵机总线 1 Mbps 直接可行。
-  - **Orange Pi 版** = 板子便宜/现成、板型与 Pi Zero 孔距一致（仅宽 2 mm），但 **40-pin 电气不兼容 RPi HAT**、**A733 总线限 500 kbps**，需自建主板载板。
-- **机械件层面**：Radxa 版直接用 fanhao375 飞特版 v2.2（它实机就是 Radxa）；Orange Pi 版用本仓自建的 `cad/orangepi_zero3w_carrier.scad`。
+  - **Orange Pi 版** = 板子便宜/现成、与 Radxa/Pi Zero 2W **同板型（65×30，Pi Zero 兼容板型）**，HAT 40-pin **功能同脚位可直插**、IMU I2C 同脚位 → **机械件亦零改动**；唯一差异是 **A733 UART7 总线限 500 kbps**（软件配置层，非机械），以及需软件开 UART0/TWI0 overlay。
+- **机械件层面**：两版都直接用 fanhao375 飞特版 v2.2（实机 Radxa，但腔体按 Pi Zero 2W 板型挖，Orange Pi 同板型兼容）；本仓 `cad/orangepi_zero3w_carrier.scad` 已降级为"外挂固定草模"参考，不再是 Orange Pi 必需件（详见适配清单 §4）。
 
 ## 1. 两版关键参数对比
 
 | 维度 | Radxa Zero 3W（RK3566） | Orange Pi Zero 3W（A733） |
 |---|---|---|
-| 板型尺寸 | 65 × 30 mm（Pi Zero 板型） | 65 × 32 mm（孔距与 Pi Zero 一致，仅宽 2 mm） |
-| 40-pin GPIO | 官方确认「compatible with most SBC accessories」（docs.radxa.com）；GPIO 3.3 V | 引脚定义 ≠ 树莓派（第三方评测确认孔距一致但电气定义不同） |
+| 板型尺寸 | 65 × 30 mm（Pi Zero 板型） | **65 × 30 mm（Pi Zero 兼容板型；参数页"32mm"为含边/连接器外包，见适配清单 §0）** |
+| 40-pin GPIO | 官方确认「compatible with most SBC accessories」（docs.radxa.com）；GPIO 3.3 V | **功能与 RPi 同脚位一致**（UART8/10、I2C3/5、5V/3.3V、GND 全同）→ HAT 可直插 |
 | 舵机总线波特率 | RK3566 UART 支持 1 Mbps（kissqy 实机跑 1 Mbps，上游主仓在 Zero 3W 上跑 1 Mbps） | A733 UART7 分频限制（`feetech.rs:34` 原话 *1 Mbit/s is not*）→ 只能 500 kbps |
-| 机械件 | **零改动**：fanhao375 飞特版 CAD 实机即 Radxa（README 第 357 行） | 主板托架/HAT 支架/摄像头支架需自建（本仓 `cad/orangepi_zero3w_carrier.scad`） |
-| HAT | 可直插 RPi 形态 kissqy HAT（40-pin 物理兼容）；舵机总线=J4 Pin8/10=RPi GPIO14/15=UART，插上即用 | 舵机总线物理也能用（Pin8/10 同为 UART），**但 IMU 的 I2C 在 Orange Pi Pin3/5 非 I2C ⇒ IMU 可能失效**，需飞线或换 I2C 引脚 |
+| 机械件 | **零改动**：fanhao375 飞特版 CAD 实机即 Radxa（README 第 357 行） | **零改动**：腔体按 Pi Zero 2W 板型挖，Orange Pi 同板型兼容（同 §0） |
+| HAT | 可直插 RPi 形态 kissqy HAT（40-pin 物理兼容）；舵机总线=J4 Pin8/10=RPi GPIO14/15=UART，插上即用 | **可直插**：舵机总线 Pin8/10=UART0、IMU I2C Pin3/5=TWI0（与 RPi 同脚位），插上即用 |
 | 现有软件镜像 | kissqy V167/ fanhao 镜像本就是 Radxa，开箱即用 | 需验证或自建；总线 500k 需改 `BAUD_RATE` 常量 |
-| 主要风险 | ~~HAT 舵机总线 UART 需避开 Pin 8/10 调试串口~~ → **已闭环**：Pin8/10=UART2_M0，主仓正是把它当舵机总线跑 1 Mbps，HAT 的 DE 还由板内自动产生（不占 SBC GPIO） | HAT 出路（转接/绕开）+ IMU I2C 落点 + 连接耳螺接位待定 |
+| 主要风险 | ~~HAT 舵机总线 UART 需避开 Pin 8/10 调试串口~~ → **已闭环**：Pin8/10=UART2_M0，主仓正是把它当舵机总线跑 1 Mbps，HAT 的 DE 还由板内自动产生（不占 SBC GPIO） | **已闭环**：HAT 同脚位可直插、IMU I2C 同脚位；仅剩 A733 总线 500k 配置（软件）+ 软件开 UART0/TWI0 |
 
 ## 2. Orange Pi Zero 3W 版（A733）
 
-### 2.1 机械件（自建中）
+### 2.1 机械件（已闭环：零改动）
 
-- 作者飞特版按 Radxa（Pi Zero 板型 65×30）建模；Orange Pi（65×32）**孔距一致、仅宽 2 mm** → 开顶卡框容得下 2 mm 边余量，躯干/腿/壳/头/电池 31 件直接通用。
-- 真正要自建的是 **主板托架 / HAT 支架 / 摄像头支架** 三处（飞特版按 RPi 做）。本仓已建 `cad/orangepi_zero3w_carrier.scad`（参数化、开顶卡框 + 四角 M2 支柱 + **通用可调长圆孔连接耳**），并渲染 `cad/orangepi_zero3w_carrier_preview.png`（已修过坐标系 bug，2D 俯视图确认 4 红孔在板内、2 蓝耳对称）。
-- 连接耳当前为「通用耳」：长圆孔沿 x 方向 ±4 mm 可调，装机时微调后用 M3 螺丝或扎带固定到飞特版躯干，**不依赖精确螺接位即可打样**。
+- 作者飞特版按 Radxa（Pi Zero 板型 65×30）建模；Orange Pi **同为 Pi Zero 兼容板型（65×30，58×23 安装孔一致）** → 腔体本就按此板型挖，**33 件零改动直接通用**（躯干/腿/壳/头/电池全通用）。"Orange Pi 宽 2mm 需改腔体"经核查不成立（参数页"32mm"为含边外包）。
+- 本仓 `cad/orangepi_zero3w_carrier.scad` + `cad/orangepi_zero3w_carrier.stl` 是按"外挂固定"思路建的，**已降级为草模参考**（HAT 已直插、SBC 应整栈进腔，外挂载板不再必需）。若最终确需外挂固定，再据此重做。
+- 已提取 `01 躯干主体` 独立网格 `out/microduck_replica/01_躯干主体_torso_shell.stl`（可查看腔体形态）；胸高腔体外壳 Z 范围剖面见 `torso_cavity_profile.txt`（仅供形态参考，净深以实物为准）。
 
-### 2.2 电气兼容性（已查，硬约束）
+### 2.2 电气兼容性（已查，已闭环）
 
-- **40-pin 定义 ≠ 树莓派** → BOM 第 3 项「树莓派机器人 HAT」不能直插。
-- **A733 UART7 分频限制** → 舵机总线只能 500 kbps（这是那块板的分频限制，不是舵机的；`feetech.rs:34` 原文针对 A733，与 Radxa 无关）。
-- 三条出路（已在适配清单列）：**A** 主板改回 Radxa（零机械改动）/ **B** 重做 HAT 接口 / **C** 绕开 HAT 用 URT-2 + imu_to_dxl 小板（本仓阶段 2 默认）。推荐 **C** 若坚持 Orange Pi。
+- **40-pin 功能与 RPi 同脚位一致** → BOM 第 3 项「树莓派机器人 HAT」**可直插**（舵机 UART 8/10、IMU I2C 3/5、5V/3.3V、GND 全同）。早先"引脚定义≠树莓派、HAT 不能直插、IMU I2C 失效"的判断**已证伪**。
+- **A733 UART7 分频限制（仍成立）** → 舵机总线只能 500 kbps（这是那块板的分频限制，不是舵机的；`feetech.rs:34` 原文针对 A733，与 Radxa 无关）；需保持 `BAUD_RATE=500k` 并将 15 颗舵机 reg6 从出厂 0 改为 1。
+- **软件层唯一新增**：Orange Pi 上需启用 UART0（舵机总线，Pin8/10）+ TWI0/I2C（IMU，Pin3/5）overlay（armbian-config），核对设备名与 robotd 配置一致。
 
 ### 2.3 当前进度与下一步
 
 - ✅ 载板 scad + 效果图完成（连接耳已升级为通用长圆孔耳）。
 - ✅ **可打印 STL 已生成**：本机 Windows 沙箱无 OpenSCAD（files.openscad.org 的 Linux 包跑不了），改用纯 Python 网格构造器 `cad/build_carrier_stl.py` 直接写二进制 STL → `cad/orangepi_zero3w_carrier.stl`（896 面，bbox X[-44.5,44.5]×Y[-18,18]×Z[0,4.2]，与 scad 同参）。与 scad 的偏差（可接受简化）：底板实心不贯穿 M2 孔、连接耳长圆孔用矩形框实现、边轨用 4 盒近似。
 - ✅ **418 MB STEP 不再必需**：连接耳长圆孔 ±4 mm 可调 + 框式结构不依赖精确螺接位即可打样；仅当要"精确拧到飞特版躯干原孔"时才拉 `SolidWorks-FT2026-10-20.zip` 定准。
-- ⏳ 下一步：① 电气定 HAT 出路（推荐 C 绕开 HAT 用 URT-2 + imu_to_dxl 小板）；② 真机打样后用实物核 BOARD_R / 安装孔 / 接插件禁布。
+- ✅ Orange Pi 经核查**机械零改动 + HAT 可直插 + IMU I2C 同脚位**；唯一差异 A733 总线 500k（软件配置）。下一步：① 软件开 UART0/TWI0 overlay；② 上电按 Radxa 验收清单同类项核对（节点名、I2C、500k 扫舵机）；③ 实物试装核板宽 30/32（大概率不卡）。
 
 ## 3. Radxa Zero 3W 版（RK3566）
 
@@ -66,7 +66,7 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 ## 4. 决策建议
 
 - **想最快跑通**：走 **Radxa**（零机械改动 + kissqy 镜像开箱 + 总线 1 Mbps）。
-- **想压价 / 用现成 Orange Pi**：走 **Orange Pi**（载板已建，但 HAT 需转接或绕开，总线限 500k）。
+- **想压价 / 用现成 Orange Pi**：走 **Orange Pi**（与 Radxa 同 Pi Zero 板型、HAT 可直插、零机械改动；仅 A733 总线限 500k + 需软件开 UART0/TWI0）。
 - 两条路共用：HD-1910 舵机（凸盘，飞特版 v2.2 已适配）、2S 电池、URT-2 调试板。
 
 ## 5. 待授权的大动作
