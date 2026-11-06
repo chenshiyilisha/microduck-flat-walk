@@ -369,23 +369,26 @@ def render(st: dict, m: dict | None, sp: dict | None, dflt: dict,
           f"IPC、以及**一次读超时 {st['read_timeout_ms']} ms > 一个周期**")
     print(f"     ⇒ 任何一次超时都直接吃掉整个 tick，且 Skip 语义不补")
 
-    # F：波特率不是这颗舵机的事，是板子的事
+    # F：波特率是板子的事。⚠️ 2026-11-06 定案已变：主控从 Radxa Zero 3W
+    # (RK3566) 改成 Orange Pi Zero 3W (A733) —— 下面这段早期结论整个反过来。
     e500 = extrapolate(pb500, n_read, st["read_len"], 100.0)["total_us"] + write_us
     pb1m = per_byte_us(1_000_000, ratio)
     e1m = extrapolate(pb1m, n_read, st["read_len"], 100.0)["total_us"] + write_us
     print()
-    print("== F. 500 kbps 是上游那块板的约束，不是我们的 ==")
+    print("== F. 500 kbps 是本方案（A733）自己的硬约束，不是「别人的板」 ==")
     print("  feetech.rs:34 原文：'Exactly representable on the A733's UART7 "
           "(24 MHz / 16 / 3). 1 Mbit/s is not.'")
-    print("  ⇒ 理由只有**时钟分频**，与舵机型号无关。A733 是 B 代（Orange Pi + HL-2915）的芯片；")
-    print("    我们要用的 Radxa Zero 3W（RK3566）不是它。")
-    print("  证据：① Radxa 官方文档 —— Zero 3 的 debug UART **默认 1 500 000 bps**；")
-    print("        ② RK3566 datasheet —— UART 'up to 4 Mbps baud rate'；")
-    print("        ③ 上游主仓 pollen-robotics/microduck 本身就是 Zero 3W，跑 **1 Mbps**。")
-    print(f"  ⇒ 若 BAUD_RATE 改 1 Mbps：每 tick 总线 {e1m/1000:.2f} ms（现在 {e500/1000:.2f} ms，"
-          f"间隙按 100 µs 估）")
-    print("  ⇒ 连带好处：reg6 保持**出厂 0 = 1 Mbps**，15 颗舵机的 EEPROM 一颗都不用写")
-    print("  ⚠️ 必须同时把 BAUD_REGISTER_VALUE 由 1 改成 **0**（Feetech 编码 0=1M/1=500k/…）。")
+    print("  ⇒ 本方案主控 = **Orange Pi Zero 3W (A733)**，正是 B 代 robotd 那块板。")
+    print("    时钟分频只能精确给出 500 kbps；1M 在该 UART 上实测约 750 kbps，不是真 1M。")
+    print("  ⇒ 所以 BAUD_RATE 保持 500_000，**不能**改成 1_000_000；")
+    print("    reg6 必须逐颗从出厂 0（1 Mbps）改成 1（500 kbps），EEPROM 写入不可省。")
+    print("    台架 1 Mbps 只是 URT-2 / USB-TTL 这一路的速率，不能据此推断整机可跑 1M。")
+    print(f"  〔历史，已作废〕若换 RK3566 且 BAUD_RATE 改 1M：每 tick 总线 "
+          f"{e1m/1000:.2f} ms（现在 {e500/1000:.2f} ms，间隙按 100 µs 估），")
+    print("    且 reg6 可保持出厂 0。依据是 Radxa Zero 3 的 debug UART 默认 1 500 000 bps、")
+    print("    RK3566 datasheet 'up to 4 Mbps'、上游主仓在 Zero 3W 上跑 1 Mbps —— ")
+    print("    **这三条只对 RK3566 成立，A733 上不适用**。")
+    print("  ⚠️ 编码陷阱（换板时才用得上）：Feetech 是 0=1M / 1=500k；")
     print("     model.rs 里那个 '3 = 1 Mbps' 是 **Dynamixel** 编码，套过来会写成 128 kbps = 失联。")
 
 

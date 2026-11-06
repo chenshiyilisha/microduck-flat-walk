@@ -29,7 +29,7 @@ A733 UART7 上限      锁 500k             ⇒ IMU 固件必须 imu-feetech(500
 |---|---|---|---|
 | 舵机 | HD-1910-C001 ×15（¥99/颗） | XL330-M288-T（¥259/颗） | 舵机占整机成本约 6 成；HD-1910 21 g 只重 17%，机身不用放大；BAM 已有一份 C001 实测辨识表（kt 0.692 / R 3.75 / armature 0.00224 / 延迟 25.3 ms） |
 | 主控 | Orange Pi Zero 3W（A733）4GB + eMMC 8GB + 40-pin | Radxa Zero 3W；kissqy 指定的 2GB 无 eMMC 档 | 同价位八核 2×A76+6×A55 / 3 TOPS / LPDDR5；**DuckBuddy upstream 就是这块板并有 4GB+15 舵机 3S 整机日常运行的实机证据** |
-| 总线速率 | 500 kbps | 1 Mbps | 50 Hz、16 设备同步读约 295 B/tick，500k 占线约 4.7 ms / 20 ms ≈ 24%；Radxa 上也跑 500k，1M 从未被用上；A733 UART7 设 1M 实测只有约 750 kbps |
+| 总线速率 | 500 kbps | 1 Mbps | 50 Hz / 16 设备同步读：早期净荷估算 295 B → 4.7 ms ≈ 24%，源码整帧解析 413 B → 8.26 ms ≈ 41%，台架实测校正后 10.28–11.01 ms ≈ 51–55%（N=5，三套口径见 §4.3，不可混用）；A733 UART7 只有 500k 可精确表示，1M 实测约 750 kbps，B 代 robotd 写死 500k ⇒ 锁 500k 且 reg6 必改 |
 | 供电板 | community-kit 三块现成 Gerber（CERN-OHL-P） | 自绘打样、kissqy HUB 成品 ¥69 | 三个 zip 直接发嘉立创；2S 适配已解析 `.kicad_pcb` 确认；省掉设计与打样那一轮 |
 | IMU 固件 | DuckBuddy `imu-feetech`（500k，IMU 排最后） | kissqy FT6（锁 1M，IMU 排第一）、666wsp 板 | 与 B 代 robotd 原生匹配；666wsp 是 CH32V203 刷不了该固件，改动最重 |
 | 软件栈 | B 代 robotd（`.upstream/DuckBuddy-main/`） | kissqy R1 镜像 / 自写飞特 daemon | 镜像是 Radxa 专属，A733 用不了；B 代 robotd 本身就是 A733 平台，且 TOML 审计 R1–R29 已完成 |
@@ -49,7 +49,7 @@ A733 UART7 上限      锁 500k             ⇒ IMU 固件必须 imu-feetech(500
 | **整机合计** | **≈¥2,574–2,653** | 路线 B 原表 ≈¥2,419–2,498，主控从 Radxa ¥205 换 A733 ≈¥360 后 +¥155 | — |
 
 > 数字口径：`docs/hardware/microduck-采购清单.md` §7.5 / §7.9.1；价格按 2026-10-23（舵机/电池）、11-05（A733）、11-06（HAT+IMU 勘误）三段拼接，**不是同日快照**。
-> ⚠️ 「事务 ≤5 ms」是**单颗台架**闸门（URT-2 调试速率下）；整机 16 设备的总线预算是另一回事 —— 500k 下约 10.9 ms / 20 ms（`deploy_import_checklist.md` §B13）。两个量不能互相套。
+> ⚠️ 「事务 ≤5 ms」是**单颗台架**闸门（URT-2 调试速率下）；整机 16 设备的总线预算是另一回事 —— 早期估算 500k 下约 10.9 ms / 20 ms（checklist §B13），**2026-11-06 台架实测校准（N=5）后为 10.28–11.01 ms / 51–55%，最坏档 16.68–17.41 ms / 83–87%（§4.3）**。两个量不能互相套。
 
 ### 1.2 参照系
 
@@ -227,7 +227,7 @@ export.py → ONNX（单文件、initializer 无 EXTERNAL）
 | **G1** | 价格 | 5 颗同步读、零位 <1°、吊架 10 min 无丢包 | 停，回到单颗 |
 | **G2** | 硬件 | 15 舵机 + IMU 200 一次 sync_read 全到；bus 绿、loop **50 Hz 0 missed**；母线 ≥6.6 V 不掉 | 查 H8 上电姿态顺序 / H1 上电顺序 / 配电载流 |
 | **G3** | 硬件 | 上电静止站立、SFLP 收敛 0.5 s；IMU 落脚乱跳判据一轮；H2 方向逐颗核对 | 记入软件修复队列，**不重训** |
-| **G4** | 软件 | 契约三检 + C9 数值 gate + `--selftest` 全绿；ONNX 无 EXTERNAL | 停，不上策略 |
+| **G4** | 软件 | 契约 8 PASS / 数值 gate PASS / 无 EXTERNAL 已在本机预检（§4.3(4)）；bundle 的 B0 metadata 待 publish 产物复核 | 停，不上策略 |
 | **G5** | 软件 | 先站稳 → ≥0.3 m/s 短走 → 不摔、体坐标前向（勿只报世界系 dx） | 先排查 plant / HOME / joint_offsets，不改奖励 |
 
 ### 4.1 G0 现成执行器（2026-11-06 补齐，不另造协议层）
@@ -314,6 +314,84 @@ python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 \
 15 颗同步读。本次 60 s 空载静止、温度全程 25 °C 没升 ⇒ 温升判据**尚未真正受力**。
 `goal` 镜像即时性只在这版固件上验过，换固件要重验。
 
+### 4.3 阶段 0 顺带闭合的两件只读验证（2026-11-06，COM3 / ID 10 / 1 Mbps）
+
+G0 之外，趁舵机在线把两个**早已写好但从未在真机上跑过**的探针跑完。两者都只读、不动扭矩、零成本。
+
+#### (1) 500 kbps 整机总线预算：从纯静态推算变成台架实测校准
+
+`servo_probe/probe_bus_budget.py --selftest` **25/25**；真机 `--port COM3 --id 10 --baud 1000000 --repeats 40`。**同一命令连跑 5 次**（下表是首次、也是最保守的一次）：
+
+| 量 | 首次实测 | 说明 |
+|---|---|---|
+| ping | min 213.9 / p50 239.3 µs | 40 次 0 未答 |
+| read 2 B | min 261.9 / p50 273.9 µs | — |
+| read 15 B | min 412.7 / p50 446.3 µs | — |
+| 差分 13 B | 150.8 µs ⇒ **11.60 µs/字节** | 理论 10.00，比值 **1.16** |
+| 固定开销 | 76.3 µs/包 | 含 USB 批延迟，**不可按设备数外推** |
+
+🔑 **重跑不算验证**：5 次重复的每字节时间落在 **10.58–11.60 µs/B**（比值 1.06–1.16；中位 11.32，mean ± sem = 11.18 ± 0.17），固定开销 76–99 µs/包。USB 批延迟每次都不同，把单次读数写成定值就是假精度。所以 D 段按首次（最保守）列，**G2 判定看区间不看单次**：
+
+| 统计量（N=5） | 每字节 µs | 标称档 ms | 最坏档 ms | 留给推理 ms |
+|---|---|---|---|---|
+| 最小 | 10.58 | 10.28 | 16.68 | 3.32 |
+| 中位 | 11.32 | 10.81 | 17.23 | 2.77 |
+| mean ± sem | 11.18 ± 0.17 | 10.71 ± 0.13 | 17.11 ± 0.12 | — |
+| 最大（最保守） | 11.60 | 11.01 | 17.41 | 2.59 |
+
+方法比数字重要：**跨波特率只能搬「比值」，不能搬绝对时间**（把 1M 的 11.60 µs 直接套到 500k 会低估一半，脚本自检里有这条负对照）。首次读数外推用 `20 µs/B × 1.16 = 23.20 µs/B @500k`。台架 1 Mbps 只是 URT-2 / USB-TTL 这一路的速率，**不能据此认为整机可跑 1M**。
+
+下表按首次读数（ratio 1.16，最保守档）外推：
+
+| 每颗响应间隙 | 读合计 | 每 tick 总线 | 占 20 ms | 留给策略推理 |
+|---|---|---|---|---|
+| 50 µs | 9.15 ms | 10.21 ms | 51% | 9.79 ms |
+| **100 µs（标称）** | 9.95 ms | **11.01 ms** | **55%** | 8.99 ms |
+| 200 µs | 11.55 ms | 12.61 ms | 63% | 7.39 ms |
+| 500 µs（悲观上界） | 16.35 ms | **17.41 ms** | **87%** | **2.59 ms** |
+
+早期估算 10.9 ms 落在 5 次重复的 **10.28–11.01 ms** 区间内（中位 10.81），被实测**证实**；但新信息是最坏档：45 Hz unhealthy 门槛对应 22.22 ms，最坏档仍在门槛内，**却只留 2.59–3.32 ms 给 ONNX 推理 + 控制律 + IPC**；而一次读超时是 30 ms > 一个 20 ms 周期，`MissedTickBehavior::Skip` 不补 ⇒ 任何一次超时吃掉整个 tick。这正是 G2 要测 `50 Hz 0 missed` 的理由，不是「还活着」就够。
+
+三套数字口径不同，**不可混用**：
+
+| 口径 | 字节数 | 500k 下 | 占周期 | 出处 |
+|---|---|---|---|---|
+| 早期净荷估算 | 295 B | 4.7 ms | 24% | IMU 三方对照 §0 |
+| 源码整帧静态（含帧头 6 B/帧 + 53 B 写包，无 gap） | 413 B | 8.26 ms | 41% | `feetech.rs` / `model.rs` 常量解析 |
+| **台架实测校正 + gap 100 µs（N=5）** | 413 B | **10.28–11.01 ms** | **51–55%** | 本节 |
+
+#### (2) 上板成品 TOML 审计：1 FAIL，且现在补不上
+
+`audit_robotd_toml.py --toml out/robotd_hd1910_mode0.toml --expect-kp 16`：schema 白名单从 `lib.rs` 重新推导通过，`gain=200` / `action_scale=1.0` / 两个 lowpass=1.0 / `cells=[2]+max_volts=8.4` / `imu_median=false` / `thermal.walk_max_c=70` 全 ok，**唯一 FAIL 是 `bus.joint_ids` 为空** —— Feetech 总线宁可拒绝打开也不猜关节到 ID 的映射（`main.rs:5495`）。
+
+⇒ 🔴 **这份 TOML 目前加载不了**，是上板前的硬阻塞。`joint_ids` 必须装机后逐颗 `identify_joints.py` 实测再填：B 代 `JOINT_IDS` 是 `20-24 / 30-34 / 10-14`（IMU 200），HD-1910 复刻线是 `1-15`；台架只有一颗 ID 10，只能证明它落在 B 代体系里，**不能**据此推出其余 14 颗。猜错等于「用 A 关节的目标驱动 B 关节」。
+
+顺带澄清 audit 参数：`--expect-kp` 要填**期望的 reg50**（成品写 `position_kp=16` ⇒ 填 16），不是训练 `kp_fw=8`。填 8 会多一条 FAIL，那是把 §3.6 的「配置对齐 ≠ 换 plant」误当成配置错误。
+
+#### (3) 一条会害到上板操作的过时结论，已订正
+
+`deploy_import_checklist.md` B13 与 `probe_bus_budget.py` F 段都写着「改板侧到 1 Mbps ⇒ 15 颗 reg6 一颗都不用写」。那是主控选 **Radxa Zero 3W / RK3566** 时写的；本方案已定 **Orange Pi Zero 3W / A733**，其 UART7 只能精确表示 500 kbps。⇒ **该建议作废**：`BAUD_RATE` 保持 500k，**15 颗必须逐颗把 reg6 从出厂 0 改成 1**，与 `reg33=0` 一起是上板两颗必改。B13、F 段、§0.1 表格已同步改写。
+
+#### (4) G4 策略侧预检：两绿一红，红的那条按部署链判
+
+环境先说清：这几个脚本**必须**用 `microduck-software/.venv-mjlab/Scripts/python.exe`（numpy 2.5.4 / onnxruntime 1.31.0）；系统 Python 缺 numpy / onnxruntime / `mjlab_microduck`，只会报 `ModuleNotFoundError`。
+
+| 检查 | 结果 |
+|---|---|
+| `verify_policy_contract.py --selftest` | 15 条负对照全部按预期变红 |
+| 同上，真策略 `p8head_2999.onnx` + 成品 TOML | **8 项全 PASS**：obs 61 / block order / 14 关节顺序 / home pose 差 0 / command 13 / action mapping scale 1 / 50 Hz / ONNX `obs[1,61]` → `actions[1,14]`，站姿动作幅值上限 0.193 rad |
+| `policy_numeric_gate.py --selftest` | 健康 PASS×2、`deploy61` FAIL |
+| 同上，真策略 | **PASS**：G1 0.3018 / G2 0.4218 / G3 0.2947 / G4 std 0.7735，报告 `out/g4_p8head_2999.json` |
+| ONNX 直接检查 | 793 KB、10 个 initializer **全内嵌、无 EXTERNAL**、输入 `obs[1,61]` / 输出 `actions[1,14]` |
+| `verify_policy_bundle.py --selftest` | 39/39 |
+| 同上，真策略 | **19 checks / 1 FAIL**：B0 `no metadata_props` |
+
+⚠️ **不要把这个 1 FAIL 抹成全绿**。`p8head_2999.onnx` 是训练直出的 checkpoint，没有 `metadata_props` 布局契约；其余 18 项全 ok（含 A8 权重内嵌、C4 归一化下限 0.01289、R1–R3 输出有限且会随输入变化、D1/D3 缩放与低通）。同一份检查也写明 `E0 manifest none given (this robotd never reads one)` —— 这代 robotd 不读 manifest，`publish` 的 manifest 字段一个都不生效，对 ONNX 只有两个宽度检查（末维 61/14）。⇒ **判决：B0 不构成当前部署链的阻塞，但 G4 不能写成「全绿」**；`publish` 之后必须对**发布产物**重跑 bundle 检查，而且只要 obs 曾经重排，缺 metadata 就没人能发现，这条风险要留着。
+
+C9 再次被现场印证：照搬 esp-duck 的 `maxabs ≤ 2% of S` 会**误杀这份健康策略**（站姿约为 2%S 的 5 倍，`standing_passes=false`），却放行 `deploy61`。
+
+两个边界：契约检查**不覆盖** `joint_ids`（那是 (2) 的 audit 唯一 FAIL），也不覆盖躯干坐标系 / 符号 / 零位（B3、B4 台架项）；运行时有一条 `[WARN] Failed to load task package mjlab_microduck ... circular import`，脚本仍给出训练侧数值并判全绿，换环境要重跑确认。
+
 ---
 
 ## 5. 仍未闭合的边界（不写成定案）
@@ -328,6 +406,9 @@ python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 \
    空载静止、温度 25→25 °C 没升，55 °C 闸门尚未真正受力）、③ 7.4 V 电压域（本次 4.5 V
    欠压）、④ 15 颗同步读（G2）。另外 `goal` 镜像即时性只在**这版固件**上 `ok`，换固件要重验；
    `--write-goal-echo` 若失败，先记 firmware 版本再判，别直接改阈值放行。
+8. **上板 TOML 的 `joint_ids` 未填**（§4.3(2)，audit 唯一 FAIL）：必须装机后逐颗实测，
+   现在填就是猜。另外总线最坏档只留 **2.59–3.32 ms** 给推理，ONNX 在 A733 上的实测耗时还没有，
+   G2 之前不能只按「45 Hz 门槛内」判安全。
 
 ---
 
@@ -337,5 +418,5 @@ python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 \
 |---|---|
 | 价格 | `docs/hardware/microduck-采购清单.md` §7 / §7.5 / §7.9.1 / §9；`docs/active/microduck-板子设计备忘.md` §5.4；`docs/archive/microduck-低成本方案.md` §阶段 0 |
 | 硬件 | `docs/hardware/microduck-硬件清单-详细接线版.md` §1–§9；`docs/hardware/microduck-IMU三方对照-666wsp-kissqy-DuckBuddy.md` §0 / §0.5 / §5；`docs/hardware/microduck-IMU板对照-666wsp-vs-DuckBuddy.md` §4–§6；`docs/hardware/microduck-供电接线图.svg` / `microduck-分线板设计图.svg`（已降为备用） |
-| 软件 | `microduck-software/tools/hd1910/deploy_import_checklist.md` A/B/H/C/D/E 全段；`microduck-software/tools/hd1910/audit_robotd_toml.py` R1–R29；`microduck-software/tools/hd1910/sts_bench.py`（G0 五闸门 + 负对照）；`microduck-software/tools/hd1910/servo_probe/hd1910_ident.py`（56..70 寄存器表）；`docs/reference/microduck-软件到硬件全链路资料地图-2026-11-06.md` §2；`docs/reference/microduck-未核实项核查报告-2026-11-06.md` §2 / §3 / §5 |
+| 软件 | `microduck-software/tools/hd1910/deploy_import_checklist.md` A/B/H/C/D/E 全段；`microduck-software/tools/hd1910/audit_robotd_toml.py` R1–R29；`microduck-software/tools/hd1910/sts_bench.py`（G0 五闸门 + 负对照）；`microduck-software/tools/hd1910/servo_probe/hd1910_ident.py`（56..70 寄存器表）；`docs/reference/microduck-软件到硬件全链路资料地图-2026-11-06.md` §2；`docs/reference/microduck-未核实项核查报告-2026-11-06.md` §2 / §3 / §5；`microduck-software/tools/hd1910/servo_probe/probe_bus_budget.py`（25/25 自检 + §4.3 台架实测）；`microduck-software/out/robotd_hd1910_mode0.toml`（§4.3 审计对象）；`verify_policy_contract.py` / `verify_policy_bundle.py` / `policy_numeric_gate.py`（§4.3(4) G4 预检） |
 | 上游源码 | `.upstream/DuckBuddy-main/`（`feetech.rs` / `model.rs` / `obs.rs` / `lib.rs`）、`.upstream/community-kit/`（KiCad + `boot_regs.c`）、`.upstream/replica/`（`directions.json`）、`.upstream/kissqy/`（`imu-source/src/main.c`）、`.upstream/666wsp-microduck-hd1910/`（原理图 PDF） |
