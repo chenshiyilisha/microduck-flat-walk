@@ -114,7 +114,16 @@ BOM 全目录 33 项的实体合计 **42 是「主目录」（含两套踝件与
 | 站起策略 | — | `roller_standup`：站高目标 `ROLLER_STAND_Z=0.138`（实测 0.1407 收口），腿关节索引 `[0-4, 11-15]`，已由 `test_roller_standup_cfg.py` 锁死（无轮模型的 `[0-4,9-13]` 索引在轮滑模型上会指到轮子，勿照抄） | `software/training/docs/roller_standup_policy_summary.md:15,27` |
 | 可用策略 | walking 系 | `roller` / `roller_crouch` / `roller_spin` / `roller_standup` / `roller_swizzle` | `pretrained_models.json` |
 
-部署链不变：`export.py`→ONNX→`infer_policy.py`→`publish`→`robotctl policy load`（obs 61 / act 14 / 50 Hz 相同），仅策略名与 `action_scale` 变。两版主板（Radxa UART 1M / Orange Pi 500k）在轮滑变体上**无任何额外改动**——机械件、固件协议、上电校验清单全部沿用。
+部署链不变：`export.py`→ONNX→`infer_policy.py`→`publish`→`robotctl policy load`（obs 61 / act 14 / 50 Hz 相同），仅策略名与 `action_scale` 变。
+
+**⚠️ 线别警示（读数矛盾清算后口径，详见验收清单 §6）**：轮滑变体不切机器人线——装机排错时**先判线别再查表**：
+
+| 线别 | 主控/协议 | 开机硬校验内容 | 文档来源 |
+|---|---|---|---|
+| **本机器人（hd191m 线，Radxa + HD-1910）** | HD-1910 原生 FT-SCS | **不查 EEPROM reg6/reg33/reg9/reg11**；校验固件元数据快照 `row[0]==3 … row[33]==4`（"HD1910M mode-4"） | `robotd`：`hd191m/microduck` |
+| DuckBuddy 线（Orange Pi A733 + HL-2915 + feetech_hls/500k） | feetech_hls | EEPROM reg6=1 / reg33=0 / reg9=0 / reg11=4095（`checked, not corrected`） | `DuckBuddy-main` robotd |
+
+**两线 JSON 配置不通用**（hd191m 键为 `reference_native/installation/imu_bus/servo_gain_profile`；DuckBuddy 键为 `[bus] servo` 等）：串用 = 电机乱躦。两版主板（Radxa UART 1M / Orange Pi 500k）在轮滑变体上**无任何额外改动**——机械件、固件协议、上电校验清单全部沿用"本机器人线"。
 
 ---
 
