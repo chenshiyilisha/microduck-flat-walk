@@ -94,19 +94,35 @@ _本清单是**拿到硬件后**的逐项验收，每条都有明确的 **PASS /
 
 > 这部分是**软配置硬约束**，错一个会导致电机不转 / 误驱动 / 配置整份加载失败。
 
-### 6.1 开机硬校验（checked, not corrected）
-robotd 开机读 EEPROM 并校验以下寄存器，不符只告警不纠正：
+### 6.1 开机硬校验（HD-1910 线：固件元数据快照，非 EEPROM 寄存器）
 
-| 寄存器 | 期望值 | 台架实测值 | 处置 |
-|---|---|---|---|
-| reg6 | **1** | 台架 0 | **必改**（写 1） |
-| reg33 | **0** | 台架 4 | **必改**（写 0） |
-| reg9 | 0 | 0 | OK |
-| reg11 | 4095 | 4095 | OK |
+> ⚠️ **2026-11-06 清算更正版**：本段此前写的"reg6=1/reg33=0/reg9=0/reg11=4095 硬校验、必改"是**照抄 DuckBuddy 线（Orange Pi A733 + HL-2915 + feetech_hls/500k）robotd 的 EEPROM 检查**。**本机器人板的 Radxa 跑的是 hd191m/microduck 线 robotd**（HD-1910 原生 FT-SCS 协议），它**不清不写 EEPROM 的 reg6/reg33/reg9/reg11**。两套期望值不是同一机器人，**不可混用**。
 
-→ PASS：`robotd` 启动日志校验项全部 `checked, not corrected` 且无 `MISMATCH` 致命报错。
+**HD-1910M line（机器人实际使用）启动校验**（源码 `duck-control/src/feetech.rs: open_with_imu`，逐行核对）：
 
-### 6.2 部署档 / 总线配置
+开机读一个 `sync_read(0, 40)` 的**固件元数据快照**（非 EEPROM、非寄存器映射），校验下述字段，不符 = `unverified HD1910M mode-4 firmware/registers` 直接启动失败：
+
+| 快照字段 | 期望值 | 含义 |
+|---|---|---|
+| row[0] | **3** | 固件模式标记 |
+| row[1] | ∈ [40, 59] | 固件参数区 |
+| row[2..5] | **[0, 10, 31]** | 版本/型号三元组 |
+| row[5] | == 该舵机 ID | ID 回读一致性 |
+| row[8] | ≠ 0 | 上电标志 |
+| row[30] | **1** | 固件兼容性位 |
+| row[33] | **4** | **HD1910M mode-4**（固件模式，MEMORY「mode=4 关不掉扭矩」正源于此） |
+| 行程 low/high | low < high ≤ 4095 | 机械行程窗口（真实堵点 1213/2816 由 ** installation.json 标定**，不走 EEPROM） |
+
+→ PASS：robotd 启动日志无 `unverified HD1910M mode-4 firmware/registers`、无 BUILD FAILED 后退出。若出现该报错 ⇒ 舵机固件/标定文件不匹配，**不要按 DuckBuddy 表写 EEPROM**。
+
+**对照保留（DuckBuddy / HL-2915 线，仅别处使用）**：那台 robotd 的期望是 reg6=1（500k）、reg33=0（mode=位置）、reg9=0/reg11=4095，且是**只读校验不纠正**（RAM 写只有 GOAL_CURRENT/SPEED/ACCEL/KP/KD/Torque0）。两线 JSON 参数混合 = 电机乱躦，判错无效。
+
+### 6.2 部署档 / 总线配置 —— ⚠️ 先确认机器人走哪条 robotd 线
+
+本节表格沿用的是 **DuckBuddy 线（feetech_hls）键名**。HD-1910 的 hd191m 线 robotd（FT-SCS 原生，1 Mbps）参数结构为 `{reference_native, port, installation, imu_bus, imu_address, allow_motion, servo_gain_profile, scheduled_bus}`——**键名完全不同**。装机前照 §6.1 先判定线别。
+
+**DuckBuddy 线（feetech_hls）键**：
+
 | 键 | 取值 | 说明 |
 |---|---|---|
 | `[bus] servo` | `"feetech_hls"` | **无 `protocol` 键**；缺 `joint_ids` 总线拒绝打开 |
