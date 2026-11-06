@@ -242,8 +242,9 @@ python microduck-software/tools/hd1910/sts_bench.py --selftest
 python microduck-software/tools/hd1910/sts_bench.py --dry-run
 
 # 有硬件：URT-2 + 1 颗，先插 USB 后上电，三档开关拨 5V
-python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 1 --soak-seconds 60
-python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 1 \
+# ⚠️ 本机台架这颗 2026-11-02 已改成 ID 10；出厂新舵机才是 1
+python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 --soak-seconds 60
+python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 \
     --soak-seconds 3600 --write-goal-echo --out out/g0_1h.json
 ```
 
@@ -272,6 +273,47 @@ python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 1 \
 不是矛盾；把 0.5 照搬到整机会把正常的 `position_kp=16` 误判成 FAIL、进而误导成「换 plant
 要重训」。
 
+### 4.2 首次真机 G0 结果（2026-11-06，COM3 / CH343 / 1 Mbps / ID 10）
+
+先扫 ID × 波特率定位：**1 Mbps 下只有 ID 10 应答**，500k / 115200 / 57600 / 9600 全无
+⇒ 供电与接线都正常，错的只是脚本默认 `--id 1`（出厂口径）。改 `--id 10` 后：
+
+| 闸门 | 实测 | 判定 |
+|---|---|---|
+| 0.1 ping | ID 10 @ 1M 应答 | PASS |
+| 0.2 50 Hz × 100 | median **1.75 ms**、p95 1.91 ms、0 错误（预算 5 ms，余量 2.9×） | PASS |
+| 0.3 遥测 | **4.5 V** / 25 °C / pos_raw 1751 / load_raw 0 / cur_raw 4 / `goal_echo=ok` | PASS |
+| 0.4 60 s × 3000 帧 | median 1.62 ms、p95 1.92 ms、**0 错误**、温度峰值 **25 °C**（全程不升） | PASS |
+| 0.5 reg50 | **P = 8** | PASS |
+
+报告 `out/g0_60s.json`（`out/` 被 gitignore，不入库）。`--selftest` 12/12 先跑过。
+
+**同一次上电的 EEPROM/RAM 只读扫描（ID 10）**：
+
+| 项 | 值 | 对方案的含义 |
+|---|---|---|
+| reg5 / reg6 | **10** / **0 = 1 Mbps** | 台架是 1M；整机 B 代 robotd 写死 500k ⇒ 上板要改 reg6=1 |
+| reg33 mode | **4** | robotd 硬校验要求 0 ⇒「两颗必改」里的第二颗，实证坐实 |
+| reg9 / reg11 | 0 / **4095** | 硬校验已合格（16 位读全，不是低字节 255） |
+| reg19 / reg13 | **13** / 80 °C | 保护位已是目标值（电压+过热+过流，无过载位 32） |
+| reg21 / reg50 / reg55 | **8 / 8 / 1** | EEPROM 与 RAM 都是 8、锁已上 ⇒ **0.5 是真 PASS，不是恰好没 FAIL** |
+| reg40 / reg42 / reg56 / reg67 | **1** / 1751 / 1751 / **1751** | ⚠️ 扭矩本来是开的；goal、位置、镜像三者一致 ⇒ 原样回写不产生位移。脚本旧文案「不开扭矩」不准确，已修 |
+| reg48 / reg69 | 1000 / 0 | 空载力矩上限与电流读数合理；脚本注释里「reg69 读到 16000 量级」是特定工况，不能当常态，仍只记录不判 |
+
+**三条结论**：
+
+1. **G0 过了，阶段 0（¥0）收口** ⇒ 可以进 G1（买 5 颗做单腿同步读与零位）。**不需要重训**。
+2. **台架与整机的口径差有了实证**：台架 `1M / mode4 / P8 / 4.5 V`，整机
+   `500k / mode0 / position_kp=16 / 7.4 V`。§3.6 那张「54% vs 92%」的表不是推的 ——
+   `reg33=4` 坐实了 mode 差。上板第一件事按 §3.3 改 reg6 与 reg33 并回读生效值。
+3. ⚠️ **4.5 V 欠压**（低于额定 4.8 V）：kp8 / duty / 齿隙 / 饱和 onset 全是欠压读数，
+   不能外推；这个电压下 robotd 也起不来（`identify_pack` 判 2.25 V/cell < 2.95 V 下限）。
+   G1 之前要么换 7.4 V 供电，要么明确标注「仅通信链路验证，不作动力学证据」。
+
+**仍未跑**：1 h 长跑（`--soak-seconds 3600`，需另开终端）、**带载温升**、7.4 V 电压域、
+15 颗同步读。本次 60 s 空载静止、温度全程 25 °C 没升 ⇒ 温升判据**尚未真正受力**。
+`goal` 镜像即时性只在这版固件上验过，换固件要重验。
+
 ---
 
 ## 5. 仍未闭合的边界（不写成定案）
@@ -282,9 +324,10 @@ python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 1 \
 4. **`banana_pcb` 3–5 A 上限**与整机 30 A 峰值设计的差距：站起/跌倒恢复压降需上板实测。
 5. **`position_kp = 16` 分支**的电流/发热代价：这颗舵机 `reg60` 恒 0、`reg62` 会拼进温度，电流回读坏，只能用真机 per-joint 温度验收。
 6. 官方 3D 模型衍生件带 **CC BY-NC-SA 4.0** 非商用限制，不满足 OSHWA 开源硬件定义；打印件不等于可制造套件。
-7. **G0 脚本只在合成总线上验过**：`--selftest` 12/12 与 `--dry-run` 全绿只证明门禁逻辑有效，
-   **不是台架证据**。真机 URT-2 的帧时序、`goal` 镜像是否即时更新、60 s 长跑的实际温度曲线
-   都还没跑；`--write-goal-echo` 若在某版固件上失败，先记 firmware 版本再判，别直接改阈值放行。
+7. **G0 真机已过（§4.2），但四条仍未闭合**：① 1 h 长跑、② **带载温升**（本次 60 s
+   空载静止、温度 25→25 °C 没升，55 °C 闸门尚未真正受力）、③ 7.4 V 电压域（本次 4.5 V
+   欠压）、④ 15 颗同步读（G2）。另外 `goal` 镜像即时性只在**这版固件**上 `ok`，换固件要重验；
+   `--write-goal-echo` 若失败，先记 firmware 版本再判，别直接改阈值放行。
 
 ---
 

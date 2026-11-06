@@ -43,6 +43,14 @@ With hardware
 -------------
 Pass ``--port COMx`` (Windows) or ``/dev/ttyUSBx`` (``pip install pyserial``).
 We do **not** vendor the FTServo SDK in-tree.
+
+⚠️ ``--id`` 默认 1 是**出厂新舵机**口径。本机台架这颗在 2026-11-02 已改成
+**ID 10**（见 ``docs/active/microduck-HD1910软件方案.md`` 行 1315 的 EEPROM 备份），
+跑真机要显式 ``--id 10``；不确定就先按 1 Mbps 扫 ID。
+
+2026-11-06 首次真机（COM3 / CH343 / 1 Mbps / ID 10 / 60 s）：五闸全绿，
+0.2 median 1.75 ms、0.4 3000 帧 0 错误且温度 25→25 °C、0.3 ``goal_echo=ok``、
+0.5 ``reg50=8``。报告 ``out/g0_60s.json``（``out/`` 被 gitignore，不入库）。
 """
 from __future__ import annotations
 
@@ -70,8 +78,11 @@ BAUD_1M = 1_000_000
 # —— P8 在 kp8 上 vx 0.2069、P5 线只有 0.1129，且 P8 在 kp5 上 7/8 摔（无降级模式）。
 # 台架读数只有对齐 reg50=8 才代表部署。与 `servo_probe/hd1910_ident.py:127` 的
 # KP_FW_DEPLOY = 8 同源，别让两份工具各说一个数。
-# 本机实测（2026-11-01，出厂 ID 1）：reg21=32、reg50=32 —— 还没改。
-# 所以闸门 0.5 在真机写 P 之前会 **正确地** 报 FAIL；这不是 bug，是提醒。
+# 2026-11-01 曾实测出厂 ID 1 的 reg21=32 / reg50=32；之后用
+# `set_gains_all.py --persist` 改过台架这颗（现 ID 10）。
+# ✅ 2026-11-06 真机回读：reg21=8（EEPROM）、reg50=8（RAM）、reg55=1（锁已上），
+#   断电后仍是 8 ⇒ 0.5 现在是真 PASS，不是「恰好没 FAIL」。
+# 若换一颗没改过的舵机，0.5 仍会**正确地**报 FAIL；那不是 bug，是提醒。
 KP_FW_TARGET = 8
 KP_FW_FACTORY_ROM = 32
 TXN_BUDGET_MS = 5.0  # gate 0.2: one sync txn on the URT-2 bench
@@ -372,8 +383,10 @@ def gate_03_telemetry(
 
     位置用原始 12 位值判物理上下界，不依赖 signed_mag/load_mag 解码；
     负载/电流**只记录不判**（台架读数坏，见模块 docstring）。
-    ``write_goal_echo`` 把当前位置原样写回 goal 再读镜像 —— 不开扭矩、不产生
-    位移，因此不触发 H8 的 15 颗 inrush，却验证了「写指令确实生效」。
+    ``write_goal_echo`` 把当前位置原样写回 goal 再读镜像 —— **不改 reg40**
+    （2026-11-06 真机实测 reg40=1，扭矩本来就是开的；因为目标 == 当前位置，
+    仍不产生位移），与 H8 的「15 颗同时上扭矩 inrush」不是同一件事，
+    却验证了「写指令确实生效」。前提：单颗静止台架，位置在动时别开这个选项。
     """
     try:
         blk = bus.read_block(servo_id, REG_TELEM, TELEM_LEN)
@@ -655,8 +668,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="no serial, synthetic pass (default if --port omitted)",
     )
-    ap.add_argument("--port", default=None, help="URT-2/URT-1 serial port, e.g. COM5")
-    ap.add_argument("--id", type=int, default=1, help="servo ID (default 1)")
+    ap.add_argument("--port", default=None, help="URT-2/URT-1 serial port, e.g. COM3")
+    ap.add_argument(
+        "--id", type=int, default=1,
+        help="servo ID (default 1 = factory; this lab's single servo is ID 10)",
+    )
     ap.add_argument("--samples", type=int, default=100, help="txn samples for gate 0.2")
     ap.add_argument(
         "--soak-seconds",
