@@ -110,13 +110,18 @@ board_ref();
 // CHECKLIST — 打印 / 装机前必须核对 (逐项填实后再出 STL)
 // ----------------------------------------------------------------------------
 // [ ] 1. BOARD_R: 打开官网 "产品详细图 / 正面视图", 量板四角倒圆半径, 改 BOARD_R.
-// [ ] 2. 安装孔: 确认 Orange Pi Zero 3W 是否有孔 + 坐标; 若有, 把 standoffs 改为真实孔位,
-//        并把 screw_d 对齐 (M2 还是其他). 若无孔, 当前四角摩擦+支柱方案可用, 但需实测紧固.
+// [ ] 2. 安装孔: 第三方评测确认 Orange Pi Zero 3W 与 Pi Zero 2W "identical hole spacing" (孔距一致),
+//        板宽仅差 2mm (65x32 vs 65x30). 作者 CAD 的板模型是 Pi Zero 板型 (实机 Radxa Zero 3W).
+//        => 机械层大概率免改; 本载板仅在 trunk_base 卡位放不下 32mm 板时才需要.
+//        若要用真实孔位: 把 standoffs 改到 Pi Zero 四孔坐标, 并确认 Orange Pi 孔数/孔径 (待实物核).
+//        无孔时当前四角摩擦+支柱方案可用, 但需实测紧固.
 // [ ] 3. 机身接口: 拉取 fanhao375/microduck-replica-cad Releases 的 SolidWorks-FT2026-10-20.zip,
 //        读原 RPi 托架的螺接位, 据此定 lugs 的位置/数量/孔径, 使本载板能拧到飞特版躯干.
 // [ ] 4. 接插件禁布: 若后续要加侧开口 (Mini HDMI/USB-C/TF/CSI/PCIe), 依官方顶视图补 cutout,
 //        位置坐标填到对应 translate 处.
-// [ ] 5. HAT 决策: 确认是否保留 RPi 形态 HAT. 若保留, 需另做 40-pin 转接载板 (引脚不兼容),
-//        本载板届时改为承载"转接载板"而非直接固定 Orange Pi.
+// [ ] 5. HAT 决策(真正的不兼容在电气层, 不在机械): Orange Pi 40-pin 定义 != RPi => 树莓派机器人HAT
+//        不能直插. 三条出路见 docs/hardware/microduck-飞特版3D打印件-OrangePi适配清单-2026-11-06.md §3:
+//        A 主板改回 Radxa Zero 3W (与作者 CAD 完全对齐, 零机械改动) / B 重做 HAT 接口 / C 绕开 HAT
+//        用 URT2 + imu_to_dxl 小板. 选 A 则本载板不需要; 选 B/C 则本载板直接固定 Orange Pi.
 // 渲染: OpenSCAD 打开本文件 -> Design -> Render -> Export STL. 无需本机装 CAD 即可由你本地渲染.
 // ============================================================================
