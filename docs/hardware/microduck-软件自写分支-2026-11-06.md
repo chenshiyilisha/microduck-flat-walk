@@ -77,10 +77,80 @@
 4. `robotctl policy load walk p8head_2999.onnx` 热挂自己的模型。
 5. 真机 G0–G5 沿用本仓 `sts_bench.py` / `probe_bus_budget.py` / `verify_policy_contract.py` / `policy_numeric_gate.py`（均已有 selftest 负对照）。
 
+### 4.1 2026-11-06 实测：把「8 PASS」升级成官方口径，并查清 duck-sim / WSL
+
+#### 4.1.1 `duck-sim` 本机跑不了；WSL2 能跑，但**验不了本分支真正要改的东西**
+
+| 项 | 结论 | 依据 |
+|---|---|---|
+| 本机直跑 | ❌ | 无 `cargo` / `rustc`（`~/.cargo/bin` 也不存在）；无官方 workspace 全量 checkout；`scripts/duck-sim` 是 `#!/bin/sh`，要 `setsid`、`.venv/bin/python`、`libonnxruntime.so`，Windows 侧只有 `.dll` |
+| 本机 WSL 是否可用 | **未验证** | `wsl.exe` 被本机安全策略列入黑名单，命令被拒；按纪律不重试、不绕过，故**不写成定案** |
+| WSL2 跑 `up` 模式 | ✅ 技术上可行 | 官方 `docs/design/simulation.md` §3：body 走 **TCP 7801** 而非 unix socket，理由就是「a container on Linux, **a Linux VM with MuJoCo**」⇒ VM/WSL 是被设计支持的 |
+| 需要 GUI 吗 | 不需要 | `DUCK_SIM_VIEWER=0` 触发 `--headless`（`docs/robot/simulation.md:168`）；WSLg 的 X11/Wayland + vGPU OpenGL 只是可选项（Microsoft Learn：需 WSL2 + Win10 19044+/Win11 + vGPU 驱动） |
+| `boot` 模式 | ⚠️ 另加条件 | 需要 `sudo` + `systemd-nspawn` + `mmdebstrap`；WSL2 需 `/etc/wsl.conf` 开 `systemd=true`。用 `up` 即可绕开 |
+| 跑起来还缺什么 | — | 605 文件官方 workspace、Rust 工具链（`cargo build -p robotd -p robotctl -p tof -p sounds -p configd -p updater`）、`microduck_rl` 的 `uv sync` venv、首次联网取 `velstand.onnx` |
+
+🔴 **决定性边界**：官方 `docs/design/simulation.md` §7 原文 *Absent — not exercised at all: the Dynamixel bus driver … A servo bus dropping reads. The twin would have caught **none** of them.* `duck-sim` 用 `duck_control::sim::RemoteIo` **整条替换了舵机总线**。⇒ 它验不了 §3 要自己写的三个文件（`bus.rs` 的 `0x82`/addr56/15 B、`imu.rs` 的 15 B 飞特人格、`model.rs` 的 reg6/33 校验），也验不了 Radxa 1M 下的 16 设备时序与丢包。它能验的是「官方守护进程 + `p8head_2999` 能否站起 / 走、`policy load`、IPC、50 Hz 控制环、updater」——这部分有价值，但**不是飞特适配的证据**。真要装 WSL，用 `up` + headless，并显式 `action_scale = 1.0`。
+
+#### 4.1.2 契约脚本升级（`verify_policy_contract.py`）
+
+原先硬编码只读 B 代 `.upstream/DuckBuddy-main`。本轮新增 `--upstream <源码根>` 与 `--rehearsal`，把四个 Rust 文件全部改为按源码根解析；`_display()` 修掉源码树在仓库外时 `relative_to(ROOT)` 抛错。**并修掉一个会漏判的盲点**：`check_action` 原把「TOML 省略 `[policy] action_scale`」当成默认 1.0 放行，而官方与 B 代源码都是 `Mode::Walk => 0.9`。现在 `default_action_scale()` 直接从 `robotd-params/src/lib.rs` 的 `unwrap_or(match self.mode {...})` 读；读不到就判 FAIL，不静默假设。
+
+`--selftest` 从 15 条扩到 **19 条**（新增：源码默认值 ==0.9、省略键 +0.9 ⇒ 必须红、显式 1.0 ⇒ 必须绿、默认值读不到 ⇒ 必须红）。**B 代与官方两棵源码树各跑一次，均 19/19 全绿。**
+
+#### 4.1.3 四组实测（`p8head_2999.onnx`，`.venv-mjlab` 的 numpy/onnxruntime）
+
+| 组 | `--upstream` | `--toml` | 结果 |
+|---|---|---|---|
+| A 回归 | B 代（默认） | 本仓 `robotd_hd1910_mode0.toml` | **8/8 PASS**（原结论保持） |
+| B 官方默认 | `out/official-main` | 官方 `deploy/robotd.toml` | **7 PASS + 1 FAIL** |
+| C 官方 + 显式 1.0 | `out/official-main` | 官方 TOML 加 `action_scale = 1.0` | **8/8 PASS** |
+| D 官方默认 + 预演 | `out/official-main` | 官方 `deploy/robotd.toml` | 1 FAIL + 预演量化 |
+
+B 组唯一红：*`toml omits [policy] action_scale -> robotd default 0.9`*。**这正是上一轮 §5.1 那条口径差的实证**，且它不是「全绿」——按项目纪律，一个能变红的检查比全绿更有证据力。C 组把唯一的红修掉后，官方口径下 **obs 61 / 14 关节序 / HOME 逐位 / 命令块拆分 / 50 Hz / ONNX 图全绿**，⇒ §3.2「`p8head_2999` 不必移植发布链、不重训」从 B 代口径升级为**官方源码口径实证**。
+
+#### 4.1.4 官方 vs B 代：逐项核，不只比一个文件
+
+| 项 | 结果 |
+|---|---|
+| `duck-control/src/obs.rs` `//!` 布局表 | **逐行 diff 为空**（61 / 13 / 六块 + 命令块拆分 [3,4,2,1,1,1,1]） |
+| `DEFAULT_POSITION` | **逐行 diff 为空**（HOME 逐位 max \|diff\| = 0） |
+| `JOINT_NAMES`（14 策略关节） | **逐行 diff 为空** |
+| `JOINT_IDS` | 数值相同 `20-24 / 30-34 / 10-14`，但**定义位置不同**：官方在 `duck-ipc-proto/src/lib.rs:652`，B 代在 `duck-control/src/model.rs:16` ⇒ 只 grep 一个路径会误判成「B 代没有 ID 表」 |
+| `action_scale` 默认 | 两棵树都 `Walk => 0.9 / Roller => 0.8`；`deploy/robotd.toml` 里 `# action_scale = 0.9` 是**注释**，TOML 解析器根本看不到这个键 |
+| `control.hz` | 官方源码 `impl Default for Control` = 50；官方 TOML 显式写 `hz = 50` |
+
+#### 4.1.5 ONNX 站姿预演（PC 侧替代 duck-sim 的静态部分，`--rehearsal`）
+
+| 量 | 实测 | 作用 |
+|---|---|---|
+| `stand \|a\|max` | **0.1930 rad**，finite | 站姿动作有界，obs 没被读错 |
+| 重力块翻转 `[0,0,-1]→[0,0,+1]` 后 `\|Δa\|` | **2.6785 rad** ⇒ SENSITIVE | **负对照**：输出确实随 obs 动，不是常数图 |
+| `a[0:4]` | `[-0.0952, 0.131, -0.0134, 0.044]` | 量级可复核 |
+| 官方默认 0.9 的目标误差 `\|a·(1−0.9)\|` | **0.0193 rad = 1.11°**（峰值关节） | 把「步态偏软」量化成具体角度 |
+| 显式 1.0 后 | 0.0000 rad | 配置对齐即闭合 |
+
+⚠️ 这是**图 + 输入敏感性检查，不是动力学仿真**：没有 MuJoCo、没有 50 Hz 闭环、没有 BAM 执行器。`policy load` 只查宽度不查语义，真机稳态仍要上板验。
+
+#### 4.1.6 复现
+
+```bash
+V=microduck-software/.venv-mjlab/Scripts/python.exe
+S=microduck-software/tools/hd1910/verify_policy_contract.py
+ONNX=artifacts/flat_walk/checkpoints/p8head_2999.onnx
+$V $S --selftest --upstream out/official-main              # 19/19
+$V $S --upstream out/official-main --onnx $ONNX \
+      --toml out/off_robotd.toml --rehearsal              # 7 PASS + 1 FAIL
+$V $S --upstream out/official-main --onnx $ONNX \
+      --toml out/official_robotd_scale1.toml --rehearsal  # 8/8 PASS
+```
+
+`out/official-main/` 是按官方目录结构摆的 4 个 Rust 文件镜像树（GitHub `main` 分支 raw 拉取），`out/official_robotd_scale1.toml` 是官方 TOML 只改一处加 `action_scale = 1.0`；两者都在被 gitignore 的 `out/`。原始输出见 `out/contract_official_default.txt`、`out/contract_official_scale1.txt`、`out/contract_official_09_rehearsal.txt`。
+
 ## 5. 必须先解决的口径差（别只报好消息）
 
-1. 🔴 **`action_scale`**：官方 walk 默认 **0.9**，本仓训练/评估与成品 TOML 是 **1.0**。加载后必须显式写 `[policy] action_scale = 1.0`，否则输出被缩放 10%，症状像「步态偏软」而不是报错。这是配置对齐，不是换 plant。
-2. 🔴 `robotctl policy load` **只查宽度、不查 obs 语义**。61/14 相同只是必要条件；8 PASS 是静态契约，真机稳态仍要验。
+1. 🔴 **`action_scale`**：官方 walk 默认 **0.9**，本仓训练/评估与成品 TOML 是 **1.0**。加载后必须显式写 `[policy] action_scale = 1.0`，否则输出被缩放 10%，症状像「步态偏软」而不是报错。这是配置对齐，不是换 plant。**§4.1 已实证**：官方源码 + 官方 TOML 实测 7 PASS / 1 FAIL，唯一的红正是这一条；显式写 1.0 后 8/8 PASS。默认 0.9 让峰值关节目标偏 **0.0193 rad = 1.11°**。⚠️ 官方 `deploy/robotd.toml` 里那行是**注释**（`# action_scale = 0.9`），TOML 解析器看不到键，别以为「文件里写了 0.9」就等于已配置。
+2. 🔴 `robotctl policy load` **只查宽度、不查 obs 语义**。61/14 相同只是必要条件；§4.1 的 8 PASS 已是**官方源码口径**的静态契约，真机稳态仍要验。
 3. ⚠️ **总线三条线的速率与指令别混**：官方主仓（XL330）1M + `0x8A`；kissqy R1（HD-1910）1M + `0x82`；B 代 A733（HD-1910）500k + `0x82`。本分支走 **Radxa 1M + `0x82`**，整机 16 设备 @1M 的预算要**重测**（本仓 `probe_bus_budget.py` 的 10.28–17.41 ms 是 1M 单颗实测再外推到 500k，不能直接套）。
 4. ⚠️ `fast_sync_read` 官方默认开，HD-1910 不实现 `0x8A`。官方注释明写 *a device that does not implement 0x8A does not answer, so every read fails* ⇒ 必须关。本仓 `probe_sync_read.py` 已在 ID 10 上验过「0x8A 沉默 / 0x82 应答」。
 5. ⚠️ `EXPECTED_REGISTERS` 的 DXL `baud_rate=3` 是 **Dynamixel 编码**，套到 Feetech 会写成 128 kbps 直接失联；开机硬校验要整个换成 B 代口径。
@@ -104,7 +174,8 @@
 | 内容 | 出处 |
 |---|---|
 | 许可、默认分支、文件树 605 项 | GitHub API `repos/pollen-robotics/microduck`（`main` / Apache-2.0）、`git/trees/main?recursive=1`；`repos/pollen-robotics/elec_RPI_Robot_HAT`（Apache-2.0） |
-| 守护进程架构、模拟器、开发链 | 官方 `README.md`、`docs/design/architecture.md`、`docs/robot/install-dev.md`、`docs/robot/simulation.md` |
+| 守护进程架构、模拟器、开发链 | 官方 `README.md`、`docs/design/architecture.md`、`docs/robot/install-dev.md`、`docs/robot/simulation.md`、`docs/design/simulation.md` §3 / §7、`scripts/duck-sim`（`out/official/`） |
+| WSL2 GUI / systemd 平台能力 | Microsoft Learn《Run Linux GUI apps on WSL》（WSL2 + WSLg X11/Wayland + vGPU OpenGL，需 Win10 19044+ / Win11）；本机 `wsl.exe` 被安全策略拒绝 ⇒ **本机是否装 WSL 未验证** |
 | 总线 / IMU / 模型 / obs 常量 | 官方 `duck-control/src/{bus,imu,model,obs}.rs`、`duck-ipc-proto/src/lib.rs:652`、`deploy/robotd.toml`（713 行） |
 | 交叉编译与 dev-push | 官方 `.cargo/config.toml`、`scripts/dev-push.sh`；deepwiki `9.3 Developer Workflow` |
 | 许可分项、fork 分支、镜像组成 | fanhao375 `software/image/README.md`；GitHub API `repos/fanhao375/Microduck-kissqy` + `branches` |

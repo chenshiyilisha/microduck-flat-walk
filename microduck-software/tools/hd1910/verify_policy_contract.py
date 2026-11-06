@@ -35,7 +35,17 @@ Usage
     python tools/hd1910/verify_policy_contract.py \
         --onnx out/p8head_2999.onnx --toml out/robotd_hd1910_mode0.toml
 
+    # the same check against the *official* pollen-robotics/microduck source
+    python tools/hd1910/verify_policy_contract.py --upstream ../../out/official-main \
+        --toml ../../out/off_robotd.toml --rehearsal
+
     python tools/hd1910/verify_policy_contract.py --selftest
+
+The `--upstream` tree must contain `duck-control/src/{obs,model}.rs`,
+`duck-ipc-proto/src/lib.rs` and `robotd-params/src/lib.rs`. Both the official
+tree and the B-generation fork resolve an omitted `[policy] action_scale` to
+**0.9 in walk mode**, so an unwritten key is checked against that source value
+rather than silently assumed to be 1.0.
 """
 
 from __future__ import annotations
@@ -46,11 +56,21 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-UPSTREAM = ROOT / ".upstream" / "DuckBuddy-main"
-OBS_RS = UPSTREAM / "duck-control" / "src" / "obs.rs"
-PARAMS_RS = UPSTREAM / "robotd-params" / "src" / "lib.rs"
-MODEL_RS = UPSTREAM / "duck-control" / "src" / "model.rs"
-PROTO_RS = UPSTREAM / "duck-ipc-proto" / "src" / "lib.rs"
+# Default source tree is the B-generation fork the deployed TOML was audited
+# against. `--upstream` can point at the *official* pollen-robotics/microduck
+# checkout instead: the same four files, a different daemon. Neither tree is
+# allowed to be the other's reference.
+DEFAULT_UPSTREAM = ROOT / ".upstream" / "DuckBuddy-main"
+
+
+def source_paths(upstream: pathlib.Path):
+    return {
+        "obs": upstream / "duck-control" / "src" / "obs.rs",
+        "params": upstream / "robotd-params" / "src" / "lib.rs",
+        "model": upstream / "duck-control" / "src" / "model.rs",
+        "proto": upstream / "duck-ipc-proto" / "src" / "lib.rs",
+    }
+
 
 N_CHECKS = [0]
 
@@ -62,9 +82,16 @@ class NotChecked(Exception):
     """This side of the comparison is unavailable; the check is SKIP, not FAIL."""
 
 
+def _display(path: pathlib.Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:  # an --upstream tree outside this repo (e.g. ../../out/)
+        return str(path)
+
+
 def _read(path: pathlib.Path) -> str:
     if not path.exists():
-        raise NotChecked(f"{path.relative_to(ROOT)} not found")
+        raise NotChecked(f"{_display(path)} not found")
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -78,8 +105,10 @@ def _const(text: str, name: str, cast=int):
 class Robotd:
     """What the daemon thinks the layout is, read out of its own source."""
 
-    def __init__(self) -> None:
-        obs = _read(OBS_RS)
+    def __init__(self, upstream: pathlib.Path = DEFAULT_UPSTREAM) -> None:
+        self.upstream = upstream
+        paths = source_paths(upstream)
+        obs = _read(paths["obs"])
         self.obs_len = _const(obs, "OBS_LEN")
         self.command_len = _const(obs, "COMMAND_LEN")
 
@@ -109,10 +138,10 @@ class Robotd:
             r for r in rows if inside(r, self.blocks[-1])
         ] if self.blocks else []
 
-        model = _read(MODEL_RS)
+        model = _read(paths["model"])
         self.mouth_index = _const(model, "MOUTH_INDEX")
         self.home_all = self._home(model)
-        self.joint_names = self._names(_read(PROTO_RS))
+        self.joint_names = self._names(_read(paths["proto"]))
 
         if len(self.home_all) != len(self.joint_names):
             raise NotChecked(
@@ -323,14 +352,28 @@ def check_home_pose(rd: Robotd, tr: Training, tol: float = 1e-6):
     return True, "home pose", f"max |diff| {worst:.2e} rad"
 
 
-def check_action(tr: Training, toml: dict | None):
+def check_action(tr: Training, toml: dict | None, default_scale: float | None = None):
+    """`target = home + a * scale` — a 0.9 default shrinks every joint by 10%.
+
+    An omitted `[policy] action_scale` used to be treated as 1.0 here. Both the
+    official daemon and the B-generation fork actually resolve it *per mode*:
+    `Mode::Walk => 0.9`. So an unwritten key is NOT a no-op -- it must be read
+    out of `robotd-params/src/lib.rs` and compared, or refused.
+    """
     notes = [f"training scale {tr.action_scale:g}, default offset {tr.use_default_offset}"]
     ok = tr.action_scale == 1.0 and tr.use_default_offset
     if toml is not None:
         scale = (toml.get("policy") or {}).get("action_scale")
         if scale is None:
-            notes.append("toml has no [policy] action_scale (default 1.0)")
-            ok = ok and True
+            if default_scale is None:
+                notes.append(
+                    "toml omits [policy] action_scale AND robotd default unreadable "
+                    "-> refusing to assume 1.0"
+                )
+                ok = False
+            else:
+                notes.append(f"toml omits [policy] action_scale -> robotd default {default_scale:g}")
+                ok = ok and float(default_scale) == tr.action_scale
         else:
             notes.append(f"toml action_scale {scale:g}")
             ok = ok and float(scale) == tr.action_scale
@@ -427,16 +470,38 @@ def stand_observation(rd: Robotd):
     return obs
 
 
-def default_ctrl_hz() -> float | None:
+def default_ctrl_hz(upstream: pathlib.Path = DEFAULT_UPSTREAM) -> float | None:
     """`control.hz` as the daemon defaults it, read from the source not guessed."""
     try:
-        text = _read(PARAMS_RS)
+        text = _read(source_paths(upstream)["params"])
     except NotChecked:
         return None
     block = re.search(r"impl Default for Control\b[^{]*\{(.*?)\n\}", text, re.S)
     if not block:
         return None
     m = re.search(r"hz: ([0-9_.]+),", block.group(1))
+    return float(m.group(1).replace("_", "")) if m else None
+
+
+def default_action_scale(upstream: pathlib.Path = DEFAULT_UPSTREAM) -> float | None:
+    """Walk-mode `action_scale` the daemon uses when the TOML key is absent.
+
+    Source of truth is the `unwrap_or(match self.mode { ... })` in
+    `robotd-params/src/lib.rs`, not a comment in `deploy/robotd.toml` (that one
+    is commented out, so TOML parsers see no key at all).
+    """
+    try:
+        text = _read(source_paths(upstream)["params"])
+    except NotChecked:
+        return None
+    block = re.search(
+        r"action_scale:\s*self\.action_scale\.unwrap_or\(match self\.mode\s*\{(.*?)\}\)",
+        text,
+        re.S,
+    )
+    if not block:
+        return None
+    m = re.search(r"Mode::Walk\s*=>\s*([0-9_.]+)", block.group(1))
     return float(m.group(1).replace("_", "")) if m else None
 
 
@@ -460,19 +525,64 @@ def report(rows):
     return bad
 
 
+def rehearsal(path: pathlib.Path, rd: Robotd, effective_scale: float) -> bool:
+    """A standing-observation ONNX run, plus a flipped-gravity negative control.
+
+    This is the PC-side stand-in for `scripts/duck-sim` when the Rust workspace,
+    systemd and MuJoCo body are not available. It is NOT a dynamics simulation:
+    it only proves the graph is loadable, finite, bounded at a standstill, and
+    that its output actually moves when the gravity block moves.
+    """
+    import numpy as np
+    import onnxruntime as ort
+
+    sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    name = sess.get_inputs()[0].name
+    base = stand_observation(rd)
+    act = sess.run(None, {name: base[None]})[0][0]
+    peak = float(np.abs(act).max())
+    finite = bool(np.all(np.isfinite(act)))
+
+    flipped = base.copy()
+    for lo, hi, label in rd.blocks:
+        if "gravity" in label:
+            flipped[lo:hi] = [0.0, 0.0, 1.0]  # upside down, same shape
+    act_flip = sess.run(None, {name: flipped[None]})[0][0]
+    sensitivity = float(np.abs(act_flip - act).max())
+
+    # target = home + a*scale: how much does a 0.9 default bend the joints?
+    scale_error = float(np.abs(act * (1.0 - effective_scale)).max())
+    print()
+    print(f"ONNX rehearsal (official/bench obs layout; scale in effect {effective_scale:g})")
+    print(f"  stand |a|max        = {peak:.4f} rad   finite={finite}")
+    print(f"  gravity flip |d a|  = {sensitivity:.4f} rad  "
+          f"({'SENSITIVE' if sensitivity > 1e-4 else 'INSENSITIVE -- report, do not assume'})")
+    print(f"  target error @scale = {scale_error:.4f} rad "
+          f"({np.degrees(scale_error):.2f} deg) on the peak joint")
+    print(f"  a[0:4]              = {np.array2string(act[:4], precision=4)}")
+    return finite and peak < 1.0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--onnx", type=pathlib.Path, default=ROOT / "out" / "p8head_2999.onnx")
     ap.add_argument("--toml", type=pathlib.Path, default=ROOT / "out" / "robotd_hd1910_mode0.toml")
+    ap.add_argument(
+        "--upstream",
+        type=pathlib.Path,
+        default=DEFAULT_UPSTREAM,
+        help="Rust source tree to read the daemon's contract from (default: B-gen fork)",
+    )
+    ap.add_argument("--rehearsal", action="store_true", help="also run the ONNX standstill probe")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
 
     if args.selftest:
-        return selftest()
+        return selftest(args.upstream)
 
     rows = []
     try:
-        rd = Robotd()
+        rd = Robotd(args.upstream)
     except NotChecked as exc:
         print(f"robotd side unavailable: {exc}")
         return 2
@@ -481,8 +591,6 @@ def main() -> int:
     except NotChecked as exc:
         print(f"training side unavailable: {exc}")
         return 2
-
-    import numpy as np  # noqa: F401
 
     onnx_in = None
     if args.onnx.exists():
@@ -497,9 +605,10 @@ def main() -> int:
     rows.append(check_home_pose(rd, tr))
 
     toml = parse_toml(args.toml if args.toml and args.toml.exists() else None)
+    default_scale = default_action_scale(args.upstream)
     rows.append(check_command_block(rd, tr))
-    rows.append(check_action(tr, toml))
-    rows.append(check_rate(tr, toml, default_ctrl_hz()))
+    rows.append(check_action(tr, toml, default_scale))
+    rows.append(check_rate(tr, toml, default_ctrl_hz(args.upstream)))
 
     if args.onnx.exists():
         rows.append(
@@ -508,13 +617,24 @@ def main() -> int:
     else:
         rows.append((False, "onnx graph", f"{args.onnx} missing"))
 
-    print(f"policy <-> robotd contract  ({args.onnx.name}, {args.toml.name if toml else 'no toml'})")
+    print(f"policy <-> robotd contract  ({args.onnx.name}, "
+          f"{args.toml.name if toml else 'no toml'})")
+    print(f"  robotd source = {_display(args.upstream)}  "
+          f"(walk default action_scale {default_scale})")
     bad = report(rows)
     print()
     if bad:
         print(f"{bad} FAIL")
     else:
         print("all pass -- layout, order, home pose and action mapping agree on both sides")
+
+    if args.rehearsal and args.onnx.exists():
+        explicit = (toml or {}).get("policy", {}).get("action_scale")
+        effective = float(explicit) if explicit is not None else (default_scale or 1.0)
+        if not rehearsal(args.onnx, rd, effective):
+            bad += 1
+            print("  [FAIL] ONNX rehearsal: non-finite or unbounded standing action")
+
     print("\nnot checked: trunk-frame conventions, sign/offset calibration, and anything "
           "about the servos. Those are bench items (B3, B4).")
     return 1 if bad else 0
@@ -523,10 +643,10 @@ def main() -> int:
 # ── negative controls ────────────────────────────────────────────────────────
 
 
-def selftest() -> int:
+def selftest(upstream: pathlib.Path = DEFAULT_UPSTREAM) -> int:
     """Every check must go red when the thing it guards is broken."""
     try:
-        rd = Robotd()
+        rd = Robotd(upstream)
         tr = Training()
     except NotChecked as exc:
         print(f"selftest needs both sides: {exc}")
@@ -595,6 +715,30 @@ def selftest() -> int:
 
     # 7. wrong control rate
     good &= expect("rate 100 Hz", check_rate(Mut(tr, ctrl_dt=0.01), None)[0], False)
+
+    # 8-10. The omitted-key trap: both daemons resolve walk action_scale to 0.9.
+    # An unwritten TOML key used to pass as "default 1.0". It must now go red,
+    # and an explicit 1.0 must bring it back to green.
+    good &= expect(
+        "walk default read from source == 0.9",
+        default_action_scale(upstream) == 0.9,
+        True,
+    )
+    good &= expect(
+        "omitted scale under 0.9 default",
+        check_action(tr, {}, 0.9)[0],
+        False,
+    )
+    good &= expect(
+        "explicit 1.0 overrides 0.9",
+        check_action(tr, {"policy": {"action_scale": 1.0}}, 0.9)[0],
+        True,
+    )
+    good &= expect(
+        "omitted scale, unreadable default",
+        check_action(tr, {}, None)[0],
+        False,
+    )
 
     print()
     print(f"{N_CHECKS[0]} checks, {'all behave' if good else 'SOME NEGATIVE CONTROLS DID NOT FIRE'}")
