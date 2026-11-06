@@ -224,12 +224,21 @@ HD-1910、只压价」时，最优解会换到另一支，不是本文定案被�
 ```
 export.py → ONNX（单文件、initializer 无 EXTERNAL）
   → verify_policy_contract.py（obs 61 / act 14 / 50 Hz / 关节序 / HOME 逐位）
-  → verify_policy_bundle.py（归一化分母下限 + metadata）
+  → verify_policy_bundle.py（B 代口径：归一化分母下限 + metadata）
+  → verify_official_loader.py（官方口径：rank / dtype / 个数 / 名字 / 宽度；判据从官方 Rust 解析）
   → policy_numeric_gate.py --selftest（G1–G4 绝对物理量级；健康 PASS×2、deploy61 FAIL）
   → infer_policy.py --walking  →  uv run publish  →  robotctl policy load
 ```
 
-- `publish` 与这代 robotd **不是一条链**：manifest 一个字段都不生效，对 ONNX 只查两个宽度（末维 61/14）。
+- **资料与实现优先级（2026-11-06 用户定调）：官方开源为主导，其他开源为辅助。** 判据一律先回
+  `pollen-robotics/microduck@main` 一手源码核对；kissqy / 666wsp / fanhao375 / B 代只作硬件侧
+  参考与对照反例，不提供阈值或判决（展开见 `软件自写分支.md` §0.1）。
+- `publish` 与 **B 代** robotd **不是一条链**：manifest 一个字段都不生效，对 ONNX 只查两个宽度
+  （末维 61/14）。⚠️ 这句**只适用于 B 代**：官方 `duck-control/src/policy.rs::open` 还查
+  rank 2 / float32 / batch 1 或 −1 / 张量个数 / 输入名 `obs`，见 §4.3(4) 续与
+  `docs/active/microduck-policy-bundle链.md`「官方加载口径（主导）」。
+- 官方侧 `updater/src/policy.rs` 测试明写缺 manifest 不拒绝（*Absence is not evidence*），
+  `open()` 也完全不读 `metadata_props` ⇒ **B0 不是加载阻塞**，它判的是「bundle 能否自描述」。
 - `publish` **不打包外部权重**：split 导出会以 3 KB 无权重图上传成功，拷贝前必须确认没有 `EXTERNAL`。
 - `deploy61` 已下线（归一化分母 10 个维 1.113e-05，差 1157 倍）；用 `p8head_2999` / `resume_5999`（下限 0.01289）。
 - **C9 数值 gate 不能照搬 esp-duck 的 `maxabs ≤ 2% of S`**：实测会误杀健康（超 5.2×/6.9×）又放行病态 `deploy61`（S 被放大 128×）；已重标 G1–G4 并带负对照。
@@ -455,6 +464,18 @@ G0 之外，趁舵机在线把两个**早已写好但从未在真机上跑过**�
 | 同上，真策略 | **19 checks / 1 FAIL**：B0 `no metadata_props` |
 
 ⚠️ **不要把这个 1 FAIL 抹成全绿**。`p8head_2999.onnx` 是训练直出的 checkpoint，没有 `metadata_props` 布局契约；其余 18 项全 ok（含 A8 权重内嵌、C4 归一化下限 0.01289、R1–R3 输出有限且会随输入变化、D1/D3 缩放与低通）。同一份检查也写明 `E0 manifest none given (this robotd never reads one)` —— 这代 robotd 不读 manifest，`publish` 的 manifest 字段一个都不生效，对 ONNX 只有两个宽度检查（末维 61/14）。⇒ **判决：B0 不构成当前部署链的阻塞，但 G4 不能写成「全绿」**；`publish` 之后必须对**发布产物**重跑 bundle 检查，而且只要 obs 曾经重排，缺 metadata 就没人能发现，这条风险要留着。
+
+**2026-11-06 续（官方为主导，按用户定调复核）**：上面的「两个宽度」是 **B 代口径**。官方
+`duck-control/src/policy.rs::open` 除 61/14 外还要求 rank 2 / float32 / batch 1 或 −1 /
+输入输出恰好 (1,1) 或 (3,3) / 输入名 `obs`；`updater/src/policy.rs` 测试原文 *Absence is not
+evidence*，缺 manifest 不拒绝；`open()` 完全不读 `metadata_props` ⇒ **B0 更不是加载阻塞**。
+新工具 `verify_official_loader.py`（判据逐条从官方 Rust 解析、解析不到即拒判）实测
+`p8head_2999` **16 checks / 0 FAIL / 0 WARN**，同仓带 8 条 metadata 的 `walk_std004_1250` 同样
+0 FAIL；自检 30/30 含 15 条负对照。把真策略 shape 改成 `[1,1,61] → [1,1,14]`（权重不动）：
+官方 **4 FAIL**，而 B 代 `check_graph` **6 项全 ok / 0 FAIL** —— 两个来源矛盾时以官方为准。
+⇒ **官方加载器形状契约这一格已闭合**；G4 报告仍不写成全绿（B 代口径那 1 FAIL 不抹红），
+且静态检查不覆盖 `Policy::load` 的 `open_warm` 零观测推理与 ORT 真开 session。详见
+`docs/active/microduck-policy-bundle链.md`「官方加载口径（主导）」与 `软件自写分支.md` §4.1.7。
 
 C9 再次被现场印证：照搬 esp-duck 的 `maxabs ≤ 2% of S` 会**误杀这份健康策略**（站姿约为 2%S 的 5 倍，`standing_passes=false`），却放行 `deploy61`。
 

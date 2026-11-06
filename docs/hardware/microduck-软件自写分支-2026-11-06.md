@@ -11,6 +11,19 @@
 
 **主控仍是 Radxa，不回 A733。** 约束不是软件能力，而是 40-pin 复用与官方 `[board] version="zero3"` / `[bus] port="/dev/ttyS2"` / MIPI-I2S-I2C 设备树；软件自己写改不了引脚（见 `最优方案.md` §2.6 的同 SoC 不同复用判据）。
 
+## 0.1 资料与实现优先级（2026-11-06 用户定调）
+
+> **尽量以官方开源为主导，其他开源为辅助。**
+
+| 层级 | 来源 | 允许它决定什么 |
+|---|---|---|
+| **主导** | `pollen-robotics/microduck@main`（Apache-2.0）、`pollen-robotics/microduck_rl`、`elec_RPI_Robot_HAT` | 守护进程架构、ONNX 加载判据、obs/关节序常量、TOML 键、部署链、许可边界 |
+| **辅助（硬件侧）** | kissqy R1 清单 / HAT+IMU、666wsp、fanhao375、community-kit Gerber | 2S 供电接法、HD-1910 电气与寄存器实测、价格、可打样的板卡 |
+| **辅助（对照反例）** | B 代 DuckBuddy / HL-2915 robotd | 只用来暴露「较弱的读者会漏掉什么」，**不提供阈值、关节序或任何判决** |
+
+落地规则：任何数字与口径**先回官方 Rust 源码核对**；官方查不到才用社区实现，且必须写明「这是辅助口径」。
+本轮据此订正了一条从 B 代继承来的错话（见 §4.1.7）。
+
 ## 1. 为什么「软件自己写」省不了钱
 
 软件本来就是 ¥0：官方 0.15.1 源码（Apache-2.0）、kissqy R1 镜像、R17 中控、10 个动作模型全免费。硬件 BOM 与软件作者无关——HAT 的音频 codec / 配电 / 半双工收发、IMU 板、相机、ToF、喇叭、电池、TF 卡、15 颗舵机，少一样就砍一项功能。
@@ -130,7 +143,7 @@ B 组唯一红：*`toml omits [policy] action_scale -> robotd default 0.9`*。**
 | 官方默认 0.9 的目标误差 `\|a·(1−0.9)\|` | **0.0193 rad = 1.11°**（峰值关节） | 把「步态偏软」量化成具体角度 |
 | 显式 1.0 后 | 0.0000 rad | 配置对齐即闭合 |
 
-⚠️ 这是**图 + 输入敏感性检查，不是动力学仿真**：没有 MuJoCo、没有 50 Hz 闭环、没有 BAM 执行器。`policy load` 只查宽度不查语义，真机稳态仍要上板验。
+⚠️ 这是**图 + 输入敏感性检查，不是动力学仿真**：没有 MuJoCo、没有 50 Hz 闭环、没有 BAM 执行器。官方 `open()` 查的是形状契约（rank / dtype / 张量个数 / 输入名），**不查 obs 语义**；真机稳态仍要上板验（逐条判据见 §4.1.7）。
 
 #### 4.1.6 复现
 
@@ -147,10 +160,50 @@ $V $S --upstream out/official-main --onnx $ONNX \
 
 `out/official-main/` 是按官方目录结构摆的 4 个 Rust 文件镜像树（GitHub `main` 分支 raw 拉取），`out/official_robotd_scale1.toml` 是官方 TOML 只改一处加 `action_scale = 1.0`；两者都在被 gitignore 的 `out/`。原始输出见 `out/contract_official_default.txt`、`out/contract_official_scale1.txt`、`out/contract_official_09_rehearsal.txt`。
 
+#### 4.1.7 官方 `open()` 加载判据：`p8head_2999` 实证 16/16（2026-11-06 续）
+
+**订正**：§4.1.5 末尾与 §5.2 原写的「`policy load` 只查宽度」是 **B 代口径**，按 §0.1 的优先级作废为通用表述。
+一手来源是官方 `duck-control/src/policy.rs::open`：`outlet(path, inputs, "obs")` 按名找输入，
+`check_matrix` 要求 **rank 2 + float32 + `shape[0]` 为 1 或 −1 + `shape[1]` 等于 61/14**，
+`(inputs.len(), outputs.len())` 必须恰好 (1,1) 或 (3,3)（后者 LSTM，还查四个 state 张量的形状与上限）。
+`updater/src/policy.rs` 测试原文 *"Absence is not evidence … the shape gate at load was always going
+to be the real check"* ⇒ 缺 manifest 不拒绝；`open()` 也**完全不读** `metadata_props`。
+
+新工具 [`verify_official_loader.py`](../../microduck-software/tools/hd1910/verify_official_loader.py)：
+每个阈值从官方 Rust 解析，解析不到即拒判；纯静态不依赖 ORT；自检 **30/30**（15 条负对照）。
+
+| 实测（判据 `verified=True`） | 结果 |
+|---|---|
+| `p8head_2999.onnx`（metadata 0 条） | **16 checks / 0 FAIL / 0 WARN** |
+| `walk_std004_1250.onnx`（同仓，metadata 8 条） | **16 checks / 0 FAIL / 0 WARN** |
+| 真策略 shape 改成 `[1,1,61] → [1,1,14]`（权重不动） | **4 FAIL** |
+| 同一份 rank-3 图交给 B 代 `check_graph` | **6 项全 ok / 0 FAIL** |
+
+最后两行是双向负对照：两个来源互相矛盾时以官方为准。也说明 **B0 缺 metadata 不是加载阻塞**
+（B 代 `verify_policy_bundle.py` 的 B0 是「能否自描述」，不是「daemon 会不会拒」）——
+但要补自描述仍用 `--stamp`，因为 obs 一旦重排，链上没有任何读者能发现。
+
+⇒ §3.2「`p8head_2999` 不需移植发布链、不重训」在**官方加载器的形状契约**这一格也闭合了。
+仍不闭合的是动态那一半：`Policy::load` 的 `open_warm` 零观测推理、ORT 能否真开 session、真机稳态；
+静态预演只覆盖到站姿动作峰值 0.1930 rad、finite。详见 `docs/active/microduck-policy-bundle链.md`
+「官方加载口径（主导）」一节。
+
+```bash
+V=microduck-software/.venv-mjlab/Scripts/python.exe
+S=microduck-software/tools/hd1910/verify_official_loader.py
+$V $S --selftest                                  # 30/30
+$V $S artifacts/flat_walk/checkpoints/p8head_2999.onnx \
+    --policy-rs out/official/duck-control_src_policy.rs \
+    --obs-rs out/official-main/duck-control/src/obs.rs
+```
+
+官方源码镜像在 `out/`（gitignore）；本机 `raw.githubusercontent.com` 被代理挡（返回 000），
+抓取走 GitHub contents API。**不给源码根时脚本显式标 `UNVERIFIED`，不会假装全绿。**
+
 ## 5. 必须先解决的口径差（别只报好消息）
 
 1. 🔴 **`action_scale`**：官方 walk 默认 **0.9**，本仓训练/评估与成品 TOML 是 **1.0**。加载后必须显式写 `[policy] action_scale = 1.0`，否则输出被缩放 10%，症状像「步态偏软」而不是报错。这是配置对齐，不是换 plant。**§4.1 已实证**：官方源码 + 官方 TOML 实测 7 PASS / 1 FAIL，唯一的红正是这一条；显式写 1.0 后 8/8 PASS。默认 0.9 让峰值关节目标偏 **0.0193 rad = 1.11°**。⚠️ 官方 `deploy/robotd.toml` 里那行是**注释**（`# action_scale = 0.9`），TOML 解析器看不到键，别以为「文件里写了 0.9」就等于已配置。
-2. 🔴 `robotctl policy load` **只查宽度、不查 obs 语义**。61/14 相同只是必要条件；§4.1 的 8 PASS 已是**官方源码口径**的静态契约，真机稳态仍要验。
+2. 🔴 `robotctl policy load` **只查形状、不查 obs 语义**（§4.1.7 订正：「只查宽度」是 B 代口径；官方 `open()` 除 61/14 外还查 rank 2 / float32 / batch 1 或 −1 / 张量个数 / 输入名 `obs`）。61/14 相同只是必要条件；§4.1 的 8 PASS 与 `p8head_2999` 官方加载判据 16/16 都是**官方源码口径**的静态契约，真机稳态仍要验。
 3. ⚠️ **总线三条线的速率与指令别混**：官方主仓（XL330）1M + `0x8A`；kissqy R1（HD-1910）1M + `0x82`；B 代 A733（HD-1910）500k + `0x82`。本分支走 **Radxa 1M + `0x82`**，整机 16 设备 @1M 的预算要**重测**（本仓 `probe_bus_budget.py` 的 10.28–17.41 ms 是 1M 单颗实测再外推到 500k，不能直接套）。
 4. ⚠️ `fast_sync_read` 官方默认开，HD-1910 不实现 `0x8A`。官方注释明写 *a device that does not implement 0x8A does not answer, so every read fails* ⇒ 必须关。本仓 `probe_sync_read.py` 已在 ID 10 上验过「0x8A 沉默 / 0x82 应答」。
 5. ⚠️ `EXPECTED_REGISTERS` 的 DXL `baud_rate=3` 是 **Dynamixel 编码**，套到 Feetech 会写成 128 kbps 直接失联；开机硬校验要整个换成 B 代口径。
@@ -177,6 +230,7 @@ $V $S --upstream out/official-main --onnx $ONNX \
 | 守护进程架构、模拟器、开发链 | 官方 `README.md`、`docs/design/architecture.md`、`docs/robot/install-dev.md`、`docs/robot/simulation.md`、`docs/design/simulation.md` §3 / §7、`scripts/duck-sim`（`out/official/`） |
 | WSL2 GUI / systemd 平台能力 | Microsoft Learn《Run Linux GUI apps on WSL》（WSL2 + WSLg X11/Wayland + vGPU OpenGL，需 Win10 19044+ / Win11）；本机 `wsl.exe` 被安全策略拒绝 ⇒ **本机是否装 WSL 未验证** |
 | 总线 / IMU / 模型 / obs 常量 | 官方 `duck-control/src/{bus,imu,model,obs}.rs`、`duck-ipc-proto/src/lib.rs:652`、`deploy/robotd.toml`（713 行） |
+| ONNX 加载判据与 manifest 缺省语义 | 官方 `duck-control/src/policy.rs::open` 与 `validate`、`updater/src/policy.rs` 测试 `a_manifest_that_claims_nothing_refuses_nothing`、`robotctl/src/main.rs` 的 `PolicyCommand`、`docs/policy-manifest.md`（2026-11-06 经 GitHub contents API 取 `main`，镜像在 `out/official/`） |
 | 交叉编译与 dev-push | 官方 `.cargo/config.toml`、`scripts/dev-push.sh`；deepwiki `9.3 Developer Workflow` |
 | 许可分项、fork 分支、镜像组成 | fanhao375 `software/image/README.md`；GitHub API `repos/fanhao375/Microduck-kissqy` + `branches` |
 | 价格与手焊/成品对照 | kissqy `DUCK-SHOPPING-LIST.md`（本地 `out/kissqy/`）、`docs/releases/public-image-r1.md`、`docs/MICRODUCK-BUILD-GUIDE.md` |
