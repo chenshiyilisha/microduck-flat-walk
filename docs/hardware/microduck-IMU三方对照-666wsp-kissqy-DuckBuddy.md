@@ -116,3 +116,67 @@ DuckBuddy 侧确认：`deploy/robots/opi-hl2915-rev-a.toml` 里 IMU 相关只有
 - **不建议买 666wsp 板接 DuckBuddy**：CH32V203 刷不了 DuckBuddy 固件，又强制 IMU 前，改动最重。除非你就是要做 666wsp 固件 + 自改 robotd 的路线。
 
 > ⚠️ 注意：kissqy 的 HAT+IMU 套件是配 **kissqy 自己的 control.43 / R17 中控**（1Mbps，IMU 前）用的，不是配 DuckBuddy robotd。买它的前提是接受 kissqy 那一整套软件栈，或愿意重刷 IMU 固件+核对引脚。
+
+---
+
+## 7. 2026-11-06 重要修正：排队位冲突的根因是**两套协议**，不是固件口味
+
+> 新证据：`jyg9/microduck_ft1910`（官方 `pollen-robotics/microduck` 0.16.0 的飞特 SCS/HLS 适配 fork）
+> `docs/design/scs-bus.md`，以及 `jyg9/microduck-community-kit` `firmware/v1/docs/bus_timing_borrow_plan.md`
+> （GD32F303CC 固件的真机联调报告）。详见 `docs/reference/microduck-开源资料全景-2026-11-06.md` §3。
+
+### 7.1 此前本文 §1 的判断需要收窄
+
+§1 写「同步读顺序是固件属性」——这话不错，但**把两件不同的事混成了一件**。
+实际有两条协议路径，让位算法、地址、块长、位次规则全都不同：
+
+| | **Dynamixel 路线** | **飞特 SCS/HLS 路线** |
+|---|---|---|
+| 同步读指令 | `0x8A` **Fast Sync Read**（一台设备发一个聚合帧，逐段累积 CRC-16） | `0x82` SYNC_READ（每个被点名设备各回一帧，8 位取反校验和） |
+| 读取地址 / 长度 | addr **124** / **12 B** | addr **56** / **15 B**（文档化块 56..70） |
+| IMU 位次 | **第 0 位**（官方 tick 读 `[200] + 15 关节`） | 也是**第一位**，因为「协议让每个设备按列表位置对应的槽应答」 |
+| 让位规则 | 按**前面 k 段的字节数**让位 `8 + k×(X+4)` | 按**槽**让位，实测 **≈295 µs/槽**，且**前导设备缺席也照样占一槽** |
+| 缺席判定 | 聚合帧缺一段即整包作废 | `BURST_IDLE=4 ms` 静默收尾（实测相邻应答最长间隔 1.94 ms，**2 ms 会被调度抖动截断**） |
+| 波特率 | 1 Mbaud | 1 Mbaud（ft1910 first light：RK3566 `/dev/ttyS2` @1M，50.0/50.0 Hz、0 missed/436 ticks） |
+
+`community-kit` 固件报告 D10 明确：**在 `0x8A` 下按「槽」让位必撞包**（一段只有 `(X+4)×10 µs`，比 295 µs 短）。
+所以「IMU 必须排第一」不是各家固件的偏好，而是**两套协议各自的物理时序约束**。
+而 DuckBuddy 的 `feetech.rs` 把 IMU 排最后、跑 500k，是它自己那条 500k 飞特路径上的实现
+（注释给的实测「IMU 在前 990/1000 干净、排最后 1000/1000」仍成立，只是不能推广到 1M 的 DXL 路径）。
+
+### 7.2 于是多出第四条路（比改 robotd 省事）
+
+`community-kit` 的 `imu_to_dxl`（GD32F303CC + LSM6DSV16X）固件 **D2（按槽）+ D10（按字节数）两套都实现**，
+`0x8A` 真机验证 19 项全过，三种位次都测了：第 0 位 / 第 1 位 / 未被点名静默。
+→ **它的板能放在任意位次**，不需要改主机排队顺序。板子带现成 Gerber + BOM（CERN-OHL-P）、
+固件可 A/B 在线升级。
+
+⚠️ **未核实**：该固件是否支持 **500k**（A733 UART7 上不了真 1M）。协议文档给了 reg6 编码表
+（`0=1M / 1=500k / 2=250k`），但本次没读到固件波特率可配性。**下单前必须确认这一条**，
+否则它在 A733 上仍然跑不起来。
+
+### 7.3 另外两家新候选（比 666wsp / kissqy 更省改动）
+
+| 候选 | 许可 | 相对本文 §6 建议的差异 |
+|---|---|---|
+| `jyg9/microduck-community-kit` `imu_to_dxl` | 板 CERN-OHL-P / 软件 Apache-2.0 | 固件两套位次仲裁都做完、真机验证、Gerber+BOM 齐全；**前提是确认 500k** |
+| `avanx/microduck_imu_to_ttl` | Apache-2.0（立创 OSHWHub 可直打样） | 第四家 `imu_to_dxl`；给出我们一直缺的**硬件方向控制实现**：`SN74LVC2G241` 半双工收发 + TVS/PTC，HT7533(3V3) + SGM2036-1.8(IMU)，MCU↔LSM6DSV16X 走 SPI+INT；附躯干 IMU 安装朝向推理 |
+| `Juxi-Technology/imu-displace-microduck` | Apache-2.0 | **根本不挂总线**：I²C ICM-42670-P → 故障域分开（IMU 挂了不再让整笔 sync_read 作废、15 颗一起丢数据）。⚠️ `robotd` 运行时未接线，目前只是台架验证工具，不能拿来走路 |
+
+### 7.4 一个同源观察（推的，未找到直接引用）
+
+666wsp 的 15 字节布局（byte12=sequence / 13=status / 14=reserved）与 community-kit 的
+15 字节「契约块」（byte12=采样计数 / 13=状态位 / 14=0）**结构一致、状态位 bit 定义不同**。
+community-kit 的 `bus_timing_borrow_plan.md` 明写外部依据来自 `fanhao375/microduck-replica` 的
+`总线协议.md` ⇒ 三方很可能同源于 replica 那条线，不是三份独立设计。
+
+### 7.5 时序坑（与 H6 判据相关）
+
+`community-kit` §7.8 抓到：USART 接收中断里按位实现的 CRC-16 耗时 11–20 µs，超过 1 Mbps 下
+一个字节的 10 µs，紧跟的字节被单字节接收寄存器覆盖 → **任何「紧跟指令帧发言」的设备都会被吃掉首字节**。
+改 256 项查表后解决。500k 下字节时间翻倍到 20 µs，风险更小，但仍是台架要留意的形状。
+
+**结论修正**：本文 §6 的「最省事 = DuckBuddy 自己的 PDB/IMU 板」**依然成立**（零改动、500k 原生）；
+但「666wsp 改动最重 / kissqy 要逐脚核对后重刷」之外，现在多了
+「用 community-kit 或 avanx 的板、把位次问题在固件侧解决」这条更干净的路。
+

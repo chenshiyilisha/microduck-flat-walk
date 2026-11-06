@@ -52,19 +52,28 @@
 
 ---
 
-## H. HD-1910 实机关卡（来自 microduck-replica 2026-09～10 实机行走/翻滚证据）
+## H. HD-1910 实机关卡（replica 实机证据 + 厂商内存表 + 官方飞特运行时）
 
-> 来源 `fanhao375/microduck-replica`（1581★，HD-1910 整机已实机行走+前滚翻）。⚠️ **DuckBuddy 上游验证的是 HL-2915，不是 HD-1910** —— HD-1910 的实机证据链全在 replica/kissqy 这条线上，所以本节是 HD-1910 台架上板的第一道硬件关，与 B 段软件关互补。
+> 来源：`fanhao375/microduck-replica`（HD-1910 整机实机行走/翻滚）、
+> `jyg9/microduck-community-kit`（飞特 HLS 内存表 + 真机联调报告）、
+> `jyg9/microduck_ft1910`（官方 0.16.0 的 SCS/HLS 后端设计文档与 first light）。
+> 全景对照见 `docs/reference/microduck-开源资料全景-2026-11-06.md`。
+> ⚠️ **DuckBuddy 上游验证的是 HL-2915，不是 HD-1910** —— HD-1910 的实机证据链在
+> replica / kissqy / community-kit / ft1910 这条线上，所以本节是 HD-1910 上板的第一道硬件关，
+> 与 B 段软件关互补。H8–H10 于 2026-11-06 补入。
 
 | # | 关卡 | 实机做法 / 的期望 | □ |
 |---|------|------------------|---|
 | H1 | **URT-2 上电顺序** | 先插 USB、后给舵机上电；反了总线被压到 ≈2.1 V、一片都不应答 | |
-| H2 | **方向（实机逐颗核对）** | 15 颗**全是 −1**（HD-1910 读数增大方向与 XL330 相反；replica 网页 ± 按钮逐颗验证过）。我方 = 填 `joint_signs`（B3 从「多数 −1」细化为「15 颗全 −1」），标完逐颗回到 `robotctl` 看体态正解 | |
+| H2 | **方向：共识值，不是逐颗实测值** | 社区两份资料都给出 15 颗全 −1，但**证据强度不均**：replica `directions.json` 是网页 ± 按钮逐颗验证；而官方飞特适配版 `jyg9/microduck_ft1910` `scs-bus.md` 明写只把 3 个关节（`left_hip_pitch`/`left_ankle`/`right_ankle`）用手转过 + 脚踝过镜像检查，**「Eleven joints were never watched」**，并点名 **`left_knee` 最可疑**（模型轴 −Y，而 hip/ankle 是 +Y）；原话「符号在位置读数里是看不见的」。→ **上板不能照抄**：用只读方向检查逐颗验（现成工具 `janauto/microduck-calibration-guide`，MIT，HD-1910 专用，搬关节看编码器变化、从不给舵机发命令），先查 `left_knee`。这正是「所有电气检查都通过、症状只是往错方向倒」的静默 bug 形状（对照 imu-displace 的 mount 装歪 90° 警告）。我方填 `joint_signs`（B3），验完逐颗回 `robotctl` 看体态 | |
 | H3 | **校零不走写 128** | 固件 3.46 不支持"reg40 写 128 = 中位校准"（会回成功但偏移不动，协议手册 4.9：HLS ≥3.43 不支持，只支持 0x0B）；**我们的链上同样成立**（B22：robotd 链上没有 0x0B 指令，零位只能靠 `joint_offsets`/calibrate_offsets 标），把舵机自身 EEPROM 校准与传统 128 方案都排除，标零后必须回读偏移确认 | |
 | H4 | **出厂 EEPROM 值** | 出厂 P32 / D40 / I0、转矩 1000。上线必需 reg6=1（500k，或按 B13 改板侧 1M）、mode=0（B13）——这三项写不上去 robotd 拒绝启动（"checked, not corrected"） | |
 | H5 | **电池：NP-F550 不是 F970** | 上游网格文件叫 np_f970.stl 但实物是 F550（39×21×71 mm，F970 厚 60 mm 装不进、且 300 g 吃掉预算）。**买 NP-F550 2S（6.6–8.4 V）**；满电 8.4 V = HD-1910 电压上限（4–8.4 V 的上沿）零余量 ⇒ 供电调到 8.0 V、限流开最大，或输入并 1000–2200 µF 电容 | |
 | H6 | **IMU 落脚乱跳首检** | **上板第一个查的量**：LSM6DSV16X 的 SFLP 姿态 vs 陀螺自积分，在足部冲击下 >5° 的跳变计数。replica 用 BNO085 实测姿态 20 ms 跳 20–60°（陀螺说没转）→ 走两三步必摔；纯软件修（切到陀螺融合后 634 s 只摔 1 次）。我们的 SFLP 是硬件融合、是否存在同样问题未实测——**用同一判据（差分 >5°）台架跑一轮即可证伪/证实**。**执行**（IMU 板接 URT-2，波特率 500k/1M 二选一）：`python servo_probe/imu_jitter_bench.py --port COM3 --id 200 --dur 10 --out out/imu_jitter.json` —— 判据脚本已提交（`servo_probe/imu_jitter_bench.py`），自带 `--selftest` 四条负对照全绿：静止/真运动不得误报，姿态跳而陀螺不动必须报。机器人站立静止 + 人工敲击躯干一轮，看 verdict；出现乱跳记入软件修复队列，**不重训**（纯软件问题） | |
 | H7 | **电源容量** | 10 A 电源或 2S 电池、16–18 AWG、XT60、输入并电容；replica 多次"走路/站起时整机掉电重启"最后都归因供电 | |
+| **H8** | **上扭矩前的姿态写入顺序**（真机重启级） | `jyg9/microduck_ft1910` `scs-bus.md` 实测：给 goal 寄存器还留着旧目标的舵机上扭矩，会同时驱动全部关节，**15 颗 × 最多 26° 误差的 inrush 触发板子欠压锁定 → 8 分钟内 4 次 SBC 重启**。→ `set_torque(true)` 必须 **先写机器人当前姿态到 goal → 回读验证 → 再上扭矩**，且封装在一次调用内；扭矩关闭要广播写 + 回读，不肯释放的舵机报错而非静默 relax。⚠️ 相关坑：**`sync_write` 写 reg40 与写 reg50 行为不同**（reg40 回读立刻是 0、几秒后又抱死，造成假的释放成功），reg40 必须逐台带 ACK 的 `WRITE`；这给台架「mode=4 下 reg40 关不掉扭矩」提供了另一种解释 | |
+| **H9** | **volatile P/D 漂移守卫** | 50/51 是 RAM，`0x08` REBOOT 会从 EEPROM 21/22 重载（ft1910 实测写 50/51=99/88 → reboot 回 32/40；厂商内存表 reg21/22 明写「上电赋值给 50/51」）。三道防线：① `set_torque` 上电前写 profile 并回读、不通过拒绝使能；② `slow_sensors` 每秒读 50..63（顺带看增益/包电压/壳温），比对 15 颗，漂移就重写并**响亮报错**；③ reboot 清 verified flag。**EEPROM 永不自动写**——写错就是每次开机猛冲，中断的 EEPROM 写会让舵机不可用；只走显式 `scs_commission --persist-gains`（读锁→清锁→写 21/22→**回读**→恢复锁，使能时拒绝）。机制：reg55=1 时「锁着的舵机接受写入到 RAM 且静默不持久化」，**没回读的调用会把什么都没做报成成功**（＝我们「回读 PASS ≠ 持久 PASS」的根因） | |
+| **H10** | **上板先读厂商内存表核对常量** | `jyg9/microduck-community-kit/docs/飞特通讯协议说明.md` §5（飞特官网《磁编码HLS舵机-内存表解析》逐条抄录）已给一手背书：reg6 编码 **0=1M / 1=500k / 2=250k**（解释三方波特率分歧）；reg15 最低输入 **40=4.0 V**（台架 4.6 V 欠压判断成立）；reg21/22→50/51；reg31 偏移 **BIT15 方向位**；reg42 目标位置 **0.087°/LSB**；reg46 速度 **0.732 RPM**（我们的速度标度）；reg44 电流 **6.5 mA/LSB**（R29 的 13305 mA 上限）；`0x0B`=CAL、`0x08`=REBOOT（不应答、≈823 ms 回来、EEPROM 保留）。**指令表要逐条回读，别靠记忆** | |
 
 ---
 

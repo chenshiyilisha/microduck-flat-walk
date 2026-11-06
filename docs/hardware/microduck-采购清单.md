@@ -102,6 +102,27 @@
 
 ## 4. 打板资料：现在就能交给嘉立创
 
+### 4.0 ✅ 2026-11-06 新增：供电三块板有现成 Gerber，优先级高于本节自绘方案
+
+`jyg9/microduck-community-kit`（28★，软件 Apache-2.0，**三块板各自 CERN-OHL-P 宽松硬件许可**），
+README 明写「方案已经过批量验证，在原版 XL330 和飞特 HD1910 舵机上，都适配良好」：
+
+| 板 | 生产文件 | 下单要点 |
+|---|---|---|
+| `banana_pcb` | `hardware/banana_pcb/production/banana_pcb.zip` | 2.5 mm 香蕉头 PCB 连接器 **13 mm / 尾部 1.5 mm，参考型号 U6068**；导线按 3–5 A |
+| `dxl_hub` | `hardware/dxl_hub/production/dxl_hub_v0.3_gerber_1p.zip` | **飞特 HD-1910 焊 `AMP175778/8283/A2007WV-3P` 立式**（不是 XL330 的 `B3B-EH-A`） |
+| `imu_to_dxl` | `hardware/imu_to_dxl/production/imu_to_dxl_v1.0.0_10p_gerber.zip` + `bom.csv`/`positions.csv`/`netlist.ipc` | 总线 IMU 从站的备选来源，固件两套位次仲裁已真机验证 |
+
+→ **§5.1 的香蕉 PCB、§5.2 的分线板，改走这三个 zip 直接下单**，不必自己设计打样。
+`docs/hardware/microduck-供电接线图.svg` / `microduck-分线板设计图.svg` 降级为自绘备用参考
+（它们是 16 路全并联 / 10 A 母线拓扑，与现成 `dxl_hub` 的 4 分支方案不同）。
+
+⚠️ 下单前核实两点：① 这套 Gerber 是否适配 **2S 8.4 V** 与 A733 HAT 尺寸（README 未提电压档/主控型号）；
+② 其 IMU 固件是否支持 **500k**（A733 UART7 上不了真 1M；协议文档只给了 reg6 编码表，未读到固件可配性）。
+详见 `docs/reference/microduck-开源资料全景-2026-11-06.md`。
+
+> 以下 §4 正文是**官方 HAT**（`elec_RPI_Robot_HAT` D1）的打板资料，与上面的供电板是不同东西，两者不冲突。
+
 官方 HAT 仓库 `pollen-robotics/elec_RPI_Robot_HAT`（99★，Apache-2.0，rev **D1** 2026-10-06）里 `production/` 目录是**完整可下单**的：
 
 | 文件 | 用途 |
