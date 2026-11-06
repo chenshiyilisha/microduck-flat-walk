@@ -38,7 +38,9 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 ### 2.3 当前进度与下一步
 
 - ✅ 载板 scad + 效果图完成（连接耳已升级为通用长圆孔耳）。
-- ⏳ 下一步：① 拉 418 MB `SolidWorks-FT2026-10-20.zip`（含 13 个 STEP + 原 RPi 托架）把连接耳螺接位**定准**（待授权带宽）；② 本机装 OpenSCAD 把 scad 导出可打印 STL；③ 电气定 HAT 出路（推荐 C 绕开 HAT）。
+- ✅ **可打印 STL 已生成**：本机 Windows 沙箱无 OpenSCAD（files.openscad.org 的 Linux 包跑不了），改用纯 Python 网格构造器 `cad/build_carrier_stl.py` 直接写二进制 STL → `cad/orangepi_zero3w_carrier.stl`（896 面，bbox X[-44.5,44.5]×Y[-18,18]×Z[0,4.2]，与 scad 同参）。与 scad 的偏差（可接受简化）：底板实心不贯穿 M2 孔、连接耳长圆孔用矩形框实现、边轨用 4 盒近似。
+- ✅ **418 MB STEP 不再必需**：连接耳长圆孔 ±4 mm 可调 + 框式结构不依赖精确螺接位即可打样；仅当要"精确拧到飞特版躯干原孔"时才拉 `SolidWorks-FT2026-10-20.zip` 定准。
+- ⏳ 下一步：① 电气定 HAT 出路（推荐 C 绕开 HAT 用 URT-2 + imu_to_dxl 小板）；② 真机打样后用实物核 BOARD_R / 安装孔 / 接插件禁布。
 
 ## 3. Radxa Zero 3W 版（RK3566）
 
@@ -69,6 +71,7 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 
 ## 5. 待授权的大动作
 
-- 拉 418 MB `SolidWorks-FT2026-10-20.zip`（GitHub Releases），只读 `pcb__raspberry_pi_zero_2_w` 相关 STEP / 原 RPi 托架，定准 Orange Pi 连接耳螺接位。
-- 本机装 OpenSCAD，把 `cad/orangepi_zero3w_carrier.scad` 渲染导出可打印 STL。
+- ~~拉 418 MB `SolidWorks-FT2026-10-20.zip` 定准连接耳螺接位~~ → **不再必需**：长圆孔 ±4 mm 可调 + 框式结构，不依赖精确螺接位即可打样。仅"精确对原孔"时才拉。
+- ~~本机装 OpenSCAD 导 STL~~ → **已完成（替代方案）**：`cad/build_carrier_stl.py` 纯 Python 生成 `cad/orangepi_zero3w_carrier.stl`，无需 OpenSCAD。若要 OpenSCAD 忠实布尔（穿透 M2 孔、半圆端槽）可本地装后重渲。
 - ~~查 kissqy 硬件工程确认 HAT 舵机总线 UART 引脚~~ → **已完成**：`microduck-kissqy HAT引脚分析-Radxa闭环-2026-11-06.md`。
+- Radxa 上电验收清单 → **已完成**：`microduck-Radxa上电验收清单-2026-11-06.md`（commit `c61fa6f`）。
