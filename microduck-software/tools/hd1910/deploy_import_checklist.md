@@ -60,12 +60,14 @@
 > 全景对照见 `docs/reference/microduck-开源资料全景-2026-11-06.md`。
 > ⚠️ **DuckBuddy 上游验证的是 HL-2915，不是 HD-1910** —— HD-1910 的实机证据链在
 > replica / kissqy / community-kit / ft1910 这条线上，所以本节是 HD-1910 上板的第一道硬件关，
-> 与 B 段软件关互补。H8–H10 于 2026-11-06 补入。
+> 与 B 段软件关互补。H8–H10 于 2026-11-06 第一轮补入；**H11–H13、C9 于同日第二轮
+> 「软件到硬件」盘点补入**，H2 于该轮二次修正（恢复 replica 的实机逐颗证据）。
+> 第二轮全景见 `docs/reference/microduck-软件到硬件全链路资料地图-2026-11-06.md`。
 
 | # | 关卡 | 实机做法 / 的期望 | □ |
 |---|------|------------------|---|
 | H1 | **URT-2 上电顺序** | 先插 USB、后给舵机上电；反了总线被压到 ≈2.1 V、一片都不应答 | |
-| H2 | **方向：共识值，不是逐颗实测值** | 社区两份资料都给出 15 颗全 −1，但**证据强度不均**：replica `directions.json` 是网页 ± 按钮逐颗验证；而官方飞特适配版 `jyg9/microduck_ft1910` `scs-bus.md` 明写只把 3 个关节（`left_hip_pitch`/`left_ankle`/`right_ankle`）用手转过 + 脚踝过镜像检查，**「Eleven joints were never watched」**，并点名 **`left_knee` 最可疑**（模型轴 −Y，而 hip/ankle 是 +Y）；原话「符号在位置读数里是看不见的」。→ **上板不能照抄**：用只读方向检查逐颗验（现成工具 `janauto/microduck-calibration-guide`，MIT，HD-1910 专用，搬关节看编码器变化、从不给舵机发命令），先查 `left_knee`。这正是「所有电气检查都通过、症状只是往错方向倒」的静默 bug 形状（对照 imu-displace 的 mount 装歪 90° 警告）。我方填 `joint_signs`（B3），验完逐颗回 `robotctl` 看体态 | |
+| H2 | **方向：腿部 10 颗实机逐颗核对，头部 5 颗有分歧**（2026-11-06 二次修正） | **上一轮「全 −1 只是共识值」降过头了**，三方要分开看：① `replica/directions.json` 明写「**2026-09-20 实机逐颗核对：15 颗全是 -1**」，网页 ± 按钮逐颗验证 ⇒ 这是实机证据，保留；② `jyg9/microduck_ft1910` `scs-bus.md` 只手转过 3 个关节（`left_hip_pitch`/`left_ankle`/`right_ankle`），**「Eleven joints were never watched」**、点名 **`left_knee` 最可疑**（模型轴 −Y）；③ `zhuoligetu123/microduck-hd1910m` `radxa/installation.json` 给的是 **腿 10 颗 −1 + `neck_pitch`/`head_pitch` 两颗 +1**，但该文件自标 `"calibration_verified": false`、`"purpose": "Read-only wiring/mapping example"` ⇒ **只读示例，不是实测证据**。→ **腿部 10 颗三方一致；头部 5 颗存在分歧，且给出 +1 的那份自标未标定**。上板用只读方向检查逐颗验（`janauto/microduck-calibration-guide`，MIT，HD-1910 专用，搬关节看编码器变化、从不给舵机发命令），**先查 `left_knee`，再单验头部 5 颗**。这仍是「所有电气检查都通过、症状只是往错方向倒」的静默 bug 形状（对照 imu-displace 装歪 90° 警告）。我方填 `joint_signs`（B3），验完逐颗回 `robotctl` 看体态 | |
 | H3 | **校零不走写 128** | 固件 3.46 不支持"reg40 写 128 = 中位校准"（会回成功但偏移不动，协议手册 4.9：HLS ≥3.43 不支持，只支持 0x0B）；**我们的链上同样成立**（B22：robotd 链上没有 0x0B 指令，零位只能靠 `joint_offsets`/calibrate_offsets 标），把舵机自身 EEPROM 校准与传统 128 方案都排除，标零后必须回读偏移确认 | |
 | H4 | **出厂 EEPROM 值** | 出厂 P32 / D40 / I0、转矩 1000。上线必需 reg6=1（500k，或按 B13 改板侧 1M）、mode=0（B13）——这三项写不上去 robotd 拒绝启动（"checked, not corrected"） | |
 | H5 | **电池：NP-F550 不是 F970** | 上游网格文件叫 np_f970.stl 但实物是 F550（39×21×71 mm，F970 厚 60 mm 装不进、且 300 g 吃掉预算）。**买 NP-F550 2S（6.6–8.4 V）**；满电 8.4 V = HD-1910 电压上限（4–8.4 V 的上沿）零余量 ⇒ 供电调到 8.0 V、限流开最大，或输入并 1000–2200 µF 电容 | |
@@ -74,6 +76,9 @@
 | **H8** | **上扭矩前的姿态写入顺序**（真机重启级） | `jyg9/microduck_ft1910` `scs-bus.md` 实测：给 goal 寄存器还留着旧目标的舵机上扭矩，会同时驱动全部关节，**15 颗 × 最多 26° 误差的 inrush 触发板子欠压锁定 → 8 分钟内 4 次 SBC 重启**。→ `set_torque(true)` 必须 **先写机器人当前姿态到 goal → 回读验证 → 再上扭矩**，且封装在一次调用内；扭矩关闭要广播写 + 回读，不肯释放的舵机报错而非静默 relax。⚠️ 相关坑：**`sync_write` 写 reg40 与写 reg50 行为不同**（reg40 回读立刻是 0、几秒后又抱死，造成假的释放成功），reg40 必须逐台带 ACK 的 `WRITE`；这给台架「mode=4 下 reg40 关不掉扭矩」提供了另一种解释 | |
 | **H9** | **volatile P/D 漂移守卫** | 50/51 是 RAM，`0x08` REBOOT 会从 EEPROM 21/22 重载（ft1910 实测写 50/51=99/88 → reboot 回 32/40；厂商内存表 reg21/22 明写「上电赋值给 50/51」）。三道防线：① `set_torque` 上电前写 profile 并回读、不通过拒绝使能；② `slow_sensors` 每秒读 50..63（顺带看增益/包电压/壳温），比对 15 颗，漂移就重写并**响亮报错**；③ reboot 清 verified flag。**EEPROM 永不自动写**——写错就是每次开机猛冲，中断的 EEPROM 写会让舵机不可用；只走显式 `scs_commission --persist-gains`（读锁→清锁→写 21/22→**回读**→恢复锁，使能时拒绝）。机制：reg55=1 时「锁着的舵机接受写入到 RAM 且静默不持久化」，**没回读的调用会把什么都没做报成成功**（＝我们「回读 PASS ≠ 持久 PASS」的根因） | |
 | **H10** | **上板先读厂商内存表核对常量** | `jyg9/microduck-community-kit/docs/飞特通讯协议说明.md` §5（飞特官网《磁编码HLS舵机-内存表解析》逐条抄录）已给一手背书：reg6 编码 **0=1M / 1=500k / 2=250k**（解释三方波特率分歧）；reg15 最低输入 **40=4.0 V**（台架 4.6 V 欠压判断成立）；reg21/22→50/51；reg31 偏移 **BIT15 方向位**；reg42 目标位置 **0.087°/LSB**；reg46 速度 **0.732 RPM**（我们的速度标度）；reg44 电流 **6.5 mA/LSB**（R29 的 13305 mA 上限）；`0x0B`=CAL、`0x08`=REBOOT（不应答、≈823 ms 回来、EEPROM 保留）。**指令表要逐条回读，别靠记忆** | |
+| **H11** | **关节 ID 有两套互不兼容的编号体系**（2026-11-06 新增，最易静默出错） | 我方 B 代 `duck-control/src/model.rs` `JOINT_IDS` = **左腿 20–24 / 头颈 30–34 / 右腿 10–14 / IMU 200**（官方、`replica`、`open-microduck` 同系）；而 HD-1910 复刻线（`hd1910m/installation.json`、`AI-FanGe/build-tutorial`、`replica-kit`）用 **1–15**：右腿 1–5 / 左腿 6–10 / 头颈 11–15。第二重错位：头部 13/14 在前者是 `head_yaw`/`head_roll`，在 `hd1910m` 是 `head_roll`/`head_yaw`。→ **禁止把别的项目 `installation.json` 直接当 `[bus] joint_ids` 填**：15 颗全错位、ping/读写/电气全过、症状只是往错方向倒。按**关节名字**逐颗映射，不能拿模型数组下标当电机 ID；`joint_ids` 顺序必须与 `JOINT_NAMES` 一致（B3）。依据 `docs/reference/microduck-软件到硬件全链路资料地图-2026-11-06.md` §2 改判 2 | |
+| **H12** | **HOME 是模型站姿，不是编码器零位**（2026-11-06 新增） | 三份独立来源一致：B 代 `model.rs` 注释「`DEFAULT_POSITION` 必须匹配训练环境 `HOME_FRAME`，否则 **14 个观测槽有恒定偏移**」；`hd1910m` §4「每个 ONNX 的 `default_joint_pos` 给出各自 HOME，输入用 `q−HOME`，**不得把 HOME 再校成硬件零位**」；`open-microduck` 复刻指南「不能把站立角当作编码器零点」。→ 我方 `probe_joy_policy.py` 的 `processed = default_joint_pos + action` 是对的；`joint_offsets` 只管**硬件零位**，两者各管各的、不可互相校准或覆盖。切到 standup/roll 等多模型时**各模型 HOME 可能不同**，要逐个核 `default_joint_pos` | |
+| **H13** | **低速与偏航不是硬件故障，是配方特性**（2026-11-06 新增） | `mindthink/microduck-policies-repro`（官方 velstand 配方独立复现，pin `bae39f5`，**全部 sim-only**）实测：**官方 velstand v8 在 0.15 m/s 指令下 4/10 不走**；**所有策略实测速度只有指令的 40–60%**；**没有策略能在 0.10 m/s 下走**；slowwalk-3750 在 0.2–0.3 m/s 右漂 ≈0.2 rad/s；官方 v8 训于 `Mjlab-VelStand-Rough-Backlash-MicroDuck`、v8 起才支持 yaw 跟踪与顺滑起身。→ **上板后不要用 0.10–0.15 m/s 的「会不会走」当验证判据**，先用 ≥0.3 m/s；偏航漂移先记基线再谈修复。这也独立支持我们「heading 奖励 A/B: no decision」的结论 | |
 
 ---
 
@@ -89,6 +94,7 @@
 | C6 | 短站立 | 先站稳再给速度指令；再谈走路 | |
 | C7 | 本仓彩排 | `rehearse_hd1910.py`（仿真，m5/kp32）作对照，**不能单独宣称真机已会走** | |
 | C8 | **归一化器下限（2026-11-04 查出，会让机器人猛打限位）** | 导出的 `Div` 分母（= 训练 std）必须逐维 > `1e-3`。`deploy61.onnx` 有 **10 个维 = `1.113e-05`**（`head[0..3]`、`body.x/y/z/roll/pitch/yaw`），放大 **89866×**；其中 **7 个是 `obs.rs:196-211` 会真写非零值的槽** ⇒ 转 5.7° 头，动作从 −0.29 跳到 **−35.7 rad**。实测 `p8head_2999` / `resume_5999` 下限 `0.01289`（**差 1157 倍**）⇒ **`deploy61` 下线，换这两个之一**。⚠️ **不能靠改 onnx 修**：把 std 抬到 `1.2e-2` 等于换了一个策略（权重是在 `1.1e-5` 下学的），必须重新导出让 `VecNorm` 带 eps 地板。`publish` 自带的 `smoke_run_onnx` 抓不到它：它只断言 `std(outputs) != 0`，而 `deploy61` 在那里的 std 是 **104**（健康 0.29–0.83）—— **抖动越大越容易通过** | |
+| C9 | **导入前跑数值 gate**（2026-11-06 新增，补 `smoke_run_onnx` 的盲区） | 借用 `xingxingRealzyx/esp-duck` 的范式：它在**每次开机**和**每次策略切换前**跑固定输入的精度 gate（`cos ≥ 0.9951`、`maxabs ≤ 0.089 action units`，host/device 双分布验证；9 个官方策略 9/9 PASS，50 Hz 9.61 ms/pass、332 ticks 0 overruns）。→ 我方导入前用**固定观测集（务必含非零 head/body 槽，否则抓不到 C8 那 7 个真写非零值的维）**跑 ONNX，与参考实现比对：① 输出动作幅度上限；② 余弦相似度下限；③ 每次开机/切换都跑。门限按我方动作幅度重新标定，**借结构不借数值**（esp-duck 是 INT8 量化误差，我们是 FP32 归一化分母）。⚠️ esp-duck 无舵机总线/安全层，只是台架数值参考，不是运行时实现 | |
 
 ---
 
