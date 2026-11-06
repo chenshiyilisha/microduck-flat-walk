@@ -229,15 +229,20 @@ first light 已跑通 50 Hz。**风险**：first light 明确写「**还没有�
 
 ## 8. 未核实 / 待办
 
-| 项 | 状态 |
+> ✅ **2026-11-06 二次核查：下表 7 条已全部处理完毕**，逐条证据与证据强度见
+> `docs/reference/microduck-未核实项核查报告-2026-11-06.md`。此处只留索引，不再重复正文。
+
+| 项 | 判定 |
 |---|---|
-| `community-kit` 的 Gerber 是否适配 **2S 8.4 V** 与 A733 HAT 物理尺寸 | 未核实（README 只说 XL330/HD1910 批量验证，未提电压档与主控型号）；下单前需看 `.kicad_sch` 电源部分 |
-| `community-kit` IMU 固件是否支持 **500k**（A733 上限） | 未核实；协议文档给了 reg6 编码表，但固件波特率可配性没读到 |
-| `dxl_hub` 实际拓扑（4 分支 vs 全并联）、铜箔载流 | **按 README 推的**，未解析 `.kicad_pcb`；若直接用现成 Gerber 则不必自己校核 |
-| 666wsp 与 community-kit 15 字节布局同源 | **推的**，只找到 community-kit 引用 replica 的间接证据 |
-| `ft1910` first light 文档里「21-byte block at 56」与正文「每设备答 15 字节」不一致 | 内部矛盾，先记录不下结论（§1.2 实测 12/15/20/21 字节读都 OK） |
-| kissqy 淘宝商品页、香蕉母座焊盘 | 仍需登录，未能独立核实（现已非必需） |
-| `MHDuck/microduck`、`Ley-WL/microduck-observer`（115/195 MB） | 只核了元信息，未下载全文 |
+| Gerber 是否适配 2S 8.4 V / A733 HAT 尺寸 | ✅ 2S 可用（`dxl_hub` 板载 `1000uF/10V`，3S 会超压）；「HAT 尺寸」问题**撤销**（三块板不插 40-pin） |
+| IMU 固件是否支持 500k | ✅ 支持（`dev_fee_baud()` 码表 `1=500000`、写 reg6 持久化）；前提：默认 1M、只走飞特协议、首帧握手待台架验 |
+| `dxl_hub` 拓扑 / 铜箔载流 | ✅ **全并联**（网络仅 `GND/+BATT//DATA`，「4 分支」是推的、已推翻）；`banana_pcb` 铜宽 3 mm / README 标 **3–5 A**，非 30 A 母线 |
+| 666wsp 与 community-kit 15 字节同源 | ✅ **契约同源**（`board.h` 明写取自 kissqy FT6，offset 12/13/14 与 status 位逐位对应），非同一份固件 |
+| 「21-byte block at 56」vs 15 字节 | ✅ **不矛盾**：15 = 数据净荷，21 = 应答整帧（`LEN=17 → LEN+4=21`）；源码 `sync_read(56, 0x0F)` 为证 |
+| kissqy 淘宝页 / 香蕉母座焊盘 | ⚠️ 官方采购清单明写「**香蕉板（暂未上架）**」⇒ 该信息存疑；主路径改回 community-kit `banana_pcb` 现成 Gerber，商品页仍受登录墙阻挡 |
+| `MHDuck/microduck`、`Ley-WL/microduck-observer` | ✅ 抽查 README/文档树：MHDuck 是 **HD1910+I²C IMU 已实施实机运行时**（H6 修法现成参考）；observer 自标「未部署实机」，不构成实机证据 |
+
+**新增待核对**：kissqy HAT 是照 **Radxa ZERO 3W** 设计的（清单明写 2GB/无 eMMC/¥309、HAT 65×30.9 mm），换 A733 后 HAT 的 UART 引脚映射需核对；kissqy 成品价格勘误为 **HAT ¥119 + IMU ¥99 + HUB ¥69**（非「一套 ¥150」）。
 
 ---
 

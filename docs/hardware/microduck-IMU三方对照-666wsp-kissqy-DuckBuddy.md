@@ -103,9 +103,20 @@ DuckBuddy 侧确认：`deploy/robots/opi-hl2915-rev-a.toml` 里 IMU 相关只有
 
 ## 5. 待核对项（下单前）
 
-- **kissqy IMU 板引脚 vs DuckBuddy imu-feetech 固件**：两者都是 STM32G031+LSM6DSV16X，但板设计不同（kissqy RevA 22.7×25.6mm 两层 vs DuckBuddy PDB/IMU R2f）。要把 kissqy 板刷成 DuckBuddy 固件，需逐脚核对：SWD、USART TX/RX、DE 方向控制、LED、传感器 SPI/I2C、供电。**不能假设引脚兼容。**
+✅ **2026-11-06 三条都已核实**（逐条证据见 `docs/reference/microduck-未核实项核查报告-2026-11-06.md` §2.3 / §4）：
+
+- **kissqy IMU 板引脚 vs DuckBuddy imu-feetech —— 逐脚核对完成**：
+  | 功能 | DuckBuddy `imu-feetech/src/main.rs:9-14` | kissqy `imu-source/src/main.c:140-152` | 判定 |
+  |---|---|---|---|
+  | MCU | STM32G031F8P6 TSSOP-20 | STM32G031xx | ✅ 同族 |
+  | USART2 TX/RX | PA2 / PA3 | PA2 / PA3 (AF1) | ✅ |
+  | SPI1 | PA5 SCK / PA6 MISO / PA7 MOSI / PA4 CS | PA5/6/7 (AF0) / PA4 active-low CS | ✅ |
+  | **DE 方向使能** | **PA1 = 74LVC1G126 OE，USART2 硬件 DE，发送期间拉高** | **PA1 = `active-low DXL_TX_EN`，软件 GPIO** | ❌ **有效电平相反** |
+  | 其它 | 64 MHz PLL / 500k | 16 MHz HSI / `DXL_BAUD=1000000` / PA0 DEBUG_LED | △ 各自固件管理 |
+
+  ⇒ **引脚号几乎全同，但 DE 极性相反**：直接刷 DuckBuddy 固件会导致总线被一直驱动（抢占）或从不发声（不应答）。「刷成原生匹配」**必须改一行把 DE 有效电平反转**，再台架验。这是「电气检查全过、症状是整条总线失联」的静默 bug 形状。
 - **DuckBuddy imu-feetech 固件源码位置**：`.upstream/DuckBuddy-main/firmware/imu-feetech`（本地已有），可作为重刷参考。
-- **666wsp 板 BAT+ 电压范围**：手册标注「待确认」（imu_dev_guide.md:158）。
+- **666wsp 板 BAT+ 电压范围 —— 已定**：原理图 PDF 提取出 U2 = **`HT7533-1`**（Vin 2 / Vout 3），Holtek 官方 `HT75xx-1` datasheet：`VIN max 30 V`、`4.3 V ≤ VIN ≤ 30 V`（Line Regulation 条件）、3.3 V±3% / 100 mA。⇒ **BAT+ 推荐 4.3–30 V，2S 6.6–8.4 V 安全**；3S 前仍需核 10 µF 电容耐压（原理图未标）。原理图同时给出 U4=`CH32V203F8U6`、U3=`LSM6DSV16XTR` 走 **SPI**、CN2/CN3=`A2007WR-3P`、D2=`RCLAMP0521T`（在数据线上，非电源）。
 
 ## 6. 给你的选择建议
 
@@ -151,9 +162,10 @@ DuckBuddy 侧确认：`deploy/robots/opi-hl2915-rev-a.toml` 里 IMU 相关只有
 → **它的板能放在任意位次**，不需要改主机排队顺序。板子带现成 Gerber + BOM（CERN-OHL-P）、
 固件可 A/B 在线升级。
 
-⚠️ **未核实**：该固件是否支持 **500k**（A733 UART7 上不了真 1M）。协议文档给了 reg6 编码表
-（`0=1M / 1=500k / 2=250k`），但本次没读到固件波特率可配性。**下单前必须确认这一条**，
-否则它在 A733 上仍然跑不起来。
+✅ **2026-11-06 已核实：支持 500k**（一手源码，见 `docs/reference/microduck-未核实项核查报告-2026-11-06.md` §2.2）：
+`firmware/v1/src/boot_regs.c:282-288` 的 `dev_fee_baud()` 码表 `{1000000, 500000, 250000, ...}` ⇒ **`fee_baud_code=1` 就是 500k**；`dev.c:76-79` 接受 0..11，写飞特寄存器 **6** 由 `dev.c:313` 自动存入 flash blob（掉电保持）；`docs/flash_layout.md:522` 原文「可临时把总线降到 500 kbps（`dev_dxl_baud()` / `dev_fee_baud()` 都支持）」。
+⚠️ **三个前提**：① 默认 `dev_cfg.c:22` = `FEE_BAUD_CODE_1M`，出厂 1M ⇒ 要先用 1M 写 reg6=1 再切 500k，**上电首帧握手顺序只能台架验**（`bus.c:254-257` 说 served baud 跟随主机最后一次的协议）；② DXL 侧码表 `{9600,57600,115200,1M,2M,3M,4M}` **没有 500k**，只有飞特 `0x82` 协议能降（我方正是飞特总线）；③ 15 颗舵机 reg6 要一起改成 0=1M/1=500k 中的 1。
+⇒ **第四条路成立**，不再卡在「500k 未核实」。
 
 ### 7.3 另外两家新候选（比 666wsp / kissqy 更省改动）
 
