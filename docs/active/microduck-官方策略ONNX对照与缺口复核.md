@@ -99,3 +99,29 @@
   - 我方 `.pt`：原生输出，无外部缩放（rsl_rl actor 已在其动作空间内学习）。
   - 判据：`fall_rate`（ONNX 基线 17.2%）须显著下降才证明 HD-1910 重训必要且成功；`mean_survival` 在 perpetual 任务下为「首次倒地前平均存活步」，作为辅证。
   - **追加"真在滑吗"指标**（避免"2% 摔但轮子不动"的伪胜利）：eval 从 `extras['log']` 累计 `Episode_Reward/wheel_speed`(权重10) 与 `Episode_Reward/glide`(权重4) 的步均奖励，作为 rolling signal。最终对比时 ONNX 基线与新 `.pt` **同设置同跑**，让摔率 + 滑行信号都苹果对苹果——已验证 `eval_roller_onnx.py` 能稳定输出这两字段。
+
+## 7. 行走策略对照（旗舰主线）+ 部署链审计
+
+### 7.1 行走对照准备（已就绪，待 GPU）
+- **官方行走 ONNX 全集已下 + 动态 batch 兼容**：`pollen-robotics/microduck-policies` 全部 6 个策略（`alpha_walking`/`velstand`/`alpha_stand`/`alpha_ground_pick`/`roller`/`roller_crouch`）已落 `out/official_policies/`。官方导出把 obs 输入冻结成 `[1,61]` batch，**CPU EP 拒绝 ≠1、CUDA EP 静默广播**——已改为在加载时**内存动态化首维**（MLP 对 batch 维天然安全），脚本自给自足，重下 HF 也无需手工 patch（提交 `c2e0727`）。
+- **`eval_velocity_in_sim.py` 加 ONNX 模式**（提交 `c2e0727`）：与我们的 `.pt` 走**同一套严苛物理量闸门**（足 clearance/滞空/速度跟踪误差/摔倒/横向漂移），支持 `--action-scale`（roller 系 0.8）。这样官方 `alpha_walking.onnx` 与我们的 `model_5999.pt` 苹果对苹果。
+- **最佳行走候选**：`logs/rsl_rl/microduck_velocity_hd1910/2026-10-27_08-37-16_hd1910_resume_4096_to6000_1027/model_5999.pt`（kp8 线，最高迭代 5999，无 `model_final.pt`，按"外层 sweep 防抖动"后续多 seed 复核）。
+- **官方行走基线（CPU 小样本，噪声大，待 GPU 大样本确认）**：`terminated_frac≈0.875`（跌倒率约 87.5%）、`vx_mean≈0.152 m/s`、`dx_over_expected≈-0.16`、gates 中 `no_fall`/`translates_forward`/`stays_upright` 均 FAIL——**官方行走 ONNX 在 HD-1910 异 plant 上几乎走不起来**，退化比 groundpick(23.4%成)/roller(17.2%摔) 更严重（走路对质量/重心最敏感），强力支撑"HD-1910 行走必须 plant 专用重训"。
+- 复现：
+  ```bash
+  # 官方基线（同 plant default，与我们的 .pt 一致）
+  .venv-mjlab/Scripts/python.exe tools/eval_velocity_in_sim.py \
+      --task Mjlab-Velocity-Flat-MicroDuck --checkpoint out/official_policies/alpha_walking.onnx \
+      --num-envs 64 --seconds 10 --device cuda:0 --cmd-vx 0.4 --plant default --seed 0
+  # 我们的 .pt
+  .venv-mjlab/Scripts/python.exe tools/eval_velocity_in_sim.py \
+      --task Mjlab-Velocity-Flat-MicroDuck --checkpoint <model_5999.pt> \
+      --num-envs 64 --seconds 10 --device cuda:0 --cmd-vx 0.4 --plant default --seed 0
+  ```
+
+### 7.2 部署链审计结论：**软件已成熟，非缺口**
+- 审计 `export_onnx.py` / `make_manifest.py` / `verify_policy_contract.py` / `verify_policy_bundle.py` / `policy_numeric_gate.py` 与 `deploy_import_checklist.md §C1–C9`：
+  - 导出：`export_onnx.py` 烘焙 normalizer + parity 校验；`make_manifest.py` 强制 `obs_len=61`/`act_len=14` 且拒绝无外部权重的空图（A8）。
+  - 契约：`verify_policy_contract.py`（obs61/act14/50Hz）+ `verify_policy_bundle.py`（归一化下限 + metadata 对质）。
+  - **致命坑已有专门防线**：`deploy61.onnx` 归一化 `Div` 分母 10 个维 = `1.113e-05`（放大 1157× → 5.7°头 → 动作 −35.7 rad）已被 `policy_numeric_gate.py` 的 G1–G4 + `--selftest` 负对照（健康 PASS / deploy61 FAIL）兜住。
+- **结论**：部署软件齐备、文档化、有负对照；剩余风险只在**真机硬件**（清单 §A–B 总线/方向、§H 实机关卡），不在软件。故部署链**不列为软件缺口**。
