@@ -1,0 +1,117 @@
+# robotd.toml for the HD-1910 duck, servos in mode 0 (the only mode robotd accepts).
+#
+# This file replaces out/robotd_only_gain.toml, which set [policy] gain = 8. That was
+# wrong and destructive: on the Feetech path every gain is mapped to reg 50 by
+#
+#     reg50 = clamp(round(gain * position_kp / 200), 1, 254)        (feetech.rs:236)
+#
+# so gain=8 with the default position_kp=8 wrote round(0.32) = 0 -> clamped to 1: every
+# servo at its softest possible Kp. The robot would go limp, and the symptom would read
+# as "the policy does not walk".
+#
+# Audit before installing:
+#   python tools/hd1910/audit_robotd_toml.py --toml out/robotd_hd1910_mode0.toml --expect-kp 16
+#
+# ── There is no `baud` key. ────────────────────────────────────────────────────────────
+# The rate is compiled in: `feetech.rs:35 BAUD_RATE = 500_000` ("exactly representable on
+# the A733's UART7, 24 MHz / 16 / 3; 1 Mbit/s is not"). `[bus]` carries
+# `deny_unknown_fields`, so a `baud = 500000` line here does not set the rate -- it makes
+# the whole file fail to load and robotd never starts. The rate lives in the servo:
+# register 6, index 1. Ours ship at index 0 (1 Mbps -- that is why every bench probe
+# defaults to 1000000 and works), and a servo at the wrong rate is simply silent, exactly
+# like an unpowered bus. Move each one with:
+#   python tools/hd1910/servo_probe/hd1910_ident.py baud --port COM3 --id <ID>
+#
+# ── What robotd checks at every start (feetech.rs:374-386, "checked, not corrected") ──
+#   reg6  = 1       500 kbps          (factory 0)        <- must change
+#   reg33 = 0       mode 0            (factory 4)        <- must change
+#   reg9/11 = 0/4095  travel limits    (factory already 0/4095)
+#   any mismatch -> "servo N is not configured for this robot" and the bus never opens.
+# And what it writes itself, every boot (so these are NOT install steps):
+#   reg44 current, reg46 speed = 250, reg41 accel = 0, reg50/51 Kp/Kd, reg40 torque off.
+
+[policy]
+# XL330-scale reference (feetech.rs:115). NOT the register value -- leave it at 200.
+gain = 200
+# Training used 1.0; the 0.9 default shrinks every action by 10% before the PD loop.
+action_scale = 1.0
+# Training has no low-pass at all; 1.0 is pass-through.
+head_lowpass = 1.0
+legs_lowpass = 1.0
+
+[bus]
+port = "/dev/ttyS2"
+servo = "feetech_hls"
+# Legs. 16, not 8: the trained plant (kp_fw=8) behaves like the servo in MODE 4 at P=8,
+# and bench measurement says mode0/P16 ≡ mode4/P8 across 0.5–4 Hz (2 Hz gain 0.604 vs
+# 0.605, lag +73.6° vs +73.9°). In mode 0 at P=8 the loop is only 56% of the plant.
+position_kp = 16
+# Joints 5..=9 (neck, head pitch/yaw/roll, mouth) take their own value (main.rs:1169).
+# Left at upstream's 16: it was raised from the legs' 6 because the neck sagged 15° there.
+position_kp_head = 16
+# There is NO `fast_sync_read` key in THIS generation (DuckBuddy-main). Careful: the
+# workspace holds two robotd generations with schemas that do not mix -- out/upstream_ref/
+# (Radxa + XL330) does have `[board]` / `fast_sync_read` / a board.rs and runs 1 Mbps;
+# DuckBuddy-main (Orange Pi + HL-2915, and the only one that speaks Feetech) has none of
+# them and hardcodes 500 kbps. A key that is real in the old one is still an unknown key
+# here, and `Bus` is deny_unknown_fields: the whole file fails to load, same trap as
+# `bus.protocol`. We had mixed the two generations in this very file.
+# The bench answer stands: 0x8A returned 0 bytes on ID 10 while 0x82 sync read matched
+# single reads (servo_probe/probe_sync_read.py) -- which is what this generation does.
+# Current cap per servo, mA (written to reg44 every boot). The default 2925 is the
+# servos' own power-up value and is ABOVE this one's stall current (1.2 A at 4.8 V,
+# 1.6 A at 6 V) -- i.e. the default is no cap at all, and the only real limit is the
+# servo's own over-current protection (reg28-29 = 500 counts = 3.25 A). Left at the
+# default on purpose: the trained plant has no current saturation, and P=16 already
+# costs 2x the loop gain. Set it explicitly only once the robot has walked and a real
+# current reading exists (reg69 is not trustworthy on this servo).
+
+# imu_median: median-of-three on the IMU's gyro and gravity. Default is true.
+# Measured (verify_imu_chain.py): at 50 Hz the median is a *pure one-tick delay*,
+# exactly 20 ms, on every tick. The training env randomises the IMU's delay to
+# 0-1 control steps -- 0-20 ms, half the envs at 0 -- so with the median on we sit
+# at the top of that window before the chip's own sampling lag (0 to one SFLP
+# period) is counted, i.e. 20-30 ms, up to 10 ms past anything the policy saw.
+# imu.rs itself says the walking policies "fail past ~20 ms of IMU lag (BAM
+# simulation, 2026-10-10): with it, the HL-2915 robot's trunk rocked and the policy
+# flailed the neck". The spike rejection it buys is not load-bearing: the block is
+# checksummed by rustypot, and the "SFLP not started" all-zero case is handled
+# separately by the decoder. => off, deliberately, against upstream's default.
+# If the bench ever shows single-block spikes, set this back to true and re-check.
+imu_median = false
+
+# joint_ids: 15 servo IDs in JOINT_NAMES order -- left leg 0-4, neck/head/mouth 5-9,
+# right leg 10-14 (duck-ipc-proto/src/lib.rs:368). The bus refuses to open without it,
+# and it refuses rather than guesses: "a guess drives one joint with another's targets"
+# (main.rs:5495).
+#
+# RESOLVED for this airframe (HD-1910 / Radxa line) from the authoritative wiring map
+# .upstream/hd1910m/radxa/installation.json (mapping_confirmed=true), which lists each
+# joint's Dynamixel ID in JOINT_NAMES order. This is NOT the XL330 reference map
+# duck-control/src/model.rs:15 ([20,21,22,23,24, 30,31,32,33,34, 10,11,12,13,14]); the
+# HD-1910 airframe uses a different assignment, so the audit_robotd_toml.py WARN about
+# "not the reference set" is expected and is not a failure.
+joint_ids = [10, 9, 8, 7, 6, 12, 11, 14, 13, 15, 5, 4, 3, 2, 1]
+#
+# joint_signs (+-1) in the same JOINT_NAMES order, also from radxa/installation.json
+# (direction field). calibration_verified=false upstream, so treat as wiring-confirmed
+# but re-verify one joint at a time on the robot (servo_probe/identify_joints.py).
+joint_signs = [-1, -1, -1, -1, -1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1]
+
+[battery]
+# [2], not the [2, 3] default: with both accepted, a 3S pack reads as a valid 3S (11.1 V
+# -> 3.7 V a cell) and robotd drives the servos at it. HD-1910s are 4-8.4 V and burn on
+# 3S (robotd-params/src/lib.rs:52). max_volts closes the other end: a full 2S LiHV is
+# 8.7 V, over the 8.4 rating.
+cells = [2]
+max_volts = 8.4
+# Note the consequence for the bench: at rest robotd identifies the pack from reg62
+# before any torque, and 4.6 V / 2 cells = 2.3 V a cell is below the 2.95 V floor, so it
+# reports "neither a 2S nor a 3S pack" and stays limp. The USB bench at 4.6 V cannot run
+# a walking robotd at all -- it needs at least ~6.0 V.
+
+[thermal]
+# The servo's own shutdown is reg13 = 80 °C (read from ID 10, 2026-11-02). 70 leaves 10 °C
+# to that latch -- the same margin the HL-2915 robot settled on after a walking trial took
+# its hottest servo to 61 °C. warn_c stays at the 55 default.
+walk_max_c = 70.0
