@@ -88,10 +88,12 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - 本项目 groundpick 在 sim 里用相位命令，但**真机上没有控制器去驱动相位/flag**——phase 类策略上真机就没人喂时序。
 - **补法**：随 SitStand + VelStand 一起做真机时序编排（缺陷 8 的动作补全项）。
 
-### 缺陷 8 — 上游非 plant 专属改进需 re-sync（元缺陷）
-- 上游自上次对照后新增：站起/velstand 鲁棒性修复（**已在 hd1910m**）、provenance 基础设施、pickup detector（PR #70）、转向改进。
-- 其中**站起鲁棒性已确认在 hd1910m**；pickup detector / 转向改进是否已在 hd1910m 需再核（建议下次对照时逐条 grep `microduck_ground_pick_env_cfg.py` 与 velstand 转向项）。
-- 与 plant 无关、又能直接提升质量的，优先 cherry-pick / re-sync。
+### 缺陷 8 — 上游非 plant 专属改进需 re-sync（元缺陷）✅ 已逐条核（2026-11-07）
+- 上游 `microduck_rl@develop`（至 2026-10-27）自上次对照后新增：`share_training`（HF 训练 bundle + provenance，已在缺陷 2 落地）、`improve_standup_velstand`（已在 hd1910m，缺陷 3）、**pickup detector（PR #70，2026-10-03）**、**转向/yaw 修复（2026-10-01/12）**。
+- **pickup detector — 与 plant 无关但 HD-1910 不可直接 re-sync（暂缓）**：它是 robotd 端感知特性（仿真训练的时序 CNN + 滞后状态机，读 robotd 每 tick 读数暂停策略）。但 HD-1910 用的是 **FT-SCS 原生 / Radxa 世代** robotd（`.upstream/hd1910m`），grep `duck-control/src` + `configd` 确认**完全不含** `pickup`/`p_held`/`[pickup]`/暂停逻辑——属官方 XL330/Orange Pi 另一 robotd 世代，是跨世代移植而非 re-sync。且 HD-1910 的 ground-pick 是**训练侧**动作，「拿起暂停」是**运行时**特性，两回事。→ 列为 robotd 层未来增强，非训练 re-sync。
+- **转向/yaw 修复 — 是训练侧奖励改动，归 P4 velstand 训练（非现在 re-sync）**：上游 `track_yaw_rate_fine`（yaw 专用细高斯，std 0.35，weight 2，2026-10-01）+ `turn_in_place_min_frac`（原地转向最小 frac，治 0.3 rad/s 死区）。grep hd1910m `microduck_velstand_env_cfg.py` **无此两项** → HD-1910 训练 velstand（P4）时务必把这两项并入 velstand env cfg / mdp.py（hd1910m `mdp.py` 现有 `hd_track_angular_velocity_axes` 自定义 yaw 项，需对照叠加，不可直接覆盖）。
+- 结论：本轮没有可立即 cherry-pick 的「与 plant 无关且能直接提升」项；re-sync 价值集中在**训练侧（P4 velstand）**与**已落地的 provenance / 站起修复**。
+- 附（信息）：官方 runtime 已 0.18.9，policy set 钉 v9（= v7 velstand 逐字节），v8 机器人上更差；API_VERSION 49→50。HD-1910 不消费官方 policy set（B 代 robotd 另一套），仅作上游动态参考。
 
 ### 缺陷 9 — HD-1910 打印件许可风险
 - 官方把 STL 网格钉死在 **CC BY-NC-SA 4.0（非商用）**。若 HD-1910 飞特版 3D 打印件派生自官方网格，商用受限。下单前先核 CAD 来源许可。
@@ -121,7 +123,7 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 3. **provenance（缺陷 2）**：✅ 已落 —— heading_meta 与所有 runmeta 已含 git/diff 指纹/seed（4 个启动器补固定 seed）。
 4. **动作补全**：优先 SitStand + VelStand（缺陷 7 时序编排一起做），tricks 类最后。
 5. **齿隙（缺陷 5）**：硬件/电源到位后换 7.4 V 重测。
-6. **re-sync（缺陷 8）**：下次对照逐条 grep 上游 pickup detector / 转向改进是否已进 hd1910m。
+6. **re-sync（缺陷 8）** ✅ 已逐条核：pickup detector 不在 HD-1910 robotd 世代（暂缓）；转向/yaw 修复归 P4 velstand 训练 re-sync。详见缺陷 8。
 
 ---
 
