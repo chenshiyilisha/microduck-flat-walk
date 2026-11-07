@@ -77,10 +77,11 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - **本项目**：HD-1910 是飞特舵机（非 XL330/BAM），有 `check_backlash_task.py` + Backlash 任务，但：① 是否「透过齿隙读数」未确认；② 台架是 4.6 V 欠压取的数，不可靠。
 - **补法**：换 7.4 V 正确电压重测飞特齿隙，确认仿真模型与真机齿隙一致、编码器读透过齿隙。
 
-### 缺陷 6 — 多策略热插拔彩排工具对 HD-1910 是坏的
+### 缺陷 6 — 多策略热插拔彩排工具对 HD-1910 是坏的 ✅ 已具备（纠正误判）
 - 官方 `infer_policy.py` 一套键盘热插拔 walk/stand/sitstand/roulade + sim2real CSV。
-- 本项目 `rehearse_deploy.py` **写死 XL330/kp200**，文档明说「不要用它跑 HD1910」。HD-1910 没有可用的多策略彩排。
-- **补法**：参数化 servo 类型 / kp（读 `apply_to_live` 的 live 值），或新增 HD-1910 专用 rehearsal。
+- **纠正**：本项目早已不是「写死」状态——`tools/hd1910/rehearse_hd1910.py` 是 HD-1910 专用封装：patch 上游 `rehearse_deploy.load_bam_model` 用 HD-1910 plant JSON、`BAM_MOTOR_NAME="hd1910"`、`--plant live|p3|p8|m5|ftservo`，默认 `live`（实测 `hd1910_kp8 → p8, kp_fw=8.0, m6`），由 `rehearse_hd1910.sh` 驱动。**单策略 BAM sim2real 彩排对 HD-1910 可用。**
+- 本轮补充（2026-11-07）：① 修 `.sh` 默认跨 plant 隐患——默认 m5 ONNX 原本没传 `--plant`，会被 live(kp8) 去彩排（= 跨 plant 陷阱）；改为默认 `--plant m5` 自洽；② 给 wrapper 加 **ONNX↔plant 守卫**：读 ONNX 同目录 runmeta 的 plant 字段，与解析出的 plant 不符则大声告警（单测通过：m5@p8 告警、m5@m5 不告警）。
+- **仍 OPEN（非阻塞）**：官方那种「键盘热插拔多策略 + sim2real CSV」完整套件；且 sitstand/roulade 等策略 HD-1910 尚未训练，多策略热插拔暂无意义。可作为 P4 后的增强。
 
 ### 缺陷 7 — 真机缺 phase / 姿态 flag 的时序编排器
 - 官方由 daemon 驱动「地面拾取」的相位命令和「坐↔站」的姿态 flag。
@@ -115,7 +116,7 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 
 ## 4. 下一步（接 P0–P4 训练计划）
 
-1. **硬件到货前**：真机部署契约已定 + 加载自检 conductor 已落地（缺陷 1 后半）；剩余 = 部署链端到端验证（待硬件）+ rehearsal 工具（缺陷 6）。✅ **参考 `robotd_hd1910_mode0.toml` 已补 `bus.joint_ids` + `joint_signs`**：取自权威 `.upstream/hd1910m/radxa/installation.json`（`mapping_confirmed=true`），ID 顺序 `[10,9,8,7,6,12,11,14,13,15,5,4,3,2,1]`，**不同于** XL330 参考 `[20-24,30-34,10-14]`。审计由 FAIL(空)→WARN(非参考集，预期内)，conductor toml 关转 PASS。真机到货仍需 `servo_probe/identify_joints.py` 逐关节复核（`calibration_verified=false`）。
+1. **硬件到货前**：真机部署契约已定 + 加载自检 conductor 已落地（缺陷 1 后半）+ rehearsal 封装已具备（缺陷 6，含 ONNX↔plant 守卫与 .sh 自洽）；剩余 = 部署链端到端验证（待硬件）。✅ **参考 `robotd_hd1910_mode0.toml` 已补 `bus.joint_ids` + `joint_signs`**：取自权威 `.upstream/hd1910m/radxa/installation.json`（`mapping_confirmed=true`），ID 顺序 `[10,9,8,7,6,12,11,14,13,15,5,4,3,2,1]`，**不同于** XL330 参考 `[20-24,30-34,10-14]`。审计由 FAIL(空)→WARN(非参考集，预期内)，conductor toml 关转 PASS。真机到货仍需 `servo_probe/identify_joints.py` 逐关节复核（`calibration_verified=false`）。
 2. **本次已落**：tests/ 套件（缺陷 4）+ 站起修复保险（缺陷 3 的测试化）+ 加载自检 conductor（缺陷 1 后半）+ provenance（缺陷 2）。
 3. **provenance（缺陷 2）**：✅ 已落 —— heading_meta 与所有 runmeta 已含 git/diff 指纹/seed（4 个启动器补固定 seed）。
 4. **动作补全**：优先 SitStand + VelStand（缺陷 7 时序编排一起做），tricks 类最后。

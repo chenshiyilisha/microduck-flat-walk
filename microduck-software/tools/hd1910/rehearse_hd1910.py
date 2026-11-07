@@ -43,6 +43,7 @@ Extra argv is forwarded to ``rehearse_deploy.main`` (``--command``/``--cmd-vx``,
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import sys
 
@@ -125,6 +126,36 @@ def _flag_value(argv: list[str], flag: str) -> str | None:
         return None
 
 
+def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
+    """Best-effort plant of an ONNX, read from its companion runmeta.
+
+    The training ``.sh`` writes ``out/runmeta_<RUN>.json`` with a top-level
+    ``plant`` (the plant *id*). The ONNX name is ``<RUN>_it<iter>.onnx``, so the
+    run is recoverable by stripping ``_it<digits>``. Returns the preset key, or
+    ``None`` when there is no companion runmeta (e.g. an ad-hoc ONNX) — callers
+    must treat ``None`` as "unknown", never as a match.
+    """
+    stem = onnx.stem
+    run = stem
+    # Strip a trailing _it<digits> (rsl_rl export names) if present.
+    if "_it" in run:
+        run = run.rsplit("_it", 1)[0]
+    meta = ROOT / "out" / f"runmeta_{run}.json"
+    if not meta.is_file():
+        # Heading runs record provenance under out/heading_meta_<run>.json too.
+        meta = ROOT / "out" / f"heading_meta_{run}.json"
+    if not meta.is_file():
+        return None
+    try:
+        d = json.load(open(meta))
+    except (OSError, ValueError):
+        return None
+    pid = d.get("plant") or (d.get("provenance") or {}).get("plant")
+    if pid is None:
+        return None
+    return PLANT_ID_TO_KEY.get(pid)
+
+
 def _rel(p: pathlib.Path) -> str:
     """Path relative to the repo when possible -- user-supplied ones may be outside."""
     try:
@@ -178,6 +209,10 @@ DETECTED_TO_PRESET = {
     "hd1910": "m5",
     "hd1910_ftservo_m6": "ftservo",
 }
+
+#: Reverse of PLANTS: a plant *id* (as written into runmeta / heading_meta) -> preset key.
+#: Lets us read an ONNX's companion runmeta and refuse a cross-plant rehearsal.
+PLANT_ID_TO_KEY = {v["id"]: k for k, v in PLANTS.items()}
 
 #: Filled in by main() before rd.main() runs; _patch_upstream reads it.
 _STATE: dict[str, object] = {"key": None, "plant": None}
@@ -304,6 +339,20 @@ def _inject_defaults(argv: list[str], kp_fw: float) -> list[str]:
         out = ["--onnx", str(onnx), *out]
     else:
         onnx = pathlib.Path(_flag_value(out, "--onnx") or "")
+    # Cross-plant guard: the ONNX was trained on some plant; rehearsing it at a
+    # different one is the XL330<->HD1910 incident all over again. Read the
+    # companion runmeta (best effort) and refuse the mismatch loudly.
+    rehearse_key = _STATE["key"]
+    if onnx and onnx.is_file():
+        onnx_key = _onnx_plant_key(onnx)
+        if onnx_key and onnx_key != rehearse_key:
+            print(
+                f"⚠️  CROSS-PLANT REHEARSAL: ONNX {_rel(onnx)} was trained on "
+                f"plant '{PLANTS[onnx_key]['id']}' (kp_fw={PLANTS[onnx_key]['kp_fw']:g}) "
+                f"but you are rehearsing at '{PLANTS[rehearse_key]['id']}' "
+                f"(kp_fw={kp_fw:g}). The BAM duty/command numbers will NOT match the "
+                f"policy's training plant. Pass --plant {onnx_key} to rehearse it at home."
+            )
     if "--kp-fw" not in out:
         # rehearse_deploy hardcodes 200 when kp_fw is None — always pin the plant's P.
         out = ["--kp-fw", str(kp_fw), *out]
