@@ -1801,10 +1801,6 @@ A/B 两组检查项：**静态**（图结构、算子集、初始化器、归一
 
 _细节与完整表格见 [`microduck-policy-bundle链.md`](microduck-policy-bundle链.md)。_
 
+> **路径约定**：本文档命令里的 `out/...`（如 `out/deploy61.onnx`、`out/p8head_2999.onnx`、`out/robotd_hd1910_mode0.toml`）是**相对 `microduck-software/`** 的——脚本从该目录运行，`out/` 即 `microduck-software/out/`（权重/产物实际落点）。仓库根 `out/` 仅含 reorg 桶（`builds/` `evidence-official/` `measurements/`），**不含**上述权重。reorg 未丢失数据。
 
-<!-- TODO-OUT-MISSING: 以下 out/ 数据路径当前缺失（需确认）:
-- out/deploy61.onnx
-- out/p8head_2999.onnx
-- out/robotd_hd1910_mode0.toml
-2026-11-07 全面检查核实：上述 out/ 数据路径当前文件系统（含 out/ 三桶 builds/evidence-official/measurements/）均不存在；out/ 为 gitignored 本地数据，无 git 恢复手段。可能成因：约定/外部下载路径（官方权重需从 HF 拉取）、已下线产物（deploy61 已下线）、历史别名（p8head_2999.onnx 简名 vs 实际 builds/p8head_2999_rank3_probe.onnx）、或 reorg 前即未落盘。**暂未改动引用** —— 请先排查本地备份 / 重新下载 / 确认 reorg 是否误移，再修正引用或恢复文件。
--->
+

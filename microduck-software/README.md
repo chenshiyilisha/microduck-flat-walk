@@ -1119,7 +1119,3 @@ GPU 全程未使用。这不是省钱，是这套流水线的物理代价本来�
 要上真机必须回上游用 GPU 重训。能借的只有工程手段，布局不用照搬。
 
 
-<!-- TODO-OUT-MISSING: 以下 out/ 数据路径当前缺失（需确认）:
-- out/deploy61.onnx
-2026-11-07 全面检查核实：上述 out/ 数据路径当前文件系统（含 out/ 三桶 builds/evidence-official/measurements/）均不存在；out/ 为 gitignored 本地数据，无 git 恢复手段。可能成因：约定/外部下载路径（官方权重需从 HF 拉取）、已下线产物（deploy61 已下线）、历史别名（p8head_2999.onnx 简名 vs 实际 builds/p8head_2999_rank3_probe.onnx）、或 reorg 前即未落盘。**暂未改动引用** —— 请先排查本地备份 / 重新下载 / 确认 reorg 是否误移，再修正引用或恢复文件。
--->

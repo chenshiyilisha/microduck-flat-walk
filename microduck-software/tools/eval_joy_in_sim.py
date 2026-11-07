@@ -120,7 +120,7 @@ def _step_period(left_z: torch.Tensor, dt: float, thresh: float = 0.008):
     return periods[len(periods) // 2]
 
 
-PLANT_CHOICES = ("default", "bam")
+PLANT_CHOICES = ("default", "bam", "hd1910", "hd1910_kp5", "hd1910_kp8")
 
 
 def swap_plant(env_cfg, plant: str) -> dict:
@@ -139,7 +139,18 @@ def swap_plant(env_cfg, plant: str) -> dict:
     would drop that conditioner as a side effect -- two variables changed, one
     number, no way to attribute the difference.
 
-    So swap exactly the two plant fields and leave the action term alone.
+    So swap exactly the plant fields and leave the action term alone.
+
+    `hd1910*` plants: the HD1910 BAM actuator differs from the joy "bam" (standup
+    voltage-law) model ONLY in its `_BAM_ACTUATOR_KWARGS` (kp_fw + params json).
+    The task's `spec_fn` (walk for velocity / standup for joy) is kept, because
+    the HD1910 plant is purely an *actuator-law* change, not a contact/spawn
+    change. We rebuild each actuator on the entity from the canonical
+    `tools/hd1910/plant_spec.py` numbers IN PROCESS -- so the reading does not
+    depend on whatever `site-packages/mjlab_microduck/robot/microduck_constants.py`
+    happens to carry globally (that file is a shared, mutable singleton that any
+    `apply_to_live.py` call rewrites). Recording the realised `kp_fw`/`json`
+    alongside proves which plant actually produced the number.
     """
     ent = env_cfg.scene.entities["robot"]
     if plant == "bam":
@@ -150,14 +161,68 @@ def swap_plant(env_cfg, plant: str) -> dict:
         ref = MICRODUCK_STANDUP_ROBOT_CFG
         ent.articulation.actuators = deepcopy(ref.articulation.actuators)
         ent.spec_fn = ref.spec_fn
+    elif plant in ("hd1910", "hd1910_kp5", "hd1910_kp8"):
+        import sys as _sys
+
+        _hd = str(pathlib.Path(__file__).resolve().parent / "hd1910")
+        if _hd not in _sys.path:
+            _sys.path.insert(0, _hd)
+        from plant_spec import (  # noqa: E402
+            HD1910_OFFICIAL_M6_KP5,
+            HD1910_OFFICIAL_M6_KP8,
+            HD1910_OPENMICRODUCK_M5,
+            TARGET_NAMES,
+        )
+
+        _spec = {
+            "hd1910": HD1910_OPENMICRODUCK_M5,
+            "hd1910_kp5": HD1910_OFFICIAL_M6_KP5,
+            "hd1910_kp8": HD1910_OFFICIAL_M6_KP8,
+        }[plant]
+        _bam = dict(
+            json_path=_spec["json_path"],
+            target_names_expr=TARGET_NAMES,
+            kp_fw=_spec["kp_fw"],
+            vin_range=_spec["vin_range"],
+            vin_drop_gain_range=_spec["vin_drop_gain_range"],
+            vin_min=_spec["vin_min"],
+            delay_min_lag=_spec["delay_min_lag"],
+            delay_max_lag=_spec["delay_max_lag"],
+        )
+        # Rebuild each actuator on the entity with the canonical HD1910 BAM
+        # kwargs, preserving its concrete class (FrictionDR vs BacklashEncoder)
+        # so both the flat and backlash task variants are covered.
+        ent.articulation.actuators = tuple(
+            type(a)(**_bam) for a in ent.articulation.actuators
+        )
     elif plant != "default":
         raise SystemExit(f"unknown --plant {plant!r}, expected one of {PLANT_CHOICES}")
 
     term = env_cfg.actions["joint_pos"]
+    _acts = ent.articulation.actuators
+    _first = _acts[0] if _acts else None
     return {
         "plant": "task-default" if plant == "default" else plant,
         "spec_fn": getattr(ent.spec_fn, "__name__", None),
-        "actuators": [type(a).__name__ for a in ent.articulation.actuators],
+        "actuators": [type(a).__name__ for a in _acts],
+        # Realised actuator law -- the number the reading was actually produced
+        # under. For `default` this is whatever the live singleton carries; for
+        # `hd1910*` it is the canonical plant_spec value (independent of the
+        # global file). A gate / drift table MUST key on this, never on the bare
+        # `plant` label, because `default` is ambiguous.
+        "kp_fw": getattr(_first, "kp_fw", None),
+        "json": (
+            pathlib.Path(getattr(_first, "json_path", "")).name
+            if getattr(_first, "json_path", None)
+            else None
+        ),
+        # Full path of the actuator params actually compiled into the sim. This is
+        # the source of truth for the plant fingerprint -- NOT the global
+        # `microduck_constants._BAM_ACTUATOR_KWARGS` singleton, which any
+        # `apply_to_live.py` call rewrites and which would otherwise mislabel an
+        # m5 run as "hd1910_kp8" (the exact ambiguity plant_id was written to
+        # prevent). The eval fingerprints from THIS, not from the singleton.
+        "json_path": getattr(_first, "json_path", None),
         # Recorded so the json proves the conditioner survived the swap.
         "action_term": type(term).__name__,
         "conditioner": {

@@ -49,6 +49,11 @@ KNOWN_PLANTS = {
         "model": "m6",
         "json_path": "official_m6_stslaw.json",
     },
+    "hd1910_kp8": {
+        "kp_fw": 8.0,
+        "model": "m6",
+        "json_path": "official_m6_stslaw.json",
+    },
 }
 
 # Which params filename means which plant. Order matters: longest/most specific first.
@@ -63,6 +68,20 @@ def label(kw: dict | None = None) -> str:
     """Best-effort plant name, e.g. 'xl330', 'hd1910', 'hd1910_kp5'."""
     kw = _kwargs() if kw is None else kw
     json_path = str(kw.get("json_path") or "").replace("\\", "/")
+    # `official_m6_stslaw.json` is shared by the P3 (kp_fw=5) and P8 (kp_fw=8)
+    # plants; the ONLY thing that separates them is kp_fw, so resolve by kp_fw,
+    # never by filename. This is the exact ambiguity plant_id was written to
+    # prevent: a reading stamped "hd1910_kp5" while the model actually ran at
+    # kp_fw=8 would be mis-filed as P3 and contradicted by every later P8 number.
+    if json_path.endswith("official_m6_stslaw.json"):
+        kp = kw.get("kp_fw")
+        if kp is not None:
+            if abs(kp - 8.0) < 0.5:
+                return "hd1910_kp8"
+            if abs(kp - 5.0) < 0.5:
+                return "hd1910_kp5"
+            return f"hd1910_official_m6_kp{kp}"
+        return "hd1910_kp5"  # legacy: kp not recorded, default to P3
     for filename, plant in _FILE_TO_PLANT:
         if json_path.endswith("/" + filename) or json_path.endswith(filename):
             return plant
@@ -86,10 +105,18 @@ def _kwargs() -> dict:
     return dict(getattr(mod, "_BAM_ACTUATOR_KWARGS", {}))
 
 
-def fingerprint() -> dict:
-    """Everything needed to answer later: 'which plant produced this number?'"""
+def fingerprint(kw: dict | None = None) -> dict:
+    """Everything needed to answer later: 'which plant produced this number?'
+
+    If `kw` is supplied it is used as the actuator kwargs -- the plant ACTUALLY
+    applied to the env -- instead of reading the global `microduck_constants`
+    singleton. The eval passes the kwargs swap_plant rebuilt in-process, because
+    the live singleton is rewritten by any `apply_to_live.py` call and would
+    otherwise mislabel an m5 run as "hd1910_kp8" (the exact ambiguity this
+    module exists to prevent).
+    """
     mod = importlib.import_module("mjlab_microduck.robot.microduck_constants")
-    kw = _kwargs()
+    kw = _kwargs() if kw is None else kw
     name = label(kw)
     jp = kw.get("json_path")
     out = {

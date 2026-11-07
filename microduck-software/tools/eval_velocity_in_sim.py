@@ -299,9 +299,23 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     freeze_command(env_cfg, vx, vy, wz, seconds)
     dropped = drop_pushes(env_cfg)
 
-    plant_info = None
-    if plant != "default":
-        plant_info = swap_plant(env_cfg, plant)
+    # Always swap/record: for `default` this records the *realised* kp_fw the
+    # live singleton carried (otherwise a drift table cannot tell kp5 from kp8);
+    # for `hd1910*` it rebuilds the actuators in-process and records the canonical
+    # kp_fw, independent of the global file.
+    plant_info = swap_plant(env_cfg, plant)
+    # Fingerprint the plant ACTUALLY compiled into env_cfg (plant_info["json_path"]
+    # / ["kp_fw"]), never the global `microduck_constants` singleton: swap_plant
+    # rebuilds the actuators in-process, so the live file -- which any
+    # apply_to_live.py call rewrites -- would mislabel an m5 run as "hd1910_kp8".
+    _applied_kw = {
+        "json_path": plant_info.get("json_path"),
+        "kp_fw": plant_info.get("kp_fw"),
+    }
+    try:
+        _applied_fp = _plant_fingerprint(kw=_applied_kw)
+    except TypeError:  # plant_id import failed -> fallback stub takes no kw
+        _applied_fp = _plant_fingerprint()
 
     solver = override_solver(env_cfg, solver_iters, solver_ls, solver_ncon)
 
@@ -830,7 +844,9 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         # Which physical plant produced this reading. cfg/mdp hashes do NOT cover
         # it (the actuator lives one import deeper, in microduck_constants), and
         # it moves vx from 0.316/0%-falls to 0.109/100%-falls. Never omit this.
-        "plant_fingerprint": _plant_fingerprint(),
+        # Fingerprinted from the plant ACTUALLY applied to env_cfg (plant_info),
+        # not the global singleton -- see the note at plant_info above.
+        "plant_fingerprint": _applied_fp,
         # Null on a non-backlash task. Non-null records the play actually
         # compiled into the model, so a 0.5-deg reading can never be mistaken
         # for a 2-deg one in a later table.
@@ -920,7 +936,7 @@ def main() -> int:
     print()
     print("=" * 66)
     print(f"checkpoint  {Path(a.checkpoint).name}   plant={a.plant}   play={a.play}")
-    print(f"plant       {_plant_one_line()}")
+    print(f"plant       {_plant_one_line(r.get('plant_fingerprint'))}")
     sv = r.get("solver") or {}
     if sv and sv.get("before") != sv.get("after"):
         print(f"solver      iters {sv['before']['iterations']} -> {sv['after']['iterations']}"
