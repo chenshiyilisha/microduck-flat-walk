@@ -93,11 +93,23 @@ def main() -> None:
                          "first step phase reaches this value. Reports how close the duck "
                          "is to standing when the real runtime cuts the take off.")
     ap.add_argument("--json", default=None, help="write JSON report here")
+    ap.add_argument("--onnx", default=None,
+                    help="evaluate an ONNX policy instead of a .pt checkpoint. "
+                         "The official microduck-policies ONNX bake obs normalization "
+                         "internally (Sub/Div) and consume RAW obs, which is exactly what "
+                         "this env's RslRlVecEnvWrapper emits (no wrapper-side normalization "
+                         "in this fork), so obs is fed through unchanged. Use --action-scale "
+                         "for policies whose manifest carries action_scale (e.g. roller=0.8).")
+    ap.add_argument("--action-scale", type=float, default=1.0,
+                    help="multiply ONNX actions by this (manifest action_scale; default 1.0)")
     args = ap.parse_args()
 
-    ckpt = pathlib.Path(args.checkpoint) if args.checkpoint else find_default_checkpoint()
-    if not ckpt.exists():
-        raise SystemExit(f"checkpoint not found: {ckpt}")
+    if args.onnx:
+        ckpt = None
+    else:
+        ckpt = pathlib.Path(args.checkpoint) if args.checkpoint else find_default_checkpoint()
+        if not ckpt.exists():
+            raise SystemExit(f"checkpoint not found: {ckpt}")
 
     import mjlab.tasks  # noqa: F401  (populate the task registry)
     from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
@@ -133,10 +145,41 @@ def main() -> None:
 
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    runner_cls = load_runner_cls(TASK) or MjlabOnPolicyRunner
-    runner = runner_cls(env, asdict(agent_cfg), device=device)
-    runner.load(str(ckpt), load_cfg={"actor": True}, strict=True, map_location=device)
-    policy = runner.get_inference_policy(device=device)
+    if args.onnx:
+        import onnxruntime as ort
+        import numpy as np
+        so = ort.SessionOptions()
+        onnx_session = ort.InferenceSession(
+            str(args.onnx), sess_options=so, providers=["CPUExecutionProvider"])
+        clip = float(getattr(agent_cfg, "clip_actions", 0.0) or 0.0)
+
+        def policy(obs_t):  # noqa: D401  (matches the .pt callable signature)
+            # env.step returns an obs TensorDict (groups "actor"/"critic"); the
+            # ".pt" inference policy extracts the actor group internally, so we
+            # do the same. The ONNX expects the raw 61-D actor obs (it bakes in
+            # its own normalization), which is exactly what this group holds.
+            if hasattr(obs_t, "__contains__") and "actor" in obs_t:
+                obs_t = obs_t["actor"]
+            elif isinstance(obs_t, dict) and "policy" in obs_t:
+                obs_t = obs_t["policy"]
+            x = obs_t.detach().cpu().numpy().astype(np.float32)
+            try:
+                a = onnx_session.run(None, {"obs": x})[0]
+            except Exception:
+                a = np.stack([onnx_session.run(None, {"obs": x[i:i + 1]})[0][0]
+                              for i in range(x.shape[0])])
+            a = a * float(args.action_scale)
+            t = torch.from_numpy(a).to(obs_t.device)
+            if clip > 0:
+                t = torch.clamp(t, -clip, clip)
+            return t
+        report_ckpt = str(args.onnx)
+    else:
+        runner_cls = load_runner_cls(TASK) or MjlabOnPolicyRunner
+        runner = runner_cls(env, asdict(agent_cfg), device=device)
+        runner.load(str(ckpt), load_cfg={"actor": True}, strict=True, map_location=device)
+        policy = runner.get_inference_policy(device=device)
+        report_ckpt = str(ckpt)
 
     robot = env.unwrapped.scene["robot"]
     cmd_mgr = env.unwrapped.command_manager
@@ -252,8 +295,9 @@ def main() -> None:
         ]
 
     report = {
-        "checkpoint": str(ckpt),
+        "checkpoint": report_ckpt,
         "task": TASK,
+        "policy_format": "onnx" if args.onnx else "pt",
         "envs": args.envs,
         "seeds": args.seeds,
         "max_steps": max_steps,
@@ -278,7 +322,7 @@ def main() -> None:
         pathlib.Path(args.json).parent.mkdir(parents=True, exist_ok=True)
         pathlib.Path(args.json).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print(f"checkpoint  {ckpt.name}")
+    print(f"checkpoint  {report_ckpt}")
     print(f"envs={args.envs}  seeds={args.seeds}  max_steps={max_steps}")
     print(f"standing mouth height (85th pct): {report['standing_mouth_height_m']:.3f} m  "
           f"[ref start 0.188 / end 0.216]")
