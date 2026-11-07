@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """零成本探针：站桩是不是当前奖励表的 argmax？
 
-做法抄自 DuckEMW `docs/03-training-log.md` 的 v13 一条：
+做法抄自 DuckEMW `docs/archive/03-training-log.md` 的 v13 一条：
 「**探针确诊**（零成本）：站桩报酬是前进报酬 38 倍（v12 日志 stance 0.87 vs
 progress 0.023 实锤）」。他们先量，再改奖励；我们之前是直接看总 reward 曲线
 猜。这个脚本把「量」这一步补上：

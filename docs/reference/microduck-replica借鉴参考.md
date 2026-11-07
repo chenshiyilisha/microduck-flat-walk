@@ -42,7 +42,7 @@
 来自 `docs/HD-1910训练前数据清单.md` + 踩坑记录：
 
 - **位置计数方向与 XL330 相反**：15 颗全反 → `directions` 全取 −1（replica 用
-  `tools/servo-web/directions.json`，robotd 里 `[bus.feetech] directions`）。我们
+  `microduck-software/tools/servo-web/directions.json`，robotd 里 `[bus.feetech] directions`）。我们
   `feetech.rs` 的 joint_signs 就是干这件事的。
 - **不认「扭矩写 128」中位校准**：固件 3.46（HLS ≥3.43）不支持，回「成功」但偏移不变 →
   必须走 **0x0B 位置校准指令**，校完回读确认（飞特很多不支持的操作照样回成功）。
@@ -88,14 +88,14 @@
   → 我们总线 IMU 是 LSM6DSV16X SFLP，芯片侧姿态是硬件融合，是否也有类似落脚冲击乱跳
   **尚未实测**，这是上台架后第一个要查的量（自洽检查：陀螺外推 vs 芯片姿态差 >5° 即撒谎）。
 - **IMU 装歪 8.5°** 会让模型接管后猛冲：校准方法是站 HOME 后把真机关节角放进仿真算
-  真实倾角，与 IMU 读数相减补进安装四元数（`tools/radxa/onboard-analysis/`）。
+  真实倾角，与 IMU 读数相减补进安装四元数（`microduck-software/tools/radxa/onboard-analysis/`）。
 
 ## 5. 硬件/系统层坑（部分与我们选型相关）
 
 - **Radxa Zero 3W V1.12（AIC8800）引导坑**：Armbian 自带引导起不来，要换瑞莎 U-Boot +
   从 B1 镜像拿 DTB；overlay 写 `extlinux.conf` 的 `fdtoverlays`（armbianEnv.txt 不生效）。
   → **这些是 RK3566-specific，A733 不适用**，但我们走 Armbian/香橙派时会有同类坑，
-  关注他们做卡脚本（`tools/radxa/build-armbian-card.sh`）的思路。
+  关注他们做卡脚本（`microduck-software/tools/radxa/build-armbian-card.sh`）的思路。
 - **UART2 被 agetty 占**：`systemctl mask serial-getty@ttyS2`（Armbian 默认在舵机串口上跑登录台）。
 - **主板散热**：机身内无风道，RK3566 85°C 降频到 408 MHz → 控制周期从 20ms 变 25ms；
   没接摄像头时 mediad/tofd 崩溃循环烧 CPU。→ A733 主频更高但同样要注意。
@@ -108,9 +108,9 @@
 
 | 路径 | 内容 |
 |---|---|
-| `tools/servo-web/` | 舵机网页调试（DXL2/feetech 双协议、的方向核对、读寄存器），有 selftest 和 poses |
-| `tools/radxa/onboard-analysis/` | 上机分析：`duck_rec.py`（每秒 fsync 录像）、`judge_block.py`、`ab_blocks.py`、`imu_fault_ctx.py`、`imu_tilt_check.py` |
-| `tools/gait-analysis/` | `foot_clear.py`（离地间隙）、`home_roll.py`（站姿不共面分析）、`stance_pitch.py` |
+| `microduck-software/tools/servo-web/` | 舵机网页调试（DXL2/feetech 双协议、的方向核对、读寄存器），有 selftest 和 poses |
+| `microduck-software/tools/radxa/onboard-analysis/` | 上机分析：`duck_rec.py`（每秒 fsync 录像）、`judge_block.py`、`ab_blocks.py`、`imu_fault_ctx.py`、`imu_tilt_check.py` |
+| `microduck-software/tools/gait-analysis/` | `foot_clear.py`（离地间隙）、`home_roll.py`（站姿不共面分析）、`stance_pitch.py` |
 | `software/training/src/mjlab_microduck/tasks/microduck_hd1910_env_cfg.py` | HD1910 训练环境（Luwu 参数版），与我们 env_cfg 结构同源 |
 | `software/image/tests/fixtures/etc/robot/feetech-ft5/robotd.toml` | 飞特版 robotd 配置样例（`feetech-ft5` 段） |
 | `hardware/imu_to_dxl/` | IMU 板工程（STM32G031 + LSM6DSV16X，DXL2 从机），含 VALIDATION.md |

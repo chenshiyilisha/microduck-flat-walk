@@ -44,8 +44,8 @@ the tool refuses to judge instead of silently falling back to a remembered numbe
 
     python tools/hd1910/verify_official_loader.py --selftest
     python tools/hd1910/verify_official_loader.py policy.onnx \
-        --policy-rs out/official/duck-control_src_policy.rs \
-        --obs-rs out/official-main/duck-control/src/obs.rs
+        --policy-rs out/evidence-official/official/duck-control_src_policy.rs \
+        --obs-rs out/evidence-official/official-main/duck-control/src/obs.rs
     python tools/hd1910/verify_official_loader.py policy.onnx --upstream <workspace root>
 
 The ONNX half is static (needs `onnx`, not `onnxruntime`), so it also runs on a machine that

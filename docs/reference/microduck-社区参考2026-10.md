@@ -865,7 +865,7 @@ command[env_ids, 2] = self.cfg.heading_control_stiffness * self.heading_error[en
 
 ### 11.2 我一直在错误地引用那个 22.4°
 
-`tools/robustness.py` 里的 `heading_error_deg_median` 是
+`microduck-software/tools/robustness.py` 里的 `heading_error_deg_median` 是
 `atan2(|lateral|, |progress|)`，即**轨迹偏角**，不是偏航角。
 前三轮反复引用的「22.4°」意思是「净位移方向偏离命令方向 22.4°」。
 

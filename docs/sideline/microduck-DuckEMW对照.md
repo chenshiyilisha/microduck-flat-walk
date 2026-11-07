@@ -37,9 +37,9 @@ third_party/microduck-playground  gitlink 80b3e8c
 - 他们自建的任务 `Mjlab-Sprint-Flat-MicroDuck`、`Mjlab-SimpleStairs-MicroDuck`，
   以及 `eval_sprint_speed.py` / `record_stilt_play.py` / `evaluate_swing360_checkpoint.py`
   **全部拿不到**；
-- `autodl/setup.sh` 第 5 行的 `REPO_GIT=https://github.com/emwstudio/microduck_rl.git` 同样是死链。
+- `archive/autodl-pipelines/setup.sh` 第 5 行的 `REPO_GIT=https://github.com/emwstudio/microduck_rl.git` 同样是死链。
 
-**能拿到的**：`docs/`（三份记录）、`artifacts/`（checkpoint、评估 JSON、视频帧）、`autodl/`（脚本）、`dance/`。
+**能拿到的**：`docs/`（三份记录）、`artifacts/`（checkpoint、评估 JSON、视频帧）、`archive/autodl-pipelines/`（脚本）、`dance/`。
 **能跑的**：只有 `artifacts/simple_stairs/checkpoints/*.pt` 这三个权重是真实文件（各 4.84 MB，已入库）。
 
 ## 2. 权重契约：和我们完全一致（实测，不是推断）
@@ -72,7 +72,7 @@ critic : obs_normalizer (1,76) → mlp 512-256-128 → 1
 | 单脚最大抬升（关节限位 Monte Carlo） | **~170 mm**（策略只用了 ~46%） |
 | 可靠迈步包络（全宽踏级、同侧间距 1 级） | **~25 mm**（24–26 mm） |
 
-**这修正了我们自己探针的解读方式。** `tools/probe_leg_reach.py` 报「天花板 25.3 mm」，
+**这修正了我们自己探针的解读方式。** `microduck-software/tools/probe_leg_reach.py` 报「天花板 25.3 mm」，
 它的提问是「脚在原地抬起、水平位移 ≤5 mm 时能升多高」——那是个**原地抬腿**问题，
 不是抬脚上限。脚本 docstring 里其实早写了「直腿甩到 hip_pitch=90° 能抬 189 mm，但那不是一步」。
 现在有了对照：真实步态 apex 净空 **66.6 mm**，是我们那个数字的 2.6 倍；运动学极限 ~170 mm。
@@ -146,7 +146,7 @@ for it in range(start_it, total_it):
 ⇒ 从 `model_10000.pt` 续训、传 `--agent.max-iterations 12000`，会跑到 **22000**。无报错、无警告。
 他们踩过（Phase 3 记录：「`--agent.max_iterations` 是「再训 N 轮」不是总数」）。
 
-**我们自己的 `tools/resume_velocity.sh` 原来是错的**（`--agent.max-iterations ${ITERS:-12000}`），
+**我们自己的 `microduck-software/tools/resume_velocity.sh` 原来是错的**（`--agent.max-iterations ${ITERS:-12000}`），
 等于「中断一次就多烧 10 小时」。已改成 `TARGET` 绝对目标、传余量，实测输出：
 
 ```
@@ -195,7 +195,7 @@ cmd 1.0 下 0.63 m/s 且 yaw 漂移 >50°。也就是说这个机器人的「官
 |---|---|
 | 他们的自研 sprint 配方（v1–v4） | 自己放弃了（plateau ≤1.43），改抄 Hannes `running_forward_progress`（线性 clamp(vx,0,cap)/cap，权重 5.0 + 命令速度双升课程 +0.15/750 轮 + 3% 站立桶 + 12195 轮） |
 | `simple_stairs` 的 21 版奖励手术 | 该线到 v21c 仍未成：25 级末级「果断前扑」不稳、台面持续行走未成型。可读过程，不可当结论 |
-| 他们的 `autodl/setup.sh` 直接跑 | `REPO_GIT` 是 404 死链；有用的是里面的环境细节：`UV_HTTP_TIMEOUT=600`、清华镜像、`HF_ENDPOINT=hf-mirror.com`、`uv python install 3.12`、headless 渲染用 `MUJOCO_GL=osmesa`（容器里 EGL 不可用）、`git clone` 被杀会留僵尸进程 `rm -rf` 目标目录 |
+| 他们的 `archive/autodl-pipelines/setup.sh` 直接跑 | `REPO_GIT` 是 404 死链；有用的是里面的环境细节：`UV_HTTP_TIMEOUT=600`、清华镜像、`HF_ENDPOINT=hf-mirror.com`、`uv python install 3.12`、headless 渲染用 `MUJOCO_GL=osmesa`（容器里 EGL 不可用）、`git clone` 被杀会留僵尸进程 `rm -rf` 目标目录 |
 | 把 `artifacts/*.pt` 当「能走的起点」 | 它是**爬梯**策略，平地上 512 env 评估 fall≈0.29、爬升 p50 8.8 级；能走多远未知，必须实测 |
 
 ## 7. 结论

@@ -384,7 +384,7 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     scale, scale_set = effective(cfg, "policy", "action_scale")
     if not scale_set:
         rep.add("FAIL", "policy.action_scale", f"{scale} (default)",
-                "training used 1.0 (docs/05-flat-walk.md); the 0.9 default belongs to the "
+                "training used 1.0 (docs/archive/05-flat-walk.md); the 0.9 default belongs to the "
                 "alpha/velstand policies and shrinks every action 10%")
     elif scale != 1.0:
         rep.add("WARN", "policy.action_scale", scale,
@@ -640,7 +640,7 @@ def audit(cfg: dict, expect_kp: int) -> Report:
     # R8: safety verdicts that are reported, not enforced
     fz, _ = effective(cfg, "safety", "fall_gravity_z")
     rep.add("ok", "safety.fall_gravity_z", fz,
-            "60 deg: a REPORT only; limp_fall is what acts (docs/05-flat-walk.md 22.9)")
+            "60 deg: a REPORT only; limp_fall is what acts (docs/archive/05-flat-walk.md 22.9)")
     dm, _ = effective(cfg, "safety", "deadman_ms")
     rep.add("ok", "safety.deadman_ms", dm, "zeroes twist only; torque stays on")
 

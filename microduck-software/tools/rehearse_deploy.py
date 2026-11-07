@@ -17,7 +17,7 @@ no viewer, no keyboard, no wall-clock sleep; fixed conditions in, JSON metrics o
 
 That distinction matters. A reimplementation would be a second opinion, and two independent
 implementations agreeing proves nothing about the one that ships (see
-`docs/05-flat-walk.md` §13.2). Reusing upstream keeps this a *measurement* of the real stack.
+`docs/archive/05-flat-walk.md` §13.2). Reusing upstream keeps this a *measurement* of the real stack.
 
 What it measures, and what it cannot
 ------------------------------------
@@ -39,7 +39,7 @@ randomised over, so the interesting answer is at the extremes, not the nominal p
 
 Usage::
 
-  python tools/flat_walk/rehearse_deploy.py \\
+  python microduck-software/tools/rehearse_deploy.py \\
       --onnx artifacts/flat_walk/checkpoints/walk_std004_1250.onnx \\
       --cmd-vx 0.4 --seconds 8 --sweep --out out/rehearse_1250.json
 

@@ -154,7 +154,7 @@ HD1910_OFFICIAL_M6_KP8 = {
         "caveat": (
             "BAM gain error vs bench: +0.8%@P5, +5.4%@P8, +31.6%@P32; BAM phase is a "
             "bounded first-order lag while the bench carries ~170 ms of pure delay, so "
-            "the sim's P8 point is optimistic — see docs/05-flat-walk §23."
+            "the sim's P8 point is optimistic — see docs/archive/05-flat-walk §23."
         ),
         "verify": "tools/hd1910/probe_plant_law.py --json <this> --kp-fw 8",
     },

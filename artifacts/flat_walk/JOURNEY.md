@@ -5,7 +5,7 @@
 
 产物：`checkpoints/model_1250.pt`（iter 1250）、`evals/eval_iter1250_clean.json`（11/11 闸门）、
 `evals/eval_curve_clean.json`（9 档 checkpoint 同协议曲线）、
-`evals/runmeta_vel_4096x12000_1025.json`（训练契约）。方法记录见 `docs/05-flat-walk.md`。
+`evals/runmeta_vel_4096x12000_1025.json`（训练契约）。方法记录见 `docs/archive/05-flat-walk.md`。
 
 ## 0. 先建立参照系（不建参照系，就没有判据）
 
@@ -61,7 +61,7 @@
 **「误差降了」和「走得更慢了」是同一件事**。原规则只看 `error_vel_xy`，把这种退化判成了进步。
 
 修法之一：`verdict()` 改成双轴——`error` 变好**且** `vx >= 0.97×` 才算 `improved`，
-否则记为 `trade`（`docs/05-flat-walk.md` §2b 的曲线就是这么来的）。
+否则记为 `trade`（`docs/archive/05-flat-walk.md` §2b 的曲线就是这么来的）。
 
 ### 2026-10-25 14:00 追下去发现更糟：25% 的 env 被静默改成「站着别动」
 
@@ -106,7 +106,7 @@
 
 ### 2.1 验收：分层看，别把「闸门全过」读成「达到预期」
 
-收尾时被问了一个好问题——「效果达到预期了吗」。按层拆开，答案不一样（详见 `docs/05-flat-walk.md` §9）：
+收尾时被问了一个好问题——「效果达到预期了吗」。按层拆开，答案不一样（详见 `docs/archive/05-flat-walk.md` §9）：
 
 | 层 | 结果 |
 |---|---|

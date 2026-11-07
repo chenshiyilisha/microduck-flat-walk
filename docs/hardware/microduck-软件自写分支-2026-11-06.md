@@ -116,9 +116,9 @@
 | 组 | `--upstream` | `--toml` | 结果 |
 |---|---|---|---|
 | A 回归 | B 代（默认） | 本仓 `robotd_hd1910_mode0.toml` | **8/8 PASS**（原结论保持） |
-| B 官方默认 | `out/official-main` | 官方 `deploy/robotd.toml` | **7 PASS + 1 FAIL** |
-| C 官方 + 显式 1.0 | `out/official-main` | 官方 TOML 加 `action_scale = 1.0` | **8/8 PASS** |
-| D 官方默认 + 预演 | `out/official-main` | 官方 `deploy/robotd.toml` | 1 FAIL + 预演量化 |
+| B 官方默认 | `out/evidence-official/official-main` | 官方 `deploy/robotd.toml` | **7 PASS + 1 FAIL** |
+| C 官方 + 显式 1.0 | `out/evidence-official/official-main` | 官方 TOML 加 `action_scale = 1.0` | **8/8 PASS** |
+| D 官方默认 + 预演 | `out/evidence-official/official-main` | 官方 `deploy/robotd.toml` | 1 FAIL + 预演量化 |
 
 B 组唯一红：*`toml omits [policy] action_scale -> robotd default 0.9`*。**这正是上一轮 §5.1 那条口径差的实证**，且它不是「全绿」——按项目纪律，一个能变红的检查比全绿更有证据力。C 组把唯一的红修掉后，官方口径下 **obs 61 / 14 关节序 / HOME 逐位 / 命令块拆分 / 50 Hz / ONNX 图全绿**，⇒ §3.2「`p8head_2999` 不必移植发布链、不重训」从 B 代口径升级为**官方源码口径实证**。
 
@@ -151,14 +151,14 @@ B 组唯一红：*`toml omits [policy] action_scale -> robotd default 0.9`*。**
 V=microduck-software/.venv-mjlab/Scripts/python.exe
 S=microduck-software/tools/hd1910/verify_policy_contract.py
 ONNX=artifacts/flat_walk/checkpoints/p8head_2999.onnx
-$V $S --selftest --upstream out/official-main              # 19/19
-$V $S --upstream out/official-main --onnx $ONNX \
-      --toml out/off_robotd.toml --rehearsal              # 7 PASS + 1 FAIL
-$V $S --upstream out/official-main --onnx $ONNX \
-      --toml out/official_robotd_scale1.toml --rehearsal  # 8/8 PASS
+$V $S --selftest --upstream out/evidence-official/official-main              # 19/19
+$V $S --upstream out/evidence-official/official-main --onnx $ONNX \
+      --toml out/evidence-official/off_robotd.toml --rehearsal              # 7 PASS + 1 FAIL
+$V $S --upstream out/evidence-official/official-main --onnx $ONNX \
+      --toml out/evidence-official/official_robotd_scale1.toml --rehearsal  # 8/8 PASS
 ```
 
-`out/official-main/` 是按官方目录结构摆的 4 个 Rust 文件镜像树（GitHub `main` 分支 raw 拉取），`out/official_robotd_scale1.toml` 是官方 TOML 只改一处加 `action_scale = 1.0`；两者都在被 gitignore 的 `out/`。原始输出见 `out/contract_official_default.txt`、`out/contract_official_scale1.txt`、`out/contract_official_09_rehearsal.txt`。
+`out/evidence-official/official-main/` 是按官方目录结构摆的 4 个 Rust 文件镜像树（GitHub `main` 分支 raw 拉取），`out/evidence-official/official_robotd_scale1.toml` 是官方 TOML 只改一处加 `action_scale = 1.0`；两者都在被 gitignore 的 `out/`。原始输出见 `out/evidence-official/contract_official_default.txt`、`out/evidence-official/contract_official_scale1.txt`、`out/evidence-official/contract_official_09_rehearsal.txt`。
 
 #### 4.1.7 官方 `open()` 加载判据：`p8head_2999` 实证 16/16（2026-11-06 续）
 
@@ -193,8 +193,8 @@ V=microduck-software/.venv-mjlab/Scripts/python.exe
 S=microduck-software/tools/hd1910/verify_official_loader.py
 $V $S --selftest                                  # 30/30
 $V $S artifacts/flat_walk/checkpoints/p8head_2999.onnx \
-    --policy-rs out/official/duck-control_src_policy.rs \
-    --obs-rs out/official-main/duck-control/src/obs.rs
+    --policy-rs out/evidence-official/official/duck-control_src_policy.rs \
+    --obs-rs out/evidence-official/official-main/duck-control/src/obs.rs
 ```
 
 官方源码镜像在 `out/`（gitignore）；本机 `raw.githubusercontent.com` 被代理挡（返回 000），
@@ -227,12 +227,12 @@ $V $S artifacts/flat_walk/checkpoints/p8head_2999.onnx \
 | 内容 | 出处 |
 |---|---|
 | 许可、默认分支、文件树 605 项 | GitHub API `repos/pollen-robotics/microduck`（`main` / Apache-2.0）、`git/trees/main?recursive=1`；`repos/pollen-robotics/elec_RPI_Robot_HAT`（Apache-2.0） |
-| 守护进程架构、模拟器、开发链 | 官方 `README.md`、`docs/design/architecture.md`、`docs/robot/install-dev.md`、`docs/robot/simulation.md`、`docs/design/simulation.md` §3 / §7、`scripts/duck-sim`（`out/official/`） |
+| 守护进程架构、模拟器、开发链 | 官方 `README.md`、`docs/design/architecture.md`、`docs/robot/install-dev.md`、`docs/robot/simulation.md`、`docs/design/simulation.md` §3 / §7、`scripts/duck-sim`（`out/evidence-official/official/`） |
 | WSL2 GUI / systemd 平台能力 | Microsoft Learn《Run Linux GUI apps on WSL》（WSL2 + WSLg X11/Wayland + vGPU OpenGL，需 Win10 19044+ / Win11）；本机 `wsl.exe` 被安全策略拒绝 ⇒ **本机是否装 WSL 未验证** |
 | 总线 / IMU / 模型 / obs 常量 | 官方 `duck-control/src/{bus,imu,model,obs}.rs`、`duck-ipc-proto/src/lib.rs:652`、`deploy/robotd.toml`（713 行） |
-| ONNX 加载判据与 manifest 缺省语义 | 官方 `duck-control/src/policy.rs::open` 与 `validate`、`updater/src/policy.rs` 测试 `a_manifest_that_claims_nothing_refuses_nothing`、`robotctl/src/main.rs` 的 `PolicyCommand`、`docs/policy-manifest.md`（2026-11-06 经 GitHub contents API 取 `main`，镜像在 `out/official/`） |
+| ONNX 加载判据与 manifest 缺省语义 | 官方 `duck-control/src/policy.rs::open` 与 `validate`、`updater/src/policy.rs` 测试 `a_manifest_that_claims_nothing_refuses_nothing`、`robotctl/src/main.rs` 的 `PolicyCommand`、`docs/policy-manifest.md`（2026-11-06 经 GitHub contents API 取 `main`，镜像在 `out/evidence-official/official/`） |
 | 交叉编译与 dev-push | 官方 `.cargo/config.toml`、`scripts/dev-push.sh`；deepwiki `9.3 Developer Workflow` |
 | 许可分项、fork 分支、镜像组成 | fanhao375 `software/image/README.md`；GitHub API `repos/fanhao375/Microduck-kissqy` + `branches` |
-| 价格与手焊/成品对照 | kissqy `DUCK-SHOPPING-LIST.md`（本地 `out/kissqy/`）、`docs/releases/public-image-r1.md`、`docs/MICRODUCK-BUILD-GUIDE.md` |
+| 价格与手焊/成品对照 | kissqy `DUCK-SHOPPING-LIST.md`（本地 `out/builds/kissqy/`）、`docs/releases/public-image-r1.md`、`docs/MICRODUCK-BUILD-GUIDE.md` |
 | HAT 打样成本与开源状态 | `chenkui164/microduck-replica/PROGRESS.md`、GitCode 硬件入门与 BOM 拆解两篇（社区重画，标注为二手） |
-| 本仓口径与台架证据 | `.upstream/DuckBuddy-main/duck-control/src/obs.rs`、`microduck-software/tools/hd1910/` 四个校验脚本、`out/g0_60s.json`、`out/bus_budget_live_2026-11-06.txt` |
+| 本仓口径与台架证据 | `.upstream/DuckBuddy-main/duck-control/src/obs.rs`、`microduck-software/tools/hd1910/` 四个校验脚本、`out/measurements/g0_60s.json`、`out/measurements/bus_budget_live_2026-11-06.txt` |

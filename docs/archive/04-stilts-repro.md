@@ -31,7 +31,7 @@
 
 ## 复现方法
 
-- 课程脚本：`autodl/run_stilt_curriculum.sh`（阶段表 = 原作者 TRAINING.md 的已执行
+- 课程脚本：`archive/autodl-pipelines/run_stilt_curriculum.sh`（阶段表 = 原作者 TRAINING.md 的已执行
   lineage，seed 72）。每级一个训练进程，形态由 `MICRODUCK_STILT_HEIGHT_CM` /
   `MICRODUCK_STILT_BLEND` 编译期固定；blend 先在 2cm 收窄（0→0.25→0.50），再逐级加高。
 - 关键机制（这版 rsl_rl）：`learn(num_learning_iterations)` 的入参是**相对起点的增量**；

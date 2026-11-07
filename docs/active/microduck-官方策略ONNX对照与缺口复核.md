@@ -15,7 +15,7 @@
 ## 1. 缺口5：GroundPick 与官方 `alpha_ground_pick.onnx` 对照【核实】
 
 - 官方条目：`alpha_ground_pick.onnx`，`kind=episodic`、`duration_s=2.8`、`command: {encoding:phase, slots:twist.vx,twist.vy, period_s:4.0, end_phase:0.7}`（与本项目评测用的 twist 相位命令同构）。manifest **无 training 溯源块**。
-- 对照方法：用 `tools/hd1910/eval_ground_pick.py --onnx` 把官方 ONNX 接进**本项目 HD-1910 GroundPick env**，跑同一套相位无关指标（成功率 / 摔倒 / 下降 / 直立 / 回姿）。
+- 对照方法：用 `microduck-software/tools/hd1910/eval_ground_pick.py --onnx` 把官方 ONNX 接进**本项目 HD-1910 GroundPick env**，跑同一套相位无关指标（成功率 / 摔倒 / 下降 / 直立 / 回姿）。
 - **重要前提**：官方 ONNX 是 **B代（MicroDuck）训练**，本项目 env 是 **HD-1910 复刻线**——关节序与动力学不同，所以这是**跨机型压力测试**，不是官方策略的原生分数（原生分数需 B代 env，本 fork 未保留可加载的 B代 GroundPick env）。
 - 结果（64 envs × 3 seeds）：
 
@@ -27,7 +27,7 @@
 - 解读：官方 B代策略落到 HD-1910 上，**运动模式可复现（下降/直立/回姿仍 ~100%），但站不稳（76.6% 摔倒）**。对照我们 96.9% → 证明**官方策略不能直接移植 HD-1910，plant 专用重训既必要又成功**。这与"关节 ID 两套体系不能混用"的铁律一致。
 - 复现：
   ```bash
-  .venv-mjlab/Scripts/python.exe tools/hd1910/eval_ground_pick.py \
+  .venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/eval_ground_pick.py \
       --onnx out/official_policies/alpha_ground_pick.onnx --envs 64 --seeds 3 --device cuda:0 \
       --json out/groundpick_eval_alpha_gp_onnx_hd1910.json
   ```
@@ -46,7 +46,7 @@
 
 - 官方条目：`roller.onnx`（`kind=perpetual, mode=roller, action_scale=0.8`）、`roller_crouch.onnx`（`kind=episodic, duration_s=3.5, mode=roller, action_scale=0.8`）。
 - 本项目已注册 4 个 Roller 任务：`Mjlab-Velocity-Flat-MicroDuck-Rollers`、`Mjlab-RollerCrouch-Flat-MicroDuck`、`Mjlab-RollerSlope-Flat-MicroDuck`、`Mjlab-RollerStandUp-Flat-MicroDuck`（均在本 fork，HD-1910 轮滑变体；critic obs 含 `wheel_vel(4)`）。
-- 对照方法：`tools/hd1910/eval_roller_onnx.py` 把官方 `roller.onnx`（`--action-scale 0.8`）接进 **HD-1910 Rollers env**，测摔倒率 + 存活 + 步奖励。
+- 对照方法：`microduck-software/tools/hd1910/eval_roller_onnx.py` 把官方 `roller.onnx`（`--action-scale 0.8`）接进 **HD-1910 Rollers env**，测摔倒率 + 存活 + 步奖励。
 - 结果（32 envs × 2 seeds × 500 步）：
   - **官方 `roller.onnx` 在 HD-1910 上：摔倒 17.2%，其余存活满窗 10 s，平均步奖励 0.102。**
   - 解读：轮滑任务跨机型迁移**远好于** GroundPick（17% vs 77% 摔倒）——"保持直立并滑行"对 plant 差异不敏感，**官方 roller ONNX 可作 HD-1910 轮滑训练的参考起点**；但 17% 摔倒说明仍有动力学差异（质量/轮摩擦/齿隙），真机上需 HD-1910 重训才稳。
@@ -56,13 +56,13 @@
   - 解读：蹲滑（crouch）跨机型迁移**明显差于** plain roller（50% vs 17%）——重心压低的平衡裕度被 plant 差异吃掉更多；若要做 HD-1910 蹲滑，应直接重训而非移植官方 crouch。
 - 复现：
   ```bash
-  .venv-mjlab/Scripts/python.exe tools/hd1910/eval_roller_onnx.py \
+  .venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/eval_roller_onnx.py \
       --task Mjlab-Velocity-Flat-MicroDuck-Rollers \
       --onnx out/official_policies/roller.onnx --action-scale 0.8 \
       --envs 32 --seeds 2 --device cuda:0 --max-steps 500 \
       --json out/roller_eval_onnx_hd1910.json
   # crouch 对照
-  .venv-mjlab/Scripts/python.exe tools/hd1910/eval_roller_onnx.py \
+  .venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/eval_roller_onnx.py \
       --task Mjlab-RollerCrouch-Flat-MicroDuck \
       --onnx out/official_policies/roller_crouch.onnx --action-scale 0.8 \
       --envs 32 --seeds 2 --device cuda:0 --max-steps 500 \
@@ -91,7 +91,7 @@
 - 训练 env：`Mjlab-Velocity-Flat-MicroDuck-Rollers`（与 roller.onnx 基线**同 env**），plant 固定 `hd1910_kp8`（kp_fw=8，部署 plant，即基线评测生效 plant）。
 - "基于 roller.onnx"取 **benchmark** 含义而非权重 warm-start：roller.onnx 内嵌归一化 + `action_scale=0.8`，与 rsl_rl actor（外部归一化）跨归一化/动作缩放两道边界，warm-start 有静默 bug 风险，避开。
 - 流水线对齐 GroundPick：smoke 64×5 ✅（exit 0 / nan 0 / 7s）→ explore 1024×1000 🔄（reward −14.5→−0.18，fell 55.8%→46.6%，nan 0）→ formal 4096×4000 ⏳ → eval `.pt` 对比。
-- 评估脚本 `tools/hd1910/eval_roller_onnx.py` 已支持 `--checkpoint`（rsl_rl `.pt`，原生 HD-1910 策略）与 `--onnx`（官方 B代）互斥，统一回放 + `fall_rate`/`mean_survival` 指标。
+- 评估脚本 `microduck-software/tools/hd1910/eval_roller_onnx.py` 已支持 `--checkpoint`（rsl_rl `.pt`，原生 HD-1910 策略）与 `--onnx`（官方 B代）互斥，统一回放 + `fall_rate`/`mean_survival` 指标。
   - ⚠️ **已抓修一个会阻断最终对比的 bug**：`--checkpoint` 模式原用 `policy_call` 包装推理策略，闭包自引用导致 `RecursionError`；已改为直接用 `runner.get_inference_policy()`（与 `eval_ground_pick.py` 一致）。用 explore `model_100.pt` 冒烟已验证端到端能出 `fall_rate` 字段。
 - **最终对比协议（必须严格同参，保证苹果对苹果）**：
   - 同 plant `hd1910_kp8`、同 env `Mjlab-Velocity-Flat-MicroDuck-Rollers`、同窗口 `--max-steps 500`（10s）、同规模 `--envs 32 --seeds 2`。
@@ -110,11 +110,11 @@
 - 复现：
   ```bash
   # 官方基线（同 plant default，与我们的 .pt 一致）
-  .venv-mjlab/Scripts/python.exe tools/eval_velocity_in_sim.py \
+  .venv-mjlab/Scripts/python.exe microduck-software/tools/eval_velocity_in_sim.py \
       --task Mjlab-Velocity-Flat-MicroDuck --checkpoint out/official_policies/alpha_walking.onnx \
       --num-envs 64 --seconds 10 --device cuda:0 --cmd-vx 0.4 --plant default --seed 0
   # 我们的 .pt
-  .venv-mjlab/Scripts/python.exe tools/eval_velocity_in_sim.py \
+  .venv-mjlab/Scripts/python.exe microduck-software/tools/eval_velocity_in_sim.py \
       --task Mjlab-Velocity-Flat-MicroDuck --checkpoint <model_5999.pt> \
       --num-envs 64 --seconds 10 --device cuda:0 --cmd-vx 0.4 --plant default --seed 0
   ```
@@ -125,3 +125,9 @@
   - 契约：`verify_policy_contract.py`（obs61/act14/50Hz）+ `verify_policy_bundle.py`（归一化下限 + metadata 对质）。
   - **致命坑已有专门防线**：`deploy61.onnx` 归一化 `Div` 分母 10 个维 = `1.113e-05`（放大 1157× → 5.7°头 → 动作 −35.7 rad）已被 `policy_numeric_gate.py` 的 G1–G4 + `--selftest` 负对照（健康 PASS / deploy61 FAIL）兜住。
 - **结论**：部署软件齐备、文档化、有负对照；剩余风险只在**真机硬件**（清单 §A–B 总线/方向、§H 实机关卡），不在软件。故部署链**不列为软件缺口**。
+
+
+<!-- TODO-OUT-MISSING: 以下 out/ 数据路径当前缺失（需确认）:
+- out/official_policies/*.onnx
+2026-11-07 全面检查核实：上述 out/ 数据路径当前文件系统（含 out/ 三桶 builds/evidence-official/measurements/）均不存在；out/ 为 gitignored 本地数据，无 git 恢复手段。可能成因：约定/外部下载路径（官方权重需从 HF 拉取）、已下线产物（deploy61 已下线）、历史别名（p8head_2999.onnx 简名 vs 实际 builds/p8head_2999_rank3_probe.onnx）、或 reorg 前即未落盘。**暂未改动引用** —— 请先排查本地备份 / 重新下载 / 确认 reorg 是否误移，再修正引用或恢复文件。
+-->

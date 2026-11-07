@@ -257,7 +257,7 @@ export.py → ONNX（单文件、initializer 无 EXTERNAL）
 
 **结论：现在不重训，GPU 开销 ¥0。** 部署候选 `p8head_2999`（`resume_5999` 同族）是
 `p8head_030_4096x3000` 在 **`hd1910_kp8` plant**（`official_m6_stslaw.json`、`kp_fw=8.0`）
-上训出来的（`docs/05-flat-walk.md` §21/§22，2026-11-03 判决 vx 0.2069、+83%）。
+上训出来的（`docs/archive/05-flat-walk.md` §21/§22，2026-11-03 判决 vx 0.2069、+83%）。
 本方案改动的是**主控载板 / 供电 / IMU 固件 / 编译目标**，四者都不进 MDP、不进 obs、
 不改 plant 参数 ⇒ 不触发重训。`AGENTS.md` §2 的「修改必重训」管的是**训练侧代码 / 奖励 / 编舞**，
 不是部署侧载板。外部旁证：`zhuoligetu123/microduck-hd1910m` 用上游四个官方 ONNX
@@ -268,7 +268,7 @@ export.py → ONNX（单文件、initializer 无 EXTERNAL）
 | 项 | 正确动作 | 依据 |
 |---|---|---|
 | **mode 0 × `position_kp=8`** | ⚠️ 真机环路只有 plant 的 **54%**（P8/D8，fc 0.69 Hz vs plant 1.28 Hz）。要对齐训练 plant 走 `[bus] position_kp=16` + `gain=200`（P16/D8 = plant **92%**）——**这是配置对齐，不是换 plant，不重训**；以真机 per-joint 温度验收 | `microduck-HD1910软件方案.md` §10.2 / 行 1030–1091 |
-| **4.6 V → 7.4/8.0 V** | 训练 json 本来就是 `ftservo_official_m6`（vin 7.4）口径，换电池是**更接近** plant，不是偏离。台架欠压读数（kp/duty/齿隙、饱和 onset ≈kp20）不可外推到 7.4 V（onset 右移到 ≈kp32） | 同上 §8.1；`docs/05-flat-walk.md` §22.2 |
+| **4.6 V → 7.4/8.0 V** | 训练 json 本来就是 `ftservo_official_m6`（vin 7.4）口径，换电池是**更接近** plant，不是偏离。台架欠压读数（kp/duty/齿隙、饱和 onset ≈kp20）不可外推到 7.4 V（onset 右移到 ≈kp32） | 同上 §8.1；`docs/archive/05-flat-walk.md` §22.2 |
 | **IMU 换 `imu-feetech`** | 只要 SFLP 的 gravity/gyro 格式与延迟包络不变就不重训（`imu_median=false` 正是为此）；H6 落脚乱跳是纯软件修复，`joint_signs/offsets` 逐颗核对是标定，heading 控制律是推理侧 | 本方案 §3.2 / §3.4；`microduck-板子设计备忘.md` §156 |
 | **`NEXT-p8-train.md:58` 的 `[policy] gain = 8`** | **旧结论，已作废**：`reg50 = clamp(gain × position_kp / 200)`，`gain=8` 会落到 reg50=1 ⇒ 机器人瘫软。保持 `gain = 200` | `microduck-HD1910软件方案.md` 行 1039–1054 |
 
@@ -283,7 +283,7 @@ export.py → ONNX（单文件、initializer 无 EXTERNAL）
    「真机与 sim 不符」；**kt/R 不需要自己辨识**，别为此预先烧 GPU。若同时想动延迟域或
    heading 配方，**合并进同一次**重训，别分两次。
 2. **端到端延迟超出训练带**：P8 × 80 ms 8/8 摔；部署缺口外推 11–18 ms 落在训练带内，
-   但「A733 + 500k 端到端 ≤30 ms」只能实测（`docs/05-flat-walk.md` §19.4 / §19.6）。
+   但「A733 + 500k 端到端 ≤30 ms」只能实测（`docs/archive/05-flat-walk.md` §19.4 / §19.6）。
    优先**压软件延迟（不重训）**；若必须把新延迟域写进训练 ⇒ domain 改动 ⇒ 从零重训。
 3. **动训练侧任何东西**：奖励（含 `air_time` 门控、heading 闭环）、obs 布局、训练侧低通、
    课程 / 步频 ⇒ 从零重训。注意「**只在部署侧加低通**」不重训，但会造成 train/deploy
@@ -322,7 +322,7 @@ python microduck-software/tools/hd1910/sts_bench.py --dry-run
 # ⚠️ 本机台架这颗 2026-11-02 已改成 ID 10；出厂新舵机才是 1
 python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 --soak-seconds 60
 python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 \
-    --soak-seconds 3600 --write-goal-echo --out out/g0_1h.json
+    --soak-seconds 3600 --write-goal-echo --out out/measurements/g0_1h.json
 ```
 
 五道闸门：`0.1` ping；`0.2` 50 Hz 单字节事务 median ≤5 ms 且 0 错误；`0.3` 遥测块
@@ -363,7 +363,7 @@ python microduck-software/tools/hd1910/sts_bench.py --port COM3 --id 10 \
 | 0.4 60 s × 3000 帧 | median 1.62 ms、p95 1.92 ms、**0 错误**、温度峰值 **25 °C**（全程不升） | PASS |
 | 0.5 reg50 | **P = 8** | PASS |
 
-报告 `out/g0_60s.json`（`out/` 被 gitignore，不入库）。`--selftest` 12/12 先跑过。
+报告 `out/measurements/g0_60s.json`（`out/` 被 gitignore，不入库）。`--selftest` 12/12 先跑过。
 
 **同一次上电的 EEPROM/RAM 只读扫描（ID 10）**：
 
@@ -458,7 +458,7 @@ G0 之外，趁舵机在线把两个**早已写好但从未在真机上跑过**�
 | `verify_policy_contract.py --selftest` | 15 条负对照全部按预期变红 |
 | 同上，真策略 `p8head_2999.onnx` + 成品 TOML | **8 项全 PASS**：obs 61 / block order / 14 关节顺序 / home pose 差 0 / command 13 / action mapping scale 1 / 50 Hz / ONNX `obs[1,61]` → `actions[1,14]`，站姿动作幅值上限 0.193 rad |
 | `policy_numeric_gate.py --selftest` | 健康 PASS×2、`deploy61` FAIL |
-| 同上，真策略 | **PASS**：G1 0.3018 / G2 0.4218 / G3 0.2947 / G4 std 0.7735，报告 `out/g4_p8head_2999.json` |
+| 同上，真策略 | **PASS**：G1 0.3018 / G2 0.4218 / G3 0.2947 / G4 std 0.7735，报告 `out/measurements/g4_p8head_2999.json` |
 | ONNX 直接检查 | 793 KB、10 个 initializer **全内嵌、无 EXTERNAL**、输入 `obs[1,61]` / 输出 `actions[1,14]` |
 | `verify_policy_bundle.py --selftest` | 39/39 |
 | 同上，真策略 | **19 checks / 1 FAIL**：B0 `no metadata_props` |

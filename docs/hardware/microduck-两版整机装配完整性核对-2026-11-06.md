@@ -92,7 +92,7 @@ _2026-11-06。回应「两个类型主板的版本都组装一下，零件不要
 
 ### 5.1 3MF 官方规范原文（一手依据，2026-11-06 补查）
 
-来源：**3MF Consortium, 3MF Core Specification v1.3.0**（3mf.io，40 页，本地存 `out/microduck_replica/3MF_Core_Spec_v1.3.0.pdf`），§3.4.3.1 Item Element，逐字引用：
+来源：**3MF Consortium, 3MF Core Specification v1.3.0**（3mf.io，40 页，本地存 `out/builds/microduck_replica/3MF_Core_Spec_v1.3.0.pdf`），§3.4.3.1 Item Element，逐字引用：
 
 > "A consumer MUST apply the transform prior to outputting the object. … **The arrangement of these items in the build is considered a default; consumers MAY rearrange the items for manufacturing in order to better pack the build volume.** Sometimes objects are arranged in the coordinate space so as to be manufactured in an interlocking fashion; **producers of these objects SHOULD collect them as components (see 4.2. Components), as 3D manufacturing devices MUST NOT transform components of an object relative to each other.**"
 
@@ -124,7 +124,7 @@ _2026-11-06。回应「两个类型主板的版本都组装一下，零件不要
 
 ---
 
-## 6. 交付物（均在 `out/microduck_replica/assembly/`，按 `.gitignore` 不入库）
+## 6. 交付物（均在 `out/builds/microduck_replica/assembly/`，按 `.gitignore` 不入库）
 
 | 文件 | 内容 |
 |---|---|

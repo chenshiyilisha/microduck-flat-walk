@@ -44,4 +44,4 @@
 4. 闸门：ping → 50 Hz ≤5 ms / 0 CRC → 可选温升与 kt/R → 确认 reg50  
 5. 不过 → **停、换货**，不买齐 15  
 
-出处：`.upstream/r_踩坑记录.md`；本仓落地：`tools/hd1910/stage0_software_prep.md`。
+出处：`.upstream/r_踩坑记录.md`；本仓落地：`microduck-software/tools/hd1910/stage0_software_prep.md`。

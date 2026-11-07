@@ -2,8 +2,8 @@
 
 _准备于 2026-10-25 晚。工具已写好并干跑通过，明天只跑数据、写结论文档。_
 
-> **本文件已并入上游仓库** `docs/05-flat-walk.md` **§14**（commit `35b28b3` / `d75c8a9`，
-> PR #2），工具在 `tools/flat_walk/rehearse_deploy.py`。**唯一真相在仓库里**——这里只作
+> **本文件已并入上游仓库** `docs/archive/05-flat-walk.md` **§14**（commit `35b28b3` / `d75c8a9`，
+> PR #2），工具在 `tools/rehearse_deploy.py`。**唯一真相在仓库里**——这里只作
 > 本地执行清单，两边不一致时以仓库为准。明天产出的 JSON 入库后，§14.4 那张「工具自检期
 > 读数」表要换成正式读数。
 
@@ -249,7 +249,7 @@ JSON 里 `speed.comparable=false` 并附原因。表里只允许出现 `fell_at_
 | 统计窗 | 后 75% 控制步，**且截止到摔倒** | 全 8 秒；摔倒则 episode 终止后 reset 继续 |
 
 **结论只能在同一仪器内部做纵向比较**（BAM vs no-BAM、高压 vs 低压），
-不能与 §10/§12 的 0.312 / 0.1592 放同一张表。这条与 `docs/05-flat-walk.md` §12.5
+不能与 §10/§12 的 0.312 / 0.1592 放同一张表。这条与 `docs/archive/05-flat-walk.md` §12.5
 的"跨版本评估脚本不可混用"是同一条纪律的延伸。
 
 ---
@@ -277,11 +277,11 @@ JSON 里 `speed.comparable=false` 并附原因。表里只允许出现 `fell_at_
 
 ## 6. 跑完之后做什么
 
-1. 把六条件表 + 负对照表写进 `docs/05-flat-walk.md` **§14**，标题明确写
+1. 把六条件表 + 负对照表写进 `docs/archive/05-flat-walk.md` **§14**，标题明确写
    "部署彩排：执行器栈能工作，数字不可与评估横比"。
    **必须同时写进 §3.5 的两个坑**（摔倒后继续跑 → 假装 0.4627；截断后存活偏差 → 0.5389
    反而比没摔的高），否则下一个读表的人一定会把 `low_batt` 那行当成"低电压更好"。
-2. `rehearse_deploy.py` 复制进 `tools/flat_walk/`，README 里补一句它和
+2. `rehearse_deploy.py` 复制进 `tools/`，README 里补一句它和
    `check_onnx_parity.py` 的分工：parity 查**图 == 数学**，彩排查**栈是否会活着**。
 3. 产物入 `artifacts/flat_walk/evals/`：`rehearse_1250_sweep.json`、
    `rehearse_1250_nobam.json`、`rehearse_1250_cmd{12,15,20}.json`、`rehearse_1250_cmd0_standslot.json`。

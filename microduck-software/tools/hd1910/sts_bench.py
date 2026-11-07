@@ -50,7 +50,7 @@ We do **not** vendor the FTServo SDK in-tree.
 
 2026-11-06 首次真机（COM3 / CH343 / 1 Mbps / ID 10 / 60 s）：五闸全绿，
 0.2 median 1.75 ms、0.4 3000 帧 0 错误且温度 25→25 °C、0.3 ``goal_echo=ok``、
-0.5 ``reg50=8``。报告 ``out/g0_60s.json``（``out/`` 被 gitignore，不入库）。
+0.5 ``reg50=8``。报告 ``out/measurements/g0_60s.json``（``out/`` 被 gitignore，不入库）。
 """
 from __future__ import annotations
 

@@ -154,7 +154,7 @@ else:
 
 ### 4.2 做法
 
-给 `tools/eval_velocity_in_sim.py` 加了 `--solver-iters` / `--solver-ls` / `--solver-ncon`
+给 `microduck-software/tools/eval_velocity_in_sim.py` 加了 `--solver-iters` / `--solver-ls` / `--solver-ncon`
 （`override_solver()`，打印 before/after，写进 JSON 的 `solver` 字段）。
 
 - checkpoint：`logs/rsl_rl/microduck_joy_smooth/2026-10-24_07-57-43_.../model_599.pt`
@@ -191,7 +191,7 @@ else:
 
    > 建议动作：把 `microduck_velocity_env_cfg.py` 里那三行从 `else:` 分支提到
    > `if/else` 之外，让 **flat 也用 `iterations=100 / ls_iterations=50`**。
-   > 注意这是改 site-packages 里的上游文件，要同步写进 `tools/train_velocity.sh` 的
+   > 注意这是改 site-packages 里的上游文件，要同步写进 `microduck-software/tools/train_velocity.sh` 的
    > cfg sha256 记录，否则 runmeta 对不上。
 
 ---

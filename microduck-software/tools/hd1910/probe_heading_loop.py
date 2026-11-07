@@ -60,7 +60,7 @@ def wrap_to_pi(x: torch.Tensor) -> torch.Tensor:
 
     Deliberately not imported: importing the very function under test would let
     a bug in it cancel out here, exactly the failure mode the ONNX parity tool
-    warns about (docs/05-flat-walk.md §10).
+    warns about (docs/archive/05-flat-walk.md §10).
     """
     return (x + math.pi) % (2.0 * math.pi) - math.pi
 

@@ -7,7 +7,7 @@ Why this file exists
 useful for comparing two policies on the *same* plant, but it is NOT a valid
 acceptance gate, and the reason is first-party:
 
-  `emwstudio/DuckEMW` `docs/04-stilts-repro.md:56-65` —
+  `emwstudio/DuckEMW` `docs/archive/04-stilts-repro.md:56-65` —
   "**不可信路径（勿用）**：CPU MuJoCo 彩排 (PolicyInference, 即使补上 BAM M6
    执行器) 渲染高跷策略会在 ~2.4s 摔倒，而同一 checkpoint 在真实环境里
    32 envs × 10s survival = 1.0。策略的验证一律以 mjlab 环境内数据为准。"

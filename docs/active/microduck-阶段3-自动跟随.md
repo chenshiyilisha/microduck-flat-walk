@@ -54,7 +54,7 @@ resampling_time_range: [3.0, 8.0] s        ← 上游真实值
 ```
 
 **而我们的评估器把这个时间常数抹掉了。** `freeze_command()`
-（`tools/flat_walk/eval_velocity_in_sim.py:118`）：
+（`microduck-software/tools/eval_velocity_in_sim.py:118`）：
 
 ```python
 cmd.resampling_time_range = (duration, duration)   # 窗口 = 整段

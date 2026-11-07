@@ -55,7 +55,7 @@ def _find_root(start: str) -> str:
     """Walk up until we hit the project root.
 
     The script lives in two places in practice: `<root>/tools/` (single-task
-    workspace, next to .venv-mjlab) and `<root>/tools/flat_walk/` (this repo),
+    workspace, next to .venv-mjlab) and `<root>/microduck-software/tools/` (this repo),
     so a fixed `dirname(dirname(__file__))` silently points at `tools/` and then
     every path (`logs/`, `out/`) is wrong. Anchoring on a marker file works for
     both.

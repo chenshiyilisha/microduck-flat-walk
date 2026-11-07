@@ -2,10 +2,10 @@
 
 > 目的：回答「还有什么我不知道的功能」。本文只做**事实盘点**，每项给出一手出处与
 > 验证状态（镜像搭载 / 真机验证 / 仅仿真 / 仅规划）。**与之前文档的关系见 §7**。
-> 信息来源：上游主仓 `out/microduck_main/`（2026-11-06 下的副本）+ 本仓此前调研。
+> 信息来源：上游主仓 `out/builds/microduck_main/`（2026-11-06 下的副本）+ 本仓此前调研。
 > 核心一手资料：`software/image/overlay/usr/share/doc/microduck/模型说明.txt`、
 > `software/training-studio/training_studio/pretrained_models.json`、
-> `software/README.md`、`tools/README.md`、`software/training-studio/README.md`、
+> `software/README.md`、`microduck-software/tools/README.md`、`software/training-studio/README.md`、
 > `playground/hardware/*` 各 README。
 
 ---
@@ -101,7 +101,7 @@ Stilts 与轮滑鞋都改脚底，**别同时装**（轮用轮滑 V1 踝，Stilt
 
 ---
 
-## 5. 调试/装机工具（tools/，烧卡装机阶段大概率要碰）
+## 5. 调试/装机工具（microduck-software/tools/，烧卡装机阶段大概率要碰）
 
 - **HD1910M Rust 命令行测试工具**：扫描总线 / 寄存器读写 / 监控——比飞特 FD 软件更贴
   我们研发流程（FD 是 Windows 图形界面，适合量产调参）。
@@ -110,7 +110,7 @@ Stilts 与轮滑鞋都改脚底，**别同时装**（轮用轮滑 V1 踝，Stilt
   不用等训练完，直接看线上日志就能用。
 - **radxa onboard-analysis**：实机采集关节/IMU/指令记录（Radxa 版专属）。
 - **Rufus 4.15 便携版**烧镜像、**飞特 FD 1.9.8.5** 舵机配置软件（官方入口都在
-  `tools/README.md`）。
+  `microduck-software/tools/README.md`）。
 
 → 与本仓衔接：fd 系列的 EEPROM 写入时序、robotd 硬校验那几条，FD 软件是图形化的
 另一条操作路径；寄存器级操作仍以 HD1910M CLI + 我们的 Python 脚本为准。

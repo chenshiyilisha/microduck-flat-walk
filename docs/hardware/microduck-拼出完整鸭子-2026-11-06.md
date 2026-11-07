@@ -20,7 +20,7 @@ _2026-11-06。回应「试试看能不能拼出一个完整的鸭子」——**�
 
 ## 1. 结论（❌ 作废）
 
-- ✅ **33 个打印件已合并为一个整机 STL**：`out/microduck_replica/microduck_assembled.stl`
+- ✅ **33 个打印件已合并为一个整机 STL**：`out/builds/microduck_replica/microduck_assembled.stl`
   - 33 件 / 391,346 三角面 / 19.5 MB / 单位 mm
   - 包围盒：X 91.8 × Y 122.7 × Z 83.5 mm（三轴都铺开，是只站着的鸭子，不是零件乱堆）
 - ✅ **验证**：作者仓库的整机渲染图 `组件图/00-microduck装配体.png` 与 3 张爆炸图，几何与本文合体一致；BOM 写明「33 项打印件」，与合并件数吻合。
@@ -37,13 +37,13 @@ _2026-11-06。回应「试试看能不能拼出一个完整的鸭子」——**�
 
 ## 3. 怎么生成的
 
-脚本：`out/microduck_replica/assemble_duck.py`（纯 Python，无外部依赖）
+脚本：`out/builds/microduck_replica/assemble_duck.py`（纯 Python，无外部依赖）
 1. 解 3MF（zip）→ 读所有 `object_*.model`，正则解析 `<vertex>` / `<triangle>`；
 2. 跳过 10 个 406 字节的空对象（无网格），保留 33 个有网格的件；
 3. 逐三角面计算法线、按原始坐标写入二进制 STL。
 
 ```bash
-cd out/microduck_replica && python assemble_duck.py
+cd out/builds/microduck_replica && python assemble_duck.py
 # parts=33  triangles=391346
 # bbox X[-45.9,45.9] Y[-61.3,61.3] Z[-41.7,41.7]
 # size X=91.8 Y=122.7 Z=83.5 mm
@@ -77,7 +77,7 @@ STL 只含 33 个结构打印件。真机要动起来还需外购件（BOM 24 �
 
 ## 6. 怎么看这只鸭子
 
-- **几何文件**：`out/microduck_replica/microduck_assembled.stl`，用任意 STL 查看器（PrusaSlicer / Blender / 在线 viewer）打开。
+- **几何文件**：`out/builds/microduck_replica/microduck_assembled.stl`，用任意 STL 查看器（PrusaSlicer / Blender / 在线 viewer）打开。
   - 坐标：导出时 **Y 轴约 123 mm 为上**（部分查看器默认 Z 上，看到是侧躺的鸭子，旋转一下即可）。
 - **作者渲染图 / 爆炸图**：`组件图/00-microduck装配体.png`、`00-microduck装配体爆炸图1~3.png` —— 直接看成品长相和拆解。
 - **21 页装配说明书**：`安装说明书/microduck装配安装说明书.pdf`，逐步图文。

@@ -3,7 +3,7 @@
 _准备于 2026-11-02 晚；2026-11-03 08:35 起训。**植物、闸门、冒烟已就绪并通过，
 但开工前发现两个启动脚本根本没带 heading 奖励配方（见 §1.0），已修并重跑冒烟。**_
 
-> **背景与动机在仓库** `docs/05-flat-walk.md` **§18**（本文件的上游）。两边不一致时以仓库为准。
+> **背景与动机在仓库** `docs/archive/05-flat-walk.md` **§18**（本文件的上游）。两边不一致时以仓库为准。
 
 ---
 
@@ -22,7 +22,7 @@ _准备于 2026-11-02 晚；2026-11-03 08:35 起训。**植物、闸门、冒烟
 - 主判据（vx 显著更高）**PASS**；副判据（航向不劣于 3.73°）**相对口径 FAIL**、绝对口径（≤20°）PASS。
 - 🔴 **+83% 只在 kp_fw=8 上成立**：同一策略在 kp=5 上 7/8 摔倒。要拿这个数，必须把真机
   15 颗舵机 reg 50 改成 8（无社区先例，且 kp=8 的 duty 余量还没测）。
-- 详细数据、判据对照与三条前提见 `docs/05-flat-walk.md` **§21**。
+- 详细数据、判据对照与三条前提见 `docs/archive/05-flat-walk.md` **§21**。
   复算：`python tools/hd1910/judge_summary.py out/xplant_p5head_base out/xplant_p8head_030_4096x3000:8 ...`
 
 ### ✅ 后续裁决（12:10）：**kp_fw=8 采纳，不必再找替代点**
@@ -49,7 +49,7 @@ reg 48=1000、reg 33=4。任何一颗不匹配 ⇒ 该机不可用（kp=5 时 7/
 ⚠️ 但这条结论是用**修正后的时序**才拿到的：旧实现四个 EEPROM 包背靠背写，全部撞进
 ~10 ms 的 commit 窗口，**回读是 RAM shadow（显示 8），断电回滚 32**。现在每写一个
 EEPROM 区寄存器等 50 ms、写前关扭矩写完恢复。**回读 PASS 永远不等于持久 PASS。**
-判据只有一条：断电后回读。方法（哨兵法）见 `docs/05-flat-walk.md` §22.7。
+判据只有一条：断电后回读。方法（哨兵法）见 `docs/archive/05-flat-walk.md` §22.7。
 
 ✅ **第二写者已找到：`robotd` 自己**（一手源码）。`duck-control/src/bus.rs:594` 的 `set_gain()`
 逐颗写 **RAM** 的 P（并强制 I=0、D=0），值来自 `[policy] gain`；`robotd-params/src/lib.rs:2460`
@@ -208,7 +208,7 @@ TRAIN_PLANT=p5 ONNX=<model_2999.onnx> bash tools/hd1910/xplant_matrix.sh
 
 ## 5. 收尾
 
-- 判决写进 `docs/05-flat-walk.md` §18，证据 JSON 入库（`out/kpsweep_p8train/`）。
+- 判决写进 `docs/archive/05-flat-walk.md` §18，证据 JSON 入库（`out/kpsweep_p8train/`）。
 - **无论结论如何都要把 live 植物切回 `p3`**（`apply_to_live.py --plant p3`），
   除非 P8 明确胜出并决定切换——否则下一次谁跑彩排都会在 P8 植物上，而 P5 线的
   全部数字都不适用。

@@ -37,7 +37,7 @@ Measured on this task, both stage tables step at iteration 1500:
     head_pose_range   +-0.39 -> +-0.72 rad    (+85% in one step)
 
 and the delivered checkpoint peaks at 1250 while iter 1999 falls back to the
-baseline's ratio (docs/05-flat-walk.md §10.4). The timing is exact; this script
+baseline's ratio (docs/archive/05-flat-walk.md §10.4). The timing is exact; this script
 tests whether it is also causal.
 
 Usage

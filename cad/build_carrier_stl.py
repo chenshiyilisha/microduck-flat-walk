@@ -215,7 +215,7 @@ def write_binary_stl(path, tris):
             f.write(struct.pack('<3f', *c))
             f.write(struct.pack('<H', 0))
 
-OUT = 'cad/orangepi_zero3w_carrier.stl'
+OUT = 'cad/build/orangepi_zero3w_carrier.stl'
 write_binary_stl(OUT, TRIS)
 
 xs = [p[0] for t in TRIS for p in t[1:]]

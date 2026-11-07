@@ -13,7 +13,7 @@ Which plant
 default rather than a fixed preset:
 
 * the policy being rehearsed was trained against the live plant, so anything
-  else is a plant mismatch (the XL330<->HD1910 incident, docs/05-flat-walk §10);
+  else is a plant mismatch (the XL330<->HD1910 incident, docs/archive/05-flat-walk §10);
 * a hardcoded preset silently keeps working after the live plant changes, and
   the rehearsal numbers then describe a robot nobody trained on.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 台架：reg46（速度上限）与 reg41（加速度斜坡）的单变量分离。
 #
-# 这脚本被推翻过两次，历史留在 docs/05-flat-walk.md §20.3，结论只有四条：
+# 这脚本被推翻过两次，历史留在 docs/archive/05-flat-walk.md §20.3，结论只有四条：
 #   ① reg46 = 速度上限，单位 ≈ 0.732 rpm/LSB ≈ 50 步/s 每 LSB；reg46=0 = 无上限。
 #   ② reg41 = 加速度斜坡，越大越紧（整定越快）；reg41=0 = 无斜坡（最快）。
 #   ③ reg46=0 时 reg41 被完全忽略（0/10 与 0/0 同速）；但上限本身单独生效
@@ -150,4 +150,4 @@ for prefix, key in (("reg46", "reg46_req"), ("reg41", "reg41_req")):
     print()
 PYEOF
 echo "证据 -> $OUT/"
-echo "把两张表贴进 docs/05-flat-walk.md §20.3，并按「50×reg46 步/s」核对上限是否生效。"
+echo "把两张表贴进 docs/archive/05-flat-walk.md §20.3，并按「50×reg46 步/s」核对上限是否生效。"

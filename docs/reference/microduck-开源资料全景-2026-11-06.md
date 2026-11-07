@@ -130,7 +130,7 @@ banana→hub 那段只按 3–5 A 设计，而我按 10 A 母线 / 30 A 堵转�
 
 | 来源 | 说法 |
 |---|---|
-| `fanhao375/microduck-replica` `tools/servo-web/directions.json` | 15 颗**全部 −1**（我们 H2 写成「实机逐颗核对」） |
+| `fanhao375/microduck-replica` `microduck-software/tools/servo-web/directions.json` | 15 颗**全部 −1**（我们 H2 写成「实机逐颗核对」） |
 | `jyg9/microduck_ft1910` `docs/design/scs-bus.md` §Commissioning | `direction` 是**单一 `-1`**，但只把 3 个关节
 （`left_hip_pitch` / `left_ankle` / `right_ankle`）用手转过 + 两个脚踝过了镜像检查；**「Eleven joints were never watched」**，
 并**点名 `left_knee` 最可疑**（模型轴 −Y，而 hip/ankle 是 +Y）。文档原话：`direction is the one field it cannot measure — a sign is not visible in a position` |

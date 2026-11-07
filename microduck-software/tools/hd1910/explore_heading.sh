@@ -106,7 +106,7 @@ print('runmeta -> out/runmeta_${RUN}.json')
 
 # Fast fail before 4096 envs are built: mdp.reward_weight applies a stage only
 # while common_step_counter > step, so a last mark >= the run length is a stage
-# that never fires (docs/05-flat-walk.md §17.2 — the shipped 0,1000,1750,2500
+# that never fires (docs/archive/05-flat-walk.md §17.2 — the shipped 0,1000,1750,2500
 # table silently trained 0 iterations at tracking weight 3.0 on a 2500 run).
 LAST_STAGE="${HEADING_STAGE_ITERS##*,}"
 if [ "$LAST_STAGE" -ge "$ITERS" ]; then

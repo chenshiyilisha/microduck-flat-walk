@@ -12,15 +12,15 @@ viewer loop -- `NativeMujocoViewer(...).run()` / `ViserPlayViewer(...).run()`
 shape.
 
 Upstream hit the same wall and solved it with a pure-addition recorder:
-DuckEMW `docs/04-stilts-repro.md:58`
+DuckEMW `docs/archive/04-stilts-repro.md:58`
     「可信路径：`scripts/record_stilt_play.py`（纯新增）——在 mjlab 训练环境内
       无头录制，物理/观测/DR 与课程门禁完全一致。」
-and `docs/04-stilts-repro.md:30` lists the artefacts it produced
+and `docs/archive/04-stilts-repro.md:30` lists the artefacts it produced
 (`videos/stilt_h{10..200}cm.mp4`, 6 s @ 50 fps). Their script lives in a
 submodule we cannot read (404), so this is the same idea re-expressed on top of
 the public mjlab API rather than a copy.
 
-Protocol carried over from `eval_velocity_in_sim.py` (see docs/05-flat-walk.md):
+Protocol carried over from `eval_velocity_in_sim.py` (see docs/archive/05-flat-walk.md):
   * `standing_envs` curriculum is **popped**. It rewrites `rel_standing_envs`
     every step from `common_step_counter` (mdp.py:3440-3474) and would otherwise
     tell 25% of the batch to stand still -- you would be filming a quarter of the

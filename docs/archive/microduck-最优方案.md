@@ -58,7 +58,7 @@
 且 DuckBuddy 已经把它量出来了（见 §3 D6）。
 
 **③ 「我们没有会走的策略」不是训练不够，是地形错了 —— 这次有实测。**
-`tools/probe_argmax.py` 在固定命令 0.4 m/s 下测：零动作站桩得 **7.357**，
+`microduck-software/tools/probe_argmax.py` 在固定命令 0.4 m/s 下测：零动作站桩得 **7.357**，
 `robust61_u6` 6.422，`robust61_a` 4.170。**站着不动拿满了 95% 的分**
 （head 2.0 + upright 1.99 + turn 1.97 + pose 1.0 = 6.96，前进相关只有 track 一项给 0.40）。
 所以走路的路线要先把分从 7.36 掉到 4–6 再爬回 12，PPO 不会先掉分。
@@ -132,9 +132,9 @@ m4 的 kt = **1.0861**，推算 106 rpm，和厂标 110 rpm 对得上；m6 的 1
 两者真正的共同事实是：满电都宽裕，**低电都紧（+20% / +26%）**，而机器人最需要力矩的
 时刻（起身、爬坡、急停）恰恰是电量不高的时候。这一条对两颗舵机同样成立。
 
-### 2.2b 实测带宽（`tools/probe_bam.py`，用 m4 重测）
+### 2.2b 实测带宽（`microduck-software/tools/probe_bam.py`，用 m4 重测）
 
-把舵机都做成 BAM 模型（`tools/bam_actuators.py` 注册），逐关节打正弦、其余关节保持：
+把舵机都做成 BAM 模型（`microduck-software/tools/bam_actuators.py` 注册），逐关节打正弦、其余关节保持：
 
 | 3 Hz | 幅值增益 | 相位滞后 | 峰值 rad/s | 空载 rad/s |
 |---|---|---|---|---|
@@ -404,7 +404,7 @@ DuckBuddy：**同一次训练里各 checkpoint 直走偏航从 −30 到 +42 °/
 | 资产 | 处置 |
 |---|---|
 | `robust61_a` / `robust61_u6*` | **保留**。作为"纯 MuJoCo CPU + XL330 物理"对照，不再续训 |
-| `tools/selfcheck.py` 90 条 | **保留**。切 mjlab 后多数断言变成"核对上游"，仍有用 |
+| `microduck-software/tools/selfcheck.py` 90 条 | **保留**。切 mjlab 后多数断言变成"核对上游"，仍有用 |
 | `.upstream/UPSTREAM_REWARD_SPEC.md` | **保留**。移植时的对照表，切 mjlab 后用于验证"我们理解对了" |
 | `microduck-采购清单.md` §1–§6（XL330 路线） | 保留原文 |
 | `microduck-采购清单.md` §7（HD-1910 路线） | 保留，降级为**预算硬上限**时的退路 |
@@ -464,4 +464,4 @@ DuckBuddy：**同一次训练里各 checkpoint 直走偏航从 −30 到 +42 °/
   `hd1910_calibration/params/hd1910_characterization.json`
 - `Rhoban/bam`：`bam/params/xl330/m6.json`、分支 `mjlab_frictionloss`
 - feetech.cn 产品页（HL-2915-C001 / HD-1910-C001 厂标）、lxrcmodel（HL-2915 完整规格）
-- 本项目实测：`tools/probe_bam.py`、`tools/robustness.py`、`tools/selfcheck.py`（90 条）
+- 本项目实测：`microduck-software/tools/probe_bam.py`、`microduck-software/tools/robustness.py`、`microduck-software/tools/selfcheck.py`（90 条）

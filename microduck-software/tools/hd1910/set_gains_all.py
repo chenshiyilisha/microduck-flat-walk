@@ -3,7 +3,7 @@
 
 Why this exists
 ---------------
-docs/05-flat-walk.md §22.4: the P8 policy's +83% only holds when reg 50 == 8 on
+docs/archive/05-flat-walk.md §22.4: the P8 policy's +83% only holds when reg 50 == 8 on
 *every* servo (§21.3: at kp=5 it falls 7/8). Doing that by hand, one servo at a
 time, with a GUI, is how you end up with 14 at 8 and one at 32 — and that machine
 is unusable, not degraded.

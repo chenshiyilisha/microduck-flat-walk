@@ -1,7 +1,7 @@
 # MicroDuck 轮滑件核图对照清单（3MF 实例 → BOM 各项）
 
 > 用途：开盘图核对，不是结论书。全部打勾完成后这张清单才可勾销。
-> 数据源：`out/microduck_replica/打印/microduck-飞特版-BambuStudio2026-11-02.3mf`（43 实例 / 33 唯一网格）。
+> 数据源：`out/builds/microduck_replica/打印/microduck-飞特版-BambuStudio2026-11-02.3mf`（43 实例 / 33 唯一网格）。
 > 判据来源：BOM 11-02 版 + 上游 `robot_allcollisions_rollers.xml`（body 结构）+ CAD 仓 README v2.1 说明。
 
 ## 0. 一句话结论
@@ -108,8 +108,8 @@
 
 ## 6. 引用与判据出处
 
-- 3MF：`out/microduck_replica/打印/microduck-飞特版-BambuStudio2026-11-02.3mf`（实例部位置与尺寸，本清单 §1 表手工核对自 PARTS_INDEX.csv）
-- BOM：`out/microduck_replica/BOM/README.md:26-38`（打印件 33 项 + 轮滑件 28/29 行）
+- 3MF：`out/builds/microduck_replica/打印/microduck-飞特版-BambuStudio2026-11-02.3mf`（实例部位置与尺寸，本清单 §1 表手工核对自 PARTS_INDEX.csv）
+- BOM：`out/builds/microduck_replica/BOM/README.md:26-38`（打印件 33 项 + 轮滑件 28/29 行）
 - 上游结构：`software/training/src/mjlab_microduck/robot/microduck/robot_allcollisions_rollers.xml`：20 个 body（含 ankle_l_v1 / tire×4 / rim×4 / roller_blade×2）
 - 文本说明：`microduck_velocity_rollers_env_cfg.py:8`："14 actuated joints + 4 passive wheels, two per blade … merged into the ankles"
 - 首页套件：本轮已在 `manifest_roller.csv` 写入轮滑角色列；清单正文以本节为准。

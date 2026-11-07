@@ -256,7 +256,7 @@ exp(-((0 - 0.0245)/0.009)**2) * exp(-((0 - 0.0005)/0.009)**2)   # 两脚相乘
 
 ## 7. 可复现
 
-新增 `tools/probe_joy_policy.py`（Windows 可用；上游 `scripts/infer_policy.py`
+新增 `microduck-software/tools/probe_joy_policy.py`（Windows 可用；上游 `scripts/infer_policy.py`
 第 13 行 `import termios`，Linux/macOS 专用，Windows 直接 ImportError）。
 
 > 上游另有一个 `scripts/probe_joy_policy.py`（2.3 KB），但它是给 `microduck_lab.parkour`
@@ -266,21 +266,21 @@ exp(-((0 - 0.0245)/0.009)**2) * exp(-((0 - 0.0005)/0.009)**2)   # 两脚相乘
 
 ```bash
 # 【Duckverse 契约】5 kHz 物理 / 50 Hz 控制 / joint_vel_delay=1（默认值已改成这套）
-python tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
+python microduck-software/tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
     --plant servo --seconds 8 --joint-vel-delay 1 \
     --json-out out/probe_joy_official.json
 
 # 对照：关掉 20 ms 速度延迟
-python tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
+python microduck-software/tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
     --plant servo --seconds 8 --joint-vel-delay 0 \
     --json-out out/probe_joy_delay0.json
 
 # BAM 植物（kp_fw 200，vin 7.4）
-python tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
+python microduck-software/tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
     --plant bam --vin 7.4 --kp-fw 200 --seconds 8 --json-out out/probe_joy_bam.json
 
 # 负对照（切断相位时钟）
-python tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
+python microduck-software/tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
     --plant servo --seconds 8 --no-clock --json-out out/probe_joy_noclock.json
 ```
 
@@ -298,7 +298,7 @@ python tools/probe_joy_policy.py --onnx .upstream/policies/continuous_joy.onnx \
 
 ## 8. 下一步（按"能不能立刻做"排）
 
-1. **零成本：用 `tools/probe_argmax.py` 的同一套做法，先算"站桩"在 joy 配方下的得分。**
+1. **零成本：用 `microduck-software/tools/probe_argmax.py` 的同一套做法，先算"站桩"在 joy 配方下的得分。**
    不训练、不装环境，把 §4 那张手算表变成实测（同一批 term 套 joy 权重）。
    判据：站桩总分必须显著低于"踏步"；否则说明我手算哪一项错了。
 2. **移植 4 项 joy 奖励 + 时钟**（约 60 行；`self.foot[:,:,2]` 和 `self.clock` 我们已经有了，

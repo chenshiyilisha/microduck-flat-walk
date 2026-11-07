@@ -27,7 +27,7 @@ scipy                    1.18.1
 - 启动横幅：`[mdp] Patches 1-2 active: NaN-safe reward/advantage` /
   `Patch 4: ONNX export filters passive_* joints` /
   `Patch 5: MICRODUCK_WARM_START=1 restarts curricula after checkpoint load`
-- `tools/install_mjlab_stack.sh` 改成幂等四步，可反复重跑。
+- `microduck-software/tools/install_mjlab_stack.sh` 改成幂等四步，可反复重跑。
 
 > 上一轮我报「还在装」，实际是**安装进程在会话重启时被杀**了（日志停在下载阶段，
 > 进程已不存在，venv 里只有 torch）。不是装不动。

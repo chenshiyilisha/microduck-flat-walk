@@ -76,7 +76,7 @@ return self._act_filt.copy()          # 滤波后的才发给舵机
 
 ### 1. 动作低通 α=0.45 —— **已经试了，对我们没用**
 
-已实现（`tools/robustness.py` 的 `act_alpha`，条件名 `lpf_leg45` / `lpf_leg70`），在
+已实现（`microduck-software/tools/robustness.py` 的 `act_alpha`，条件名 `lpf_leg45` / `lpf_leg70`），在
 `robust61_a.pt` 上实测（0.3 m/s，8 s × 8 env，单 seed）：
 
 | 条件 | 跟踪率 | 摔倒 | 倾角 |

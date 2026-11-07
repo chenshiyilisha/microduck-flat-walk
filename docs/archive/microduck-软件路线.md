@@ -20,7 +20,7 @@
 |---|---|---|
 | 环境搭建 | `.venv` + ffmpeg，无编译器、无 WSL | ✅ |
 | 用现成权重复现走路 | `out/walk_first.mp4`（6 秒 300 帧） | ✅ |
-| 客观评估（不看视频看数字） | `tools/eval_policy.py` + 速度包线 | ✅ |
+| 客观评估（不看视频看数字） | `microduck-software/tools/eval_policy.py` + 速度包线 | ✅ |
 | 导出 ONNX（归一化烘进图） | `out/walk56.onnx`，2.3 KiB，双后端差异 4.8e-07 | ✅ |
 | 自训可部署策略 | `out/deploy61.pt` | ⏳ 后台训练中 |
 
@@ -214,7 +214,7 @@ projected gravity（直立时为 `[0,0,-1]`）、reset 后关节位置在 ±0.05
 
 ## 七、ONNX 导出：把归一化关进图里
 
-`tools/export_onnx.py` 不只是 `torch.onnx.export` 一行。它做的三件事：
+`microduck-software/tools/export_onnx.py` 不只是 `torch.onnx.export` 一行。它做的三件事：
 
 1. 只导 actor 的**均值动作**（不是采样）——50 Hz 部署时采样只会给力矩限幅添麻烦
 2. 用 `ActorOnly` 包一层，把 critic 砍掉，图里只有一个输出
@@ -276,5 +276,5 @@ inputs, "obs")?, OBS_LEN)` 按名字取输入，名字不对直接拒绝加载�
 
 ---
 
-*训练日志：`out/train61.log`；工具：`tools/eval_policy.py`、`tools/export_onnx.py`；
+*训练日志：`out/train61.log`；工具：`microduck-software/tools/eval_policy.py`、`microduck-software/tools/export_onnx.py`；
 新增训练入口：`repo/train_official.py`*

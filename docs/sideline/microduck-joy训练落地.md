@@ -25,7 +25,7 @@
 
 ---
 
-## 2. 落地过程（`tools/apply_joy_patch.py`）
+## 2. 落地过程（`microduck-software/tools/apply_joy_patch.py`）
 
 `git apply` / `patch -p1` 都不行：补丁锚在 `5946fd9`（09-01），我们的 `develop` 快照
 `mdp.py` 是 **7706 行**，补丁期望 **8248 行**，每个 hunk 都对不上。
@@ -158,7 +158,7 @@ Episode_Reward/pose:         0.0059              (权重 0.15，被压到底)
 选 SmoothPD 而不是 BAM 的理由：
 - 与 `continuous_joy.onnx` 同族（它的 `run_path` 是 `microduck_joy_smooth_pd/model_300.pt`）
 - 与真机一致（位置伺服、±0.6405 Nm、kp 0.55、target conditioner α=.25 / ±.08 rad）
-- 训完可以直接用 `tools/probe_joy_policy.py` 的**Duckverse 9 条门槛**评测，并与 Duckverse ONNX 对照
+- 训完可以直接用 `microduck-software/tools/probe_joy_policy.py` 的**Duckverse 9 条门槛**评测，并与 Duckverse ONNX 对照
 
 **验收（三条一起看，缺一条都不算数）**：
 
@@ -176,17 +176,17 @@ Episode_Reward/pose:         0.0059              (权重 0.15，被压到底)
 
 ```bash
 # 1) 落地补丁（幂等，重复运行会跳过）
-.venv-mjlab/Scripts/python.exe tools/apply_joy_patch.py
+.venv-mjlab/Scripts/python.exe microduck-software/tools/apply_joy_patch.py
 
 # 2) 上游测试
 cd .upstream/microduck_rl-develop
 PYTHONPATH=$(pwd)/src ../../.venv-mjlab/Scripts/python.exe -m pytest tests/test_joy_cfg.py -q
 
 # 3) 训练
-bash tools/train_joy.sh smooth 2048 600     # 位置伺服，部署一致
-bash tools/train_joy.sh bam    2048 600     # BAM 植物，快 1.6 倍
+bash microduck-software/tools/train_joy.sh smooth 2048 600     # 位置伺服，部署一致
+bash microduck-software/tools/train_joy.sh bam    2048 600     # BAM 植物，快 1.6 倍
 
 # 4) 验收（训练产出的 ONNX/pt 用 Duckverse 9 条门槛测）
-python tools/probe_joy_policy.py --onnx <exported.onnx> --plant servo \
+python microduck-software/tools/probe_joy_policy.py --onnx <exported.onnx> --plant servo \
     --seconds 8 --joint-vel-delay 1 --json-out out/probe_joy_trained.json
 ```

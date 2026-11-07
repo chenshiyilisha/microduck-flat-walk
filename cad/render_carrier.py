@@ -119,7 +119,7 @@ def main():
     draw_2d(ax2)
     fig.suptitle("Orange Pi Zero 3W 载板 (开顶卡框 + M2支柱 + 通用长圆孔耳)",
                  fontsize=13)
-    out = os.path.join(os.path.dirname(__file__),
+    out = os.path.join(os.path.dirname(__file__), "build",
                        "orangepi_zero3w_carrier_preview.png")
     fig.savefig(out, dpi=130, bbox_inches="tight")
     print("wrote", out)

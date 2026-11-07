@@ -84,7 +84,7 @@
 
 ## 三、实测：换 HD1910 到底有没有风险
 
-### 3.1 HD1910 参数逐轴回归（`tools/robustness.py`）
+### 3.1 HD1910 参数逐轴回归（`microduck-software/tools/robustness.py`）
 
 策略 `robust61_a`，8 s × 8 envs × 3 seeds，命令 0.3 m/s，开环（无航向闭环）。
 
@@ -107,7 +107,7 @@
 
 ### 3.2 stock PD vs BAM：这才是「我们的仿真像不像真机」
 
-`tools/probe_bam.py`：同一台机器人、同一正弦目标、逐关节驱动，测幅值增益与相位滞后。
+`microduck-software/tools/probe_bam.py`：同一台机器人、同一正弦目标、逐关节驱动，测幅值增益与相位滞后。
 
 | 频率 | stock PD（kp 5.0） | BAM xl330（kp_fw 400） |
 |---|---|---|
@@ -193,7 +193,7 @@
 `hl2915_m4.json`，"fitted on the pendulum bench (two loads, Kp 8–32, 0.53 deg mean error)"），
 不是 `fit_hl2915.py` 命令行里写的 m6。m4 = "Stribeck load-dependent"，比 m6 少 8 个自由参数；
 m6 的 kt 0.848 推 135 rpm，与厂标 110 rpm 矛盾，m4 的 1.086 推 106 rpm 与厂标吻合。
-→ `tools/bam_params/hl2915/m4.json` 已补上，`probe_bam.py` 改用 m4。
+→ `microduck-software/tools/bam_params/hl2915/m4.json` 已补上，`probe_bam.py` 改用 m4。
 
 ---
 
@@ -211,7 +211,7 @@ m6 的 kt 0.848 推 135 rpm，与厂标 110 rpm 矛盾，m4 的 1.086 推 106 rp
 2. **`Hd1910Actuator`** —— 从 mjlab `DcMotorActuator` 派生，「输出侧位置 PD + 直流电机
    力矩-转速包络」，**rated torque 硬顶**。文档明说：
    *"The nominal torque constant is not inserted into the XL330 BAM back-EMF equation."*
-   —— 这一点比我们自拼的 `HD1910Actuator`（`tools/bam_actuators.py`，无源头）**更有依据**。
+   —— 这一点比我们自拼的 `HD1910Actuator`（`microduck-software/tools/bam_actuators.py`，无源头）**更有依据**。
 3. **一份罕见的诚实清单**（profile 的 `unknown` 8 项 + `hd1910_adaptation.md` §仍待测量 4 行）：
    Mode 4 固件 P/D 单位与换算、电流限幅与热包络、转子惯量、Stribeck 摩擦、
    端到端延迟与速度滤波、每关节安装零位/方向、8.4 V 表现、编码器相对齿隙的位置。
@@ -251,7 +251,7 @@ profile 自己标了 `"Uncalibrated XL330 BAM reference"` / `"explicitly uncalib
 
 - **主路线不变**（HL-2915 + joy 配方）。这个仓库不构成换舵机的理由。
 - **要拿的两样**：① `kt 0.7355 / rated 0.363 Nm@7.4V / 质量 21 g / backlash 0.5°` 用来
-  校 `tools/bam_actuators.py` 里自拼的 `HD1910Actuator`；② 那 8 项 `unknown` 就是
+  校 `microduck-software/tools/bam_actuators.py` 里自拼的 `HD1910Actuator`；② 那 8 项 `unknown` 就是
   HD-1910 路线要付的测量成本清单，写进选型表当风险项。
 - **不要拿的**：`model_2000.pt` 不是「会走的策略」，它是 velocity 任务 + 未标定植物 +
   上游默认奖励的 2000 iter 中间产物，而且站桩 8/8 摔。

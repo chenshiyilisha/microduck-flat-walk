@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rehearsal sweeps that produced docs/05-flat-walk.md §22 (kp plateau) and §23
+# Rehearsal sweeps that produced docs/archive/05-flat-walk.md §22 (kp plateau) and §23
 # (command envelope). One script because both are "one variable x n start yaws"
 # over the same instrument, and because both need the same readback guard.
 #

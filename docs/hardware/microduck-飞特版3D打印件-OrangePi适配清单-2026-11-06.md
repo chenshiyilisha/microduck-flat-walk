@@ -66,7 +66,7 @@ BOM 第 3 项「树莓派机器人HAT电路板」按 RPi 40-pin 设计，**Orang
 
 ## 4. 我已有的"载板"（⚠️ 思路已弃，勿直接打）
 
-`cad/orangepi_zero3w_carrier.scad` / `cad/orangepi_zero3w_carrier.stl` 是按**外挂耳板**（69×36、带耳 89mm，M3 长圆孔拧躯干外侧）建的。经两轮更正后确认：
+`cad/orangepi_zero3w_carrier.scad` / `cad/build/orangepi_zero3w_carrier.stl` 是按**外挂耳板**（69×36、带耳 89mm，M3 长圆孔拧躯干外侧）建的。经两轮更正后确认：
 - 它解决的是"外挂固定"，而正确做法是 **SBC 像作者那样整栈进躯干主壳腔体**（HAT 已兼容，无需外挂）；
 - 它比裸板还大、且**没有解决真约束（腔体深度）**；
 - 在 Radxa 路径下完全不需要；在 Orange Pi 路径下也不能救场。
@@ -80,7 +80,7 @@ BOM 第 3 项「树莓派机器人HAT电路板」按 RPi 40-pin 设计，**Orang
 - **真实安装孔数/孔径**：评测仅确认"孔距一致"，待实物或官方机械图二次确认。
 - **板角倒圆半径**：官方未给，暂估 2.0。
 
-> 📦 **已提取可查看件**：`out/microduck_replica/01_躯干主体_torso_shell.stl`（从 3MF 提取的 `01 躯干主体` 独立网格，24362 面，**零件局部坐标、中心在原点**，可在查看器确认该壳件形态）；同目录 `torso_cavity_profile.txt` 为该件自身高度的 Z 范围剖面（**非整机腔体坐标**，仅供形态参考，净深以实物为准）。
+> 📦 **已提取可查看件**：`out/builds/microduck_replica/01_躯干主体_torso_shell.stl`（从 3MF 提取的 `01 躯干主体` 独立网格，24362 面，**零件局部坐标、中心在原点**，可在查看器确认该壳件形态）；同目录 `torso_cavity_profile.txt` 为该件自身高度的 Z 范围剖面（**非整机腔体坐标**，仅供形态参考，净深以实物为准）。
 
 ## 6. 下一步
 

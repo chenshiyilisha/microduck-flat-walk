@@ -8,7 +8,7 @@ Covers exactly what the trained snapshot adds on top of official b02fdea for:
 
 Blocks were extracted mechanically from (clean b02fdea -> trained snapshot)
 and replayed verbatim; the replay check reproduces the snapshot byte for
-byte (see tools/upstream_patches/README.md).
+byte (see microduck-software/tools/).
 
 Idempotent: a block whose first line is already present is skipped. A block
 whose anchor is missing or ambiguous aborts with exit 1 -- that means the

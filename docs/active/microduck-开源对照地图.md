@@ -85,7 +85,7 @@ plain）混在一起平均，而且是**整回合累积**，把 reset 的加速�
 | 2 | `error_vel_xy` 高估 ~3×，且分不清哪种模式在坏 | 判据改用**实测位移 / 分轴速度**，不用这个数 |
 | 3 | 失败形态是「原地踏步收钱」或「横着滑」 | 必须**分轴**判，只看合速度看不出来 |
 
-**评测脚本已按此改**（`tools/eval_velocity_in_sim.py`，本次改动）：
+**评测脚本已按此改**（`microduck-software/tools/eval_velocity_in_sim.py`，本次改动）：
 
 - 新增闸门 `translates_forward`（`dx/期望位移 ≥ 0.2`）——直接区分「原地踏步」与「真在走」
 - 新增闸门 `not_sideways`（`|dy|中位 ≤ 0.5·|dx|`）——抓「横着滑」
@@ -187,7 +187,7 @@ Agent Tools and MCP、Community Hubs。想自己往下翻就从这里进。
 | 上游 flat 的抬脚奖励目标 `foot_clearance.target_height` | **20 mm** | 我们 cfg `:352`（`foot_swing_height` 同为 0.02） |
 | 实际训练出来的平地策略 `peak_height_mean` | **14.1 mm** | Datawhale `model_5999` |
 | 爬 25 mm 台阶的策略脚 apex 净空 | 66.6 mm | DuckEMW FK 实测 |
-| 我们的探针：**原地**抬腿（｜dx｜≤5 mm）天花板 | 25.3 mm | `tools/probe_leg_reach.py` |
+| 我们的探针：**原地**抬腿（｜dx｜≤5 mm）天花板 | 25.3 mm | `microduck-software/tools/probe_leg_reach.py` |
 
 ⇒ **平地参照是 14–20 mm，不是 66.6 mm**（那是爬梯策略）。66.6 mm 只在「要跨台阶」时才适用。
 

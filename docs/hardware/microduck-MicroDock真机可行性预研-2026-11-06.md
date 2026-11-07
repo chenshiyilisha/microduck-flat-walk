@@ -92,7 +92,7 @@ MicroDock 是**官方 Playground 实验硬件自回充坞**：鸭子走到 April
 - `scoot_dock.onnx` / `scoot_undock.onnx`（+ 实验 `scoot_dock_undock.onnx`）。
 - **同策略族**：输入 61-D 观测（48 本体感知 + 13 命令块；twist 槽为 `[vx, vy, wz]` 体坐标，head 姿态槽同其它策略，body 姿态槽为零），输出 14 个 BAM XL330 动作，50 Hz。
 - 训练任务 `Mjlab-ButtWalk-Flat-MicroDuck`（microduck_rl develop `bae39f59`），每回合从坐姿开始；座摩擦随机化 0.05–0.25 渐增到 0.3–1.0。
-- **HD-1910 移植警示**：这些是 **B代（MicroDuck）训练**权重，与本项目 HD-1910 复刻线存在 plant 差异（关节序/动力学）。GroundPick 的对照已证明官方 B代策略直接落到 HD-1910 仅 23.4% 成功率（见 `tools/hd1910/eval_ground_pick.py --onnx` 结果）——v2 scoot 策略若直接装载 HD-1910 同样不可靠，**须在 HD-1910 上重训**。
+- **HD-1910 移植警示**：这些是 **B代（MicroDuck）训练**权重，与本项目 HD-1910 复刻线存在 plant 差异（关节序/动力学）。GroundPick 的对照已证明官方 B代策略直接落到 HD-1910 仅 23.4% 成功率（见 `microduck-software/tools/hd1910/eval_ground_pick.py --onnx` 结果）——v2 scoot 策略若直接装载 HD-1910 同样不可靠，**须在 HD-1910 上重训**。
 
 ### 6.4 仿真验证结果【核实】
 - **入坞**（`sim/docking_seated.py`，seeds 41/42/43 ×10）：**30/30** 入坞（USB 接通并保持），**0** 次罩碰到电源键；座摩擦 0.3 / 0.8 各 10 组 → 均 10/10。精度：沿推程 ±0.1 mm、横向 0.6 mm、竖向 0.5 mm。

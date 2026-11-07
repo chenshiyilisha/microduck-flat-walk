@@ -150,13 +150,13 @@
 > 环境给的都是**第 0 档** …… 结果就是评测**系统性地把任务测简单了**、奖励数字也和训练日志不可比
 > —— 而它不报错，图照样出、json 照样写。
 
-对照我们自己的代码（`grep common_step_counter tools/*.py`）：
+对照我们自己的代码（`grep common_step_counter microduck-software/tools/*.py`）：
 
 | 脚本 | 有没有对齐课程计数器 |
 |---|---|
-| `tools/probe_official_rhythm.py:93` | ✅ `self.common_step_counter = 10**9`（pin 到最后一档） |
-| `tools/probe_pair_min.py:133` | ✅ 同上 |
-| **`tools/eval_joy_in_sim.py`** | ❌ **没有**，且 `--play` 默认 `False`（走训练 cfg，课程生效） |
+| `microduck-software/tools/probe_official_rhythm.py:93` | ✅ `self.common_step_counter = 10**9`（pin 到最后一档） |
+| `microduck-software/tools/probe_pair_min.py:133` | ✅ 同上 |
+| **`microduck-software/tools/eval_joy_in_sim.py`** | ❌ **没有**，且 `--play` 默认 `False`（走训练 cfg，课程生效） |
 
 **后果分两层**：
 

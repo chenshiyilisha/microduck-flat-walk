@@ -2,7 +2,7 @@
 
 日期 2026-11-02。对象：把 `microduck-software/tools/` 里零散的 HD-1910 主线工具整合成一个统一软件工具（先纯 CLI）的**可行性评估**，含后续接 UI 的扩展性（§7 开源参照、§8 UI 扩展性）。
 
-**入口**：[根目录 README](../../README.md) · 软件主方案 [microduck-HD1910软件方案.md](microduck-HD1910软件方案.md) · 工具说明 [tools/hd1910/README.md](../../microduck-software/tools/hd1910/README.md)。
+**入口**：[根目录 README](../../README.md) · 软件主方案 [microduck-HD1910软件方案.md](microduck-HD1910软件方案.md) · 工具说明 [microduck-software/tools/hd1910/README.md](../../microduck-software/tools/hd1910/README.md)。
 
 > 本文档**只评估，不施工**。结论与分阶段计划在这里；执行到哪一步由用户定。
 
@@ -14,7 +14,7 @@
 
 **能整合，但只值得做"主线壳"，不值得做"全量合并"。**
 
-- 主线工具量可控：`tools/hd1910/` 约 25 个文件 + 主线依赖的 `tools/` 约 15 个，去掉 joy 侧线和旧栈，真正要收口的是 **~30 个入口**，不是 70+。
+- 主线工具量可控：`microduck-software/tools/hd1910/` 约 25 个文件 + 主线依赖的 `microduck-software/tools/` 约 15 个，去掉 joy 侧线和旧栈，真正要收口的是 **~30 个入口**，不是 70+。
 - 建议形态：**纯 CLI（`mduck`）+ 一个共享库**，把现有脚本当后端包起来，**不重写业务逻辑**。真正的障碍是语义接缝，不是代码量。
 - **两个最大风险，都不是工程量**：
   1. **开工时机**（§4.1）。阶段 0 要动的四个文件全在训练进程的 import 闭包里，`apply_to_live` 改的就是训练正在读的那个 `microduck_constants.py`。在有训练跑着的时候动手，等于把正在跑的实验静默作废，且不会报错。
@@ -30,7 +30,7 @@
 
 | | 内容 |
 |---|---|
-| **in** | `tools/hd1910/` 全部；主线依赖的 `tools/`：`eval_velocity_in_sim`、`eval_tracking`、`plant_id`、`check_velocity_ready`、`export_onnx`、`check_onnx_parity`、`make_manifest`、`record_walk`、`train_velocity_variant`、`train_heading_variant`、`watch_milestones`、`make_train_dashboard`、`convert_ckpt_stdtype`、`rehearse_deploy`、`bam_actuators` |
+| **in** | `microduck-software/tools/hd1910/` 全部；主线依赖的 `microduck-software/tools/`：`eval_velocity_in_sim`、`eval_tracking`、`plant_id`、`check_velocity_ready`、`export_onnx`、`check_onnx_parity`、`make_manifest`、`record_walk`、`train_velocity_variant`、`train_heading_variant`、`watch_milestones`、`make_train_dashboard`、`convert_ckpt_stdtype`、`rehearse_deploy`、`bam_actuators` |
 | **out（保留遗留）** | `repo/` 的 `train_ppo/train_official/train_robust`；依赖它们的 `robustness`、`envelope`、`ab_compare`、`eval_policy`、`deploy_sim`、`plant.py`、大多数 `probe_*`、`patch_joy_*`；joy 侧线全套（`eval_joy_in_sim`、`probe_joy_*`、`trace_joy_foot_phase` 等） |
 
 ---
@@ -43,10 +43,10 @@
 
 | 来源 | 说的是什么 | 位置 |
 |---|---|---|
-| `tools/hd1910/plant_spec.py` | m5 / m6 / `hd1910_kp5` / xl330 的数字 + 出处 | `tools/hd1910/plant_spec.py` |
-| `tools/plant_id.py` | 回读 live `_BAM_ACTUATOR_KWARGS` 的指纹 | `tools/plant_id.py:66` |
-| `tools/eval_joy_in_sim.swap_plant` | `default` vs `bam`（joy 自己的植物轴） | `tools/eval_joy_in_sim.py:126` |
-| `tools/plant.py` | 旧 CPU 栈的 SPECS | legacy，不迁 |
+| `microduck-software/tools/hd1910/plant_spec.py` | m5 / m6 / `hd1910_kp5` / xl330 的数字 + 出处 | `microduck-software/tools/hd1910/plant_spec.py` |
+| `microduck-software/tools/plant_id.py` | 回读 live `_BAM_ACTUATOR_KWARGS` 的指纹 | `microduck-software/tools/plant_id.py:66` |
+| `microduck-software/tools/eval_joy_in_sim.swap_plant` | `default` vs `bam`（joy 自己的植物轴） | `microduck-software/tools/eval_joy_in_sim.py:126` |
+| `microduck-software/tools/plant.py` | 旧 CPU 栈的 SPECS | legacy，不迁 |
 
 `plant_id.py` 的模块 docstring 记录了这次事故的机理：换植物时 `microduck_velocity_env_cfg.py` 与 `mdp.py` 的 sha **仍然匹配**，`curriculum_counter_before_pin` 也照样是 30024——因为植物藏在**再深一层的 import**里（cfg 从 `microduck_constants` 导入 `MICRODUCK_WALK_ROBOT_CFG`，该模块用 `_BAM_ACTUATOR_KWARGS` 建执行器）。哈希说"cfg 文件没变"，完全不覆盖它的传递闭包。
 
@@ -98,7 +98,7 @@ from eval_joy_in_sim import PLANT_CHOICES, swap_plant   # eval_velocity_in_sim.p
 - `apply_to_live.py` 直接写 `site-packages/mjlab_microduck/robot/microduck_constants.py`（含本机绝对路径）
 - `patch_sts3215_q_target_smooth.py` 改 editable bam
 
-`tools/hd1910/README.md` 明确警告"别在另一个训练跑着时热换植物"。
+`microduck-software/tools/hd1910/README.md` 明确警告"别在另一个训练跑着时热换植物"。
 
 **评估结论**：这两类操作**不能**被整合成一个隐式动作。必须：显式子命令、写前备份、写后 `--check` 回读、记录到 runmeta。整合的价值之一正是把这个纪律机器化。
 
@@ -106,7 +106,7 @@ from eval_joy_in_sim import PLANT_CHOICES, swap_plant   # eval_velocity_in_sim.p
 
 训练入口是 shell（`smoke_train.sh` 用 `RUN`/`DEVICE` 环境变量、内部再拼 `--agent.*`），评估入口是 Python argparse。没有 `pyproject`、没有 console_scripts，工具间靠 34 处 `sys.path.insert` 硬拼。
 
-**评估结论**：CLI 应该**包住**这些 shell，而不是重写它们——`mduck train smoke` 内部 `bash tools/hd1910/smoke_train.sh`，同时把 env 变量收敛成 CLI 参数。
+**评估结论**：CLI 应该**包住**这些 shell，而不是重写它们——`mduck train smoke` 内部 `bash microduck-software/tools/hd1910/smoke_train.sh`，同时把 env 变量收敛成 CLI 参数。
 
 ### 2.6 一次换植物会改两个任务 —— 隐式副作用（§2.2 的推论）
 
@@ -121,13 +121,13 @@ from eval_joy_in_sim import PLANT_CHOICES, swap_plant   # eval_velocity_in_sim.p
 附录把 `servo_probe/` 列进 in 范围，但它不是纯自研代码：`hd1910_readonly.py` 与上游 `sxyseo/microduck-replica@master` **逐字节相同**（sha256 `9cf2d21a…b4f06ee`，commit `062f4d59`，作者 abel）。
 
 该文件的许可状态是**"未明确声明"**，不是 Apache-2.0：
-- 该仓根 `LICENSE` 是**按路径分配**的双许可证，Apache-2.0 一栏只覆盖 `scripts/` 与 `tools/`
+- 该仓根 `LICENSE` 是**按路径分配**的双许可证，Apache-2.0 一栏只覆盖 `scripts/` 与 `microduck-software/tools/`
 - `rl-series/scripts/` **不在任何一栏**，`NOTICE.md` 的原创内容表也未列入
 - 第二处独立证据：`rl-series/README.md` 全文零许可字样，目录下也没有自己的 `LICENSE`（对比父仓 `software/training/` 是有 `LICENSE` 的）
 
-现状处理见 `tools/hd1910/servo_probe/ATTRIBUTION.md`（保留逐字节副本 + 标注出处 + 不改一行 + 再分发前须向上游确认）。
+现状处理见 `microduck-software/tools/hd1910/servo_probe/ATTRIBUTION.md`（保留逐字节副本 + 标注出处 + 不改一行 + 再分发前须向上游确认）。
 
-**评估结论**：把 `servo_probe/` 从 `tools/` 移进新包 `mduck/` 是**再分发动作**，不是内部重构。整合清单里必须为它保留 `ATTRIBUTION.md` 与上游出处，并在发布包（`make_manifest`）里携带。这条不影响工期，但漏了会在发布环节卡住。
+**评估结论**：把 `servo_probe/` 从 `microduck-software/tools/` 移进新包 `mduck/` 是**再分发动作**，不是内部重构。整合清单里必须为它保留 `ATTRIBUTION.md` 与上游出处，并在发布包（`make_manifest`）里携带。这条不影响工期，但漏了会在发布环节卡住。
 
 ---
 
@@ -285,7 +285,7 @@ mduck/                         # 新包（= 共享库）
 
 | 类别 | 是什么 | 现状 |
 |---|---|---|
-| **3D 可视化** | 看机器人跑（viser 式 3D 窗口） | **上游已有**：`ViserPlayViewer`；本仓库已 patch（`tools/patch_mjlab_viser_gui.py`、`tools/patch_viser_zh.py`）并有 `tools/run_viser.sh`。依赖实测在位：`viser 1.1.1` + `mjviser 0.0.14` |
+| **3D 可视化** | 看机器人跑（viser 式 3D 窗口） | **上游已有**：`ViserPlayViewer`；本仓库已 patch（`microduck-software/tools/patch_mjlab_viser_gui.py`、`microduck-software/tools/patch_viser_zh.py`）并有 `microduck-software/tools/run_viser.sh`。依赖实测在位：`viser 1.1.1` + `mjviser 0.0.14` |
 | **作业控制/监控看板** | 启动/停止/监控训练、看指标 | 脚本版已有：`make_train_dashboard.py`、`watch_milestones.py`（本质就是最早的 UI） |
 
 第一类**已经存在**，不需要"接"。第二类才是"未来接 UI"的主力，也是 §8.3 要埋的接缝。
@@ -300,8 +300,8 @@ mduck/                         # 新包（= 共享库）
 
 | 脚本 | 实际数据源 |
 |---|---|
-| `tools/make_train_dashboard.py:19,47,52` | **tensorboard 二进制**（`EventAccumulator` + `events.out.tfevents*`） |
-| `tools/watch_milestones.py:134,146` | **正则解析 `train_*.log` 文本** |
+| `microduck-software/tools/make_train_dashboard.py:19,47,52` | **tensorboard 二进制**（`EventAccumulator` + `events.out.tfevents*`） |
+| `microduck-software/tools/watch_milestones.py:134,146` | **正则解析 `train_*.log` 文本** |
 
 而 `watch_milestones.py:146` 那个 `open(log_path)` 逐行正则，正是本文档警告过的"解析 stdout 的脆弱东西"—— **它已经存在了**。所以这条接缝的真实理由是：两套临时方案已经并存，UI 再来就是第三套，且三者对"训练跑到哪了"给出的口径互不可比。
 
@@ -344,7 +344,7 @@ UI 的"训练进度页"读这些静态文件已经够用（轮询 1 Hz），真�
 
 **③ GPU 互斥锁建议现在做，不等 UI 期。**
 
-实测：仓库里**没有任何锁机制**（`flock` / `msvcrt.locking` / `LockFileEx` / `.lock` 在 `tools/` 下零匹配）。而互斥这件事已经踩过一次：FD 工具与探针抢 COM3，只能靠人记得"开一个必须先关另一个"（`tools/hd1910/README.md` 用警告文字兜着）。
+实测：仓库里**没有任何锁机制**（`flock` / `msvcrt.locking` / `LockFileEx` / `.lock` 在 `microduck-software/tools/` 下零匹配）。而互斥这件事已经踩过一次：FD 工具与探针抢 COM3，只能靠人记得"开一个必须先关另一个"（`microduck-software/tools/hd1910/README.md` 用警告文字兜着）。
 
 ⇒ 现状是**多窗口跑训练/评估就会撞卡**，不需要等到 UI。建议阶段 0 顺手加一个最简的单卡锁（`out/.gpu0.lock` + pid 与 run_name 内容），成本约 0.1 天，比 UI 期再补便宜。
 
@@ -352,7 +352,7 @@ UI 的"训练进度页"读这些静态文件已经够用（轮询 1 Hz），真�
 
 ## 附：主线工具清单（in 范围）
 
-**`tools/hd1910/`**（新增层，相对自洽）：
+**`microduck-software/tools/hd1910/`**（新增层，相对自洽）：
 
 | 文件 | 角色 |
 |---|---|
@@ -365,4 +365,4 @@ UI 的"训练进度页"读这些静态文件已经够用（轮询 1 Hz），真�
 | `sts_bench.py` / `check_step_vs_sim.py` / `servo_probe/` | 阶段 0 台架/实测。⚠️ `servo_probe/hd1910_readonly.py` 是上游逐字节副本、**许可未明确声明**，收口时必须带上 `ATTRIBUTION.md`（§2.7） |
 | `patch_sts3215_q_target_smooth.py` | 给 editable bam 打补丁（全局副作用） |
 
-**`tools/` 共享层**：`eval_velocity_in_sim`（评估）、`eval_tracking`（跟踪）、`plant_id`（指纹）、`check_velocity_ready`（发车前静态检查）、`export_onnx` + `check_onnx_parity`（导出）、`make_manifest`（发布包）、`record_walk`（录像）、`train_velocity_variant` / `train_heading_variant`（进程内改 cfg）、`watch_milestones`（守候）、`make_train_dashboard`（看板）。
+**`microduck-software/tools/` 共享层**：`eval_velocity_in_sim`（评估）、`eval_tracking`（跟踪）、`plant_id`（指纹）、`check_velocity_ready`（发车前静态检查）、`export_onnx` + `check_onnx_parity`（导出）、`make_manifest`（发布包）、`record_walk`（录像）、`train_velocity_variant` / `train_heading_variant`（进程内改 cfg）、`watch_milestones`（守候）、`make_train_dashboard`（看板）。

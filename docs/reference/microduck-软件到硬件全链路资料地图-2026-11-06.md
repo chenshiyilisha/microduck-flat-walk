@@ -223,7 +223,7 @@ esp-duck / playground / mdlab / loco-diag`，全部被 gitignore 覆盖。
 |---|---|
 | `hd1910m` `installation.json` 里两颗 +1 是否为真实装法差异 | ✅ **已核实：不是**。`purpose: "Read-only wiring/mapping example"` + `calibration_verified:false`；README:48「示例映射仅供对照，部署使用本机实际标定文件」；+1 的只是 `neck_pitch(12)`/`head_pitch(11)`。⇒ **不构成反证**，H2 仍以 replica 2026-09-20 逐颗实机核对为准 |
 | `AI-FanGe` 的「Shutdown 去输入电压错误项」在 HLS 上对应哪个寄存器 | ✅ **已核实**：教程是 DXL XL330 的 `Shutdown(63)`；飞特 HLS 对应 **reg19(0x13) 卸载条件 BIT0=电压保护**（配套 reg20 LED 报警、reg65 状态 BIT0、reg14/15 电压窗、`0x06 RECOVERY`）。**别照抄**：写 EEPROM 要按 H 段时序 + 断电回读双验 |
-| `esp-duck` 的量化 gate 门限能否直接搬到 FP32 ONNX | ✅ **已核实并定量反证**：其 `maxabs ≤ 2% of S` 在我方 `p8head_2999`/`resume_5999` 上 **误杀健康**（超 5.2×/6.9×），在病态 `deploy61` 上 **反而放行**（S 被放大 128×）。已重标为 G1–G4 绝对物理量级判据并落成 `tools/hd1910/policy_numeric_gate.py`，`--selftest` 健康 PASS / 病态 FAIL 全绿 |
+| `esp-duck` 的量化 gate 门限能否直接搬到 FP32 ONNX | ✅ **已核实并定量反证**：其 `maxabs ≤ 2% of S` 在我方 `p8head_2999`/`resume_5999` 上 **误杀健康**（超 5.2×/6.9×），在病态 `deploy61` 上 **反而放行**（S 被放大 128×）。已重标为 G1–G4 绝对物理量级判据并落成 `microduck-software/tools/hd1910/policy_numeric_gate.py`，`--selftest` 健康 PASS / 病态 FAIL 全绿 |
 | `mindthink` / `witcheer` / `RemiFabre` 全部策略 | **sim-only，未上真机**；只作配方证据，不作 sim2real 证据 |
 | `playground`（393 MB）、`mdlab`（75 MB）、`replica-kit`（63 MB） | 只读了 README 与关键文档，未逐份解析实验/打印件 |
 | 官方策略 manifest 的 `training.dirty=true` 等字段对 B 代是否有影响 | 无影响（B 代不读 manifest） |

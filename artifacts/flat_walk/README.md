@@ -1,11 +1,11 @@
 # flat_walk — 平地速度跟踪产物
 
-对应文档：`docs/05-flat-walk.md`（方法与判决）、`JOURNEY.md`（时间线与教训）。
+对应文档：`docs/archive/05-flat-walk.md`（方法与判决）、`JOURNEY.md`（时间线与教训）。
 
 | 文件 | 是什么 |
 |---|---|
 | `checkpoints/model_1250.pt` | **baseline**（std²=0.10）iter 1250 策略，11/11 闸门通过（4.8 MB） |
-| `checkpoints/model_1250_std004.pt` | **单变量后**（std²=0.04）iter 1250 策略，**当前交付点**：cmd 0.4 下 ratio **0.811** / `error_vel_xy` **0.159**（当前评估脚本复测；旧脚本记的是 0.773 / 0.162，跨版本不可混用，见 §12.5）（4.8 MB，见 `docs/05-flat-walk.md` §10） |
+| `checkpoints/model_1250_std004.pt` | **单变量后**（std²=0.04）iter 1250 策略，**当前交付点**：cmd 0.4 下 ratio **0.811** / `error_vel_xy` **0.159**（当前评估脚本复测；旧脚本记的是 0.773 / 0.162，跨版本不可混用，见 §12.5）（4.8 MB，见 `docs/archive/05-flat-walk.md` §10） |
 | `checkpoints/walk_std004_1250.onnx` | 上面那个 ckpt 的部署图：obs 61 → act 14、opset 18、**静态 batch 1**、normalizer 已烘入。parity `max abs(onnx−ref)` = 2.65e−06，负对照偏离 5.30（53000× 容差）。见 §13 |
 | `evals/eval_iter1250_clean.json` | baseline 交付档的评估原始输出，含全部闸门布尔值与逐项指标 |
 | `evals/eval_iter6000_clean.json` | baseline 停训档（11 项里 `no_fall` 失败），用来说明「继续训没有更好」 |
@@ -36,7 +36,7 @@
 
 > 前提：需要 `Mjlab-Velocity-Flat-MicroDuck` 任务包与对应环境；本仓库的 `third_party/*`
 > 是 private submodule，**外部 clone 拿不到**。所以「可复现」的含义与边界写在
-> `docs/05-flat-walk.md` §7.0，别按「clone 即出数」去理解。
+> `docs/archive/05-flat-walk.md` §7.0，别按「clone 即出数」去理解。
 
 ```bash
 uv run python tools/flat_walk/eval_velocity_in_sim.py \
@@ -50,7 +50,7 @@ uv run python tools/flat_walk/eval_velocity_in_sim.py \
   让地形/指令范围等课程项取末级（否则新建的 env 计数器是 0，等于按第 0 级评测）；
   **同时 `pop` 掉 `standing_envs` 课程项**——它每步按同一个计数器重写 `rel_standing_envs`
   （末级 0.25），会把「冻结到 vx 0.4」悄悄变成「25% 的 env 站着不动」。
-  这两件事必须成对出现，只做前者会让误差被稀释（详见 `docs/05-flat-walk.md` §5 坑 1）。
+  这两件事必须成对出现，只做前者会让误差被稀释（详见 `docs/archive/05-flat-walk.md` §5 坑 1）。
 - `command_frozen_ok` 闸门就是这条协议的自检：它记录每步 `vel_command_b`，
   要求 `max|cmd − frozen| ≤ 1e-3`。**去掉 pop 那一行，它会立刻 FAIL 并打印
   `uniq cmd vx [0.0, 0.4] / frac_cmd_zero 25.0%`** —— 一个只见过绿色的闸门不是证据。

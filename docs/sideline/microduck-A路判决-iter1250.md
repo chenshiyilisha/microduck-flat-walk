@@ -122,7 +122,7 @@ state    NOT applied
 | `MICRODUCK_ISSUE46=1` | `feet_air_time_forward_gated` | **4.0** | **3.0** |
 | 再加 `GATE=.25 FLOOR=.1 TRACK_W=5 LATERAL=2` | 同上，`vel_gate_ref=0.25, gate_floor=0.1` | 5.0 | 2.0 |
 
-随时可用：`python tools/patch_issue46.py --apply`，两秒，无需重启环境。
+随时可用：`python microduck-software/tools/patch_issue46.py --apply`，两秒，无需重启环境。
 
 补丁的设计要点（也是「尽量用现成」的落实）：
 
@@ -145,7 +145,7 @@ state    NOT applied
 
 ## 本轮落地（用户「按你的建议来」，2026-10-25 09:45）
 
-### 1) 4000 / 6000 自动体检：`tools/watch_milestones.py`（已在后台运行）
+### 1) 4000 / 6000 自动体检：`microduck-software/tools/watch_milestones.py`（已在后台运行）
 
 训练跑到 iter 1649（09:45，3.14 s/iter），4000 预计 **11:48**，6000 预计 **13:33**。
 守候进程做的三件事：
@@ -183,7 +183,7 @@ flat      ⇐  其余情况，或任一闸门失败
 若守候进程被会话回收，手动等价命令：
 
 ```bash
-cd microduck-software && .venv-mjlab/Scripts/python.exe tools/eval_velocity_in_sim.py \
+cd microduck-software && .venv-mjlab/Scripts/python.exe microduck-software/tools/eval_velocity_in_sim.py \
   --checkpoint logs/rsl_rl/microduck_velocity/2026-10-25_08-10-20_vel_4096x12000_1025/model_4000.pt \
   --num-envs 32 --seconds 8 --device cuda:0 --cmd-vx 0.4 \
   --solver-iters 100 --solver-ls 50 --out out/eval_iter4000.json
@@ -258,7 +258,7 @@ state    NOT applied
 ### 决定：在 6000 停训（原计划 12000，省 5.3 h）
 
 - 训练已 `taskkill /PID 23760`（14:12），ckpt `model_0 … model_6000` 全在，
-  `tools/resume_velocity.sh` 可随时从 6000 续到 12000 ⇒ **可逆**。
+  `microduck-software/tools/resume_velocity.sh` 可随时从 6000 续到 12000 ⇒ **可逆**。
 - 判据：9 档里没有一档超过 1250，且 6000 跌出一个摔倒闸门。继续跑没有证据支持会回升。
 - 交付策略：**`model_1250.pt`**，11/11 闸门。
 

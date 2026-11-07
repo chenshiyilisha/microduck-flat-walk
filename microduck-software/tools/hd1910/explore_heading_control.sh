@@ -194,5 +194,5 @@ echo
 echo "ok — control arm trained and verified:"
 echo "  $D"
 echo "next: sweep checkpoints on this run and on $REWARD_ARM with"
-echo "      tools/flat_walk/eval_velocity_in_sim.py, then compare with"
-echo "      tools/flat_walk/gate_p3_yaw.py --baseline-set kp8"
+echo "      tools/eval_velocity_in_sim.py, then compare with"
+echo "      tools/gate_p3_yaw.py --baseline-set kp8"

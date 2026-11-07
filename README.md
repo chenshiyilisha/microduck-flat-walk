@@ -27,8 +27,8 @@
 
 ```bash
 cd microduck-software
-.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910
-.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --check
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/apply_to_live.py --plant hd1910
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/apply_to_live.py --check
 # 期望：detected=hd1910  kp_fw=32.0  register=True  gate_ok=True
 ```
 
@@ -62,24 +62,24 @@ cd microduck-software
 
 ```bash
 cd microduck-software
-.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --check
-"D:/Program Files/Git/bin/bash.exe" tools/hd1910/smoke_train.sh
-ENVS=4096 ITERS=2000 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/explore_train.sh
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/apply_to_live.py --check
+"D:/Program Files/Git/bin/bash.exe" microduck-software/tools/hd1910/smoke_train.sh
+ENVS=4096 ITERS=2000 "D:/Program Files/Git/bin/bash.exe" microduck-software/tools/hd1910/explore_train.sh
 # 续训（默认 4096→6000；本机勿用 8192）：
-"D:/Program Files/Git/bin/bash.exe" tools/hd1910/resume_train.sh
+"D:/Program Files/Git/bin/bash.exe" microduck-software/tools/hd1910/resume_train.sh
 # StandUp（可选；从零训，勿续 5999）：
-"D:/Program Files/Git/bin/bash.exe" tools/hd1910/smoke_standup.sh
-ENVS=1024 ITERS=1000 "D:/Program Files/Git/bin/bash.exe" tools/hd1910/explore_standup.sh
+"D:/Program Files/Git/bin/bash.exe" microduck-software/tools/hd1910/smoke_standup.sh
+ENVS=1024 ITERS=1000 "D:/Program Files/Git/bin/bash.exe" microduck-software/tools/hd1910/explore_standup.sh
 # ONNX parity / 阶段0软件入口：
-"D:/Program Files/Git/bin/bash.exe" tools/hd1910/parity_smoke.sh
-# 见 tools/hd1910/stage0_software_prep.md
+"D:/Program Files/Git/bin/bash.exe" microduck-software/tools/hd1910/parity_smoke.sh
+# 见 microduck-software/tools/hd1910/stage0_software_prep.md
 # A/B（短训对照，勿与长训并行热换植物）：
-"D:/Program Files/Git/bin/bash.exe" tools/hd1910/ab_train.sh both
+"D:/Program Files/Git/bin/bash.exe" microduck-software/tools/hd1910/ab_train.sh both
 ```
 
 工具说明：[`microduck-software/tools/hd1910/README.md`](microduck-software/tools/hd1910/README.md)。  
 Windows 训练机打包（4070 Ti，勿拷 venv）：[`microduck-software/tools/hd1910/server_pack/README.md`](microduck-software/tools/hd1910/server_pack/README.md)。  
-StandUp（可选）：`tools/hd1910/smoke_standup.sh` → `explore_standup.sh`（默认 1024×1000）。
+StandUp（可选）：`microduck-software/tools/hd1910/smoke_standup.sh` → `explore_standup.sh`（默认 1024×1000）。
 
 ---
 
@@ -119,6 +119,6 @@ StandUp（可选）：`tools/hd1910/smoke_standup.sh` → `explore_standup.sh`�
 
 ## 5. 本仓还保留的 XL330 / DuckEMW 交付（旁线）
 
-main 合并了原先 flat-walk 交付树：[`docs/05-flat-walk.md`](docs/05-flat-walk.md)、`tools/flat_walk/`、`artifacts/flat_walk/`、`third_party/`。  
+main 合并了原先 flat-walk 交付树：[`docs/archive/05-flat-walk.md`](docs/archive/05-flat-walk.md)、`microduck-software/tools/`、`artifacts/flat_walk/`、`third_party/`。  
 那是 **XL330 平地速度跟踪** 档案；**现行施工以 HD-1910 为主**（见上文）。旁线入口：[docs/sideline/](docs/sideline/)。
 

@@ -2,7 +2,7 @@
 
 把当日讨论钉成可查记录。施工细节仍以各专项文档为准；本页只记**结论与出处**。
 
-相关：[软件方案](microduck-HD1910软件方案.md) · [阶段 C](microduck-HD1910阶段C软件清单.md) · [采购 §7](../hardware/microduck-采购清单.md) · [upstream 摘录核对](microduck-upstream摘录核对.md) · [XGO 对照](../reference/microduck-XGO-Duck对照.md) · [tools/hd1910](../../microduck-software/tools/hd1910/README.md)
+相关：[软件方案](microduck-HD1910软件方案.md) · [阶段 C](microduck-HD1910阶段C软件清单.md) · [采购 §7](../hardware/microduck-采购清单.md) · [upstream 摘录核对](microduck-upstream摘录核对.md) · [XGO 对照](../reference/microduck-XGO-Duck对照.md) · [microduck-software/tools/hd1910](../../microduck-software/tools/hd1910/README.md)
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1.1 URT-2 接线（已写入施工文）
 
-一手：`.upstream/r_踩坑记录.md`。落地：`tools/hd1910/stage0_software_prep.md`。
+一手：`.upstream/r_踩坑记录.md`。落地：`microduck-software/tools/hd1910/stage0_software_prep.md`。
 
 - 外电/电池 → **舵机 V、G**；URT 只接 **S + 共地**；**V1 空着**（勿灌 7.4 V）。
 - 拨码是 TTL 电平，不是外电切换；空载改 ID 可用 USB 上 V1≈5 V。
@@ -59,7 +59,7 @@
 
 - bootstrap 默认：植物 **m5 / kp_fw=32**，冒烟 **Velocity 64×5**，`MUJOCO_GL=glfw`，`cuda:0`。
 - 下一步文档已改为：冒烟后可改跑 **StandUp**（平地走已有交付时）。
-- 出处：`tools/hd1910/server_pack/README.md`、`pins.txt`。
+- 出处：`microduck-software/tools/hd1910/server_pack/README.md`、`pins.txt`。
 
 ### 2.2 StandUp 脚本与墙钟（4070 级）
 
@@ -77,9 +77,9 @@
 
 ```powershell
 $env:MUJOCO_GL = "glfw"
-& "C:\Program Files\Git\bin\bash.exe" tools/hd1910/smoke_standup.sh
+& "C:\Program Files\Git\bin\bash.exe" microduck-software/tools/hd1910/smoke_standup.sh
 $env:ENVS = "1024"; $env:ITERS = "1000"
-& "C:\Program Files\Git\bin\bash.exe" tools/hd1910/explore_standup.sh
+& "C:\Program Files\Git\bin\bash.exe" microduck-software/tools/hd1910/explore_standup.sh
 ```
 
 ---
@@ -131,9 +131,9 @@ uv run python scripts/export.py Mjlab-Velocity-Flat-XgoDuck …
 
 | 路径 | 改动 |
 |---|---|
-| `tools/hd1910/stage0_software_prep.md` | URT 接线图 |
-| `tools/hd1910/smoke_standup.sh` 等 | StandUp 冒烟/探索/续训 |
-| `tools/hd1910/server_pack/README.md` | Ti 上改跑 StandUp |
+| `microduck-software/tools/hd1910/stage0_software_prep.md` | URT 接线图 |
+| `microduck-software/tools/hd1910/smoke_standup.sh` 等 | StandUp 冒烟/探索/续训 |
+| `microduck-software/tools/hd1910/server_pack/README.md` | Ti 上改跑 StandUp |
 | `docs/active/microduck-HD1910软件方案.md` | 下一步含 StandUp |
 | `docs/active/microduck-upstream摘录核对.md` | `.upstream` 核对 |
 | **本页** | 当日总纪要 |

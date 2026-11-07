@@ -61,10 +61,10 @@ cmd 冻结 wz=0 时，`error_vel_yaw` 是**瞬时** |ω| 误差（kp32 实测 �
 
 用法
 ----
-  python tools/flat_walk/gate_p3_yaw.py out/p3/*.json
-  python tools/flat_walk/gate_p3_yaw.py --baseline-set kp8 out/p4/*.json
-  python tools/flat_walk/gate_p3_yaw.py --audit-baseline [--baseline-set kp8]
-  python tools/flat_walk/gate_p3_yaw.py --selftest
+  python microduck-software/tools/gate_p3_yaw.py out/p3/*.json
+  python microduck-software/tools/gate_p3_yaw.py --baseline-set kp8 out/p4/*.json
+  python microduck-software/tools/gate_p3_yaw.py --audit-baseline [--baseline-set kp8]
+  python microduck-software/tools/gate_p3_yaw.py --selftest
 
 退出码：0 全过 / 1 有闸门红 / 2 完整性过但重复数 <3（PROVISIONAL，不给判决）/ 3 完整性红
 """

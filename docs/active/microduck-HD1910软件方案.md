@@ -4,7 +4,7 @@
 `../archive/microduck-国内自制方案.md` 已证伪段）。本文只定**软件怎么拼**，不重复 BOM。
 
 **工作区入口**：[根目录 `README.md`](../../README.md)（文档地图 + 命令）。  
-**真机清单**：[阶段 C](microduck-HD1910阶段C软件清单.md)。**工具**：[tools/hd1910](../../microduck-software/tools/hd1910/README.md)。  
+**真机清单**：[阶段 C](microduck-HD1910阶段C软件清单.md)。**工具**：[microduck-software/tools/hd1910](../../microduck-software/tools/hd1910/README.md)。  
 **主线执行计划**：[§8](#8-主线执行计划2026-10-28-定hd1910-为唯一主线)（2026-10-28 定：HD1910 唯一主线、偏航为首要缺口）。  
 **10-27 纪要**（IMU / 组装机 / 场景 / kissqy·XGO）：[microduck-2026-10-27裁决与场景纪要.md](microduck-2026-10-27裁决与场景纪要.md)。  
 **2026-10-27 裁决纪要**（场景 / IMU / 组装机 / kissqy↔XGO）：[microduck-2026-10-27裁决与场景纪要.md](microduck-2026-10-27裁决与场景纪要.md)。
@@ -23,13 +23,13 @@
 | 飞特 m6 | JSON+别名就绪；**勿整包装** ftservo-bam；长训仍主 **m5** |
 | ONNX + parity（5999） | ✅ `out/hd1910_resume_4096_to6000_1027_it5999.onnx`；parity max\|Δ\|≈**2.5e−6** |
 | 彩排（5999） | 名义/低电/高电 **过**；`train_lag3/4/6` 仍挂（与 1999 同类；CPU MuJoCo±delay 非训练同仪） |
-| 下一步 | **人：阶段 0 下单**；Velocity 不必再长训。可选新场景 **StandUp**（`tools/hd1910/explore_standup.sh`，4070 Ti：先 1024×1000） |
-| P3 闸门（2026-11-03） | ✅ 预注册 `tools/flat_walk/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` + 16 项负对照）；`not_sideways` 退出判决、改当诊断 |
+| 下一步 | **人：阶段 0 下单**；Velocity 不必再长训。可选新场景 **StandUp**（`microduck-software/tools/hd1910/explore_standup.sh`，4070 Ti：先 1024×1000） |
+| P3 闸门（2026-11-03） | ✅ 预注册 `microduck-software/tools/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` + 16 项负对照）；`not_sideways` 退出判决、改当诊断 |
 | kp8 参考点（2026-11-03 晚） | ✅ 部署候选 `model_2999` 三次重复：vx **0.1629**、`err_yaw` **0.7284**、absdy 0.476、dx 比 0.316（已冻结成 `--baseline-set kp8`）。⚠️ 与 m5/kp32 差三样（plant/奖励/迭代数）⇒ **不是 heading 有效性的证据** |
 | heading A/B 控制臂（2026-11-03 晚备好） | 🟡 发现原"干净对照"（11-02）还多一个 `ang_vel_z ±1.0`（`--ang-vel-z-clip` 被静默忽略）⇒ 先补 `set_ang_vel_z_range`；控制臂脚本 + 反向闸门 + 配对判决全部就绪并冒烟通过，**待次日 3.28 h 开跑**（`explore_heading_control.sh`） |
 | 控制臂训练（2026-11-04） | 🟢 **跑中**：`2026-11-04_08-38-17_p8ctl_030_1104`（起步核对全绿；早期曲线与奖励臂基本重合，err_yaw 略高符合预期），ETA ~11:40 |
 | ONNX + parity（kp8 候选 2999） | ✅ `artifacts/flat_walk/checkpoints/p8head_2999.onnx`；parity max\|Δ\|**3.53e−6**、负对照 53348× 容差（`evals/onnx_parity_p8head_2999.json`）——P4 链第一步完成，A/B 判决后如换臂重导即可 |
-| cmd 包线扫点工具 | ✅ `tools/hd1910/sweep_cmd_envelope.sh`（0.15/0.2/0.3/0.4×3 seed，与冻结基线同口径；只报数不判决），训练完与 A/B 扫点一起排 GPU 队；`TASK=` 可换域 |
+| cmd 包线扫点工具 | ✅ `microduck-software/tools/hd1910/sweep_cmd_envelope.sh`（0.15/0.2/0.3/0.4×3 seed，与冻结基线同口径；只报数不判决），训练完与 A/B 扫点一起排 GPU 队；`TASK=` 可换域 |
 | **齿隙域（backlash，2026-11-04）** | ✅ **上游自带**，非自研：`add_backlash.py` 串 `passive_<joint>_backlash` 硬限位铰链 + `BacklashEncoderBamActuator`（PD 读输出侧）+ obs 换 `*_rel_backlash`；任务 `Mjlab-Velocity-Flat-Backlash-MicroDuck` 与 **hd1910 kp8 零改动组合**（执行器共用 `_BAM_ACTUATOR_KWARGS`）。闸门 `check_backlash_task.py` 6 项自检全绿（obs/act **61/14 不变**、nq 21→35）。**剂量曲线**（同策略三 seed CPU）：0.5°(厂标) → err_yaw **+9.2%**、1.0° → +15.8%、2.0°(上游默认) → +17.7%，**均不摔不降速** ⇒ 真机量级约 +9%，不进单独 3.3 h run，并入 P4 候选那一版 |
 | **信息缺口台账（2026-11-04）** | ✅ 见 **§8.5**。补齐 8 项（齿轮虚位 **≤0.5° 官网一手**、7.4 V 三档全表、IMU 真实配置 **±4 g/±500 dps/120 Hz**、**电池已含在 737 g 内**（MJCF `np_f970` 网格名误导，几何是 F550）、obs 噪声量级、方向性齿隙的学术依据）；剩 6 项只能上台架（游隙/地面摩擦/IMU 削顶/总线事务/实称 782 g/SFLP 延迟） |
 
@@ -40,7 +40,7 @@
 | 层 | 采用谁的 | 不采用谁的 |
 |---|---|---|
 | **训练框架** | 官方 `pollen-robotics/microduck_rl`（mjlab 1.3 / PPO / 61×14） | `tailong-wu/microduck-mjbatch`（仅作历史脚手架） |
-| **执行器植物** | **OpenMicroDuck 台架 m5**（已在本仓 `tools/bam_params/hd1910/`）作**当前可跑基线**；目标升级到 **飞特官方 BAM** `feetech_hd1910_7_4V` m6 | 陆吾 `1910_m6.json`（`actuator: sts3215` 错标） |
+| **执行器植物** | **OpenMicroDuck 台架 m5**（已在本仓 `microduck-software/tools/bam_params/hd1910/`）作**当前可跑基线**；目标升级到 **飞特官方 BAM** `feetech_hd1910_7_4V` m6 | 陆吾 `1910_m6.json`（`actuator: sts3215` 错标） |
 | **任务适配参考** | `qiaosiyi/microduck_rl_hd1910`（33 任务全改、质量 +3 g×15、公开 iter2000） | 其 DcMotor「规格书临时模型」——只作对照，不作主植物 |
 | **真机运行时** | `kissqy/Microduck-kissqy` control.43 + R17 V167（或 fanhao 镜像 fork） | 官方 `pollen-robotics/microduck` 原版（只认 Dynamixel） |
 | **机械/CAD/装配** | `fanhao375/microduck-replica` 飞特版 `-FT` | XL330 舵盘件 |
@@ -69,14 +69,14 @@
 | **LuwuDynamics/xgoduck** | 商业产品 | 架构对照：Arduino UNO Q + STM32 协处理、2 Mbps、QMI8658A 走 I²C——**证明"MCU 侧 100 Hz 闭环 + I²C IMU"绕开 Dynamixel 总线 IMU 可行** | 另一套硬件生态，迁移成本高；其 `1910_m6.json` 与陆吾同组（见 BAM 链注） |
 | **fanhao375/microduck-replica** | 1356★ | `-FT` CAD、BOM、装配教程、踩坑、训练工程打包 | 早期「待步态验收」记录；以当前 README 真机演示为准并自验 |
 | **zhuoligetu123/hd1910m** | 28★ | 四模型 + APK 作部署对照 | **原始接线图作者自标有错**，勿照抄 |
-| **本仓已有工具** | — | `tools/bam_actuators.py`、`tools/plant.py` HD1910 SPECS、`eval_velocity_in_sim`、`train_velocity.sh` | `walk_std004` XL330 权重（交付物归档，不上 HD1910 机） |
+| **本仓已有工具** | — | `microduck-software/tools/bam_actuators.py`、`microduck-software/tools/plant.py` HD1910 SPECS、`eval_velocity_in_sim`、`train_velocity.sh` | `walk_std004` XL330 权重（交付物归档，不上 HD1910 机） |
 
 ### BAM 参照链（纪律）
 
 ```
 hd1910_our_measured_m*     # 终点：自己台架（阶段 0 之后）
 hd1910_ftservo_official_m6 # 目标强先验：飞特 Gitee（装好后切换）
-hd1910_openmicroduck_m5    # 当前基线：本仓 tools/bam_params/hd1910/m5.json  ← 先跑通
+hd1910_openmicroduck_m5    # 当前基线：本仓 microduck-software/tools/bam_params/hd1910/m5.json  ← 先跑通
 hd1910_luwu_1910_m6        # 历史对照 ONLY，禁止当训练主植物
 ```
 
@@ -106,7 +106,7 @@ hd1910_luwu_1910_m6        # 历史对照 ONLY，禁止当训练主植物
 
 ```
 microduck-software/
-  tools/
+  microduck-software/tools/
     bam_actuators.py          # 已有：注册 hd1910 / hl2915 到 BAM
     bam_params/hd1910/m5.json # 已有：OpenMicroDuck 台架
     plant.py                  # 已有：HD1910 SPECS（CPU 植物）
@@ -134,7 +134,7 @@ microduck-software/
 
 | 键 | XL330（现状） | HD1910（目标基线） |
 |---|---|---|
-| `motor_name` / `json_path` | `xl330` + bundled m6 | **`json_path` → `tools/bam_params/hd1910/m5.json`** |
+| `motor_name` / `json_path` | `xl330` + bundled m6 | **`json_path` → `microduck-software/tools/bam_params/hd1910/m5.json`** |
 | `kp_fw` | 200 | **32** |
 | `vin_range` | (6.5, 8.2) | (6.5, 8.2) 保持 |
 | `delay_*_lag` | 3–6 | 3–6（25.3 ms ≈ 1.3 控制拍，落在区间内） |
@@ -146,7 +146,7 @@ microduck-software/
 > **32 的确切出处 = BAM 官方 `STS3215Actuator` 的构造默认值**。源码（Apache-2.0，
 > `.upstream/bam-62bd8ce.../bam/feetech/actuator.py`）：
 > `super().__init__(testbench_class, vin=7.4, kp=32, error_gain=0.166, max_pwm=0.97)`。
-> 本仓 `tools/bam_actuators.py` 的 `HD1910Actuator` 当初照抄了这个 32。
+> 本仓 `microduck-software/tools/bam_actuators.py` 的 `HD1910Actuator` 当初照抄了这个 32。
 >
 > 四条来源交叉证实「32 = 出厂未干预值」：
 >
@@ -176,7 +176,7 @@ microduck-software/
 > 数字（`§13` A/B 的 vx0.109/摔 100%、`model_5999` 的 vx0.2989 与 `error_vel_yaw`1.164、
 > m5/m6 A/B 的 `terminated_frac=1.0`）**都是在 P=32 这个植物下测的**，换 kp 后全部作废需重训。
 >
-> **目标植物 = `hd1910_kp5`**（`tools/bam_params/hd1910/official_m6_stslaw.json`），三条均有出处：
+> **目标植物 = `hd1910_kp5`**（`microduck-software/tools/bam_params/hd1910/official_m6_stslaw.json`），三条均有出处：
 >
 > | 层 | 取什么 | 出处 |
 > |---|---|---|
@@ -189,7 +189,7 @@ microduck-software/
 > `error_gain_ratio` —— 写了就拿不到官方限速。这正是陆吾那份的问题：它写了
 > `max_velocity: 100`（≈5730°/s），把官方 5.22 rad/s 的限速**悄悄拆掉了**。
 >
-> 验证手段（不要靠读 json 猜）：`.venv-mjlab/Scripts/python.exe tools/hd1910/probe_plant_law.py
+> 验证手段（不要靠读 json 猜）：`.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/probe_plant_law.py
 > --json <params.json> --kp-fw 5`，它打印实际生效的 `law_class` / `kp` / `max_velocity` / `max_pwm`。
 >
 > **执行顺序（不要提前烧 GPU）**：阶段 0 台架**验证**（kt/R 不辨识，只核是否落在 plant 值附近，
@@ -212,29 +212,29 @@ microduck-software/
 > 3. ⚠️ **10-26 那次 m5 vs m6 A/B 无效**：两者均在 kp=32 下 `terminated_frac=1.0`（全摔），
 >    当时记的「差不多」实为「两个都废」，不构成对照。
 
-命令（实现见 `tools/hd1910/`）：
+命令（实现见 `microduck-software/tools/hd1910/`）：
 
 ```bash
 cd microduck-software
 # 复现已归档数字 → m5 + kp_fw=32
-.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/apply_to_live.py --plant hd1910
 # P3 正式重训目标 → 官方 m6 + 官方控制律 + kp_fw=5
-.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant hd1910_kp5
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/apply_to_live.py --plant hd1910_kp5
 # 回 XL330（走 microduck_constants.py.xl330.bak 恢复路线）
-.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant xl330
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/apply_to_live.py --plant xl330
 
 # 开关本身的回归自检（含负对照：改坏 kp 后闸门必须变红，最后还原现场）
-.venv-mjlab/Scripts/python.exe tools/hd1910/selftest_plant_switch.py
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/selftest_plant_switch.py
 
 # 冒烟：64 env × 5 iter —— **必须 GPU**（cuda:0）；Windows 固定 MUJOCO_GL=glfw（勿 egl）
-bash tools/hd1910/smoke_train.sh
+bash microduck-software/tools/hd1910/smoke_train.sh
 
 # 评估（沿用现有脚本，checkpoint 换成 HD1910 run）
-.venv-mjlab/Scripts/python.exe tools/eval_velocity_in_sim.py \
+.venv-mjlab/Scripts/python.exe microduck-software/tools/eval_velocity_in_sim.py \
   --checkpoint logs/.../model_*.pt --num-envs 32 --seconds 8 --cmd-vx 0.4
 
 # 恢复 XL330（对照实验用）
-.venv-mjlab/Scripts/python.exe tools/hd1910/apply_to_live.py --plant xl330
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/apply_to_live.py --plant xl330
 ```
 
 训练铁律：正式训练走 **GPU `cuda:0`**；CPU 只做探针。见 `.cursor/rules/look-up-first.mdc`。
@@ -273,14 +273,14 @@ bash tools/hd1910/smoke_train.sh
      `vin_drop_gain_range` 改成了 `vin_drop_resistance_range`，microduck 植物立刻  
      `unexpected keyword`（2026-10-26 实测）。  
    - **现行 pin**：`.venv-mjlab` editable → `.upstream/bam-62bd8ce…`（`vin_drop_gain_range`，与 4096 训一致）  
-   - 官方仓只取：**参数 JSON + 对照**；控制类暂走本仓 `tools/bam_actuators.HD1910Actuator`  
+   - 官方仓只取：**参数 JSON + 对照**；控制类暂走本仓 `microduck-software/tools/bam_actuators.HD1910Actuator`  
 2. ~~大小写别名~~ **已做**：表键 `HD1910` vs JSON `hd1910` → `bam_actuators` 双注册  
-   - 本地参数：`tools/bam_params/hd1910/ftservo_official_m6.json`（actuator=`HD1910`）  
+   - 本地参数：`microduck-software/tools/bam_params/hd1910/ftservo_official_m6.json`（actuator=`HD1910`）  
    - ftservo clone 内 `actuators.py` 亦补了小写键（仅参考，未装进 venv）  
 3. ~~切植物 m6~~ **A/B 时已切过**；长训主线 **切回 m5**（`apply_to_live.py --plant hd1910`）  
 4. ~~A/B 短训~~ **已完** `ab_train.sh both`（1024×500，seed 42）  
    - 结果：m5/m6 **均 100% fall、ratio~0.13**——500 iter 不够分离植物；**不以短训改主植物**  
-   - 参数表：`tools/hd1910/bam_param_compare.md`  
+   - 参数表：`microduck-software/tools/hd1910/bam_param_compare.md`  
    - 待 8192/加长后再做 **同量级** m6 对照  
 
 ### 阶段 C — 与硬件并行（真机栈）
@@ -289,7 +289,7 @@ bash tools/hd1910/smoke_train.sh
 
 1. 部署侧跟 kissqy V167 / fanhao 镜像（不自写 robotd）——入口与许可已写入清单 §1  
 2. 阶段 0 台架：**URT-2（优先）或 URT-1** + 1 颗（**勿用 U2D2**），事务 ≤5 ms，**核 kt/R 是否落在 plant 值附近（不重新辨识）**——闸门见清单 §3 / `stage0_software_prep.md` §4 与 §5.8。HD-1910 接 **TTL**；**外电进 URT-2 的 V1/G 端子、舵机照常插 TTL-Bus 口**（V1 本来就是 TTL 总线外电输入，2026-11-03 更正：早先"勿灌 V1"是错的，见 `stage0_software_prep.md` §2）  
-3. ONNX export + parity ✅；部署彩排入口 `tools/hd1910/rehearse_hd1910.py`（m5 / kp_fw=32）  
+3. ONNX export + parity ✅；部署彩排入口 `microduck-software/tools/hd1910/rehearse_hd1910.py`（m5 / kp_fw=32）  
 4. 有整机后再做 sim2real；仿真结论不得单独宣称「真机已会走」
 
 ### 阶段 D — 能力补强（可选，植物稳定后）
@@ -331,11 +331,11 @@ bash tools/hd1910/smoke_train.sh
 | `../archive/microduck-国内自制方案.md` | 硬件选型已过时（S288）；**软件跟本文** |
 | `../hardware/microduck-采购清单.md` §7 | 硬件花钱顺序；本文管软件 |
 | `microduck-最优方案.md` | 曾推 HL-2915；**用户已定 HD1910**，HL 仅作对照 |
-| `.upstream/dew_repo/docs/05-flat-walk.md` | XL330 交付档案保留；新实验进 HD1910 runmeta |
+| `.upstream/dew_repo/docs/archive/05-flat-walk.md` | XL330 交付档案保留；新实验进 HD1910 runmeta |
 
 ---
 
-*依据：本仓 `tools/plant.py` / `bam_actuators.py` / OpenMicroDuck 表征 JSON；
+*依据：本仓 `microduck-software/tools/plant.py` / `bam_actuators.py` / OpenMicroDuck 表征 JSON；
 qiaosiyi、kissqy、fanhao、ftservo-bam、LuwuDynamics 公开 README；检索日 2026-10-26。*
 
 ---
@@ -376,7 +376,7 @@ qiaosiyi、kissqy、fanhao、ftservo-bam、LuwuDynamics 公开 README；检索�
 | 阻塞项 | 现状 | 影响 |
 |---|---|---|
 | ~~**舵机参数不是实测**~~ → **2026-11-03 解除** | `m5.json` = OpenMicroDuck 真机台架（vin 5 V）；`ftservo_official_m6.json` = 飞特官方（vin 7.4）；两者 R 差 21%、kt 差 18% | kt/R **不需要自己辨识**：`plant.py` 用的就是真机台架值（kt r²=0.99），本机阶跃响应已验偏差 <15%，且策略对 kt/R 容差宽（xgoduck 拿 STS3215 参数也能走）⇒ **不再是阻塞**，见 `stage0_software_prep.md` §5.8 |
-| **A/B 已经做过且无效** | `tools/hd1910/ab_train.sh` 1024×500 两条腿**都 100% fall**（500 轮判不了植物） | ⛔ **别重复这个实验**；要 A/B 就 ≥2000 轮，或干脆等实测 |
+| **A/B 已经做过且无效** | `microduck-software/tools/hd1910/ab_train.sh` 1024×500 两条腿**都 100% fall**（500 轮判不了植物） | ⛔ **别重复这个实验**；要 A/B 就 ≥2000 轮，或干脆等实测 |
 
 结论（2026-11-03 更新）：参数这一项**已不是阻塞**（kt/R 不自测，§5.8）⇒ 剩下的阻塞只在硬件
 （ID 200 桥、7.4 V 电源）。重训的触发条件改为**真机行为与 sim 不符**，不再是"参数没落地"。
@@ -393,8 +393,8 @@ qiaosiyi、kissqy、fanhao、ftservo-bam、LuwuDynamics 公开 README；检索�
 
 ### P1 · 真机辨识 → 回填（本机，半天）
 
-- 量 kt / R / 死区 / 齿隙 / 空载与堵转电流（`tools/hd1910/urt1_bench.py`）
-- 产出 `tools/bam_params/hd1910/hd1910_measured_<date>.json`，用 `apply_to_live.py` 装成新 plant
+- 量 kt / R / 死区 / 齿隙 / 空载与堵转电流（`microduck-software/tools/hd1910/urt1_bench.py`）
+- 产出 `microduck-software/tools/bam_params/hd1910/hd1910_measured_<date>.json`，用 `apply_to_live.py` 装成新 plant
 - **G1 闸门**：kt/R 落在 m5 与官方 m6 之间（偏离 >20% 先查接线与标定，不信单点）；
   plant 记录（`out/plant_*.json`）写出该 json 的 sha256
 
@@ -451,7 +451,7 @@ mujoco_warp#562"*；MuJoCo 官方 FAQ 给的出路是 **`wp.set_device("cpu")`**
 
 - 本机探索档 **1024×2000**（⛔ 8192 已证伪：8 GB 上 ~100 s/iter、显存顶满）
 - 上云仅 **4090D ¥1.88/h**：先 64×5 冒烟，**开工前报预计时长×单价征得同意**
-- **G3 闸门已预注册**（`tools/flat_walk/gate_p3_yaw.py`，2026-11-03 钉死，`--selftest` 14 项全绿）：
+- **G3 闸门已预注册**（`microduck-software/tools/gate_p3_yaw.py`，2026-11-03 钉死，`--selftest` 14 项全绿）：
 
 | 轴 | 量 | 基线（3 seed 均值） | 阈值 | 为什么是它 |
 |---|---|---|---|---|
@@ -497,7 +497,7 @@ mujoco_warp#562"*；MuJoCo 官方 FAQ 给的出路是 **`wp.set_device("cpu")`**
 
 **原以为的对照不成立。** `2026-11-02_21-26-53_p8head_030` 一直被当作"kp8 + `rel_heading_envs=0.3`
 不带奖励"的干净对照（只跑到 `model_0` 就中止）。逐叶比对它的 `params/env.yaml` 与奖励臂
-（`tools/hd1910/diff_run_recipes.py`，29 处差异）后确认：它还多一个 `ranges.ang_vel_z = ±1.0`
+（`microduck-software/tools/hd1910/diff_run_recipes.py`，29 处差异）后确认：它还多一个 `ranges.ang_vel_z = ±1.0`
 （奖励臂是 ±0.5）。原因不是手误 —— `train_heading_variant.py` 里 `--ang-vel-z-clip`
 **只在奖励分支内被读取**，不带奖励时这个 flag 被静默忽略。⇒ 那条 run 等于一次改了**两个**变量，
 和奖励臂不可比；"再跑一遍 11-02 的配方"会同时改转向范围。
@@ -525,14 +525,14 @@ bash microduck-software/tools/hd1910/explore_heading_control.sh
 # DRY=1 先看解析结果；SMOKE=1 跑 64×5 只验闸门
 ```
 
-**闸门**（`tools/hd1910/check_control_arm.py`，读 run 自己的 `params/`，不信命令行）
+**闸门**（`microduck-software/tools/hd1910/check_control_arm.py`，读 run 自己的 `params/`，不信命令行）
 ① 奖励项**必须缺席**（`rewards`/`curriculum` 里零个含 heading 的键 —— 反向断言，多一个就红）；
 ② `ang_vel_z == ±0.5`；③ `rel_heading_envs == 0.3`；④ envs / iters / seed 与 A 相同。
 每次跑完自动做**负对照**：同一脚本打在奖励臂上必须红，否则说明闸门是坏的。
 `--selftest` 6 项：奖励臂必须被拒、±1.0 无奖励臂必须被拒（就是 11-02 那种）、把范围改成 ±0.5
 后必须通过（证明不是"对谁都红"）、seed 不同必须被拒。
 
-**判决规则**（`tools/hd1910/summarize_heading_ab.py`，开跑前写死）
+**判决规则**（`microduck-software/tools/hd1910/summarize_heading_ab.py`，开跑前写死）
 同 seed 同迭代 ⇒ 每个 `model_k` 是一**配对**，比配对差而不是比两臂均值：
 
 - `error_vel_yaw` **越小越好**。`d(k) = 100·(err_yaw_B − err_yaw_A)/err_yaw_A`
@@ -647,7 +647,7 @@ heading env 可能同时是 forward env。`_resample_command` 给它 ω=0，`_up
 vx 那半不受影响（`clamp(≥0.3)` 保留），所以 forward 桶"防低速摸鱼"的作用还在。
 真要互斥得改 `mdp.py`，被 `mdp_patch_contained` 挡着 ⇒ **接受并记录，不掩盖**。
 
-**已验证**（`tools/hd1910/probe_heading_loop.py`，CPU 8 env、90 步、无 policy、几秒）
+**已验证**（`microduck-software/tools/hd1910/probe_heading_loop.py`，CPU 8 env、90 步、无 policy、几秒）
 
 | 判据 | control | variant |
 |---|---|---|
@@ -745,7 +745,7 @@ max|Δ|=3.53e−6）；cmd 包线工具 `sweep_cmd_envelope.sh` 备好。彩排�
 
 ### P5 · 阶段 3 自动跟随（偏航修好后才有意义）
 
-跑 `tools/flat_walk/eval_tracking.py`（已带 plant 指纹 + 基线健康闸门），回答
+跑 `microduck-software/tools/eval_tracking.py`（已带 plant 指纹 + 基线健康闸门），回答
 `resampling_time_range [3.0, 8.0] s` 那条；再扫 cmd 0.15–0.4 找 **HD1910 自己的低速地板**
 （XL330 那条 0.15 m/s 下限**不适用**，属跨 plant 引用，重测）。
 
@@ -753,18 +753,18 @@ max|Δ|=3.53e−6）；cmd 包线工具 `sweep_cmd_envelope.sh` 备好。彩排�
 
 | # | 纪律 | 起因 |
 |---|---|---|
-| 1 | **每次读数必带 plant 指纹** | cfg/mdp sha 盖不到 `_BAM_ACTUATOR_KWARGS`（传递闭包），换 plant 时它们照样全绿。已落地 `tools/flat_walk/plant_id.py`，两个评估脚本都写 `plant_fingerprint` |
+| 1 | **每次读数必带 plant 指纹** | cfg/mdp sha 盖不到 `_BAM_ACTUATOR_KWARGS`（传递闭包），换 plant 时它们照样全绿。已落地 `microduck-software/tools/plant_id.py`，两个评估脚本都写 `plant_fingerprint` |
 | 2 | **跨 plant 数字不横比** | 同一 ckpt 同命令：xl330 vx 0.318/摔 0% ↔ hd1910 vx 0.109/摔 100%（10-28 实测 A/B）。说「变差」是错的，是任务变了 |
 | 3 | **位移类读数必须 ≥3 次重复才判决** | `abs_dy_body_median` CV 31.4%；`not_sideways` 用的是单次 `|dy| vs 0.5×|dx|` |
 | 4 | **验证靠 N 次重复 + sem，不靠"再跑一遍"** | MJWarp 不确定性（mujoco_warp#562，官方 FAQ 确认）：同 seed 只保证**初始条件**一致，20 步后就在第 4 位发散。⇒ 复跑取同值不成立；需要确定性时另有官方出路 `wp.set_device("cpu")` |
-| 5 | **闸门只能压在低 CV 量上，且阈值必须开训前钉死** | P2 三次重复的 CV 表：`error_vel_yaw` **1.20%**、`vx` 1.98%、`error_vel_xy` 1.75% vs `abs_dy_body_median` 19.6%、`dx_over_expected` 25.5%。原来的 G3 恰好把最抖的 `not_sideways` 放进闸门、把最稳的 `error_vel_yaw` 留成诊断 ⇒ 判决能被运气翻面。已改：`tools/flat_walk/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` 防漂移 + 负对照里基线自己被判红） |
+| 5 | **闸门只能压在低 CV 量上，且阈值必须开训前钉死** | P2 三次重复的 CV 表：`error_vel_yaw` **1.20%**、`vx` 1.98%、`error_vel_xy` 1.75% vs `abs_dy_body_median` 19.6%、`dx_over_expected` 25.5%。原来的 G3 恰好把最抖的 `not_sideways` 放进闸门、把最稳的 `error_vel_yaw` 留成诊断 ⇒ 判决能被运气翻面。已改：`microduck-software/tools/gate_p3_yaw.py`（阈值写死 + `--audit-baseline` 防漂移 + 负对照里基线自己被判红） |
 
 ## 8.4 待你定的两件事
 
 1. **阶段 0 是否今天就下单**（清单已就绪，≈¥245–324）—— P1 的实测参数卡在它后面
 2. ~~P2 是否启用 symmetry 试跑~~ —— **已作废**：P2 实测三次符号翻转、同号率 0.51 ⇒ 假设证伪，不用再问
 3. ~~P3 要不要顺带加 `rel_heading_envs > 0`~~ —— **问题变了**：工具与机制验证已就绪
-   （`tools/train_heading_variant.py` + `tools/hd1910/probe_heading_loop.py`，8/8 PASS），
+   （`microduck-software/tools/train_heading_variant.py` + `microduck-software/tools/hd1910/probe_heading_loop.py`，8/8 PASS），
    **不再问"要不要加"，只剩"取多少"**。建议 P3 开训当天用探索档小 sweep（如 0.15 / 0.30）
    由数据决定，而不是现在拍脑袋。仍须与 P3 合并为**同一次**重训（属 task 改动 ⇒ 必重训）。
    详见上面的「P3 附」
@@ -1428,7 +1428,7 @@ robotd 下一次启动覆盖。真正只能手写的是 EEPROM 那一组（ID、
 
 ### 10.5 工具
 
-`tools/hd1910/verify_policy_contract.py`（`--selftest` 15 项）。跑一次约 6 s（要 import mjlab）。
+`microduck-software/tools/hd1910/verify_policy_contract.py`（`--selftest` 15 项）。跑一次约 6 s（要 import mjlab）。
 
 ---
 
@@ -1645,7 +1645,7 @@ near ±1, the accuracy of qw is reduced"*。这一条在本项目里的落点是
 
 ### 12.7 工具
 
-`tools/hd1910/verify_imu_chain.py`（13 项检查，`--selftest` 15 项 / 8 条负对照）。
+`microduck-software/tools/hd1910/verify_imu_chain.py`（13 项检查，`--selftest` 15 项 / 8 条负对照）。
 跑一次约 8 s（要 import mjlab）。负对照里最能说明问题的一条：**去掉 `w ≥ 0` 的规范化，
 端到端立刻红** —— 说明 ST 那条保证是承重的，不是注释。
 
@@ -1763,7 +1763,7 @@ near ±1, the accuracy of qw is reduced"*。这一条在本项目里的落点是
 `deploy61` / `p8head_2999` 的 metadata 是 0 条。`--stamp` 写一份新的：
 
 ```bash
-python tools/hd1910/verify_policy_bundle.py out/p8head_2999.onnx \
+python microduck-software/tools/hd1910/verify_policy_bundle.py out/p8head_2999.onnx \
     --stamp out/p8head_2999_stamped.onnx --action-scale 1.0
 ```
 
@@ -1787,7 +1787,7 @@ python tools/hd1910/verify_policy_bundle.py out/p8head_2999.onnx \
 
 ### 13.8 工具
 
-`tools/hd1910/verify_policy_bundle.py`（13 项检查，`--selftest` 39 项 / 22 条负对照）。
+`microduck-software/tools/hd1910/verify_policy_bundle.py`（13 项检查，`--selftest` 39 项 / 22 条负对照）。
 A/B 两组检查项：**静态**（图结构、算子集、初始化器、归一化器分母的逐维下限、metadata
 逐字段、与 `JOINT_NAMES` / `DEFAULT_POSITION` / `action_scale` 默认值的对质）；
 **动态**（零观测预热、真实站姿幅值、输出是否响应输入、5.7° 头部命令的响应）。
@@ -1800,3 +1800,11 @@ A/B 两组检查项：**静态**（图结构、算子集、初始化器、归一
 ---
 
 _细节与完整表格见 [`microduck-policy-bundle链.md`](microduck-policy-bundle链.md)。_
+
+
+<!-- TODO-OUT-MISSING: 以下 out/ 数据路径当前缺失（需确认）:
+- out/deploy61.onnx
+- out/p8head_2999.onnx
+- out/robotd_hd1910_mode0.toml
+2026-11-07 全面检查核实：上述 out/ 数据路径当前文件系统（含 out/ 三桶 builds/evidence-official/measurements/）均不存在；out/ 为 gitignored 本地数据，无 git 恢复手段。可能成因：约定/外部下载路径（官方权重需从 HF 拉取）、已下线产物（deploy61 已下线）、历史别名（p8head_2999.onnx 简名 vs 实际 builds/p8head_2999_rank3_probe.onnx）、或 reorg 前即未落盘。**暂未改动引用** —— 请先排查本地备份 / 重新下载 / 确认 reorg 是否误移，再修正引用或恢复文件。
+-->

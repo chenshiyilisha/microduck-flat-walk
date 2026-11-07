@@ -60,7 +60,7 @@
 
 **③ 周期不对。** 实测 `step_period = 0.66 s`，而 1.15 Hz 对应 **0.87 s**。它没有跟上节拍。
 
-**④ 数值积分给出的位置。** 用 `tools/analyze_joy_feet_floor.py` 积分一个完整相位周期：
+**④ 数值积分给出的位置。** 用 `microduck-software/tools/analyze_joy_feet_floor.py` 积分一个完整相位周期：
 
 | 策略              | 周期平均奖励 |
 | --------------- | ------ |
@@ -176,7 +176,7 @@ by rewarding feet in the air"。
 （`initialize_joy_servo_targets`）。这个跳变可能落在上报的 `done` **前一格或后一格**，只按  
 `done` 做掩码会 off-by-one，把伪影留在里面。
 
-修法（`tools/eval_joy_in_sim.py`）：**用硬约束本身识别伪影**，而不是猜 reset 落在哪一格。
+修法（`microduck-software/tools/eval_joy_in_sim.py`）：**用硬约束本身识别伪影**，而不是猜 reset 落在哪一格。
 
 ```python
 is_artefact = (dtgt_raw > 0.08 + 1e-3).any(dim=-1)   # 物理上不可能是策略
@@ -430,7 +430,7 @@ cfg.scene.entities['robot'] = deepcopy(
 | 聚合   | 14 通道求和后取比值         | 每通道比值，再取 `max`                 |
 
 矩形窗旁瓣 −13 dB 并按 1/f 衰减，会把 1.15 Hz 步态的强能量漏进 8 Hz 以上——  
-听起来完全能解释 42 倍。用 `tools/probe_8hz_metric_convention.py` 把**同一批合成信号**  
+听起来完全能解释 42 倍。用 `microduck-software/tools/probe_8hz_metric_convention.py` 把**同一批合成信号**  
 喂进两套口径，实测：
 
 | hf_amp | 真值      | 上游(Hann) | 我们(矩形)  |
@@ -518,7 +518,7 @@ plant: bam   actuators=[FrictionDRBamActuatorCfg]   spec_fn=get_standup_spec
 action_term=JoySmoothPositionActionCfg   conditioner={joy_alpha 0.25, joy_max_step 0.08}
 ```
 
-`tools/eval_joy_plants.sh <ckpt>` 把它串成「同一权重 × 两个 plant」的并排表。  
+`microduck-software/tools/eval_joy_plants.sh <ckpt>` 把它串成「同一权重 × 两个 plant」的并排表。  
 跨 plant 加载已确认可行：两个任务的 obs 项完全一致（actor 8 项、critic 14 项）。
 
 ### 10.5 这一轮的三条方法论
@@ -696,7 +696,7 @@ BamActuatorCfg(joint_names_expr=["^(?!passive_).*"], motor=_XL330_MOTOR_CFG,
 ### 12.3 本轮实验：§9 的「真因是 plant」被否掉了
 
 从零重训 `joy_smooth_2048x600_xmlpd`（600 轮，40:45，4.35 s/iter），然后用  
-`tools/eval_joy_plants.sh` 把**同一份权重**过两个 plant（64 env × 8 s）：
+`microduck-software/tools/eval_joy_plants.sh` 把**同一份权重**过两个 plant（64 env × 8 s）：
 
 | gate                     | XML-PD（训练所在）             | BAM               |
 | ------------------------ | ------------------------ | ----------------- |
@@ -816,7 +816,7 @@ knee 更晚 100 ms，这个组合在空中对消 —— 每条腿单看都有「
 
 ### 13.4 已做的改动与在跑的实验
 
-`tools/patch_joy_foot_peak.py`：把 `joy_feet` 的判据从**逐时刻贴合**  
+`microduck-software/tools/patch_joy_foot_peak.py`：把 `joy_feet` 的判据从**逐时刻贴合**  
 `exp(-((h(t)-target(t))/9mm)²)` 换成**摆动窗内运行峰值**  
 `exp(-((peak-24mm)/9mm)²)`。权重 12、目标 24 mm、容差 9 mm、1.15 Hz 相位时钟、  
 σ/entropy/action_rate/plant **全部不动**，单变量。
@@ -931,7 +931,7 @@ joy 任务把速度指令全置零（原地踏步），所以没有任何一项�
 ### 15.2 §13.3 的「纯膝上限 8.8 mm」是**错的**，方向搞反了
 
 我当时是沿 HOME 往**负方向**扫膝（−0.05…−1.5），看到前 0.5 rad 贡献为零，就推断  
-「抬 24 mm 需膝 1.238 rad = 70.9°」。用 `tools/probe_foot_lift_ceiling.py` 重扫  
+「抬 24 mm 需膝 1.238 rad = 70.9°」。用 `microduck-software/tools/probe_foot_lift_ceiling.py` 重扫  
 （躯干固定在 z=0.117、右腿锁 HOME、脚高按**支撑脚相对**度量）：
 
 | 关节          | dq    | 脚高增量          | 备注                      |
@@ -981,7 +981,7 @@ r         = ∏_feet exp(−((actual − target)/σ)²)
 **站姿几乎正好落在 target 的均值上。** 这就是为什么站桩能拿分，也是为什么调 σ 没用：  
 σ 只改变容差宽度，不改变「站姿 ≈ 均值」这个几何事实。
 
-`tools/probe_joy_peak_payoff.py` 的离线周期均值（权重 12）：
+`microduck-software/tools/probe_joy_peak_payoff.py` 的离线周期均值（权重 12）：
 
 | 策略            | σ=9   | **σ=18（在跑那版）** | 峰值高斯 24mm | 峰值线性 20mm |
 | ------------- | ----- | -------------- | --------- | --------- |
@@ -1049,7 +1049,7 @@ cfg.rewards["foot_swing_height"].params["target_height"] = 0.02   # ← 20 mm
 
 ### 15.6 改法：摆动窗口内的**运行峰值** + **线性** payoff @ 20 mm
 
-`tools/patch_joy_peak_linear.py`：
+`microduck-software/tools/patch_joy_peak_linear.py`：
 
 ```
 r = clamp(peak_in_swing_window / 0.020, 0, 1)     只评当前摆动的那只脚
@@ -1132,7 +1132,7 @@ sig018 的右足 5.53 / 左足 5.33，peaklin 的左足 5.47 / 右足 5.33，**�
 
 ### 16.3 开环探针：全部摔倒，数据不可用（探针本身设计错了）
 
-`tools/probe_openloop_lift.py` 直接给关节阶跃，测脚高：
+`microduck-software/tools/probe_openloop_lift.py` 直接给关节阶跃，测脚高：
 
 | case              | peak L   | peak R   | upright   |
 | ----------------- | -------- | -------- | --------- |
@@ -1148,7 +1148,7 @@ sig018 的右足 5.53 / 左足 5.33，peaklin 的左足 5.47 / 右足 5.33，**�
 
 ### 16.4 闭环探针（决定性的那张表）
 
-`tools/probe_policy_bias_lift.py`：加载策略正常跑，只给左膝 action 加常值偏置。  
+`microduck-software/tools/probe_policy_bias_lift.py`：加载策略正常跑，只给左膝 action 加常值偏置。  
 策略仍看到状态、仍努力平衡，所以 `upright` 测的是**控制器的余量**，不是「没有余量」。
 
 ```
@@ -1185,7 +1185,7 @@ sig018 的右足 5.53 / 左足 5.33，peaklin 的左足 5.47 / 右足 5.33，**�
 
 ### 16.5 改法：抬脚高度 curriculum（7 mm → 20 mm）
 
-`tools/patch_joy_peak_curriculum.py`，只改目标高度这一件事：
+`microduck-software/tools/patch_joy_peak_curriculum.py`，只改目标高度这一件事：
 
 | 迭代              | 0    | 80     | 160     | 240   | 320+      |
 | --------------- | ---- | ------ | ------- | ----- | --------- |
@@ -1241,7 +1241,7 @@ gate 是 `feet_peak_m > 0.008`，现在 **0.00725，差 9.4%**。七版以来第
 
 ### 17.2 关键：这不是「两腿都抬不高」，是**单腿踏步**
 
-只看 `min(left, right)` 会误读成「抬脚幅度不足」。`tools/probe_phase_profile.py`  
+只看 `min(left, right)` 会误读成「抬脚幅度不足」。`microduck-software/tools/probe_phase_profile.py`  
 按 gait phase 分 24 个 bin 测脚高（`model_400`，64 env × 6 s）：
 
 ```
@@ -1295,7 +1295,7 @@ right  mean 2.26 mm  sd 1.84 mm  r(sin p) = -0.220
 
 我在 §16 里拿 p50 = 6.3 mm 去对照 `joy_feet` 均值 11.1 mm、并据此判断「策略只抬 6 mm」，  
 那个推断的**结论碰巧对**（右脚确实只有 7 mm），但**依据是错的**。  
-`tools/probe_peak_spread.py` 改用「窗口末峰值」统计，把「env 间差异」和「窗口间波动」  
+`microduck-software/tools/probe_peak_spread.py` 改用「窗口末峰值」统计，把「env 间差异」和「窗口间波动」  
 分开，才是能对上的量。
 
 ### 17.5 结构性不对称：每次 episode 都是左腿先摆
@@ -1318,7 +1318,7 @@ sin(p):             [0.0, ...]   -> rises through positive -> LEFT (site 0) swin
 
 ### 17.6 第八版：只加相位观测（已应用，正在训 `joy_clock_2048x600`）
 
-`tools/patch_joy_gait_clock.py`，唯一改动是观测 +2 维：
+`microduck-software/tools/patch_joy_gait_clock.py`，唯一改动是观测 +2 维：
 
 ```python
 def joy_gait_clock(env):
@@ -1420,7 +1420,7 @@ MICRODUCK_JOY_SYMMETRY=0 → None
 **这已是本项目的第 N 次同类错误：属性写在能被接受但没人读的地方。**  
 判据只能是「我改的那个量，下游有没有真的读到」，不能是「没报错」。
 
-### 18.4 三重校验 + 负对照（`tools/probe_symmetry_mirror.py`）
+### 18.4 三重校验 + 负对照（`microduck-software/tools/probe_symmetry_mirror.py`）
 
 | 检查       | 内容                                              | 结果                           |
 | -------- | ----------------------------------------------- | ---------------------------- |
@@ -1456,9 +1456,9 @@ MICRODUCK_JOY_SYMMETRY=0 → None
 
 ### 18.6 落地
 
-- `tools/patch_joy_symmetry.py`：改写两个位置的 `symmetry.py`（`.venv-mjlab` 与 `.upstream`），  
+- `microduck-software/tools/patch_joy_symmetry.py`：改写两个位置的 `symmetry.py`（`.venv-mjlab` 与 `.upstream`），  
   并在 joy cfg 里加 `MICRODUCK_JOY_SYMMETRY` 开关（默认关，不改变任何既有 run 的行为）。
-- `tools/apply_joy_patch.py` 的同步清单加入 `tasks/symmetry.py` —— 否则下次 `apply_joy_patch`  
+- `microduck-software/tools/apply_joy_patch.py` 的同步清单加入 `tasks/symmetry.py` —— 否则下次 `apply_joy_patch`  
   会把 61 维表推回去，而 augmentation 会**静默截断**而不是报错。
 - 奖励、目标高度、curriculum **一律不动**，与 `joy_clock` 保持单变量对照。
 
@@ -1620,7 +1620,7 @@ initialisation)**：每个 episode 把环境初始化到「参考步态周期的
 
 ### 20.5 第十版的后手已写好：`MICRODUCK_JOY_PHASE_RSI=1`
 
-`tools/patch_joy_phase_rsi.py`：
+`microduck-software/tools/patch_joy_phase_rsi.py`：
 
 - `joy_phase` 增加一个 per-env 常量 offset，**每次 reset 从 U[0, 2π) 重采样**；
 - offset 挂在 env 实例上（`env._joy_gait_phase_offset`），不用模块全局 —— 同进程两个 env 不会  
@@ -1629,7 +1629,7 @@ initialisation)**：每个 episode 把环境初始化到「参考步态周期的
   **必然共用同一个被偏移的钟**，不存在观测与打分错相位的可能；
 - 开关关闭时 **reset event 根本不注册**，`joy_phase` 走的是逐位相同的旧路径。
 
-负对照 `tools/probe_phase_rsi.py`（纯 CPU，不占训练 GPU），5 项全 PASS：
+负对照 `microduck-software/tools/probe_phase_rsi.py`（纯 CPU，不占训练 GPU），5 项全 PASS：
 
 ```
 [PASS] OFF: joy_phase bit-identical to pre-patch formula (t range 0.000..57.516 rad)
@@ -1786,7 +1786,7 @@ score = min(end_peak_left, end_peak_right) / target_height
 
 ## 22. 第十版：奖励改成「两脚窗口末峰值的 min」+ 修掉一个静默的时钟分叉
 
-代码已落地（**未起训**）。`tools/patch_joy_pair_min.py` + `tools/probe_pair_min.py`。
+代码已落地（**未起训**）。`microduck-software/tools/patch_joy_pair_min.py` + `microduck-software/tools/probe_pair_min.py`。
 
 ### 22.1 缺的那一项，用实测轨迹量出来了
 
@@ -1850,7 +1850,7 @@ arXiv 1910.10194 用"连续双支撑超过 100 步 → −2.0 并终止 episode"
 而 `joy_feet` 满额 12/步 —— 要靠它单独压住 hop 需要权重约 850，那会把训练搞崩。  
 它的定位是**连续提示信号**（权重 50–200），主要防线仍是"没有支撑就会摔"。
 
-### 22.4 验证（`tools/probe_pair_min.py`，全 CPU）
+### 22.4 验证（`microduck-software/tools/probe_pair_min.py`，全 CPU）
 
 ```
 1. cfg 开关（双向）            OFF 无 pair_min 键 / 无 joy_ds；ON 均为真
@@ -1872,7 +1872,7 @@ arXiv 1910.10194 用"连续双支撑超过 100 步 → −2.0 并终止 episode"
 
 ```bash
 MICRODUCK_JOY_PAIR_MIN=1 MICRODUCK_JOY_PHASE_RSI=1 MICRODUCK_JOY_SYMMETRY=1 \
-  bash tools/train_joy.sh smooth 2048 600 joy_pair_2048x600
+  bash microduck-software/tools/train_joy.sh smooth 2048 600 joy_pair_2048x600
 ```
 
 保留第九版的对称增强：它已经证明能让**某一条**腿抬到 23 mm（能力存在），而 `pair_min`  
@@ -1883,7 +1883,7 @@ MICRODUCK_JOY_PAIR_MIN=1 MICRODUCK_JOY_PHASE_RSI=1 MICRODUCK_JOY_SYMMETRY=1 \
 只涨一侧 = `pair_min` 被单侧解绕过（那时才需要开 `joy_foot_stance`）。  
 两侧都涨但 `8hz` 恶化 = 抬脚变成了抖，要看 `8hz_foot_interpretable`。
 
-⚠️ `tools/apply_joy_patch.py` 会用 `.upstream` 的**未打补丁** `mdp.py` 覆盖 site-packages。  
+⚠️ `microduck-software/tools/apply_joy_patch.py` 会用 `.upstream` 的**未打补丁** `mdp.py` 覆盖 site-packages。  
 重跑它之后必须重放补丁链：`patch_joy_peak_linear` → `patch_joy_peak_curriculum` →  
 `patch_joy_gait_clock` → `patch_joy_phase_rsi` → `patch_joy_pair_min`。  
 新脚本会在 anchor 缺失时直接报错退出，而不是静默什么都不做。
@@ -2088,7 +2088,7 @@ Duckverse 产物已存到 `microduck-software/.upstream/official-joy-2026-10/`�
 | 我们 `0757`（从零，std 0.4）                 | 0.17 → **4.88@100** → 5.18@200 → **5.64@599**                 |
 | Duckverse smooth（resume 自 pd200-seed） | **0.166@iter200** → 4.x@250 → **6.0@iter349**（selected 是 300） |
 
-两条曲线几乎重合，末端都停在 **≈6/12 = 0.5**。而 `tools/probe_official_rhythm.py` 把四套口径  
+两条曲线几乎重合，末端都停在 **≈6/12 = 0.5**。而 `microduck-software/tools/probe_official_rhythm.py` 把四套口径  
 放到**同一条实测轨迹**（`probe_phase_sym.log` 的 24 点分箱，model_599 的真实踏步）上：
 
 ```
@@ -2146,10 +2146,10 @@ Duckverse 产物已存到 `microduck-software/.upstream/official-joy-2026-10/`�
 
 ```bash
 cd microduck-software
-.venv-mjlab/Scripts/python.exe tools/verify_vs_official.py --table   # 每个 run 一行
-.venv-mjlab/Scripts/python.exe tools/verify_vs_official.py --live    # 现在起训会用到的配置
-.venv-mjlab/Scripts/python.exe tools/verify_vs_official.py --stack   # 两份拷件各装了哪些补丁
-.venv-mjlab/Scripts/python.exe tools/verify_vs_official.py --sync    # installed -> .upstream
+.venv-mjlab/Scripts/python.exe microduck-software/tools/verify_vs_official.py --table   # 每个 run 一行
+.venv-mjlab/Scripts/python.exe microduck-software/tools/verify_vs_official.py --live    # 现在起训会用到的配置
+.venv-mjlab/Scripts/python.exe microduck-software/tools/verify_vs_official.py --stack   # 两份拷件各装了哪些补丁
+.venv-mjlab/Scripts/python.exe microduck-software/tools/verify_vs_official.py --sync    # installed -> .upstream
 ```
 
 ### 26.1 全部 run 的机器读数（`--table`）
@@ -2223,7 +2223,7 @@ plant = servo   physics_step_s = 0.0002   joint_vel_delay = 1
 
 ### 26.4 更正三：同一个 0.2 ms 工厂下，Duckverse 过、我们倒
 
-既然 `tools/probe_joy_policy.py` 能跑任意 ONNX（`ALPHA=0.25` / `max_step=0.08` 写死，与两个策略  
+既然 `microduck-software/tools/probe_joy_policy.py` 能跑任意 ONNX（`ALPHA=0.25` / `max_step=0.08` 写死，与两个策略  
 的训练条件一致），就可以把"Duckverse vs 我们"放进**同一个工厂**。三个策略、同一组参数  
 （`--plant servo --seconds 8 --joint-vel-delay 1`）：
 
@@ -2414,7 +2414,7 @@ Duckverse 两段式正是这条：第一段 `joy_pd` 200 轮在轻税下先把�
 
 **量化 —— 部署端三个折扣加起来就是"真机只抬仿真一半"。**
 
-他们真机实测（官方 walk 策略 + `tools/gait-analysis/foot_clear.py`）：两只脚只抬 **3～6 mm**，  
+他们真机实测（官方 walk 策略 + `microduck-software/tools/gait-analysis/foot_clear.py`）：两只脚只抬 **3～6 mm**，  
 同条件仿真 11～12 mm。拆出来三个来源，**全部在部署端，训练里一个都没有**：
 
 | 折扣    | 值                                                                         | 单项影响（他们仿真）                                                       |

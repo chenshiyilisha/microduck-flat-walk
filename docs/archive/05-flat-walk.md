@@ -155,7 +155,7 @@
 教训：**「我设了这个字段」不等于「这个字段还是这个值」。** 任何跨模块共享的配置，只要还有
 第二个写者（课程、manager、reset 事件），冻结就必须是可测量的，不能是声明式的。
 
-## 6. 续训三个坑（都在 `tools/flat_walk/` 里写成了注释）
+## 6. 续训三个坑（都在 `microduck-software/tools/` 里写成了注释）
 
 1. **`--agent.max-iterations` 是增量不是总量**（rsl_rl 5.0.1 `on_policy_runner.py:77-79`：
    `total_it = start_it + num_learning_iterations`）——从 10000 传 12000 会跑到 22000。
@@ -202,11 +202,11 @@ _（2026-10-26 修订：本节最初把任务包归为 `tailong-wu/microduck-mjb
 `b02fdea` 自带的**（官方 `mdp.py:25` 起就有）。即 **velocity 任务的官方代码零自加补丁**；
 5 个文件的追加全部是 joy 专用，velocity 任务一行都不引用。
 
-补丁重放已闭环为一条命令：`tools/upstream_patches/replay_all.py`（11 个工具 + 15 KB 的
+补丁重放已闭环为一条命令：`microduck-software/tools/replay_all.py`（11 个工具 + 15 KB 的
 `rc_joy.patch` 输入入库；前置自检 submodule 在 `b02fdea`；末尾按快照实测的 EOL 表归一
 行尾并打印 velocity 关键文件 sha1）。重放验证：**254/256 文件与训练快照逐字节一致**；
 唯二残差（`mdp.py`、`microduck_joy_env_cfg.py` 的 joy 段）来自已丢失的
-`tools/patch_joy_foot_peak.py`，效果只存在于 joy 任务，velocity 路线不受影响。
+`microduck-software/tools/patch_joy_foot_peak.py`，效果只存在于 joy 任务，velocity 路线不受影响。
 
 本节全部数字产生于官方 `microduck_rl` 快照注册的 `Mjlab-Velocity-Flat-MicroDuck` 任务包，
 环境：Python 3.12 + `mjlab 1.3.0` + `mujoco_warp 3.7.0.1` + `warp-lang 1.12.0`，
@@ -215,7 +215,7 @@ RTX 4070 Laptop 8 GB。
 所以「可复现」在本文的确切含义是：
 
 - **给定同一份任务包与环境**，`artifacts/flat_walk/evals/*.json` 里每个数都能用
-  `tools/flat_walk/eval_velocity_in_sim.py` 逐位算回来（同参：32 envs × 8 s × cmd 0.4 × solver 100/50）；
+  `microduck-software/tools/eval_velocity_in_sim.py` 逐位算回来（同参：32 envs × 8 s × cmd 0.4 × solver 100/50）；
 - `runmeta` 里的 `cfg_byte_identical_to_upstream: true` 和 cfg/mdp 的字节哈希，
   是「没有偷偷改奖励」的机器证据；
 - **公开读者**：`git clone --recurse-submodules`（submodule 已指 public 原仓）后
@@ -226,20 +226,20 @@ RTX 4070 Laptop 8 GB。
 ### 7.1 命令
 
 ```bash
-# 从零训练（4096 envs；Windows + .venv-mjlab 的包装脚本见 tools/flat_walk/train_velocity.sh）
+# 从零训练（4096 envs；Windows + .venv-mjlab 的包装脚本见 microduck-software/tools/train_velocity.sh）
 uv run train Mjlab-Velocity-Flat-MicroDuck \
   --env.scene.num-envs 4096 --env.sim.mujoco.iterations 100 --env.sim.mujoco.ls-iterations 50 \
   --agent.max-iterations 12000 --agent.save-interval 250 \
   --agent.logger tensorboard --agent.experiment-name microduck_velocity
 
 # 判读（11 项闸门，含 command_frozen_ok 协议自检；cmd 0.4，与文档里所有数字同参）
-uv run python tools/flat_walk/eval_velocity_in_sim.py \
+uv run python microduck-software/tools/eval_velocity_in_sim.py \
   --checkpoint artifacts/flat_walk/checkpoints/model_1250.pt \
   --num-envs 32 --seconds 8 --cmd-vx 0.4 \
   --solver-iters 100 --solver-ls 50 --out out/eval.json
 
 # 中途体检 + 判停（等 model_4000/6000 落盘后自动评测，泛化不动就停训）
-python tools/flat_walk/watch_milestones.py --targets 4000,6000 --stop-pid <训练 pid>
+python microduck-software/tools/watch_milestones.py --targets 4000,6000 --stop-pid <训练 pid>
 ```
 
 ## 8. 状态与尚缺
@@ -251,7 +251,7 @@ python tools/flat_walk/watch_milestones.py --targets 4000,6000 --stop-pid <训�
   P2 记录 6.5 V 不可用，P5/P7 只记录不作结论）。
 - **已停止**：run 在 iter 6000 后人为停止（原计划 12000）。依据是曲线——4000 比 1250 慢 13%、
   误差高 10%，6000 再跌一个 `no_fall` 闸门；继续跑 5800 轮（约 5.3 h）没有证据支持会回升。
-  ckpt 全部保留（`model_0 … model_6000`），`tools/flat_walk/resume_velocity.sh` 可随时从
+  ckpt 全部保留（`model_0 … model_6000`），`microduck-software/tools/resume_velocity.sh` 可随时从
   任意一档续训到任意目标轮数，所以这个决定是可逆的。
 - **已关闭的方向**：把「iter 1250 之后退化」归因于课程跳档——§12 用一次整跑证伪。
   课程不再作为杠杆；iter 1999 的掉点按上游口径是 checkpoint 级抖动，用扫点处置。
@@ -324,7 +324,7 @@ python tools/flat_walk/watch_milestones.py --targets 4000,6000 --stop-pid <训�
 两个候选方向（都需要新实验，不是续训；完整清单见 §8 的「下一步候选」）：
 
 1. **收紧角速度跟踪**（只改 `std` / weight，单变量，2000 轮可判）；
-2. **前进门控**：`tools/flat_walk/patch_issue46.py` 里的 `feet_air_time_forward_gated`
+2. **前进门控**：`microduck-software/tools/patch_issue46.py` 里的 `feet_air_time_forward_gated`
    + track 侧向加权，针对「走得慢但平滑」这个具体形状。
 
 ### 9.3 参照系：上游部署版在同一个指令上走多少
@@ -374,12 +374,12 @@ python tools/flat_walk/watch_milestones.py --targets 4000,6000 --stop-pid <训�
 --env.rewards.track-linear-velocity.params.std FLOAT   (default: 0.31622776601683794)
 ```
 
-所以跑 `EXTRA_ARGS="--env.rewards.track-linear-velocity.params.std 0.2" bash tools/flat_walk/train_velocity.sh 4096 2000 vel_4096x2000_std004_1025` 即可。
+所以跑 `EXTRA_ARGS="--env.rewards.track-linear-velocity.params.std 0.2" bash microduck-software/tools/train_velocity.sh 4096 2000 vel_4096x2000_std004_1025` 即可。
 **这条路比改 `site-packages` 里的 cfg 严格更好**：改文件会让预检的 `velocity_cfg_pristine`
 （blocking）直接 FAIL，逼你 `--no-check`，等于拿掉保护来换实验能力。走 CLI 时
 `runmeta_vel_4096x2000_std004_1025.json` 里 `cfg_byte_identical_to_upstream: true` 仍然成立。
 
-配套改动（`tools/flat_walk/train_velocity.sh`）：
+配套改动（`microduck-software/tools/train_velocity.sh`）：
 
 - `EXTRA_ARGS` 透传；
 - runmeta 新增 **`rewards_effective`**：用**同一条 tyro 路径**重新解析 `EXTRA_ARGS`，记录实际生效的
@@ -721,7 +721,7 @@ normalizer 必须烘进图里，否则模拟器照旧（Python 里已经归一�
 ### 13.2 `check_onnx_parity.py`：用独立实现当参考
 
 ```
-python tools/flat_walk/check_onnx_parity.py --checkpoint model_1250.pt --onnx walk.onnx
+python microduck-software/tools/check_onnx_parity.py --checkpoint model_1250.pt --onnx walk.onnx
 ```
 
 关键设计：**参考前向不复用 rsl_rl 的 `forward`**，而是从 `actor_state_dict` 的裸张量
@@ -810,7 +810,7 @@ robotctl policy load ...                           # 4. 上机
 对——同一个理由见 §13.2。复用上游才让它是一次**测量**而不是一次复述。
 
 ```bash
-MUJOCO_GL=glfw python tools/flat_walk/rehearse_deploy.py \
+MUJOCO_GL=glfw python microduck-software/tools/rehearse_deploy.py \
   --onnx artifacts/flat_walk/checkpoints/walk_std004_1250.onnx \
   --infer-policy /path/to/microduck_rl/scripts/infer_policy.py \
   --cmd-vx 0.4 --seconds 8 --sweep --out out/rehearse_1250_sweep.json
@@ -1001,7 +1001,7 @@ dx +0.008…−0.008 m、max tilt 3.3°。
 
 ### 14.8 结论与遗留
 
-- **彩排能做、且做完了工具**：`tools/flat_walk/rehearse_deploy.py`，七条判据里 P1/P2/P3/P4/P6
+- **彩排能做、且做完了工具**：`microduck-software/tools/rehearse_deploy.py`，七条判据里 P1/P2/P3/P4/P6
   可判定，P5/P7 明确定为「只记录」。这就是「判据可判定」的意思——不是所有维度都该有结论。
 - **能声明的**：部署栈（BAM M6 + XL330 电压模型 + 50 Hz 环）在 nominal / high_batt 下站得住
   且向前走；BAM 确实在控制路径上；obs/动作形状与训练契约一致。
@@ -1015,7 +1015,7 @@ dx +0.008…−0.008 m、max tilt 3.3°。
 ## 15. 台架实测 HD1910（P3 植物）：单关节到底跟不跟得上
 
 §14 只能回答"部署栈站不站得住"，回答不了"单关节能不能跟上步态"。这一节用一个舵机回答。
-仪器 `tools/hd1910/servo_probe/hd1910_ident.py sine`：给 goal 发正弦，单频最小二乘拟合出
+仪器 `microduck-software/tools/hd1910/servo_probe/hd1910_ident.py sine`：给 goal 发正弦，单频最小二乘拟合出
 幅值比 / 相位滞后 / 残差，产物 `out/sine/*.csv|json`（**已入库**，见 §15.4）。ID 10 @ COM3。
 
 判据沿用 §14 的口径：`gain ≥ 0.8 且滞后 ≤ 30°` 才算跟上；`gain < 0.6 或滞后 > 60°` 判跟不上。
@@ -1074,12 +1074,12 @@ dx +0.008…−0.008 m、max tilt 3.3°。
 
 原结论「reg46 300→4095 把整定 561→161 ms」已撤回，但**那个 A/B 本身从没被正确跑过**：
 `_arm()` 一次写三个寄存器（reg46 / reg41 / reg48），只盯 reg46 就会漏看 reg41。
-`tools/hd1910/ab_reg4641.sh` 把两个变量分开（改一个钉死另一个），每档 3 次重复，
+`microduck-software/tools/hd1910/ab_reg4641.sh` 把两个变量分开（改一个钉死另一个），每档 3 次重复，
 并且 **reg46/41/48 的请求值与回读值都进 JSON**（请求 4095 可能被固件截断，
 "我发了" 不等于 "它生效了"）。`hd1910_ident.py step --json PATH` 是该脚本的数据源。
 
 ```bash
-PORT=COM3 ID=10 REPS=3 bash tools/hd1910/ab_reg4641.sh
+PORT=COM3 ID=10 REPS=3 bash microduck-software/tools/hd1910/ab_reg4641.sh
 ```
 
 判据：整定时间与峰速一起看——只有速度变了而整定没变，才说明该寄存器不是瓶颈
@@ -1095,7 +1095,7 @@ PORT=COM3 ID=10 REPS=3 bash tools/hd1910/ab_reg4641.sh
 
 ### 15.5 对应的仿真侧检查
 
-`tools/rehearse_deploy.py --sweep` 现在含 `low_volt`（4.5 V，与台架同电压，可作软硬件锚点）、
+`microduck-software/tools/rehearse_deploy.py --sweep` 现在含 `low_volt`（4.5 V，与台架同电压，可作软硬件锚点）、
 `nominal`（7.4）、`low_batt`（6.5，sag 0.2）、`high_batt`（8.2）。首次结果（it1600 ckpt）：
 
 | 档 | vin | vx_mean | ratio | 摔倒 |
@@ -1363,7 +1363,7 @@ iter 0 的 ONNX**、**64×5 的冒烟会留下 iter 4 的 ONNX**，两者 mtime 
 
 ```bash
 PLANT=p8 ENVS=4096 ITERS=3000 REL_HEADING=0.30 \
-  bash tools/hd1910/explore_heading.sh p8head_030_4096x3000
+  bash microduck-software/tools/hd1910/explore_heading.sh p8head_030_4096x3000
 ```
 
 与 model_2999 同轮数（3000）、同课程（`0,1000,1750,2500`，末段 mark 60000 < 72000
@@ -1408,10 +1408,10 @@ PLANT=p8 ENVS=4096 ITERS=3000 REL_HEADING=0.30 \
 
 ### 18.7 判决工具：`xplant_matrix.sh` + `await_and_judge.sh`
 
-- `tools/hd1910/xplant_matrix.sh`：2×2 网格一条命令（8 起始 yaw × 2 彩排植物），
+- `microduck-software/tools/hd1910/xplant_matrix.sh`：2×2 网格一条命令（8 起始 yaw × 2 彩排植物），
   写 manifest，复用 `summarize_rehearsal_grid.py` 钉死口径；含 ONNX 代数护栏
   （companion ckpt < 50 拒绝）。
-- `tools/hd1910/await_and_judge.sh`：等末轮 → 等 ONNX 比 ckpt 新 → 自动跑
+- `microduck-software/tools/hd1910/await_and_judge.sh`：等末轮 → 等 ONNX 比 ckpt 新 → 自动跑
   ① 2×2 网格 ② `delay4`（80 ms，P5 定稿的硬边界）③ ±90° 目标负对照。
   判据在数字出现**之前**写死，避免事后改口径；无进展 3 min 自动 ABORT。
 
@@ -1512,7 +1512,7 @@ live 执行器读回来是 `vin_range=(6.5, 8.2)` + `vin_drop_gain_range=(0.0, 0
 
 - **在部署电压域，缺口 11–18 ms，全部 ≤ 训练带**⇒ 策略训练时见过的延迟覆盖了它
   ⇒ **植物在工作点是忠实的，不需要拉宽延迟带**。§19.2 第 2 条建议撤回。
-- 工具：`tools/hd1910/phase_gap_vs_load.py`（可重跑），数据 `out/sine/phase_gap.json`。
+- 工具：`microduck-software/tools/hd1910/phase_gap_vs_load.py`（可重跑），数据 `out/sine/phase_gap.json`。
 - ⚠️ **这是沿 u 的外推，不是实测。** 它把部署缺口**界定**在 11–18 ms，
   不能替代一次 7.4 V 扫频；但它把优先级从「阻塞项」降为「确认项」。
 
@@ -1715,7 +1715,7 @@ live 执行器读回来是 `vin_range=(6.5, 8.2)` + `vin_drop_gain_range=(0.0, 0
 | P8 策略 + 目标 +90° | 4 | 0 | 0.2068 | 0.0024 | 7.46° | 1.41 |
 | P8 策略 + 目标 −90° | 4 | 0 | 0.2032 | 0.0017 | 7.55° | 0.94 |
 
-工具：`tools/hd1910/judge_summary.py`（可重跑；同目录含多档时要写 `目录:kp`）。
+工具：`microduck-software/tools/hd1910/judge_summary.py`（可重跑；同目录含多档时要写 `目录:kp`）。
 
 ### 21.2 逐条对照预注册判据
 
@@ -1788,7 +1788,7 @@ live 执行器读回来是 `vin_range=(6.5, 8.2)` + `vin_drop_gain_range=(0.0, 0
 ⇒ §21 的 +83% **不是对单一植物值的过拟合**；策略对植物刚度有 1.7 倍的容差。
 这条比「+83%」本身更重要——它把「无先例的甜点」变成了「一段可容错的区间」。
 
-复算：`ONNX=<run.onnx> bash tools/hd1910/sweep_envelope.sh kp`（写 `out/sweep_kp/`）。
+复算：`ONNX=<run.onnx> bash microduck-software/tools/hd1910/sweep_envelope.sh kp`（写 `out/sweep_kp/`）。
 该脚本内置一条**生效值回读防呆**：逐份 JSON 读 `settings.kp_fw`，与请求值不符即 exit 3
 （负对照：把 kp=8 的输出放进期望 9 的目录 → `FAIL readback: 9: settings.kp_fw={8.0} != 9.0`，rc=3）。
 没有这条，「扫描没真的改植物」会产出一张完全可信的假表——本项目已在 `apply_to_live`、
@@ -1844,7 +1844,7 @@ kp=8 距崩溃边界（kp≤6）有**两档缓冲**，这是它相对 kp=7 的�
 ⇒ 必须 **50/51 与 21/22 都写、都回读**，且写 21 前先 `55=0`、写完 `55=1`。
 「发出去」≠「它认了」，唯一判据是回读值。
 
-工具：`tools/hd1910/set_gains_all.py`（默认只读审计；写要 `--write --yes`；`--persist` 才动 EEPROM）。
+工具：`microduck-software/tools/hd1910/set_gains_all.py`（默认只读审计；写要 `--write --yes`；`--persist` 才动 EEPROM）。
 自检 5 条（含三条负对照：写被静默丢弃必须 FAIL、少一颗舵机必须 FAIL、EEPROM 写间隔被压到
 0 或 5 ms 必须 FAIL）+ 真机验证：
 RAM 写 → `p_ram=8 / p_eeprom=32`；再 `--persist` → `p_eeprom=8 / 55=1`（已回锁）。
@@ -2066,7 +2066,7 @@ SFLP 需要几秒样本，其间 projected gravity 读出来像「侧躺」；20
 ### 22.5 ⚠️ 仪器缺口（记录，不用假数字填）
 
 HD1910 这条线在本机**只有一个仪器**：`rehearse_hd1910.py`。
-`tools/rehearse_deploy.py`（上游 `infer_policy` 外层循环复用）内部写死
+`microduck-software/tools/rehearse_deploy.py`（上游 `infer_policy` 外层循环复用）内部写死
 `load_bam_model(kp_fw, vin, ...)` = **XL330 / kp_fw=200**，没有 `--plant` 开关；
 拿它彩排 HD1910 策略就是 §10 那个植物错配，因此**不跑**。
 
@@ -2103,7 +2103,7 @@ HD1910 这条线在本机**只有一个仪器**：`rehearse_hd1910.py`。
    ⇒ 与 §6 的上游方案一致：真机静止要靠**独立 stand 策略 + `--switch-threshold 0.05` 热切换**，
    不能靠把 cmd 设 0。这条现在有数字支撑，不再只是「上游这么做的」。
 
-复算：`ONNX=<run.onnx> bash tools/hd1910/sweep_envelope.sh cmd`（写 `out/sweep_cmd/`）。
+复算：`ONNX=<run.onnx> bash microduck-software/tools/hd1910/sweep_envelope.sh cmd`（写 `out/sweep_cmd/`）。
 脚本在 cmd 模式下另有一条回读防呆：所有档位的 `settings.kp_fw` 必须都是 8——
 否则「扫的是 cmd、植物却变了」这类混淆不会被发现。
 单起点（yaw=0）与 4 起点的均值一致（cmd=0.40：0.2135 vs 0.2080），说明 4 起点已足够。
@@ -2128,11 +2128,11 @@ HD1910 这条线在本机**只有一个仪器**：`rehearse_hd1910.py`。
 「注释描述的那个机器人」和「我们的机器人」不是同一台。而它在任何日志里都不会报错——
 只会在机器人趴在地上、电机顶着地板发烫时才表现出来。
 
-**工具**：`tools/hd1910/audit_robotd_toml.py`（已入仓，含负对照自检）。
+**工具**：`microduck-software/tools/hd1910/audit_robotd_toml.py`（已入仓，含负对照自检）。
 
 ```bash
-.venv-mjlab/Scripts/python.exe tools/hd1910/audit_robotd_toml.py --selftest
-.venv-mjlab/Scripts/python.exe tools/hd1910/audit_robotd_toml.py \
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/audit_robotd_toml.py --selftest
+.venv-mjlab/Scripts/python.exe microduck-software/tools/hd1910/audit_robotd_toml.py \
     --toml out/upstream_ref/robotd.toml --expect-kp 8
 ```
 

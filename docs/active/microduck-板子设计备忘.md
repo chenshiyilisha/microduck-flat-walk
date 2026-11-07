@@ -343,9 +343,9 @@ Pi 上照抄这一段即可，不是手工难题。
 2. **即使跑起来，`--fake` 也验不了 `[policy] gain=8`**——fake 总线是内存模拟，
    `set_gain` 写进去没有可回读的寄存器。"配置生效"这件事在 Windows 上**无法用运行验证**。
 
-**替代品（已入仓）**：`tools/hd1910/audit_robotd_toml.py` 把"配置是否与训练标度一致"
+**替代品（已入仓）**：`microduck-software/tools/hd1910/audit_robotd_toml.py` 把"配置是否与训练标度一致"
 变成静态检查，正好对症 §22.8 那类事故（默认值覆盖没写的键）。它同时暴露了四个
-按 `gain=200` 标定、在 kp8 下全部失配的参数——见 `docs/05-flat-walk.md` §22.10。
+按 `gain=200` 标定、在 kp8 下全部失配的参数——见 `docs/archive/05-flat-walk.md` §22.10。
 
 **唯一能验运行时的地方**：真板（Radxa/Pi）起 `robotd` 后回读 reg 50（清单 B8）。
 不买板就没有这一步，这一点没有替代方案。

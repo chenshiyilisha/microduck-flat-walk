@@ -120,7 +120,7 @@ random  : cos >= 0.998, relL2 <= 8%      # 度量 INT8 权重 vs FP32 参考的�
 standing: maxabs <= 2% of S              # S = mean ||a_fp|| over random set
 ```
 
-我们 B 代 robotd 跑的就是同一份 FP32 ONNX，**没有量化孪生可比** ⇒ 照搬等于 gate 一个不存在的量。更糟的是「尺度感知」在这里会自我失效。用我方三份 ONNX 实测（`tools/hd1910/policy_numeric_gate.py`）：
+我们 B 代 robotd 跑的就是同一份 FP32 ONNX，**没有量化孪生可比** ⇒ 照搬等于 gate 一个不存在的量。更糟的是「尺度感知」在这里会自我失效。用我方三份 ONNX 实测（`microduck-software/tools/hd1910/policy_numeric_gate.py`）：
 
 | 策略 | S = mean‖a‖ | 2%·S | standing max‖a‖ | 照搬 esp 门限 |
 |---|---:|---:|---:|---|

@@ -35,7 +35,7 @@ _2026-11-06。回应「是否找了参考资料」。按项目铁律「遇到问
 | 14 | SLDASM 读取/转换路径多源交叉 | Dassault eDrawings 官方说明、Onshape、Autodesk Fusion 360、FreeCAD/OCC、file-extension.info、file-types.com（本次补查） | `.SLDASM` 存 mates、内嵌细分显示图形；免费导入导出路径 |
 | 15 | `pollen-robotics/microduck` 主仓 Rust 源码 | 早前轮次，官方一手 | policy load 校验、robotd 配置键、寄存器硬校验 |
 
-> 本地留存：`out/microduck_replica/` 下 `3MF_Core_Spec_v1.3.0.pdf`、`3MF_spec_text.txt`、`pdf_text.txt`、`SolidWorks-FT2026-10-20.zip`、`step_changed.zip` 等（该目录按 `.gitignore` 不入库）。
+> 本地留存：`out/builds/microduck_replica/` 下 `3MF_Core_Spec_v1.3.0.pdf`、`3MF_spec_text.txt`、`pdf_text.txt`、`SolidWorks-FT2026-10-20.zip`、`step_changed.zip` 等（该目录按 `.gitignore` 不入库）。
 
 ---
 

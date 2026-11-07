@@ -37,8 +37,8 @@
 | 导出 | ONNX **烘焙 normalizer** | `scripts/export.py` / 本仓 export 链 |
 | 热切换 | 多策略同观测布局 | 官方 playbook；勿改 obs 维数 |
 
-本仓已有彩排工具（XL330 交付物）：`tools/rehearse_deploy.py`、`NEXT-deploy-rehearsal.md`。  
-**HD1910**：同一套契约 + 植物指纹 — `tools/hd1910/rehearse_hd1910.py`（patch BAM→m5/`kp_fw=32`，默认探索 ONNX）。不要换 obs 布局。
+本仓已有彩排工具（XL330 交付物）：`microduck-software/tools/rehearse_deploy.py`、`NEXT-deploy-rehearsal.md`。  
+**HD1910**：同一套契约 + 植物指纹 — `microduck-software/tools/hd1910/rehearse_hd1910.py`（patch BAM→m5/`kp_fw=32`，默认探索 ONNX）。不要换 obs 布局。
 
 ---
 
@@ -76,11 +76,11 @@
 | C-prep-3 | A/B 短训脚本（训完切植物） | ✅ `../../microduck-software/tools/hd1910/ab_train.sh` |
 | C-prep-4 | 确认 export/ONNX 路径对 HD1910 run 可用 | ✅ ONNX + **parity 过**（`max|Δ|=1.6e−6`，`out/parity_hd1910_explore_4096x2000_1026_it1999.json`） |
 | C-prep-5 | 采购阶段 0 四项是否下单 | 人决策（清单 §7） |
-| C-prep-6 | 续训脚本 | ✅ `tools/hd1910/resume_train.sh`（默认接到 6000） |
-| C-prep-7 | 阶段 0 / 镜像软件入口 | ✅ `tools/hd1910/stage0_software_prep.md`（FD、表征 JSON、kissqy R1/V167 链接） |
-| C-prep-8 | HD1910 部署彩排入口 | ✅ `tools/hd1910/rehearse_hd1910.py` / `.sh`（m5 / kp 32；跑 sweep 写 `out/rehearse_hd1910_*.json`） |
-| C-prep-9 | URT-2/URT-1 台架脚本骨架 | ✅ `tools/hd1910/urt1_bench.py`（`--dry-run`；live 待 SDK/FD） |
-| C-prep-10 | kissqy 上板导入勾选清单 | ✅ `tools/hd1910/deploy_import_checklist.md`（镜像/方向/P=32/缩放 0.9·0.5·0.7） |
+| C-prep-6 | 续训脚本 | ✅ `microduck-software/tools/hd1910/resume_train.sh`（默认接到 6000） |
+| C-prep-7 | 阶段 0 / 镜像软件入口 | ✅ `microduck-software/tools/hd1910/stage0_software_prep.md`（FD、表征 JSON、kissqy R1/V167 链接） |
+| C-prep-8 | HD1910 部署彩排入口 | ✅ `microduck-software/tools/hd1910/rehearse_hd1910.py` / `.sh`（m5 / kp 32；跑 sweep 写 `out/rehearse_hd1910_*.json`） |
+| C-prep-9 | URT-2/URT-1 台架脚本骨架 | ✅ `microduck-software/tools/hd1910/urt1_bench.py`（`--dry-run`；live 待 SDK/FD） |
+| C-prep-10 | kissqy 上板导入勾选清单 | ✅ `microduck-software/tools/hd1910/deploy_import_checklist.md`（镜像/方向/P=32/缩放 0.9·0.5·0.7） |
 
 ---
 

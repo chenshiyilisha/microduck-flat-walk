@@ -201,7 +201,7 @@
 ## Desk-Climb 爬梯复现 + 优化实验（2026-09-21 晚 ~ 22 凌晨）
 
 - **任务**：复现 `HannesVonEssen/microduck-climb`（爬 27 级交替梯上桌 + 桌面跌倒恢复，climber@56500 + getup 双策略，源 `experiments/desk-climb/`，昨天已随上游同步进仓）。复现必须用包内 `source/` 独立快照（爬梯代码从未进主 src 树）+ `uv sync --frozen`。
-- **管线**：`autodl/run_climb_pipeline.sh`（本地编排）+ `autodl/run_climb.sh`（实例端，断点续跑）+ `autodl/audit_climb_eval.py`（从 switches.json+actions.npz 复算 full-audit 口径指标）+ `autodl/phase4a_triggers.sh` / `phase4bc.sh` / `finalize_climb.sh`。等 4090D 卡 ~1.5h，实算 ~3h。
+- **管线**：`archive/autodl-pipelines/run_climb_pipeline.sh`（本地编排）+ `archive/autodl-pipelines/run_climb.sh`（实例端，断点续跑）+ `archive/autodl-pipelines/audit_climb_eval.py`（从 switches.json+actions.npz 复算 full-audit 口径指标）+ `archive/autodl-pipelines/phase4a_triggers.sh` / `phase4bc.sh` / `finalize_climb.sh`。等 4090D 卡 ~1.5h，实算 ~3h。
 - **复现电池（4 seeds×64 envs×60s 全序列，对齐 evidence/full-audit 口径）**：
   | 臂 | 切换 | 站立10s | 结论 |
   |---|---|---|---|

@@ -6,7 +6,7 @@
 > 一手来源：`kissqy/Microduck-kissqy` 的 `DUCK-SHOPPING-LIST.md`、`docs/build/budget.html`、
 > `microduck-hd1910/firmware/OFFICIAL-GAMEPAD.zh-CN.md`、
 > `microduck-hd1910/firmware/docs/robot/pair-a-gamepad.md`（2026-11-06 经 GitHub raw 拉取，
-> 副本在 `out/kissqy/`，`out/` 被 gitignore）；官方规格页 `store.pollen-robotics.com/products/microduck`；
+> 副本在 `out/builds/kissqy/`，`out/` 被 gitignore）；官方规格页 `store.pollen-robotics.com/products/microduck`；
 > 官方 zero3 / beta 硬件分版对照（mindthink 拆解，第三方，仅用于分版，不用于定价）。
 
 ---

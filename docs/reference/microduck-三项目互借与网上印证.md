@@ -135,7 +135,7 @@ ayan-3d 的教训（n=19 时 11:8 是纯噪声，却差点被当成有偏）在�
 
 协议只有一步：**声明被测对象、把它藏掉或改坏、再跑一次，必须返回非零。** 这条对我们特别相关：
 
-`tools/selfcheck.py` 的 `check_env_equivalence()` 拿 `R.Duck`（带随机化的 wrapper）和
+`microduck-software/tools/selfcheck.py` 的 `check_env_equivalence()` 拿 `R.Duck`（带随机化的 wrapper）和
 `O.Duck`（官方）逐帧对比。它是**差分测试**——只能发现两者之间的**差异**，发现不了**共同祖先里的错**。
 如果父类的物理、奖励、观测布局一起错了，两边一致，这一项照样绿。
 
@@ -167,7 +167,7 @@ Python 用 `mutmut` / `cosmic-ray`，JS 用 Stryker。我们不需要上工具�
 > 派生层**结构上不可能**跟丢或残留——骨盆归零它必然跟着归零。
 
 这句话对 microduck 直接适用，而且我们现在正犯它说的错：
-`tools/plant.py` 里 `FORCE_STALL = 0.96`、`FORCE_CURRENT = 0.6405`、
+`microduck-software/tools/plant.py` 里 `FORCE_STALL = 0.96`、`FORCE_CURRENT = 0.6405`、
 `SOLVER_TRAINING = (10, 20)`、`FLOOR_FRICTION = (1.0, 0.005, 0.0001)` 是**四个并列常数**。
 它们来自不同地方（数据手册 / kt×电流 / 上游训练配置 / 上游 XML），
 一旦有一个偏了，表现只是"策略差一点"，**不会报错**。这正是"写歪了不报错"的形状。
@@ -185,7 +185,7 @@ Python 用 `mutmut` / `cosmic-ray`，JS 用 Stryker。我们不需要上工具�
 修法是**把窗口放大到装得下 4~5 个事件，同时加一条严格更强的判据（分桶包络）**，
 而不是放宽阈值。
 
-我们的同形问题：`tools/envelope.py` 早期默认 6 s，后退命令测出负速度——
+我们的同形问题：`microduck-software/tools/envelope.py` 早期默认 6 s，后退命令测出负速度——
 因为**启动瞬态（先压重心再反向迈一步）主导了净位移**。改成 12 s 才好。
 
 两条合起来的通则：**任何"净量"指标（位移、平均速度、平均跟踪率）都必须声明它的测量窗，
@@ -202,7 +202,7 @@ Python 用 `mutmut` / `cosmic-ray`，JS 用 Stryker。我们不需要上工具�
 
 ### 2.4 live2d-pet ← microduck：先登记门槛，再测量
 
-这是我们**唯一一处比另两个项目更严的地方**：`tools/gates.json` 是在跑 27 项之前写好的，
+这是我们**唯一一处比另两个项目更严的地方**：`microduck-software/tools/gates.json` 是在跑 27 项之前写好的，
 里面每条门槛都带一句为什么。改数字要留 `_revision` 说明（延迟单位那次就留了）。
 
 另两个项目都是**测完再判断**（`verify-*.js` 断言的是"行为符合预期"，
@@ -214,7 +214,7 @@ Python 用 `mutmut` / `cosmic-ray`，JS 用 Stryker。我们不需要上工具�
 但跟踪率表里它是 `yaw 1.63 / back 1.19 / side 0.98`——全是**翻倒过程中的位移**。
 当时 15 次摔倒就印在同一份输出里，我先读了跟踪率、没读它。
 
-`tools/ab_compare.py` 因此改成**同屏输出跟踪率 / 摔倒 / 倾角三张表**。
+`microduck-software/tools/ab_compare.py` 因此改成**同屏输出跟踪率 / 摔倒 / 倾角三张表**。
 ayan-3d 的 9 条判据里也有同款结构（包络 + 分桶包络 + 分段均值 + 斜率），
 **同一条现象用多个不相关的量去夹**，任何一个单独都能被曲解。
 
@@ -361,7 +361,7 @@ microduck 的 `laugh` 关键帧里，`head_yaw` 在 0.0–0.4 s 起、`mouth` �
 
 ### 5.3 唯一值得抄的代码
 
-`tools/microduck-joint-mirror/readonly_bus.py`：**只发 PING/READ/SYNC_READ，拦掉一切
+`microduck-software/tools/microduck-joint-mirror/readonly_bus.py`：**只发 PING/READ/SYNC_READ，拦掉一切
 运动与参数写**的只读总线读取器。几个细节是真踩过的：
 
 - 先读 `torque`，**非 0 直接抛错**（不给扭矩开着就抓姿态的机会）；

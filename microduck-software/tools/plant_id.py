@@ -33,10 +33,44 @@ import importlib
 from pathlib import Path
 
 # Values recorded 2026-10-27 by switching plants with tools/hd1910/apply_to_live.py.
+# 2026-10-29: added hd1910_kp5 (P3 target). Two plants now share one directory, so
+# identify by *params filename*, never by "does the path mention hd1910" — doing that
+# silently merges kp_fw=32 readings with kp_fw=5 ones.
 KNOWN_PLANTS = {
     "xl330": {"kp_fw": 200.0, "model": "m6", "json_path": None},
     "hd1910": {"kp_fw": 32.0, "model": None, "json_path": "m5.json"},
+    "hd1910_ftservo_m6": {
+        "kp_fw": 32.0,
+        "model": "m6",
+        "json_path": "ftservo_official_m6.json",
+    },
+    "hd1910_kp5": {
+        "kp_fw": 5.0,
+        "model": "m6",
+        "json_path": "official_m6_stslaw.json",
+    },
 }
+
+# Which params filename means which plant. Order matters: longest/most specific first.
+_FILE_TO_PLANT = [
+    ("official_m6_stslaw.json", "hd1910_kp5"),
+    ("ftservo_official_m6.json", "hd1910_ftservo_m6"),
+    ("m5.json", "hd1910"),
+]
+
+
+def label(kw: dict | None = None) -> str:
+    """Best-effort plant name, e.g. 'xl330', 'hd1910', 'hd1910_kp5'."""
+    kw = _kwargs() if kw is None else kw
+    json_path = str(kw.get("json_path") or "").replace("\\", "/")
+    for filename, plant in _FILE_TO_PLANT:
+        if json_path.endswith("/" + filename) or json_path.endswith(filename):
+            return plant
+    if "hd1910" in json_path.lower():
+        return "hd1910_unidentified"  # refuse to guess: would merge distinct plants
+    if kw.get("motor_name") == "xl330":
+        return "xl330"
+    return "unknown"
 
 
 def _sha_file(p: str | Path, n: int = 12) -> str | None:
@@ -50,17 +84,6 @@ def _sha_file(p: str | Path, n: int = 12) -> str | None:
 def _kwargs() -> dict:
     mod = importlib.import_module("mjlab_microduck.robot.microduck_constants")
     return dict(getattr(mod, "_BAM_ACTUATOR_KWARGS", {}))
-
-
-def label(kw: dict | None = None) -> str:
-    """Best-effort plant name: 'xl330', 'hd1910', or 'unknown'."""
-    kw = _kwargs() if kw is None else kw
-    json_path = kw.get("json_path")
-    if json_path and "hd1910" in str(json_path).lower():
-        return "hd1910"
-    if kw.get("motor_name") == "xl330":
-        return "xl330"
-    return "unknown"
 
 
 def fingerprint() -> dict:
@@ -82,6 +105,11 @@ def fingerprint() -> dict:
         "actuator_class": getattr(mod, "actuators", None).__class__.__name__
         if getattr(mod, "actuators", None) is not None else None,
     }
+    # Cross-check the pair against the table. A plant whose kp_fw disagrees with its
+    # recorded spec means someone hand-edited one of the two and did not tell anyone.
+    spec = KNOWN_PLANTS.get(name)
+    mismatched = bool(spec and spec["kp_fw"] is not None and spec["kp_fw"] != kw.get("kp_fw"))
+    out["kp_fw_matches_spec"] = (None if spec is None else not mismatched)
     return out
 
 
@@ -91,6 +119,13 @@ def one_line(fp: dict | None = None) -> str:
     warn = ""
     if fp["name"] == "unknown":
         warn = "  <-- UNKNOWN PLANT, do not compare against any archived reading"
+    elif fp.get("kp_fw_matches_spec") is False:
+        warn = (
+            f"  <-- kp_fw={fp['kp_fw']} disagrees with this plant's recorded spec; "
+            f"readings are not comparable to any archived number"
+        )
+    elif fp["name"] == "hd1910_unidentified":
+        warn = "  <-- HD1910 params file not recognised; refusing to assume m5/kp32"
     return f"plant={fp['name']}{extra} (sha {fp['source_sha256_12']}){warn}"
 
 

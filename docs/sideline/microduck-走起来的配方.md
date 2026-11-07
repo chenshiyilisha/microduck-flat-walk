@@ -38,7 +38,7 @@
 
 ## 2. 我们自己的探针：站桩到底值多少分
 
-新增 `tools/probe_argmax.py`（做法抄 DuckEMW 的「零成本探针确诊」：`docs/03-training-log.md:254`
+新增 `microduck-software/tools/probe_argmax.py`（做法抄 DuckEMW 的「零成本探针确诊」：`docs/archive/03-training-log.md:254`
 「站桩报酬是前进报酬 38 倍（v12 日志 stance 0.87 vs progress 0.023 实锤）」）。
 
 固定命令 `cmd=(0.4, 0, 0)`，512 envs × 100 步（2 s），把 `env.step()` 的每一项 term 记下来，
@@ -126,7 +126,7 @@ def running_forward_progress_from_velocity(velocity_x, speed_cap=1.2):
 - cap 截断防单个物理异常值变成 jackpot
 
 这是 Hannes 从 0.4 走到 1.66 的骨架。DuckEMW 自己的 sprint v1–v4 全部 plateau ≤1.43，
-**换了这个配方才破 1.65**（`docs/03-training-log.md:100-102`）。
+**换了这个配方才破 1.65**（`docs/archive/03-training-log.md:100-102`）。
 
 ### heading_hold（`mdp.py:5009-5041`）
 
@@ -215,7 +215,7 @@ kissqy 的 `training_adapter_revision` 是 `R1.5.21-verified-actions-no-ema`，
 - **kissqy**：官方表 + 512-256-128 + ~2000 轮 → 有实机、**无量化速度**
 - **我们（自写 CPU 植物）**：官方表 + **128-128** + 2000 轮 → 站桩 0.035 m/s
 - **官方自己**：官方表 + 512-256-128 + 主训 → 出厂 `alpha_walking.onnx` 实测
-  **cmd 0.4 → 0.164 m/s，高命令下 yaw 漂 > 50°**（DuckEMW Phase 0 亲测，`03-training-log.md:86`）
+  **cmd 0.4 → 0.164 m/s，高命令下 yaw 漂 > 50°**（DuckEMW Phase 0 亲测，`../archive/03-training-log.md:86`）
 
 - **Hannes**：官方表 **+ `forward_progress`** + 512-256-128 + **12195 轮** → 1.659 m/s
 
@@ -286,7 +286,7 @@ kissqy 的证据把它提到了 P0 —— 因为它是「官方默认 vs 我们�
 
 ## 4. DuckEMW 的 v1→v3 站桩病历（和我们一模一样）
 
-`docs/03-training-log.md:94-96`：
+`docs/archive/03-training-log.md:94-96`：
 
 > **v1**：站桩 0.006 m/s。机制：25% standing envs 白拿奖励质量 + air_time 固定 0.20s 下限
 > （阶跃函数，0.05s 行走步态永远够不到，全程奖励 ≈0.0001）+ action_rate −1.0 摆腿税 +
@@ -333,7 +333,7 @@ v3 的「前向门控」对我们最有价值：**任何正奖励项都要乘 `c
 > 本文档里的「我们 = `128-128`」指的是**自写 CPU 植物链**（`repo/train_ppo.py`）。
 > **mjlab GPU 链的 `MicroduckRlCfg.actor.hidden_dims` 本来就是 `(512, 256, 128)`**，
 > 与官方 `microduck_velocity_env_cfg.py:913-925` 逐字相同，`critic` 也是。
-> 实测确认（`out/velocity_ready.json`，`tools/check_velocity_ready.py`）：
+> 实测确认（`out/velocity_ready.json`，`microduck-software/tools/check_velocity_ready.py`）：
 > `actor_hidden_dims: [512, 256, 128]`、`actor obs = 61`（与部署契约 8 项同序）、`action = 14`。
 > → A 路**不必再单独分「换网络」这一批**，可直接按满预算跑。
 > 第 2–5 项（奖励地形）不受影响，仍然有效。
@@ -346,7 +346,7 @@ v3 的「前向门控」对我们最有价值：**任何正奖励项都要乘 `c
    `128-128` **0.031 s**，`512-256-128` **0.129 s**，差 **0.098 s/iter**；
    而当前 1 iter 实测 **4.9 s**（物理占 4.87 s）→ 换网络后吞吐 **20k → 19.6k steps/s**，
    可以忽略。（我先猜「会掉到 12–15k」，实测否掉了 —— 物理仿真是唯一瓶颈。）
-   ⚠️ 唯一真实成本在**部署侧**：`tools/export_mcu.py:204` 的 `MD_HIDDEN` 是单宽度宏，
+   ⚠️ 唯一真实成本在**部署侧**：`microduck-software/tools/export_mcu.py:204` 的 `MD_HIDDEN` 是单宽度宏，
    换三层网络要同步改 MCU 侧的内存布局与导出。上机前要单独验这一环。
    （**补充 2026-10-24**：这条只对**自写链**成立。`export_mcu.py` 是自写链工具
    —— 它 `import train_ppo as T`、只读自写 ckpt 的 `c["obs_dim"]/c["model"]`，

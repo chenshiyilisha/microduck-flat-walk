@@ -11,13 +11,13 @@
 ## 0. 一句话
 
 **这个仓库里最重要的不是配方，是它 `docs/04` 里那条「CPU 彩排不可信、一律以 mjlab 环境内数据为准」——
-它直接判了我们 `tools/probe_joy_policy.py` 的死刑（当验收用的话）。**
+它直接判了我们 `microduck-software/tools/probe_joy_policy.py` 的死刑（当验收用的话）。**
 
 ---
 
 ## 1. ⚠️ CPU MuJoCo 彩排不是同一套物理（推翻我们的验收方式）
 
-`docs/04-stilts-repro.md:56-65` 原文：
+`docs/archive/04-stilts-repro.md:56-65` 原文：
 
 > **不可信路径（勿用）**：CPU MuJoCo 彩排（`scripts/infer_policy.py` 风格的
 > `PolicyInference`，即使补上 BAM M6 执行器）渲染高跷策略会在 **~2.4s 摔倒**，
@@ -33,17 +33,17 @@
 | 约束 | 原生 CG/Newton | warp 自己的 constraint buffer |
 | 来源 | `microduck_joy_env_cfg.py:72` 注释明写：「Warp MULTICCD requires zero margin; CPU rehearsal retains .2 mm margin」 ||
 
-我们的 `tools/probe_joy_policy.py` 正是 CPU 回放。它在**同一台机器上比较两个策略**
+我们的 `microduck-software/tools/probe_joy_policy.py` 正是 CPU 回放。它在**同一台机器上比较两个策略**
 时仍然有效（同一物理、同一误差），但**不能当验收门**。
 
-### 落地：`tools/eval_joy_in_sim.py`
+### 落地：`microduck-software/tools/eval_joy_in_sim.py`
 
 对应他们训练日志 `:93` 的自建工具 `scripts/eval_sprint_speed.py`
 （「warp 原生环境内测 checkpoint 真实速度，绕开一切 harness 差异」）。
 我们的版本：
 
 ```
-.venv-mjlab/Scripts/python.exe tools/eval_joy_in_sim.py \
+.venv-mjlab/Scripts/python.exe microduck-software/tools/eval_joy_in_sim.py \
     --checkpoint logs/.../model_599.pt --num-envs 512 --device cuda:0
 ```
 
@@ -91,7 +91,7 @@
 
 ## 3. 三个 dt 在飞，必须钉死一个写进验收
 
-`docs/02-design-notes.md`「50Hz 控制对齐」一节：
+`docs/archive/02-design-notes.md`「50Hz 控制对齐」一节：
 
 > 训练物理：`timestep=0.005 + decimation=4`（50Hz）。上游 `scripts/infer_policy.py`
 > 沿用场景 XML 默认 `0.002`（实际 125Hz 控制），是**既有偏差、未动**。
@@ -190,4 +190,4 @@ CPU 的 5 kHz 数只用于和 Duckverse ONNX 对表（口径必须一致才可�
 2. 600 轮跑完后先看这条：`feet_peak_m` 有没有过 8 mm。没过就不是「精度不够」，是
    **奖励在教它站着**（`joy_drift` 权重 100 + `joy_balance` 权重 5 都在逼它不动）。
 3. 过了才加 `forward_progress`，并且**从零重训**（AGENTS.md 明令）。
-4. 修 `tools/probe_joy_policy.py` 的注释，写明「此脚本不是验收门」。
+4. 修 `microduck-software/tools/probe_joy_policy.py` 的注释，写明「此脚本不是验收门」。

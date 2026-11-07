@@ -54,7 +54,7 @@
 
 ### 2.1 脚根本没离地多久 —— `air_time` 改法是死的（幸好先测了）
 
-`tools/probe_joy_feet_contact.py`（model_599，128 envs，8 s，训练 cfg）：
+`microduck-software/tools/probe_joy_feet_contact.py`（model_599，128 envs，8 s，训练 cfg）：
 
 ```
 foot_z 绝对高度  p0 -0.1mm  p5 0.1mm  p50 1.6mm  p95 3.8mm  p100 8.6mm
@@ -74,7 +74,7 @@ stance(p5)       0.10 / 0.12 mm
 
 ### 2.2 奖励曲线是单调的，问题不在悬崖
 
-`tools/analyze_joy_feet_cliff.py`，用**训练 cfg 实测站高 0.1 mm**重新积分（上一版用的 5.7 mm 来自
+`microduck-software/tools/analyze_joy_feet_cliff.py`，用**训练 cfg 实测站高 0.1 mm**重新积分（上一版用的 5.7 mm 来自
 `play=True` 的生成高度，不是训练时的站姿 —— 那个基线是错的）：
 
 | 峰值抬脚 | joy_feet | ×权重 12 |
@@ -148,8 +148,8 @@ if pd_actuators:
 ```
 
 **删除这两行**，让它继承 joy 档自己的课程（−0.05 → −0.15 @150 → −0.30 @300）。
-补丁工具 `tools/patch_joy_action_rate.py`，幂等，同时改上游源树和 site-packages
-（否则 `tools/apply_joy_patch.py` 会把改动覆盖回去）。
+补丁工具 `microduck-software/tools/patch_joy_action_rate.py`，幂等，同时改上游源树和 site-packages
+（否则 `microduck-software/tools/apply_joy_patch.py` 会把改动覆盖回去）。
 
 验证课程真的生效（直接调用 `mdp.reward_weight`，不是读源码）：
 
@@ -175,12 +175,12 @@ iter  实际生效 weight
 
 ```bash
 # 1) 正式 gate
-.venv-mjlab/Scripts/python.exe tools/eval_joy_in_sim.py \
+.venv-mjlab/Scripts/python.exe microduck-software/tools/eval_joy_in_sim.py \
     --checkpoint logs/rsl_rl/microduck_joy_smooth/<run>/model_599.pt \
     --num-envs 512 --seconds 8 --device cuda:0 --out out/eval_ar03.json
 
 # 2) 接触/幅度诊断
-.venv-mjlab/Scripts/python.exe tools/probe_joy_feet_contact.py \
+.venv-mjlab/Scripts/python.exe microduck-software/tools/probe_joy_feet_contact.py \
     --checkpoint <同上> --num-envs 128 --seconds 8 --device cuda:0
 ```
 
@@ -278,7 +278,7 @@ our stepping-in-place reference trajectory causes the robot to fall immediately"
 
 对我们是现成条件：joy 的相位已经从 `head_command` / `body_command` 通道喂进观测
 （`ref_relu(sin φ)²` 那条），可以据此解析生成 `q_ref`（髋+膝各一条正弦）。代价是**改动作空间**，
-会影响 ONNX 导出（`tools/export_mcu.py`）和 MCU 侧推理 —— 要动就要和部署一起动。
+会影响 ONNX 导出（`microduck-software/tools/export_mcu.py`）和 MCU 侧推理 —— 要动就要和部署一起动。
 
 ### 调参顺序（这条是纪律，不是改法）
 
@@ -299,7 +299,7 @@ our stepping-in-place reference trajectory causes the robot to fall immediately"
 
 ### 4.6.1 结果：更稳、更静、抬脚更少
 
-600/600 跑完，与旧 run 同 cfg、同 512 envs、同 8 s（`tools/compare_joy_runs.py` 输出）：
+600/600 跑完，与旧 run 同 cfg、同 512 envs、同 8 s（`microduck-software/tools/compare_joy_runs.py` 输出）：
 
 | gate | old(−1.0) | ar03(−0.30) | |
 |---|---:|---:|---|
@@ -336,7 +336,7 @@ our stepping-in-place reference trajectory causes the robot to fall immediately"
 ### 4.6.3 机制：奖励容差只有 9 mm，而一个 σ 能推 28 mm
 
 `joy_foot_rhythm` 是 `exp(−((z − z_target)/9mm)²)`。PPO 优化的是**带探索噪声的期望**，
-而期望值对凹函数会被拉到峰值以下。用 `tools/probe_noise_vs_reward.py` 实测映射
+而期望值对凹函数会被拉到峰值以下。用 `microduck-software/tools/probe_noise_vs_reward.py` 实测映射
 （纯运动学：写关节角 → `mj_forward` → 读脚 site 高度，512 样本）：
 
 | σ (rad) | 脚高 std (mm) | E@peak | E@stand | gap | **gap×12** |

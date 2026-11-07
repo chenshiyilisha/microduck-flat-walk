@@ -4,8 +4,8 @@
 两版 MicroDuck 完整零件包生成器（Radxa Zero 3W / Orange Pi Zero 3W）
 
 数据来源（均需先自行下载，脚本不联网）：
-  - 打印几何: out/microduck_replica/打印/microduck-飞特版-BambuStudio2026-11-02.3mf
-  - 零件清单: out/microduck_replica/BOM/README.md  (33 项打印件 + 24 项外购件)
+  - 打印几何: out/builds/microduck_replica/打印/microduck-飞特版-BambuStudio2026-11-02.3mf
+  - 零件清单: out/builds/microduck_replica/BOM/README.md  (33 项打印件 + 24 项外购件)
   - 装配层级: 安装说明书 PDF 15 组件（已固化在报告中）
 
 诚实边界（重要）：

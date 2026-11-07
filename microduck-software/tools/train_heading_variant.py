@@ -10,7 +10,7 @@ lines set `ranges.ang_vel_z = (-1.0, 1.0)` and the comment calls that change
 to where the robot actually points. Nothing in training ever asks the policy to
 drive a heading error to zero.
 
-Measured consequence (`docs/05-flat-walk.md` §15, three repeats): the walk-it
+Measured consequence (`docs/archive/05-flat-walk.md` §15, three repeats): the walk-it
 self reporter walks fine (path_dx 2.3-2.5 m) but the heading does an unbiased
 random walk (|drift| median 13-17 deg/s), leaving only 13-21% of the path as
 net displacement along the initial heading. `error_vel_yaw` is 1.164 rad/s on
@@ -66,7 +66,7 @@ than hidden.
 
 Evaluation is unaffected
 ------------------------
-`tools/flat_walk/eval_velocity_in_sim.py` reflectively zeroes every `rel_*`
+`microduck-software/tools/eval_velocity_in_sim.py` reflectively zeroes every `rel_*`
 knob and additionally sets `ranges.heading = (0.0, 0.0)`, so its readings stay
 command-following and comparable across variants. The observation/action
 contract (obs 61 / act 14 / 50 Hz) does not change either: the actor still sees
@@ -500,7 +500,7 @@ def plant_fingerprint() -> dict[str, Any]:
     """Record which robot this variant is declared against.
 
     Heading data gathered on the old m5/kp32 plant is not comparable with data
-    gathered on hd1910_kp5 (see docs/05-flat-walk.md §13/§16). This is a
+    gathered on hd1910_kp5 (see docs/archive/05-flat-walk.md §13/§16). This is a
     read-only call; it never switches the live plant.
     """
     try:

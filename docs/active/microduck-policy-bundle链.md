@@ -39,7 +39,7 @@ _2026-11-06 追加：本文 §1–§5 是 **B 代**口径；文末「官方加�
 ## 实测六个样本
 
 ```
-python tools/hd1910/verify_policy_bundle.py --toml out/robotd_hd1910_mode0.toml
+python microduck-software/tools/hd1910/verify_policy_bundle.py --toml out/robotd_hd1910_mode0.toml
 ```
 
 | 样本 | 宽度 | onnx metadata | 归一化除数下限 | 结论 |
@@ -117,7 +117,7 @@ python tools/hd1910/verify_policy_bundle.py --toml out/robotd_hd1910_mode0.toml
 `deploy61` / `p8head_2999` 的 metadata 是 0 条。`--stamp` 写一份新的：
 
 ```bash
-python tools/hd1910/verify_policy_bundle.py out/p8head_2999.onnx \
+python microduck-software/tools/hd1910/verify_policy_bundle.py out/p8head_2999.onnx \
     --stamp out/p8head_2999_stamped.onnx --action-scale 1.0
 ```
 
@@ -181,7 +181,7 @@ manifest 只管技能时长 / `command.encoding` / `action_scale` 等。真正�
 - 纯静态：不跑 ORT，因此**不覆盖** `Policy::load` 的 `open_warm` 零观测推理、`commit_from_file`
   能否真开 session、以及 ONNX Runtime 共享库是否存在。动态那一半仍由本工具 `R1` 与
   `verify_policy_contract.py --rehearsal` 覆盖（`p8head_2999` 站姿动作峰值 0.1930 rad、finite）。
-- 官方源码镜像在 `out/official/` 与 `out/official-main/`（被 gitignore）；新机需重新抓，脚本
+- 官方源码镜像在 `out/evidence-official/official/` 与 `out/evidence-official/official-main/`（被 gitignore）；新机需重新抓，脚本
   **不给源码根时显式标 `UNVERIFIED`，不会假装全绿**。抓取走 GitHub contents API（本机
   `raw.githubusercontent.com` 被代理挡，返回 000）。
 
@@ -190,9 +190,9 @@ V=microduck-software/.venv-mjlab/Scripts/python.exe
 S=microduck-software/tools/hd1910/verify_official_loader.py
 $V $S --selftest                                  # 30/30
 $V $S artifacts/flat_walk/checkpoints/p8head_2999.onnx \
-    --policy-rs out/official/duck-control_src_policy.rs \
-    --obs-rs out/official-main/duck-control/src/obs.rs \
-    --json out/official_loader_p8head_2999.json
+    --policy-rs out/evidence-official/official/duck-control_src_policy.rs \
+    --obs-rs out/evidence-official/official-main/duck-control/src/obs.rs \
+    --json out/evidence-official/official_loader_p8head_2999.json
 ```
 
 ---
@@ -204,3 +204,11 @@ $V $S artifacts/flat_walk/checkpoints/p8head_2999.onnx \
 - [ ] `publish` 在 `upload_folder` 前检查 `data_location == EXTERNAL`，或直接 `onnx.save` 内联。
 - [ ] B 代导出（`hl2915_*`）筛掉 `passive_*_backlash` 再写 `joint_names`。
 - [ ] `robotd` 侧没有任何版本号能挡住「导出脚本换了但 cwd 没换」——如果以后要防，最小改动是 **`policy.rs::open` 里读一次 metadata 的 `joint_names` 与 `JOINT_NAMES` 对质**（约 15 行，fail loud）。
+
+
+<!-- TODO-OUT-MISSING: 以下 out/ 数据路径当前缺失（需确认）:
+- out/deploy61.onnx
+- out/p8head_2999.onnx
+- out/p8head_2999_stamped.onnx
+2026-11-07 全面检查核实：上述 out/ 数据路径当前文件系统（含 out/ 三桶 builds/evidence-official/measurements/）均不存在；out/ 为 gitignored 本地数据，无 git 恢复手段。可能成因：约定/外部下载路径（官方权重需从 HF 拉取）、已下线产物（deploy61 已下线）、历史别名（p8head_2999.onnx 简名 vs 实际 builds/p8head_2999_rank3_probe.onnx）、或 reorg 前即未落盘。**暂未改动引用** —— 请先排查本地备份 / 重新下载 / 确认 reorg 是否误移，再修正引用或恢复文件。
+-->
