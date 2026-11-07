@@ -83,3 +83,18 @@
 - **缺口4（IMU 未引 build-tutorial 标定流程）— 修正，不是盲引**：核实发现 build-tutorial（AI-FanGe 中文复刻）的 `bno08x_calibrate_ui.py` 是 **BNO08x** 标定，而我们 HD-1910 线是 **LSM6DSV16X**（§0.5 三方同芯片）——**芯片错配，不可直接套用**。已在 `docs/hardware/microduck-IMU三方对照-666wsp-kissqy-DuckBuddy.md` §0.1 改写为正确权威源：`community-kit` 的 `lsm6dsv16x_driver_spec.md` + DuckBuddy `imu-feetech`（同芯片同传感器），外加 HD-1910 整机标定社区工具（janauto/lxm/jackwuwei）。这条正好印证"查全比查到更重要"——只看到"有标定脚本"就引，会引错芯片。
 
 ⇒ 5 个缺口至此全部收口/修正，元任务（挖掘开源资产 + 复核缺资料环节）闭环。
+
+## 6. 下游动作：基于 roller.onnx 启动 HD-1910 轮滑重训（2026-11-07 进行中）
+
+原"两个任务"中「补回 B代 env 跑原生分」经核实**前提不成立**（官方 B代 RL 源 `microduck_rl-develop` 与我们 fork 是同一 `mjlab_microduck` 包、`robot_walk.xml` 惯量逐字节相同、velocity/roller env 配置一字不差——不存在独立 B代 plant 可补；之前测的 23.4%/17.2% 已是共享 plant 上的苹果对苹果分）。故只做**真有价值的第二条：HD-1910 原生轮滑重训**。
+
+- 训练 env：`Mjlab-Velocity-Flat-MicroDuck-Rollers`（与 roller.onnx 基线**同 env**），plant 固定 `hd1910_kp8`（kp_fw=8，部署 plant，即基线评测生效 plant）。
+- "基于 roller.onnx"取 **benchmark** 含义而非权重 warm-start：roller.onnx 内嵌归一化 + `action_scale=0.8`，与 rsl_rl actor（外部归一化）跨归一化/动作缩放两道边界，warm-start 有静默 bug 风险，避开。
+- 流水线对齐 GroundPick：smoke 64×5 ✅（exit 0 / nan 0 / 7s）→ explore 1024×1000 🔄（reward −14.5→−0.18，fell 55.8%→46.6%，nan 0）→ formal 4096×4000 ⏳ → eval `.pt` 对比。
+- 评估脚本 `tools/hd1910/eval_roller_onnx.py` 已支持 `--checkpoint`（rsl_rl `.pt`，原生 HD-1910 策略）与 `--onnx`（官方 B代）互斥，统一回放 + `fall_rate`/`mean_survival` 指标。
+  - ⚠️ **已抓修一个会阻断最终对比的 bug**：`--checkpoint` 模式原用 `policy_call` 包装推理策略，闭包自引用导致 `RecursionError`；已改为直接用 `runner.get_inference_policy()`（与 `eval_ground_pick.py` 一致）。用 explore `model_100.pt` 冒烟已验证端到端能出 `fall_rate` 字段。
+- **最终对比协议（必须严格同参，保证苹果对苹果）**：
+  - 同 plant `hd1910_kp8`、同 env `Mjlab-Velocity-Flat-MicroDuck-Rollers`、同窗口 `--max-steps 500`（10s）、同规模 `--envs 32 --seeds 2`。
+  - ONNX 基线：`--onnx roller.onnx --action-scale 0.8`（忠实还原 manifest 的 runtime 0.8 缩放）。
+  - 我方 `.pt`：原生输出，无外部缩放（rsl_rl actor 已在其动作空间内学习）。
+  - 判据：`fall_rate`（ONNX 基线 17.2%）须显著下降才证明 HD-1910 重训必要且成功；`mean_survival` 在 perpetual 任务下为「首次倒地前平均存活步」，作为辅证。
