@@ -264,7 +264,7 @@ def _read_metrics(u) -> dict[str, float]:
 
 def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         solver_iters=None, solver_ls=None, solver_ncon=None, seed=None,
-        backlash_deg=None):
+        backlash_deg=None, action_scale=None):
     from dataclasses import asdict
 
     from mjlab.envs import ManagerBasedRlEnv
@@ -321,10 +321,7 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
             )
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
-    runner = runner_cls(env, asdict(agent_cfg), device=device)
-    runner.load(checkpoint, load_cfg={"actor": True}, strict=True, map_location=device)
-    policy = runner.get_inference_policy(device=device)
+    # policy is created below, once `dev` is known, for both .pt and .onnx.
 
     obs, _ = env.reset()
     counter_before = pin_curriculum(env)
@@ -337,6 +334,44 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
     step_dt = float(u.step_dt)
     n_steps = int(round(seconds / step_dt))
     dev = u.device
+
+    # --- policy: either our rsl_rl .pt or an official ONNX (cross-machine test) ---
+    if str(checkpoint).endswith(".onnx"):
+        import io
+
+        import numpy as np
+        import onnx
+        import onnxruntime as ort
+
+        # Official MicroDuck ONNX export their obs input with a *fixed* batch
+        # dim of 1. onnxruntime's CPU EP rejects any other batch size, while the
+        # CUDA EP silently broadcasts -- so the same file behaves differently per
+        # device. Relax the leading dim to dynamic in-memory (the graph is a plain
+        # MLP: Sub/Div + Gemm + Elu, all batch-safe) so the file works on either
+        # EP and across N envs without a separate pre-patch step.
+        _m = onnx.load(str(checkpoint))
+        for _t in list(_m.graph.input) + list(_m.graph.output):
+            for _d in _t.type.tensor_type.shape.dim:
+                if _d.dim_value == 1:
+                    _d.dim_value = 0
+                    _d.dim_param = "N"
+        _sess = ort.InferenceSession(
+            _m.SerializeToString(),
+            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        )
+        _onnx_in = _sess.get_inputs()[0].name
+        _ascale = float(action_scale) if action_scale is not None else 1.0
+
+        def policy(obs_t):  # noqa: D401  (matches the .pt callable signature)
+            x = obs_t["actor"].detach().cpu().numpy().astype(np.float32)
+            a = _sess.run(None, {_onnx_in: x})[0]
+            return torch.as_tensor(a * _ascale, device=dev)
+    else:
+        runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
+        runner = runner_cls(env, asdict(agent_cfg), device=device)
+        runner.load(checkpoint, load_cfg={"actor": True}, strict=True,
+                    map_location=device)
+        policy = runner.get_inference_policy(device=device)
 
     vx_h, vy_h, wz_h, up_h, yaw_h, xy_h = [], [], [], [], [], []
     # The command is assumed frozen for the whole window; recording it is what
@@ -854,6 +889,10 @@ def main() -> int:
                          "variant (upstream bakes 2.0 = XL330-class; the HD1910 "
                          "datasheet says <= 0.5). Rewrites the passive joint "
                          "ranges and asserts the compiled model matches.")
+    ap.add_argument("--action-scale", type=float, default=None,
+                    help="action multiplier for an official ONNX policy "
+                         "(e.g. roller family uses 0.8). Ignored for .pt "
+                         "checkpoints. Defaults to 1.0 when an .onnx is given.")
     a = ap.parse_args()
 
     # Mechanical guard: a play value on a task that has no backlash joints would
@@ -863,7 +902,8 @@ def main() -> int:
 
     r = run(a.task, a.checkpoint, a.num_envs, a.seconds, a.device,
             a.cmd_vx, a.cmd_vy, a.cmd_wz, a.plant, a.play,
-            a.solver_iters, a.solver_ls, a.solver_ncon, a.seed, a.backlash_deg)
+            a.solver_iters, a.solver_ls, a.solver_ncon, a.seed,
+            a.backlash_deg, a.action_scale)
 
     if a.out:
         p = Path(a.out)
