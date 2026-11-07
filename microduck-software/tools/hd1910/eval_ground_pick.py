@@ -36,6 +36,16 @@ Usage
         --checkpoint logs/rsl_rl/microduck_groundpick_hd1910/<run>/model_4000.pt \
         --envs 64 --seeds 1 --json out/groundpick_eval.json
 
+Phase-cutoff fidelity check (real runtime cuts the take at φ=0.7, take ~2.8 s of
+the 4 s period; the upstream recipe only completes the rise at φ≈1.0). Pass
+``--phase-cap 0.7`` to force a phase-0 start (like the real take) and measure how
+close the duck is to standing/upright *at the instant phase first reaches 0.7* —
+i.e. whether freezing there looks like "stood back up" or "frozen mid-crouch".
+
+    .venv-mjlab/Scripts/python.exe tools/hd1910/eval_ground_pick.py \
+        --checkpoint logs/rsl_rl/microduck_groundpick_hd1910/<run>/model_4000.pt \
+        --envs 64 --seeds 3 --phase-cap 0.7 --json out/groundpick_cap07.json
+
 Defaults pick the highest ``model_*.pt`` in the most recent GroundPick run dir.
 """
 import argparse
@@ -76,6 +86,12 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, default=1, help="independent resets for iqr")
     ap.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--max-steps", type=int, default=0, help="0 = env.max_episode_length")
+    ap.add_argument("--phase-cap", type=float, default=None,
+                    help="phase-cutoff fidelity check: if set (e.g. 0.7), force "
+                         "randomize_phase=False (start at phase 0 = standing, like the "
+                         "real take) and record each env's mouth height / upright at the "
+                         "first step phase reaches this value. Reports how close the duck "
+                         "is to standing when the real runtime cuts the take off.")
     ap.add_argument("--json", default=None, help="write JSON report here")
     args = ap.parse_args()
 
@@ -90,6 +106,17 @@ def main() -> None:
     env_cfg = load_env_cfg(TASK, play=True)
     agent_cfg = load_rl_cfg(TASK)
     env_cfg.scene.num_envs = args.envs
+
+    # phase-cap fidelity mode: the real take starts the cycle at phase 0 (standing)
+    # and cuts off at phi=0.7 (take ~2.8 s of the 4 s period). Default training uses
+    # randomize_phase=True (decorrelate envs); for this check we force phase 0 start
+    # so "first time phase reaches cap" = "end of the real take".
+    if args.phase_cap is not None:
+        try:
+            tw_cfg = env_cfg.commands["twist"]
+            tw_cfg.randomize_phase = False
+        except (KeyError, AttributeError):
+            pass  # command name differs across forks; cap check falls back to random start
 
     env = None
     try:
@@ -112,6 +139,7 @@ def main() -> None:
     policy = runner.get_inference_policy(device=device)
 
     robot = env.unwrapped.scene["robot"]
+    cmd_mgr = env.unwrapped.command_manager
     try:
         mouth_idx = int(robot.site_names.index("mouth_tip"))
         trunk_idx = int(robot.body_names.index("trunk_base"))
@@ -128,6 +156,7 @@ def main() -> None:
         return 1.0 - 2.0 * (x * x + y * y)
 
     all_success, all_fell, all_descent, all_upright, all_return = [], [], [], [], []
+    all_cap_ok, all_cap_mouth, all_cap_up = [], [], []
     standing_mouth_per_seed = []
     mouth_min_per_seed, mouth_max_per_seed, mouth_final_per_seed = [], [], []
     # Pooled mouth heights across all steps/envs/seeds -> self-calibrate standing.
@@ -143,6 +172,9 @@ def main() -> None:
         max_up = torch.zeros(N, device=device)
         final_mouth = torch.zeros(N, device=device)
         final_up = torch.zeros(N, device=device)
+        if args.phase_cap is not None:
+            cap_mouth = torch.full((N,), float("nan"), device=device)
+            cap_up = torch.full((N,), float("nan"), device=device)
 
         for _ in range(max_steps):
             mouth_w = robot.data.site_pos_w[:, mouth_idx, 2]  # z (height) per env
@@ -157,6 +189,15 @@ def main() -> None:
             max_up = torch.where(alive, torch.maximum(max_up, up.float()), max_up)
             final_mouth = torch.where(alive, mh, final_mouth)
             final_up = torch.where(alive, up.float(), final_up)
+            if args.phase_cap is not None:
+                # Phase is encoded as command = [cos(2π·φ), sin(2π·φ), 0] on "twist".
+                # Recover φ the same way the reward functions do (mdp.py:1616).
+                twist = cmd_mgr.get_command("twist")
+                phase = (torch.atan2(twist[:, 1], twist[:, 0]) / (2.0 * torch.pi)) % 1.0
+                reached = phase >= args.phase_cap
+                grab = alive & cap_mouth.isnan() & reached
+                cap_mouth = torch.where(grab, mh, cap_mouth)
+                cap_up = torch.where(grab, up.float(), cap_up)
             pooled_mouth.append(mh.cpu().float())
 
             with torch.no_grad():
@@ -180,6 +221,16 @@ def main() -> None:
         return_ok = max_mouth > (0.9 * sm)     # rose back to standing >= once
         upright_ok = max_up > 0.9              # trunk reached upright >= once
         success = (~fell) & descent_ok & return_ok & upright_ok
+
+        if args.phase_cap is not None:
+            cm = cap_mouth.cpu().float()
+            cu = cap_up.cpu().float()
+            # At the real take cutoff the duck should already be (near) standing
+            # and upright; otherwise it freezes mid-crouch.
+            cap_ok = torch.isfinite(cm) & (cm > 0.9 * sm) & (cu > 0.9)
+            all_cap_ok.append(float(cap_ok.float().mean().item()))
+            all_cap_mouth.append(float(torch.nanmedian(cm).item()))
+            all_cap_up.append(float(torch.nanmedian(cu).item()))
 
         all_success.append(float(success.float().mean().item()))
         all_fell.append(float(fell.float().mean().item()))
@@ -218,6 +269,11 @@ def main() -> None:
         "upright_rate": med_iqr(all_upright),
         "return_rate": med_iqr(all_return),
     }
+    if args.phase_cap is not None:
+        report["phase_cap"] = args.phase_cap
+        report["cap_cutoff_ok_rate"] = med_iqr(all_cap_ok)
+        report["cap_mouth_height_m_median"] = round(float(sum(all_cap_mouth) / len(all_cap_mouth)), 4)
+        report["cap_upright_median"] = round(float(sum(all_cap_up) / len(all_cap_up)), 4)
     if args.json:
         pathlib.Path(args.json).parent.mkdir(parents=True, exist_ok=True)
         pathlib.Path(args.json).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -234,6 +290,12 @@ def main() -> None:
     print(f"descent     {report['descent_rate'][0]*100:.1f}%  (mouth reached ground)")
     print(f"upright     {report['upright_rate'][0]*100:.1f}%  (reached upright)")
     print(f"return      {report['return_rate'][0]*100:.1f}%  (mouth rose back up)")
+    if args.phase_cap is not None:
+        print(f"phase-cap {args.phase_cap}: cutoff-ok {report['cap_cutoff_ok_rate'][0]*100:.1f}%  "
+              f"(iqr {[round(v*100,1) for v in report['cap_cutoff_ok_rate'][1]]})  "
+              f"[mouth {report['cap_mouth_height_m_median']:.3f} m / upright {report['cap_upright_median']:.3f}]")
+        pct = report['cap_mouth_height_m_median'] / report['standing_mouth_height_m'] * 100
+        print(f"   -> at real take cutoff duck is ~{pct:.0f}% of standing height, upright {report['cap_upright_median']:.2f}")
     if args.json:
         print(f"json -> {args.json}")
 
