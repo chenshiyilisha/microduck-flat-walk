@@ -184,6 +184,11 @@ import tyro
 sys.path.insert(0, str(Path(__file__).resolve().parents[0] / "hd1910"))
 from _provenance import capture_provenance  # noqa: E402
 
+# Git repo root, used by capture_provenance() to locate the repository. This file
+# lives at <repo>/microduck-software/tools/train_heading_variant.py, so parents[2]
+# is the repo root (same convention as tools/hd1910/log_run_provenance.py).
+ROOT = Path(__file__).resolve().parents[2]
+
 DEFAULT_TASK = "Mjlab-Velocity-Flat-MicroDuck"
 
 # Fields this script is allowed to touch on cfg.commands["twist"]. Kept explicit:
