@@ -50,6 +50,10 @@
 - 结果（32 envs × 2 seeds × 500 步）：
   - **官方 `roller.onnx` 在 HD-1910 上：摔倒 17.2%，其余存活满窗 10 s，平均步奖励 0.102。**
   - 解读：轮滑任务跨机型迁移**远好于** GroundPick（17% vs 77% 摔倒）——"保持直立并滑行"对 plant 差异不敏感，**官方 roller ONNX 可作 HD-1910 轮滑训练的参考起点**；但 17% 摔倒说明仍有动力学差异（质量/轮摩擦/齿隙），真机上需 HD-1910 重训才稳。
+- `roller_crouch.onnx` 补充对照（任务 `Mjlab-RollerCrouch-Flat-MicroDuck`，同 `--action-scale 0.8`）：
+  - **官方 `roller_crouch.onnx` 在 HD-1910 上：摔倒 50.0%，平均步奖励 0.134。**
+  - 注：脚本的 `mean_survival` 在 episodic 任务上会重复计数（倒地后 env 自动重置、后续步继续累加非摔倒步），对 crouch 不可信，**以 `fall_rate`（累计摔倒占比）为准**。crouch 多为末段摔倒（存活步数接近满窗但一半 env 倒过），与"蹲滑更难、平衡裕度更小"一致。
+  - 解读：蹲滑（crouch）跨机型迁移**明显差于** plain roller（50% vs 17%）——重心压低的平衡裕度被 plant 差异吃掉更多；若要做 HD-1910 蹲滑，应直接重训而非移植官方 crouch。
 - 复现：
   ```bash
   .venv-mjlab/Scripts/python.exe tools/hd1910/eval_roller_onnx.py \
@@ -57,6 +61,12 @@
       --onnx out/official_policies/roller.onnx --action-scale 0.8 \
       --envs 32 --seeds 2 --device cuda:0 --max-steps 500 \
       --json out/roller_eval_onnx_hd1910.json
+  # crouch 对照
+  .venv-mjlab/Scripts/python.exe tools/hd1910/eval_roller_onnx.py \
+      --task Mjlab-RollerCrouch-Flat-MicroDuck \
+      --onnx out/official_policies/roller_crouch.onnx --action-scale 0.8 \
+      --envs 32 --seeds 2 --device cuda:0 --max-steps 500 \
+      --json out/roller_crouch_eval_onnx_hd1910.json
   ```
 
 ## 4. 方法学备注
