@@ -95,8 +95,10 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - 结论：本轮没有可立即 cherry-pick 的「与 plant 无关且能直接提升」项；re-sync 价值集中在**训练侧（P4 velstand）**与**已落地的 provenance / 站起修复**。
 - 附（信息）：官方 runtime 已 0.18.9，policy set 钉 v9（= v7 velstand 逐字节），v8 机器人上更差；API_VERSION 49→50。HD-1910 不消费官方 policy set（B 代 robotd 另一套），仅作上游动态参考。
 
-### 缺陷 9 — HD-1910 打印件许可风险
-- 官方把 STL 网格钉死在 **CC BY-NC-SA 4.0（非商用）**。若 HD-1910 飞特版 3D 打印件派生自官方网格，商用受限。下单前先核 CAD 来源许可。
+### 缺陷 9 — HD-1910 打印件许可风险 ✅ 对自用场景 N/A（2026-11-07）
+- **用户裁定：不商用，自用。** CC BY-NC-SA 4.0 仅限制**商业**再分发/再利用；个人自用（打印、训练、把玩）不受限。故该缺陷对当前项目目的**不适用**，无需 mitigation。
+- **查实事实（备查）**：① 官方 `pollen-robotics/microduck` 整体 Apache-2.0，但 PR #73（2026-10-09）把 **3D 模型文件单独钉死 CC BY-NC-SA 4.0**（靠单独声明，不在主 LICENSE 内）。② HD-1910 复刻线（`.upstream/hd1910m`）的 STL 资源在 `microduck_rl/src/mjlab_microduck/robot/microduck/assets/*.stl`（ankle/head_shell/foot/trunk_base 等），是**复刻线自带的机身网格**（非直接搬运官方发布包）；其 LICENSE 由 `.upstream/hd1910m/THIRD_PARTY.md` 明定：本地集成快照**不改授第三方许可**，RL 部分保留 `microduck_rl/LICENSE`（Apache-2.0），但官方 3D 模型范围按上游 PR #73 为 CC BY-NC-SA 4.0。③ HD-1910 另有自建模证据：`robot_description/microduck.urdf` + 自定 `replica_mass_20261002.json` / `reference_hd1910_profile.json`（飞特版专属质量/惯量/作动器剖面）。
+- **结论**：若未来要商用，需另寻许可来源或自建模（换掉 CC BY-NC-SA 网格）；当前自用无碍。下单前仍需核的是 **CAD 来源是否可信 / 结构是否适配飞特舵机**（工程问题，非许可问题）。
 
 ---
 
