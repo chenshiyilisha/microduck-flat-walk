@@ -37,11 +37,14 @@ Gates before a single iteration is spent
 
 Usage
 -----
-    # today: prove the generated command is accepted, spend no GPU
+    # today: prove the generated command is accepted, spend no GPU (p3 = kp5 default)
     python tools/hd1910/resume_heading_run.py
 
+    # resume the kp8 (deploy-target) heading run instead
+    python tools/hd1910/resume_heading_run.py --plant p8
+
     # tomorrow: actually continue
-    python tools/hd1910/resume_heading_run.py --launch
+    python tools/hd1910/resume_heading_run.py --plant p8 --launch
 """
 
 from __future__ import annotations
@@ -69,7 +72,17 @@ RECIPE = [
     "--agent.logger", "tensorboard",
 ]
 TARGET_ITERS = 2500
-EXPECT_KP = 5.0
+
+# Which plant this resume targets. Mirrors tools/hd1910/explore_heading.sh's
+# PLANT switch so a p3 resume and a p8 resume cannot be confused (training on
+# one plant and believing it was the other is the XL330<->HD1910 incident).
+PLANT_PRESETS = {
+    "p3": dict(kp=5.0, run_pattern="*p3head_rw*", apply_plant="p3",
+               det_expect="hd1910_kp5", plant_id="hd1910_official_m6_kp5"),
+    "p8": dict(kp=8.0, run_pattern="*p8head*", apply_plant="p8",
+               det_expect="hd1910_kp8", plant_id="hd1910_official_m6_kp8"),
+}
+EXPECT_KP = 5.0  # backward-compat default (p3); overridden by --plant
 
 
 def latest_run(pattern: str = "*p3head_rw*") -> Path:
@@ -150,7 +163,7 @@ def check_heading_run(run_dir: Path) -> None:
         )
 
 
-def plant_check() -> str:
+def plant_check(preset: dict) -> str:
     r = subprocess.run(
         [sys.executable, str(APPLY), "--check"],
         cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -162,11 +175,11 @@ def plant_check() -> str:
     if not got:
         raise SystemExit(f"could not read kp_fw from apply_to_live --check:\n{out[-800:]}")
     kp = float(got.group(1))
-    if abs(kp - EXPECT_KP) > 1e-9:
+    if abs(kp - preset["kp"]) > 1e-9:
         raise SystemExit(
-            f"live plant reports kp_fw={kp:g}, expected {EXPECT_KP:g} (p3 preset). "
+            f"live plant reports kp_fw={kp:g}, expected {preset['kp']:g} ({preset['det_expect']}). "
             f"Different plant = different task (docs section 10); run "
-            f"`apply_to_live.py --plant p3` before resuming. Readback: {line}"
+            f"`apply_to_live.py --plant {preset['apply_plant']}` before resuming. Readback: {line}"
         )
     return line
 
@@ -190,18 +203,21 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-dir", default=None,
-                    help="run to continue (default: newest *p3head_rw* dir)")
+                    help="run to continue (default: newest dir for --plant)")
     ap.add_argument("--target", type=int, default=TARGET_ITERS,
                     help=f"absolute iteration the run should end at (default {TARGET_ITERS})")
     ap.add_argument("--run-name", default=None,
                     help="name for the continued run (default <orig>_resume<iter>)")
     ap.add_argument("--envs", type=int, default=4096)
+    ap.add_argument("--plant", choices=sorted(PLANT_PRESETS), default="p3",
+                    help="target plant (default p3 = kp5; p8 = kp8, the deploy target)")
     ap.add_argument("--skip-plant-check", action="store_true")
     ap.add_argument("--launch", action="store_true",
                     help="actually start training (default: dry-run the generated command)")
     a = ap.parse_args()
 
-    run_dir = Path(a.run_dir) if a.run_dir else latest_run()
+    preset = PLANT_PRESETS[a.plant]
+    run_dir = Path(a.run_dir) if a.run_dir else latest_run(preset["run_pattern"])
     run_dir = run_dir.resolve()
     check_heading_run(run_dir)
     ckpt, it_from_name = latest_ckpt(run_dir)
@@ -260,7 +276,7 @@ def main() -> int:
               f"{[(s, w) for s, w in stages]})")
 
     if not a.skip_plant_check:
-        print(f"plant      : {plant_check()}")
+        print(f"plant      : {plant_check(preset)}  (--plant {a.plant})")
 
     run_name = a.run_name or f"{run_dir.name.split('_', 2)[-1]}_resume{done}"
     cmd = build_cmd(run_dir, ckpt, done, remaining, run_name, a.envs)

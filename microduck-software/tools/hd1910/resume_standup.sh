@@ -15,6 +15,12 @@ MAX_ITERS="${MAX_ITERS:-4000}"
 SAVE="${SAVE:-100}"
 EXP="${EXP:-microduck_standup_hd1910}"
 TASK=Mjlab-StandUp-Flat-MicroDuck
+PLANT="${PLANT:-hd1910}"
+case "$PLANT" in
+  hd1910) DET_NAME=hd1910; KP_EXPECT=32.0; APPLY_PLANT=hd1910; JSON=m5.json; PLANT_ID=hd1910_openmicroduck_m5 ;;
+  p8)     DET_NAME=hd1910_kp8; KP_EXPECT=8.0; APPLY_PLANT=p8; JSON=official_m6_stslaw.json; PLANT_ID=hd1910_official_m6_kp8 ;;
+  *) echo "PLANT must be hd1910 or p8 (got '$PLANT')" >&2; exit 2 ;;
+esac
 export MICRODUCK_WARM_START="${MICRODUCK_WARM_START:-1}"
 
 if [ -z "${LOAD_RUN:-}" ] || [ -z "${LOAD_CKPT:-}" ]; then
@@ -36,25 +42,26 @@ fi
 
 echo "== GPU / GL =="
 "$PY" -c "import torch; assert torch.cuda.is_available(); print('cuda', torch.cuda.get_device_name(0))"
-"$PY" tools/hd1910/apply_to_live.py --plant hd1910
+echo "plant=$PLANT (expect detected=$DET_NAME kp_fw=$KP_EXPECT)"
+"$PY" tools/hd1910/apply_to_live.py --plant "$APPLY_PLANT"
 "$PY" tools/hd1910/apply_to_live.py --check
-DET=$("$PY" -c "import json,subprocess,sys; d=json.loads(subprocess.check_output([sys.executable,'tools/hd1910/apply_to_live.py','--check','--json'])); print(d['detected']); raise SystemExit(0 if d.get('detected')=='hd1910' and d.get('kp_fw')==32.0 else 1)")
+DET=$("$PY" -c "import json,subprocess,sys; d=json.loads(subprocess.check_output([sys.executable,'tools/hd1910/apply_to_live.py','--check','--json'])); print(d['detected']); raise SystemExit(0 if d.get('detected')=='$DET_NAME' and d.get('kp_fw')==$KP_EXPECT else 1)")
 echo "detected $DET"
 
 mkdir -p out
 "$PY" tools/hd1910/apply_to_live.py --check --json > "out/plant_${RUN}.json"
 "$PY" -c "
 import json, hashlib, pathlib
-p=pathlib.Path('tools/bam_params/hd1910/m5.json')
+p=pathlib.Path('tools/bam_params/hd1910/$JSON')
 meta={
   'run': '$RUN', 'task': '$TASK',
-  'plant': 'hd1910_openmicroduck_m5', 'kp_fw': 32.0,
+  'plant': '$PLANT_ID', 'kp_fw': $KP_EXPECT,
   'device': 'cuda:0', 'gpu_ids': [0], 'mujoco_gl': 'glfw',
-  'm5_sha256_16': hashlib.sha256(p.read_bytes()).hexdigest()[:16],
+  'sha256_16': hashlib.sha256(p.read_bytes()).hexdigest()[:16],
   'envs': $ENVS, 'max_iterations': $MAX_ITERS,
   'resume': True, 'load_run': '$LOAD_RUN', 'load_checkpoint': '$LOAD_CKPT',
   'warm_start': '$MICRODUCK_WARM_START',
-  'ref': 'StandUp same-recipe resume; HD1910 m5',
+  'ref': 'StandUp same-recipe resume; HD1910 $PLANT',
 }
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
 print('runmeta -> out/runmeta_${RUN}.json')
