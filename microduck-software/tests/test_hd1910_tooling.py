@@ -112,18 +112,25 @@ def test_onnx_plant_key_real_metas():
     # preset-id string runmeta (previously the only working case)
     assert rh._onnx_plant_key(
         ROOT / "out" / "hd1910_explore_4096x2000_1026_it1999.onnx") == "m5"
+    # deploy candidates SHIPPED WITHOUT a companion meta: the file-name heuristic
+    # is the only thing that catches them. The old code returned None here, so the
+    # guard silently passed the real policy that goes onto the robot.
+    assert rh._onnx_plant_key(ROOT / "out" / "p8head_2999.onnx") == "p8"
+    assert rh._onnx_plant_key(ROOT / "out" / "onnx_p3head030_it1600.onnx") == "p3"
+    # deprecated XL330-origin samples must NOT be inferred as an HD1910 plant
+    assert rh._onnx_plant_key(ROOT / "out" / "deploy61.onnx") is None
+    assert rh._onnx_plant_key(ROOT / "out" / "walk_std004_1250.onnx") is None
 
 
 def test_rehearsal_cross_plant_guard():
-    """A p8 ONNX rehearsed at m5 must warn; at p8 must not. Exercises the real
-    heading_meta nested-dict path (the deploy candidate), not a synthetic
-    happy-path string -- the old code crashed or stayed silent there. The guard
-    now resolves the plant from the meta alone, so the ONNX file need not exist."""
+    """A p8 deploy-candidate ONNX rehearsed at m5 must warn; at p8 must not.
+
+    Uses the REAL shipped candidate (``p8head_2999.onnx`` -- no companion meta),
+    so the guard is exercised on the artifact that actually goes onto the robot.
+    Its plant is resolved by the file-name heuristic, which means the ONNX file
+    need not even exist for the guard to fire."""
     rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
-    p8_onnx = ROOT / "out" / "p8head_030_4096x3000_resume2999_it2999.onnx"
-    if _meta_for(p8_onnx) is None:
-        import pytest
-        pytest.skip("p8head heading_meta not present")
+    p8_onnx = ROOT / "out" / "p8head_2999.onnx"
     # Case A: rehearse p8 onnx at m5 -> CROSS-PLANT warning.
     rh._STATE["key"] = "m5"
     buf = io.StringIO()
@@ -136,6 +143,25 @@ def test_rehearsal_cross_plant_guard():
     with contextlib.redirect_stdout(buf2):
         rh._inject_defaults(["--onnx", str(p8_onnx), "--out", "/tmp/x.json"], kp_fw=8.0)
     assert "CROSS-PLANT" not in buf2.getvalue()
+
+
+def test_rehearsal_plant_from_filename():
+    """The deploy candidates ship without a companion meta, so the file-name
+    heuristic must resolve them -- and must NOT invent a plant for the
+    deprecated XL330-origin samples."""
+    rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
+    f = rh._plant_from_filename
+    assert f("p8head_2999") == "p8"
+    assert f("p8head_030_4096x3000_resume2999") == "p8"
+    assert f("p8ctl_030_1104") == "p8"
+    assert f("onnx_p3head030_it1600") == "p3"
+    assert f("p3head030_4096x2000_it1600") == "p3"
+    assert f("p3ctl_xxx") == "p3"
+    # anything ambiguous stays None, never guessed
+    assert f("hd1910_explore_4096x2000_1026_it1999") is None
+    assert f("deploy61") is None
+    assert f("walk56") is None
+    assert f("walk_std004_1250") is None
 
 
 def test_provenance_keys():

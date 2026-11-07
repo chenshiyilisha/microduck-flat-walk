@@ -171,14 +171,40 @@ def _normalize_plant(raw: object) -> str | None:
     return None
 
 
-def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
-    """Best-effort plant preset key of an ONNX, read from its companion meta.
+def _plant_from_filename(stem: str) -> str | None:
+    """Infer the plant preset key from an ONNX filename when no companion meta
+    exists.
 
-    The ONNX name is ``<RUN>_it<iter>.onnx``; the run is recoverable by stripping
-    ``_it<digits>``, and the training ``.sh`` writes ``out/runmeta_<RUN>.json``
-    (plain runs) or ``out/heading_meta_<RUN>.json`` (heading runs). Returns the
-    preset key, or ``None`` when there is no companion meta (e.g. an ad-hoc ONNX)
-    — callers must treat ``None`` as "unknown", never as a match.
+    The deploy-candidate exports ship with a short name and NO runmeta /
+    heading_meta — ``p8head_2999.onnx`` -> p8, ``onnx_p3head030_it1600.onnx`` ->
+    p3 — so the meta lookup alone returns ``None`` and the cross-plant guard
+    silently passes the single most important policy. Only names that
+    *explicitly* carry the plant target are inferred; anything ambiguous stays
+    ``None`` so the guard reports "unknown" rather than guessing (a wrong guess
+    would either block a valid rehearsal or pass a real mismatch). The
+    deprecated XL330-origin samples (deploy61, walk56, walk_std*) deliberately
+    fall through to ``None``.
+    """
+    for prefix, key in (
+        ("p8head", "p8"), ("p8ctl", "p8"),
+        ("p3head", "p3"), ("p3ctl", "p3"),
+        ("onnx_p3", "p3"),
+    ):
+        if stem == prefix or stem.startswith(prefix) or f"_{prefix}" in stem:
+            return key
+    return None
+
+
+def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
+    """Best-effort plant preset key of an ONNX.
+
+    Resolution order, so the guard never silently passes the deploy candidate:
+      1. companion meta (runmeta_<RUN>.json / heading_meta_<RUN>.json) ->
+         ``_normalize_plant`` (preset-id string, DETECTED string, or nested dict)
+      2. file-name heuristic (deploy candidates ship without a companion meta)
+
+    Returns the preset key, or ``None`` when neither resolves — callers treat
+    ``None`` as "unknown", never as a match.
     """
     stem = onnx.stem
     run = stem
@@ -189,16 +215,20 @@ def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
     if not meta.is_file():
         # Heading runs record provenance under out/heading_meta_<run>.json too.
         meta = ROOT / "out" / f"heading_meta_{run}.json"
-    if not meta.is_file():
-        return None
-    try:
-        d = json.load(open(meta))
-    except (OSError, ValueError):
-        return None
-    raw = d.get("plant")
-    if raw is None:
-        raw = (d.get("provenance") or {}).get("plant")
-    return _normalize_plant(raw)
+    if meta.is_file():
+        try:
+            d = json.load(open(meta))
+        except (OSError, ValueError):
+            d = {}
+        raw = d.get("plant")
+        if raw is None:
+            raw = (d.get("provenance") or {}).get("plant")
+        resolved = _normalize_plant(raw)
+        if resolved is not None:
+            return resolved
+    # 2) file-name heuristic for deploy candidates without a companion meta
+    #    (e.g. p8head_2999.onnx -> p8, onnx_p3head030_it1600.onnx -> p3).
+    return _plant_from_filename(stem)
 
 
 def _rel(p: pathlib.Path) -> str:
