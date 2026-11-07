@@ -126,6 +126,7 @@ def main() -> None:
     max_steps = args.max_steps or int(env.max_episode_length)
 
     all_fall, all_surv, all_rew = [], [], []
+    all_ws, all_glide = [], []  # "actually rolling?" signals (reward-weighted)
     for seed in range(args.seeds):
         torch.manual_seed(seed)
         obs, _ = env.reset()
@@ -133,6 +134,8 @@ def main() -> None:
         fell = torch.zeros(N, dtype=torch.bool, device=device)
         surv = torch.zeros(N, device=device)
         step_rew = 0.0
+        ws_sum = 0.0
+        glide_sum = 0.0
         n = 0
         for _ in range(max_steps):
             with torch.no_grad():
@@ -143,10 +146,17 @@ def main() -> None:
             fell = fell | ft
             surv = torch.where(~ft, surv + 1.0, surv)
             step_rew += float(rew.float().mean().item())
+            log = extras.get("log", {}) or {}
+            if "Episode_Reward/wheel_speed" in log:
+                ws_sum += float(torch.as_tensor(log["Episode_Reward/wheel_speed"]).float().mean().item())
+            if "Episode_Reward/glide" in log:
+                glide_sum += float(torch.as_tensor(log["Episode_Reward/glide"]).float().mean().item())
             n += 1
         all_fall.append(float(fell.float().mean().item()))
         all_surv.append(float(surv.float().mean().item()))
         all_rew.append(step_rew / max(n, 1))
+        all_ws.append(ws_sum / max(n, 1))
+        all_glide.append(glide_sum / max(n, 1))
 
     env.close()
 
@@ -162,6 +172,8 @@ def main() -> None:
         "mean_survival_steps": round(float(np.mean(all_surv)), 1),
         "mean_survival_s": round(float(np.mean(all_surv)) * 0.02, 2),
         "mean_step_reward": round(float(np.mean(all_rew)), 4),
+        "mean_wheel_speed_reward": round(float(np.mean(all_ws)), 4),
+        "mean_glide_reward": round(float(np.mean(all_glide)), 4),
         "note": note,
     }
     if args.json:
@@ -176,6 +188,8 @@ def main() -> None:
     print(f"fall_rate            {report['fall_rate']*100:.1f}%")
     print(f"mean survival        {report['mean_survival_s']:.1f} s  ({report['mean_survival_steps']:.0f} steps)")
     print(f"mean step reward     {report['mean_step_reward']:.3f}")
+    print(f"mean wheel_speed rew {report['mean_wheel_speed_reward']:.3f}  (rolling signal)")
+    print(f"mean glide rew       {report['mean_glide_reward']:.3f}  (rolling signal)")
     if policy_format == "onnx":
         print(f"[cross-plant] official B代 ONNX on HD-1910 plant, not the policy's native score")
     else:

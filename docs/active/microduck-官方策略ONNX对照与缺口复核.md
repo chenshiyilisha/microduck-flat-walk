@@ -98,3 +98,4 @@
   - ONNX 基线：`--onnx roller.onnx --action-scale 0.8`（忠实还原 manifest 的 runtime 0.8 缩放）。
   - 我方 `.pt`：原生输出，无外部缩放（rsl_rl actor 已在其动作空间内学习）。
   - 判据：`fall_rate`（ONNX 基线 17.2%）须显著下降才证明 HD-1910 重训必要且成功；`mean_survival` 在 perpetual 任务下为「首次倒地前平均存活步」，作为辅证。
+  - **追加"真在滑吗"指标**（避免"2% 摔但轮子不动"的伪胜利）：eval 从 `extras['log']` 累计 `Episode_Reward/wheel_speed`(权重10) 与 `Episode_Reward/glide`(权重4) 的步均奖励，作为 rolling signal。最终对比时 ONNX 基线与新 `.pt` **同设置同跑**，让摔率 + 滑行信号都苹果对苹果——已验证 `eval_roller_onnx.py` 能稳定输出这两字段。
