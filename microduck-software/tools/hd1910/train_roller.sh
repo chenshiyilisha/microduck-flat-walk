@@ -24,6 +24,7 @@ PY=.venv-mjlab/Scripts/python.exe
 ENVS="${ENVS:-64}"
 ITERS="${ITERS:-5}"
 SAVE="${SAVE:-${ITERS}}"
+SEED="${SEED:-42}"   # fixed seed -> reproducible run, captured in provenance
 RUN="${1:-hd1910_roller_${ENVS}x${ITERS}_$(date +%m%d_%H%M)}"
 TASK=Mjlab-Velocity-Flat-MicroDuck-Rollers
 DEVICE="${MICRODUCK_DEVICE:-cuda:0}"
@@ -60,6 +61,7 @@ meta={
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
 print('runmeta -> out/runmeta_${RUN}.json')
 "
+"$PY" tools/hd1910/log_run_provenance.py --run "$RUN" --seed "$SEED" --via "$0"
 
 LOG="out/train_${RUN}.log"
 echo "== roller train $RUN envs=$ENVS iters=$ITERS (GPU cuda:0) =="
@@ -75,6 +77,7 @@ set +e
   --agent.logger tensorboard \
   --agent.experiment-name microduck_roller_hd1910 \
   --agent.run-name "$RUN" \
+  --agent.seed "$SEED" \
   > "$LOG" 2>&1
 RC=$?
 set -e

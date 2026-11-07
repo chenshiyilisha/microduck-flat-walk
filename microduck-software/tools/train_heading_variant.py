@@ -170,6 +170,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -177,6 +178,11 @@ from typing import Any
 import mjlab
 import mjlab.tasks  # noqa: F401  (populates the task registry)
 import tyro
+
+# Provenance capture (git commit / diff fingerprint / seed / versions) so every
+# heading run is reproducible. Kept in the hd1910 tool dir as a shared module.
+sys.path.insert(0, str(Path(__file__).resolve().parents[0] / "hd1910"))
+from _provenance import capture_provenance  # noqa: E402
 
 DEFAULT_TASK = "Mjlab-Velocity-Flat-MicroDuck"
 
@@ -809,6 +815,9 @@ def main() -> int:
         "cfg_sha256_16": _sha16(live / "microduck_velocity_env_cfg.py"),
         "mdp_sha256_16": _sha16(live / "mdp.py"),
         "passthrough_args": passthrough,
+        # Reproducibility block: git commit + uncommitted-diff fingerprint + seed
+        # + dependency versions. Lets a good run be identified and re-run later.
+        "provenance": capture_provenance(ROOT),
     }
 
     out_dir = Path("out")

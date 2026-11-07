@@ -14,6 +14,7 @@ ENVS="${ENVS:-1024}"
 MAX_ITERS="${MAX_ITERS:-4000}"
 SAVE="${SAVE:-100}"
 EXP="${EXP:-microduck_standup_hd1910}"
+SEED="${SEED:-42}"   # fixed seed -> reproducible run, captured in provenance
 TASK=Mjlab-StandUp-Flat-MicroDuck
 PLANT="${PLANT:-hd1910}"
 case "$PLANT" in
@@ -66,6 +67,7 @@ meta={
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
 print('runmeta -> out/runmeta_${RUN}.json')
 "
+"$PY" tools/hd1910/log_run_provenance.py --run "$RUN" --seed "$SEED" --via "$0"
 
 LOG="out/train_${RUN}.log"
 echo "== StandUp resume $RUN envs=$ENVS max_iters=$MAX_ITERS from $LOAD_RUN/$LOAD_CKPT =="
@@ -84,6 +86,7 @@ set +e
   --agent.logger tensorboard \
   --agent.experiment-name "$EXP" \
   --agent.run-name "$RUN" \
+  --agent.seed "$SEED" \
   > "$LOG" 2>&1
 RC=$?
 set -e

@@ -22,6 +22,7 @@ PY=.venv-mjlab/Scripts/python.exe
 ENVS="${ENVS:-1024}"
 ITERS="${ITERS:-1000}"
 SAVE="${SAVE:-100}"
+SEED="${SEED:-42}"   # fixed seed -> reproducible run, captured in provenance
 RUN="${1:-hd1910_groundpick_${ENVS}x${ITERS}_$(date +%m%d_%H%M)}"
 TASK=Mjlab-GroundPick-Flat-MicroDuck
 
@@ -54,6 +55,7 @@ meta={
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
 print('runmeta -> out/runmeta_${RUN}.json')
 "
+"$PY" tools/hd1910/log_run_provenance.py --run "$RUN" --seed "$SEED" --via "$0"
 
 LOG="out/train_${RUN}.log"
 echo "== GroundPick explore $RUN envs=$ENVS iters=$ITERS (GPU) =="
@@ -69,6 +71,7 @@ set +e
   --agent.logger tensorboard \
   --agent.experiment-name microduck_groundpick_hd1910 \
   --agent.run-name "$RUN" \
+  --agent.seed "$SEED" \
   > "$LOG" 2>&1
 RC=$?
 set -e

@@ -14,6 +14,7 @@ PY=.venv-mjlab/Scripts/python.exe
 ENVS="${ENVS:-1024}"
 ITERS="${ITERS:-1000}"
 SAVE="${SAVE:-100}"
+SEED="${SEED:-42}"   # fixed seed -> reproducible run, captured in provenance
 PLANT="${PLANT:-hd1910}"
 case "$PLANT" in
   hd1910) DET_NAME=hd1910; KP_EXPECT=32.0; APPLY_PLANT=hd1910; JSON=m5.json; PLANT_ID=hd1910_openmicroduck_m5 ;;
@@ -52,6 +53,7 @@ meta={
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
 print('runmeta -> out/runmeta_${RUN}.json')
 "
+"$PY" tools/hd1910/log_run_provenance.py --run "$RUN" --seed "$SEED" --via "$0"
 
 LOG="out/train_${RUN}.log"
 echo "== StandUp explore $RUN envs=$ENVS iters=$ITERS (GPU) =="
@@ -67,6 +69,7 @@ set +e
   --agent.logger tensorboard \
   --agent.experiment-name microduck_standup_hd1910 \
   --agent.run-name "$RUN" \
+  --agent.seed "$SEED" \
   > "$LOG" 2>&1
 RC=$?
 set -e
