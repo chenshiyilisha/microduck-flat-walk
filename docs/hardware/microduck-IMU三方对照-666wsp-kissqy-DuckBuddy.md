@@ -4,6 +4,24 @@ _2026-11-05。三方定位：**666wsp** = 通用 IMU 板厂商（IMU_TO_DXL）�
 
 **一句话结论：IMU 板固件决定了同步读里 IMU 的排队位置，而 666wsp 与 kissqy 的固件都要求「IMU 排第一位」，DuckBuddy 的 robotd（HD1910/feetech 后端）却硬编码「IMU 排最后」且总线跑 500k。两者不能直接对接——要么改 robotd 的排队顺序，要么用 DuckBuddy 自己的 IMU 固件/板。原生匹配只有 DuckBuddy 的 PDB/IMU 板。**
 
+## 0.1 标定流程权威源（2026-11-07 补 · 修正原缺口假设）
+
+> 原"缺资料"复核把 `build-tutorial` 的 `bno08x_calibrate_ui.py` 列为应引的 IMU 标定流程——**核实后发现这是错配**：该 build-tutorial（AI-FanGe/Microduck-build-tutorial 中文复刻）IMU 用的是 **BNO08x** 系列（README BOM 与 `IMU_MOUNT_QUAT` 朝向约定），而我们的 HD-1910 线是 **LSM6DSV16X**（§0.5 三方同芯片），**不是同一颗**，其 BNO08x 标定脚本不可直接套用。
+
+正确的 LSM6DSV16X 相关权威源（均本地 `.upstream`）：
+
+- `community-kit/firmware/v1/docs/lsm6dsv16x_driver_spec.md` —— LSM6DSV16X 驱动规格（寄存器/量程/融合）。
+- DuckBuddy `imu-feetech` 固件（STM32G031 + LSM6DSV16X，500k，原生匹配，见 §0.5）—— 这是和我们硬件真正对口的 IMU 实现。
+- 安装朝向约定：build-tutorial 的 `IMU_MOUNT_QUAT` 思路可借鉴，但取值必须按 LSM6DSV16X 在 HD-1910 上的实际安装方向重新确定（不可抄 BNO08x 的值）。
+
+真正对 HD-1910 **整机标定（关节零位/方向）** 有用、且开源可查的"标定流程"参照是社区工具（见 `awesome-microduck` 的 *Calibration and Assembly Tools* 段）：
+
+- `janauto/microduck-calibration-guide` —— 只读关节方向核对，不驱舵机，动画比对预期运动。
+- `lxm/microduck-maker` —— 逐关节零位标定 + 3D 参考 + 装配检查（含 kissqy 非商用例）。
+- `jackwuwei/microduck-tools` —— SSH/串口零位标定工作台 + 打印标定托盘。
+
+⇒ 本笔记后续若补"标定"章节，应引上述 LSM6DSV16X + 社区工具，而非 build-tutorial 的 BNO08x 脚本。
+
 ## 0. 先澄清一个常见误判：A733 的 UART7 上不了真 1 Mbps ≠ 性能不如 Radxa
 
 DuckBuddy INTERFACE-CN.md 注明「A733 的 UART7 设 1 Mbps 实际只有约 750 kbps，所以统一用 500k」。这**不是 A733 的劣势**：

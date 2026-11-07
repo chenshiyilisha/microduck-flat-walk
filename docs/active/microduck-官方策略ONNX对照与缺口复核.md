@@ -1,7 +1,7 @@
 # 官方策略 ONNX 对照与资料缺口复核（2026-11-07）
 
 > 收口两条元任务：① 挖掘参考过的开源项目还有哪些可用；② 复核前面是否有缺资料对照的环节。
-> 落实三个缺口：**缺口5**（GroundPick 未与官方 `alpha_ground_pick.onnx` 对照）、**缺口1**（MicroDock 未挖 v2 / scoot_dock.onnx）、**缺口2**（轮滑未引 roller 生态）。
+> 落实 5 个缺口：**缺口5**（GroundPick 未与官方 `alpha_ground_pick.onnx` 对照）、**缺口1**（MicroDock 未挖 v2 / scoot_dock.onnx）、**缺口2**（轮滑未引 roller 生态）、**缺口3**（Backlash 未引官方 walk-flat 齿隙微调）、**缺口4**（IMU 未引标定流程——已修正为 LSM6DSV16X 正确源，原 build-tutorial 是 BNO08x 错配）。
 > 所有 ONNX 来自 `pollen-robotics/microduck-policies`（HuggingFace，apache-2.0，11 个 ONNX + `manifest.json`）。
 
 ## 0. 官方策略仓库与 ONNX 规格【核实】
@@ -74,3 +74,12 @@
 - 三个对照的"官方 ONNX 在 HD-1910 env"都是**跨机型压力测试**（官方 B代训练 vs 本 fork HD-1910 env），**不是官方策略的原生分数**；原生分数需 B代 env，本 fork 未保留可加载的 B代训练环境。
 - 这反而强化了项目主线结论：**HD-1910 复刻线必须做 plant 专用重训**，GroundPick 已用 96.9% 闭环证明，轮滑预期同样适用。
 - 可复现：ONNX 由 `hf-mirror.com/pollen-robotics/microduck-policies/resolve/main/<f>` 重新拉取（已落 `out/official_policies/`，但 `*.onnx` 被 gitignore，属可复现产物）。
+
+## 5. 缺口3 / 缺口4 收口（2026-11-07 补）
+
+原"复核缺资料环节"列了 5 个缺口，前三个（5/1/2）已在 §1–§3 收口。剩下两个：
+
+- **缺口3（Backlash 未引官方 walk-flat 齿隙微调）— 已收口**：在 `docs/active/microduck-开源对照地图.md` §3 补了 `witcheer/microduck-walk-flat` 的权威齿隙微调配方（v1 平地行走 + `Mjlab-Velocity-Flat-Backlash-MicroDuck` 每舵机 ±1° 齿隙续训 3000 iter；齿隙仿真 20s 不倒率 2/5→4/5，真机未测）。这正是我们 HD-1910 Backlash 系列任务借鉴的范式。
+- **缺口4（IMU 未引 build-tutorial 标定流程）— 修正，不是盲引**：核实发现 build-tutorial（AI-FanGe 中文复刻）的 `bno08x_calibrate_ui.py` 是 **BNO08x** 标定，而我们 HD-1910 线是 **LSM6DSV16X**（§0.5 三方同芯片）——**芯片错配，不可直接套用**。已在 `docs/hardware/microduck-IMU三方对照-666wsp-kissqy-DuckBuddy.md` §0.1 改写为正确权威源：`community-kit` 的 `lsm6dsv16x_driver_spec.md` + DuckBuddy `imu-feetech`（同芯片同传感器），外加 HD-1910 整机标定社区工具（janauto/lxm/jackwuwei）。这条正好印证"查全比查到更重要"——只看到"有标定脚本"就引，会引错芯片。
+
+⇒ 5 个缺口至此全部收口/修正，元任务（挖掘开源资产 + 复核缺资料环节）闭环。

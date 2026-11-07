@@ -132,6 +132,8 @@ manifest.json
 
 ⇒ 所谓「出厂基线 0.4 m/s」是命令值，实际跟踪很差。**我们训出 0.15–0.2 m/s 属正常。**
 
+**齿隙（backlash）微调的官方参照配方**：`witcheer/microduck-walk-flat`（HF `hf-policies` 本地副本 `walk-flat.README.md`）给出 B代抗齿隙 walk 的权威做法——在 v1 平地行走基础上，用 `Mjlab-Velocity-Flat-Backlash-MicroDuck`（**每舵机 ±1° 齿隙**）继续训 3000 iter（总 4000+3000，4096 envs，单卡 RTX 5090 约 57 min）。同一齿隙仿真里 v2 的 20 s 不倒率从 v1 的 2/5 升到 4/5（小样本，训练期摔倒率未改善），**真机尚未测**（上游 `pollen-robotics/microduck_rl` develop 分支 `53b8971b6`）。这就是我们 HD-1910 Backlash 系列任务（`Mjlab-*-Backlash-MicroDuck`）直接借鉴的范式——证明确实走"先平地、再叠齿隙续训"这条路，且**真机有效性仍待验证**（与我们的处境一致）。
+
 ## 4. 可续训的 `.pt`（想从别人肩膀上起步时）
 
 | 权重 | 内容 | 备注 |
