@@ -126,14 +126,59 @@ def _flag_value(argv: list[str], flag: str) -> str | None:
         return None
 
 
-def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
-    """Best-effort plant of an ONNX, read from its companion runmeta.
+def _normalize_plant(raw: object) -> str | None:
+    """Map a raw ``plant`` field — however the training side wrote it — to a
+    rehearsal preset key (``p3|p8|m5|ftservo``), or ``None`` if unresolvable.
 
-    The training ``.sh`` writes ``out/runmeta_<RUN>.json`` with a top-level
-    ``plant`` (the plant *id*). The ONNX name is ``<RUN>_it<iter>.onnx``, so the
-    run is recoverable by stripping ``_it<digits>``. Returns the preset key, or
-    ``None`` when there is no companion runmeta (e.g. an ad-hoc ONNX) — callers
-    must treat ``None`` as "unknown", never as a match.
+    The training side emits the plant under *two* incompatible shapes and *two*
+    name namespaces, and the rehearsal guard must understand all of them or it
+    silently (or crash-ingly) lets a cross-plant rehearsal through:
+
+    * runmeta_*.json  -> top-level ``plant`` is a **string**. It is either the
+      rehearsal preset *id* (``hd1910_official_m6_kp8``) or the training-side /
+      DETECTED name (``hd1910_kp8``); only the former was ever in
+      ``PLANT_ID_TO_KEY``, so the latter used to return ``None``.
+    * heading_meta_*.json -> top-level ``plant`` is a **dict** whose ``name`` is
+      the training-side name. For the generic name ``"hd1910"`` the ``kp_fw``
+      field is the only disambiguator (m5=32, p3=5, p8=8) — and passing the dict
+      straight into ``PLANT_ID_TO_KEY.get`` raised ``TypeError: unhashable``,
+      taking the whole rehearsal down on the real deploy-candidate ONNX.
+
+    Never raises; a crash here would disable the very guard that is supposed to
+    stop the XL330<->HD1910 plant-mismatch incident from repeating.
+    """
+    name = None
+    kp_fw = None
+    if isinstance(raw, str):
+        name = raw
+    elif isinstance(raw, dict):
+        name = raw.get("name")
+        kp_fw = raw.get("kp_fw")
+    else:
+        return None
+
+    # 1) Rehearsal preset id (the canonical single source of truth in plant_spec).
+    if name in PLANT_ID_TO_KEY:
+        return PLANT_ID_TO_KEY[name]
+    # 2) Training-side / DETECTED name (the constants-file "detected" string).
+    if name in DETECTED_TO_PRESET:
+        key = DETECTED_TO_PRESET[name]
+        # The generic name "hd1910" is shared by three plants; kp_fw decides.
+        if name == "hd1910" and kp_fw is not None:
+            kp_map = {32.0: "m5", 5.0: "p3", 8.0: "p8"}
+            return kp_map.get(float(kp_fw), key)
+        return key
+    return None
+
+
+def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
+    """Best-effort plant preset key of an ONNX, read from its companion meta.
+
+    The ONNX name is ``<RUN>_it<iter>.onnx``; the run is recoverable by stripping
+    ``_it<digits>``, and the training ``.sh`` writes ``out/runmeta_<RUN>.json``
+    (plain runs) or ``out/heading_meta_<RUN>.json`` (heading runs). Returns the
+    preset key, or ``None`` when there is no companion meta (e.g. an ad-hoc ONNX)
+    — callers must treat ``None`` as "unknown", never as a match.
     """
     stem = onnx.stem
     run = stem
@@ -150,10 +195,10 @@ def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
         d = json.load(open(meta))
     except (OSError, ValueError):
         return None
-    pid = d.get("plant") or (d.get("provenance") or {}).get("plant")
-    if pid is None:
-        return None
-    return PLANT_ID_TO_KEY.get(pid)
+    raw = d.get("plant")
+    if raw is None:
+        raw = (d.get("provenance") or {}).get("plant")
+    return _normalize_plant(raw)
 
 
 def _rel(p: pathlib.Path) -> str:
@@ -168,8 +213,14 @@ def _report_onnx(onnx: pathlib.Path, out_path: pathlib.Path) -> None:
     """Say which policy is being judged -- silence here is how the wrong ckpt wins."""
     import datetime as _dt
 
-    mtime = _dt.datetime.fromtimestamp(onnx.stat().st_mtime)
-    print(f"onnx: {_rel(onnx)}  ({onnx.stat().st_size / 1e3:.0f} kB, "
+    try:
+        st = onnx.stat()
+    except OSError:
+        print(f"onnx: {_rel(onnx)}  (file missing -- cannot read size/provenance)")
+        print(f"out : {_rel(out_path)}")
+        return
+    mtime = _dt.datetime.fromtimestamp(st.st_mtime)
+    print(f"onnx: {_rel(onnx)}  ({st.st_size / 1e3:.0f} kB, "
           f"{mtime:%m-%d %H:%M})")
     print(f"out : {_rel(out_path)}")
     ckpt, it = _onnx_companion(onnx)
@@ -177,11 +228,11 @@ def _report_onnx(onnx: pathlib.Path, out_path: pathlib.Path) -> None:
         print("  (no sibling model_*.pt -- provenance of this ONNX is unknown)")
         return
     print(f"  companion checkpoint: {ckpt.name}  (iter {it})")
-    lag = ckpt.stat().st_mtime - onnx.stat().st_mtime
+    lag = ckpt.stat().st_mtime - st.st_mtime
     if lag > 5:
         print(f"  ⚠️  onnx is {lag:.0f}s older than {ckpt.name} -- it may not match "
               f"that checkpoint; re-export before trusting the numbers")
-    if _dt.datetime.now().timestamp() - onnx.stat().st_mtime < 120:
+    if _dt.datetime.now().timestamp() - st.st_mtime < 120:
         print("  ⚠️  this file was written <2 min ago -- a live training run may "
               "still be overwriting it")
 
@@ -341,9 +392,11 @@ def _inject_defaults(argv: list[str], kp_fw: float) -> list[str]:
         onnx = pathlib.Path(_flag_value(out, "--onnx") or "")
     # Cross-plant guard: the ONNX was trained on some plant; rehearsing it at a
     # different one is the XL330<->HD1910 incident all over again. Read the
-    # companion runmeta (best effort) and refuse the mismatch loudly.
+    # companion meta (best effort) and refuse the mismatch loudly. We check as
+    # long as the plant is resolvable from the meta -- the ONNX file itself need
+    # not exist yet (e.g. a dry-run guard before the export lands).
     rehearse_key = _STATE["key"]
-    if onnx and onnx.is_file():
+    if onnx:
         onnx_key = _onnx_plant_key(onnx)
         if onnx_key and onnx_key != rehearse_key:
             print(

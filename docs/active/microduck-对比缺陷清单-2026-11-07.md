@@ -14,6 +14,7 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - 「缺陷 4：缺 tests/ 回归套件」**已于 2026-11-07 补齐**（`tests/test_hd1910_configs.py`，9 项，CPU 可跑，live kp8 实测通过）。
 - **缺陷 1（真机加载自检）与缺陷 2（训练 provenance）已于 2026-11-07 当晚补齐**：conductor `pre_deploy_check.py` 串起 contract/bundle/numeric/toml 四关，实测抓到参考 `robotd_hd1910_mode0.toml` 缺 `bus.joint_ids` 的真实 blocker；provenance 已并入 `heading_meta` 与所有 `runmeta`（含给 4 个启动器补固定 seed）。
 - **Pass5（2026-11-07 收口）— 新工具回归测试补齐**：前序 Pass 落地的 conductor / rehearsal 封装 / provenance 三个新工具原本无回归测试；新增 `microduck-software/tests/test_hd1910_tooling.py`（5 项，CPU-only，不烧 GPU），锁死 conductor `_classify` 返回码分类、`--selftest` 四关全绿、rehearsal 的 ONNX↔plant 跨 plant 守卫（m5@p8 告警/m5@m5 不告警）、provenance 关键键齐全。实测 `5 passed`。至此**不烧 GPU 的工程 / 部署就绪缺口全部收口**。
+- **Pass6（2026-11-07 晚 · 二轮循环）—— 抓到并修掉一个真 bug：跨 plant 守卫对真实产物全面失效**。Pass5 测试只喂了理想的 preset-id 串，假绿。复检发现训练侧实际写出**两种 `plant` 格式**：runmeta 字符串（含 `hd1910_kp8`/`hd1910_kp5` 训练侧命名串）+ heading_meta 嵌套 dict（`name='hd1910' kp_fw=N`）。而 `_onnx_plant_key` 对嵌套 dict 直接 `TypeError` 崩溃、对训练侧串返回 `None`——**部署候选 p8head ONNX 彩排会整段崩溃、且跨 plant 守卫对大多数真实格式死掉**（正是它要防的 XL330↔HD1910 事故）。已加 `_normalize_plant` 统一两套命名 + kp_fw 消歧，守卫改为「能解析就查、不要求 ONNX 文件存在」，`_report_onnx` 容错缺失文件；测试扩到 6 项（覆盖全部真实格式 + 真实 p8head heading_meta 派生 ONNX 在 m5 下触发 CROSS-PLANT、在 p8 下不触发）。实测 `6 passed`（全 suite 15 passed）。**结论修正**：Pass5 称「收口」过早——守卫本身有 bug，是靠 Pass6 才真正收口。
 
 ---
 
@@ -127,7 +128,7 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 4. **动作补全**：优先 SitStand + VelStand（缺陷 7 时序编排一起做），tricks 类最后。
 5. **齿隙（缺陷 5）**：硬件/电源到位后换 7.4 V 重测。
 6. **re-sync（缺陷 8）** ✅ 已逐条核：pickup detector 不在 HD-1910 robotd 世代（暂缓）；转向/yaw 修复归 P4 velstand 训练 re-sync。详见缺陷 8。
-7. **新工具回归测试（Pass5）** ✅ 已落：`tests/test_hd1910_tooling.py`（5 passed @ CPU），覆盖 conductor 返回码分类 / `--selftest` 四关 / rehearsal 跨 plant 守卫 / provenance 关键键。闭环判定：离线 ONNX→onnxruntime 推理门禁已由 conductor `numeric` 关实现；至此不烧 GPU 的部署/工程缺口全部收口。
+7. **新工具回归测试（Pass5→Pass6 真正收口）** ✅ 已落并修 bug：`tests/test_hd1910_tooling.py` 原 5 项（Pass5）；**Pass6 扩到 6 项**——发现并修掉 `_onnx_plant_key` 对真实产物（heading_meta 嵌套 dict 崩溃 + 训练侧命名串失配）全面失效的 bug，守卫现覆盖全部真实格式。覆盖 conductor 返回码分类 / `--selftest` 四关 / rehearsal 跨 plant 守卫（含真实 p8head 部署候选 ONNX）/ provenance 关键键。实测 `6 passed`（全 suite 15 passed）。
    - 剩余 OPEN（**非软件缺口**）：真机端到端验证（硬件未到货）、`bus.joint_ids` 真机逐关节复核（`calibration_verified=false`）、齿隙在 7.4 V 正确电压下重测（台架 4.6 V 欠压）、P4 训练侧转向/yaw re-sync。
 
 ---

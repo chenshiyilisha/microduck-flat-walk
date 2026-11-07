@@ -50,33 +50,91 @@ def test_conductor_selftest_runs():
     assert proc.returncode == 0, proc.stderr[-2000:]
 
 
-def test_rehearsal_onnx_plant_key():
+def _meta_for(onnx: pathlib.Path) -> pathlib.Path | None:
+    """Locate the companion runmeta/heading_meta for an ONNX stem (or None)."""
+    run = onnx.stem
+    if "_it" in run:
+        run = run.rsplit("_it", 1)[0]
+    for name in (f"runmeta_{run}.json", f"heading_meta_{run}.json"):
+        p = ROOT / "out" / name
+        if p.is_file():
+            return p
+    return None
+
+
+def test_normalize_plant_all_formats():
+    """``_normalize_plant`` must understand every plant shape the training side
+    actually writes -- rehearsal preset-id string, training-side/DETECTED
+    string, and the nested-dict heading_meta disambiguated by kp_fw. The old
+    code raised TypeError on the nested dict and returned None on the
+    training-side strings, so the cross-plant guard was dead for the real
+    deploy-candidate ONNX."""
     rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
-    onnx = ROOT / "out" / "hd1910_explore_4096x2000_1026_it1999.onnx"
-    if not onnx.is_file():
-        import pytest
-        pytest.skip("m5 reference ONNX not present")
-    assert rh._onnx_plant_key(onnx) == "m5"
+    N = rh._normalize_plant
+    # rehearsal preset ids (single source of truth in plant_spec)
+    assert N("hd1910_openmicroduck_m5") == "m5"
+    assert N("hd1910_official_m6_kp8") == "p8"
+    assert N("hd1910_official_m6_kp5") == "p3"
+    assert N("hd1910_ftservo_official_m6") == "ftservo"
+    # training-side / DETECTED names (used by some runmetas)
+    assert N("hd1910_kp8") == "p8"
+    assert N("hd1910_kp5") == "p3"
+    assert N("hd1910_ftservo_m6") == "ftservo"
+    # nested-dict heading_meta
+    assert N({"name": "hd1910_kp8", "kp_fw": 8.0}) == "p8"
+    # generic "hd1910" name disambiguated by kp_fw -- the deploy-candidate path
+    assert N({"name": "hd1910", "kp_fw": 8.0}) == "p8"
+    assert N({"name": "hd1910", "kp_fw": 5.0}) == "p3"
+    assert N({"name": "hd1910", "kp_fw": 32.0}) == "m5"
+    # unresolvable -> None, never raises
+    assert N(None) is None
+    assert N({"name": "bogus"}) is None
+    assert N(123) is None
+
+
+def test_onnx_plant_key_real_metas():
+    """``_onnx_plant_key`` must resolve the *real* meta files on disk, including
+    the deploy-candidate p8head heading_meta (which used to raise TypeError)."""
+    rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
+    # deploy candidate: nested-dict heading_meta, name='hd1910_kp8'
+    assert rh._onnx_plant_key(
+        ROOT / "out" / "p8head_030_4096x3000_resume2999_it2999.onnx") == "p8"
+    # generic-name heading_meta disambiguated by kp_fw
+    assert rh._onnx_plant_key(
+        ROOT / "out" / "p8head_030_4096x3000_it2999.onnx") == "p8"
+    assert rh._onnx_plant_key(
+        ROOT / "out" / "p3head030_4096x2000_it1600.onnx") == "p3"
+    # training-side string runmetas (used to return None)
+    assert rh._onnx_plant_key(
+        ROOT / "out" / "hd1910_roller_formal_1107_formal_it100.onnx") == "p8"
+    assert rh._onnx_plant_key(
+        ROOT / "out" / "hd1910_kp5_head015_4096x4000_resume_1030_0841_it100.onnx") == "p3"
+    # preset-id string runmeta (previously the only working case)
+    assert rh._onnx_plant_key(
+        ROOT / "out" / "hd1910_explore_4096x2000_1026_it1999.onnx") == "m5"
 
 
 def test_rehearsal_cross_plant_guard():
-    """An m5 ONNX rehearsed at p8 must warn; at m5 must not."""
+    """A p8 ONNX rehearsed at m5 must warn; at p8 must not. Exercises the real
+    heading_meta nested-dict path (the deploy candidate), not a synthetic
+    happy-path string -- the old code crashed or stayed silent there. The guard
+    now resolves the plant from the meta alone, so the ONNX file need not exist."""
     rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
-    onnx = ROOT / "out" / "hd1910_explore_4096x2000_1026_it1999.onnx"
-    if not onnx.is_file():
+    p8_onnx = ROOT / "out" / "p8head_030_4096x3000_resume2999_it2999.onnx"
+    if _meta_for(p8_onnx) is None:
         import pytest
-        pytest.skip("m5 reference ONNX not present")
-    # Case A: rehearse m5 onnx at p8 (live) -> CROSS-PLANT warning.
-    rh._STATE["key"] = "p8"
+        pytest.skip("p8head heading_meta not present")
+    # Case A: rehearse p8 onnx at m5 -> CROSS-PLANT warning.
+    rh._STATE["key"] = "m5"
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rh._inject_defaults(["--onnx", str(onnx), "--out", "/tmp/x.json"], kp_fw=8.0)
+        rh._inject_defaults(["--onnx", str(p8_onnx), "--out", "/tmp/x.json"], kp_fw=32.0)
     assert "CROSS-PLANT" in buf.getvalue()
-    # Case B: rehearse m5 onnx at m5 -> no warning.
-    rh._STATE["key"] = "m5"
+    # Case B: rehearse p8 onnx at p8 -> no warning.
+    rh._STATE["key"] = "p8"
     buf2 = io.StringIO()
     with contextlib.redirect_stdout(buf2):
-        rh._inject_defaults(["--onnx", str(onnx), "--out", "/tmp/x.json"], kp_fw=32.0)
+        rh._inject_defaults(["--onnx", str(p8_onnx), "--out", "/tmp/x.json"], kp_fw=8.0)
     assert "CROSS-PLANT" not in buf2.getvalue()
 
 
