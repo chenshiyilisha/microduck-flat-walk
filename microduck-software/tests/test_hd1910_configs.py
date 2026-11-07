@@ -14,58 +14,126 @@ HD-1910-specific failure modes recorded in the project memory:
 * The standup "freezing on back" fix must stay present: the
   ``ground_state_mix`` reverse-curriculum that ramps ``face_up_prob`` 0 -> 0.35.
 
-Requires an HD-1910 plant to be applied first
-(``tools/hd1910/apply_to_live.py --plant hd1910|hd1910_kp5|hd1910_kp8|hd1910_ftservo_m6``).
-If a non-HD-1910 plant (e.g. xl330) is live, the model/kinematics tests skip.
+Plant-independence (no environmental false-green)
+-------------------------------------------------
+These invariants describe the HD-1910 *robot* (kinematics, collision geoms,
+reward signs, standup curriculum). ``apply_to_live`` only swaps the actuator
+``_BAM_ACTUATOR_KWARGS`` block (json_path / kp_fw / motor_name) — it never
+touches the robot XML or the env-cfg reward/curriculum definitions. So the tests
+do NOT depend on which plant is currently "live":
+
+* The kinematic tests load each HD-1910 plant's constants **in isolation**
+  (``_load_constants_for_plant``), straight from source, without mutating the
+  live site-packages file. They therefore verify the HD-1910 robot on any host,
+  in CI, regardless of ``--plant`` choice.
+* The env-cfg tests assert plant-independent reward/curriculum definitions and
+  run unconditionally (the env-cfg module is identical across plants within this
+  fork).
+
+This replaces the old blanket ``skipif(not IS_HD1910)`` that silently skipped
+the whole file whenever a non-HD-1910 plant (e.g. xl330) was live — the tests
+then reported green while never having verified anything. The only remaining
+skip is genuine: when ``mjlab_microduck`` itself is not importable.
 
 Run:
     .venv-mjlab/Scripts/python.exe -m pytest tests/test_hd1910_configs.py -q
 """
 from __future__ import annotations
 
-import json
-import subprocess
+import importlib.util
+import os
 import sys
 from pathlib import Path
 
-import mujoco
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-PY = sys.executable
 
-HD1910_PLANTS = {"hd1910", "hd1910_kp5", "hd1910_kp8", "hd1910_ftservo_m6"}
+# The HD-1910 robot config is produced by swapping a single kwargs block inside
+# the live microduck_constants.py. We load it directly from source so the test
+# never depends on which plant is currently applied on this machine.
+sys.path.insert(0, str(REPO / "tools" / "hd1910"))
+
+# Every HD-1910 variant must produce the SAME kinematics — switching kp_fw
+# (P3<->P8) or the params JSON must not silently reshuffle joints or geoms.
+HD1910_PLANTS = ["hd1910", "hd1910_kp5", "hd1910_kp8", "hd1910_ftservo_m6"]
 
 
-def _live_plant() -> str | None:
-    out = subprocess.run(
-        [PY, str(REPO / "tools/hd1910/apply_to_live.py"), "--check", "--json"],
-        capture_output=True,
-        text=True,
-    )
-    if out.returncode != 0:
-        return None
+def _mjlab_importable() -> tuple[bool, str]:
     try:
-        return json.loads(out.stdout).get("detected")
-    except Exception:
-        return None
+        import mjlab_microduck.tasks  # noqa: F401  (side effect: registers tasks)
+    except Exception as e:  # pragma: no cover - depends on install state
+        return False, f"{type(e).__name__}: {e}"
+    return True, ""
 
 
-LIVE_PLANT = _live_plant()
-IS_HD1910 = LIVE_PLANT in HD1910_PLANTS
-
+_MJLAB_OK, _MJLAB_ERR = _mjlab_importable()
 pytestmark = pytest.mark.skipif(
-    not IS_HD1910,
-    reason=f"live plant {LIVE_PLANT!r} is not an HD-1910 variant; apply one first",
+    not _MJLAB_OK,
+    reason=f"mjlab_microduck not importable ({_MJLAB_ERR}); install the venv first",
 )
 
-import mjlab_microduck.tasks  # noqa: E402,F401  (side effect: registers tasks)
-from mjlab_microduck.robot.microduck_constants import (  # noqa: E402
-    MICRODUCK_WALK_ROBOT_CFG,
-    get_allcollisions_spec,
-    get_standup_spec,
-    SERVO_GEOM_SUFFIX,
-)
+
+def _load_constants_for_plant(plant: str):
+    """Load a fresh microduck_constants module with ``plant``'s actuator kwargs
+    injected, WITHOUT mutating the live site-packages file.
+
+    The robot XML paths and spec functions live in the shared template *outside*
+    the kwargs block, so they are identical to the live file; only the actuator
+    params differ. Writing the temp module next to the real one lets ``_ROBOT_DIR``
+    (derived from ``__file__``) resolve to the real robot XML. The temp file and
+    any bytecode are always cleaned up.
+    """
+    from apply_to_live import _find_kwargs_span
+    from plant_spec import LIVE_CONSTANTS, kwargs_block
+
+    src = LIVE_CONSTANTS.read_text(encoding="utf-8")
+    block = kwargs_block(plant) + "\n"
+    start, end = _find_kwargs_span(src)
+    new = src[:start] + block + src[end:]
+    tmp = LIVE_CONSTANTS.parent / f"_consts_{plant}_{os.getpid()}.py"
+    prev_dont_write = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    tmp.write_text(new, encoding="utf-8")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"_hd1910_consts_{plant}", str(tmp)
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = prev_dont_write
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    return mod
+
+
+def _joints(spec_fn) -> list[str]:
+    """Compile a spec *function* (e.g. ``mod.get_walk_spec``) and return its
+    joint names. The function is passed, not called, so callers pick which
+    spec (walk / allcollisions / standup) they want to inspect."""
+    import mujoco
+
+    m = spec_fn().compile()
+    return [
+        mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, i) for i in range(m.njnt)
+    ]
+
+
+def _actuated(joint_names: list[str]) -> list[str]:
+    return [n for n in joint_names if n != "trunk_base_freejoint"]
+
+
+def _geom_names(model) -> list[str]:
+    import mujoco
+
+    return [
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i)
+        for i in range(model.ngeom)
+    ]
+
 
 # Canonical HD-1910 actuated joint order, free joint excluded. Locked from the
 # live kp8 model on 2026-11-07. Any silent remap across the two joint-ID
@@ -77,51 +145,46 @@ CANONICAL_ACTUATED_JOINTS = [
 ]
 
 
-def _joints(spec) -> list[str]:
-    m = spec().compile()
-    return [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, i) for i in range(m.njnt)]
+# ── Kinematics / joint mapping (plant-isolated, parametrized) ────────────────
+
+@pytest.mark.parametrize("plant", HD1910_PLANTS)
+def test_actuated_joint_count_is_14(plant):
+    mod = _load_constants_for_plant(plant)
+    act = _actuated(_joints(mod.get_walk_spec))
+    assert len(act) == 14, (plant, act)
 
 
-def _actuated(joint_names: list[str]) -> list[str]:
-    return [n for n in joint_names if n != "trunk_base_freejoint"]
-
-
-def _geom_names(model) -> list[str]:
-    return [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i) for i in range(model.ngeom)]
-
-
-# ── Kinematics / joint mapping ────────────────────────────────────────────────
-
-def test_actuated_joint_count_is_14():
-    act = _actuated(_joints(MICRODUCK_WALK_ROBOT_CFG.spec_fn))
-    assert len(act) == 14, act
-
-
-def test_walk_joint_order_is_canonical():
-    act = _actuated(_joints(MICRODUCK_WALK_ROBOT_CFG.spec_fn))
+@pytest.mark.parametrize("plant", HD1910_PLANTS)
+def test_walk_joint_order_is_canonical(plant):
+    mod = _load_constants_for_plant(plant)
+    act = _actuated(_joints(mod.get_walk_spec))
     assert act == CANONICAL_ACTUATED_JOINTS, (
-        "HD-1910 joint order drifted — this is the silent remap the project "
-        "memory warns about (two joint-ID numbering systems)."
+        f"{plant}: HD-1910 joint order drifted — this is the silent remap the "
+        "project memory warns about (two joint-ID numbering systems)."
     )
 
 
-def test_allcollisions_matches_walk_kinematics():
-    a = _joints(get_allcollisions_spec)
-    g = _joints(MICRODUCK_WALK_ROBOT_CFG.spec_fn)
-    assert a == g, "allcollisions spec joint order diverges from walk spec"
+@pytest.mark.parametrize("plant", HD1910_PLANTS)
+def test_allcollisions_matches_walk_kinematics(plant):
+    mod = _load_constants_for_plant(plant)
+    a = _joints(mod.get_allcollisions_spec)
+    g = _joints(mod.get_walk_spec)
+    assert a == g, f"{plant}: allcollisions spec joint order diverges from walk"
 
 
-def test_standup_matches_walk_kinematics():
-    s = _joints(get_standup_spec)
-    g = _joints(MICRODUCK_WALK_ROBOT_CFG.spec_fn)
-    assert s == g, "standup spec joint order diverges from walk spec"
+@pytest.mark.parametrize("plant", HD1910_PLANTS)
+def test_standup_matches_walk_kinematics(plant):
+    mod = _load_constants_for_plant(plant)
+    s = _joints(mod.get_standup_spec)
+    g = _joints(mod.get_walk_spec)
+    assert s == g, f"{plant}: standup spec joint order diverges from walk"
 
 
-# ── Collision integrity ───────────────────────────────────────────────────────
-
-def test_allcollisions_servo_geoms_are_named():
-    model = get_allcollisions_spec().compile()
-    servo = [n for n in _geom_names(model) if n and n.endswith(SERVO_GEOM_SUFFIX)]
+@pytest.mark.parametrize("plant", HD1910_PLANTS)
+def test_allcollisions_servo_geoms_are_named(plant):
+    mod = _load_constants_for_plant(plant)
+    model = mod.get_allcollisions_spec().compile()
+    servo = [n for n in _geom_names(model) if n and n.endswith(mod.SERVO_GEOM_SUFFIX)]
     # 14 servos; one body carries a 15th xl330 housing mesh in the export.
     assert len(servo) >= 14
     for n in servo:
@@ -129,7 +192,24 @@ def test_allcollisions_servo_geoms_are_named():
         assert g.contype[0] or g.conaffinity[0], f"{n} is not a collision geom"
 
 
-# ── Cfg builds ────────────────────────────────────────────────────────────────
+def test_joint_order_identical_across_hd1910_plants():
+    """Switching kp_fw / params JSON must NOT reshuffle joints or geoms.
+
+    This is the real guard against the 'apply a different plant and the robot
+    silently remaps' failure mode — and it is exactly the invariant the old
+    blanket skip hid (the tests never ran on a machine whose live plant was
+    anything but HD-1910).
+    """
+    orders = {}
+    for plant in HD1910_PLANTS:
+        mod = _load_constants_for_plant(plant)
+        orders[plant] = _actuated(_joints(mod.get_walk_spec))
+    ref = orders[HD1910_PLANTS[0]]
+    for plant, o in orders.items():
+        assert o == ref, f"joint order differs for {plant}: {o} != {ref}"
+
+
+# ── Cfg builds (plant-independent; run unconditionally) ──────────────────────
 
 def test_velocity_cfg_builds():
     from mjlab_microduck.tasks.microduck_velocity_env_cfg import (
