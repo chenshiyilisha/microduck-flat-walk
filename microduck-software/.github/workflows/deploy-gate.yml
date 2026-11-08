@@ -45,8 +45,10 @@ jobs:
         run: python tools/hd1910/verify_policy_inference.py --selftest
 
       - name: Show training provenance of committed policy
-        run: python tools/hd1910/record_provenance.py --print
-        continue-on-error: true
+        run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --print
+
+      - name: Verify provenance matches committed onnx (drift detection)
+        run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --verify
 
       - name: Real deploy gate on committed artifacts
         run: |

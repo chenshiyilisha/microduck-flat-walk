@@ -33,8 +33,11 @@ No third-party imports: provenance is read from companion JSON + ``git`` + the
 stdlib-only ``_provenance`` module, so this runs on a clean checkout. (It does NOT
 need ``onnx``.)
 
-Exit codes: 0 ok, 1 usage/IO error, 2 a referenced onnx has no companion meta AND
-no path-parseable config (honest "unknown", not a forged success).
+Exit codes: 0 ok, 1 usage/IO error (or provenance DRIFT under --verify), 2 a
+referenced onnx has no companion meta AND no path-parseable config (honest
+"unknown", not a forged success). ``--verify`` recomputes the per-artifact block
+from the onnx paths stored in the bundle and fails (rc=1) on any field drift,
+catching "the onnx changed but provenance was never refreshed".
 """
 from __future__ import annotations
 
@@ -165,38 +168,108 @@ def provenance_for_onnx(onnx_path: Path) -> Provenance:
     return pv
 
 
+# Provenance facts that must be stable per artifact: if the onnx (or its
+# companion meta) changes, these should change too. Drift between the stored
+# bundle block and a fresh recomputation means "the onnx moved but provenance
+# was not refreshed" — a silent traceability gap.
+_ARTIFACT_FIELDS = (
+    "task", "plant_name", "cfg_sha256_16", "mdp_sha256_16", "export_iteration",
+)
+
+
+def verify_bundle(bundle_path: Path) -> tuple[int, list[str]]:
+    """Recompute per-artifact provenance from the onnx paths recorded in the
+    bundle and diff against the stored block. Pure stdlib (no onnx). Returns
+    (rc, messages); rc=1 on any per-artifact drift. The code-side git_commit is
+    compared but only WARNed (new commits are expected between runs).
+    """
+    if not bundle_path.exists():
+        return 1, [f"bundle not found: {bundle_path}"]
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    prov = bundle.get("provenance")
+    if not prov:
+        return 1, ["bundle has no 'provenance' block to verify"]
+    msgs: list[str] = []
+    rc = 0
+
+    cur_code = _provenance.capture_provenance(ROOT)
+    stored_code = prov.get("code", {})
+    if stored_code.get("git_commit") != cur_code.get("git_commit"):
+        msgs.append(
+            f"WARN code git_commit differs: stored="
+            f"{str(stored_code.get('git_commit'))[:7]} current="
+            f"{str(cur_code.get('git_commit'))[:7]} (expected after new commits)")
+
+    pa = prov.get("per_artifact", {})
+    if not pa:
+        return 1, ["bundle provenance has no 'per_artifact' entries"]
+    for rel, stored in pa.items():
+        onnx = ROOT / rel
+        if not onnx.exists():
+            rc = 1
+            msgs.append(f"DRIFT onnx missing on disk: {rel}")
+            continue
+        pv = provenance_for_onnx(onnx)
+        for f in _ARTIFACT_FIELDS:
+            sv = stored.get(f)
+            cv = getattr(pv, f)
+            if sv != cv:
+                rc = 1
+                msgs.append(
+                    f"DRIFT {rel}: {f} stored={sv!r} recomputed={cv!r}")
+    if rc == 0:
+        msgs.append(f"OK provenance consistent for {len(pa)} artifact(s)")
+    return rc, msgs
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--onnx", type=Path, required=True, nargs="+",
-                    help="deployed policy .onnx file(s)")
+    ap.add_argument("--onnx", type=Path, nargs="+", default=None,
+                    help="deployed policy .onnx file(s) to harvest provenance from")
     ap.add_argument("--bundle", type=Path, default=None,
-                    help="deploy bundle JSON to inject the provenance block into")
-    ap.add_argument("--print", action="store_true", help="print the provenance JSON")
+                    help="deploy bundle JSON to read/inject/verify the provenance block")
+    ap.add_argument("--print", action="store_true",
+                    help="print the provenance JSON (from --bundle if given, else "
+                         "recomputed from --onnx)")
+    ap.add_argument("--verify", action="store_true",
+                    help="verify the bundle's stored provenance matches the onnx "
+                         "companion meta on disk (detects onnx changed but "
+                         "provenance not refreshed); stdlib-only, CI-safe")
     args = ap.parse_args()
+
+    if args.verify:
+        if not args.bundle:
+            print("ERROR: --verify requires --bundle", file=sys.stderr)
+            return 3
+        rc, msgs = verify_bundle(args.bundle)
+        for m in msgs:
+            print(m)
+        return rc
 
     # Code-side fingerprint: reuse the existing _provenance git logic.
     code = _provenance.capture_provenance(ROOT)
 
     prov: dict[str, dict] = {}
     any_unknown = False
-    for onnx in args.onnx:
-        if not onnx.exists():
-            print(f"ERROR: onnx not found: {onnx}", file=sys.stderr)
-            return 1
-        pv = provenance_for_onnx(onnx)
-        rel = str(onnx.resolve().relative_to(ROOT.resolve())).replace("\\", "/")
-        prov[rel] = pv.to_dict()
-        if pv.companion_meta == "absent" and pv.export_iteration is None \
-           and pv.envs is None and pv.iters is None:
-            any_unknown = True
-        print(f"[{pv.companion_meta:<9}] {onnx.name}")
-        print(f"    task={pv.task} plant={pv.plant_name} seed={pv.seed} "
-              f"envs={pv.envs} iters={pv.iters} export_iter={pv.export_iteration}")
-        if pv.cfg_sha256_16:
-            print(f"    cfg_sha256_16={pv.cfg_sha256_16} mdp_sha256_16={pv.mdp_sha256_16}")
-        if pv.created:
-            print(f"    created={pv.created}")
+    if args.onnx:
+        for onnx in args.onnx:
+            if not onnx.exists():
+                print(f"ERROR: onnx not found: {onnx}", file=sys.stderr)
+                return 1
+            pv = provenance_for_onnx(onnx)
+            rel = str(onnx.resolve().relative_to(ROOT.resolve())).replace("\\", "/")
+            prov[rel] = pv.to_dict()
+            if pv.companion_meta == "absent" and pv.export_iteration is None \
+               and pv.envs is None and pv.iters is None:
+                any_unknown = True
+            print(f"[{pv.companion_meta:<9}] {onnx.name}")
+            print(f"    task={pv.task} plant={pv.plant_name} seed={pv.seed} "
+                  f"envs={pv.envs} iters={pv.iters} export_iter={pv.export_iteration}")
+            if pv.cfg_sha256_16:
+                print(f"    cfg_sha256_16={pv.cfg_sha256_16} mdp_sha256_16={pv.mdp_sha256_16}")
+            if pv.created:
+                print(f"    created={pv.created}")
 
     block = {
         "code": code,
@@ -207,11 +280,18 @@ def main() -> int:
         if not args.bundle.exists():
             print(f"ERROR: bundle not found: {args.bundle}", file=sys.stderr)
             return 1
-        bundle = json.loads(args.bundle.read_text(encoding="utf-8"))
-        bundle["provenance"] = block
-        args.bundle.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n",
-                               encoding="utf-8")
-        print(f"\ninjected provenance into {args.bundle}")
+        if args.onnx:
+            bundle = json.loads(args.bundle.read_text(encoding="utf-8"))
+            bundle["provenance"] = block
+            args.bundle.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n",
+                                   encoding="utf-8")
+            print(f"\ninjected provenance into {args.bundle}")
+        elif args.print:
+            # Print the provenance block already stored in the bundle.
+            bundle = json.loads(args.bundle.read_text(encoding="utf-8"))
+            stored = bundle.get("provenance", {})
+            print(json.dumps(stored, indent=2, ensure_ascii=False))
+            return 0
 
     if args.print:
         print(json.dumps(block, indent=2, ensure_ascii=False))

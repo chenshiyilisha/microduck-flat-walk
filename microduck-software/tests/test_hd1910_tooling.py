@@ -316,3 +316,74 @@ def test_inference_selftest_runs():
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
 
+
+# ── Pass14: 推理闸门强制 robotd 契约(输入名obs / 输出宽度) + provenance 完整性 ──
+
+def test_inference_validate_outputs_width_mismatch():
+    """A metadata/export skew like the official 28-vs-14 standup bug (action
+    width != expect_act) must be a hard FAIL, not silently ignored."""
+    vi = _load("verify_policy_inference_test", HERE / "verify_policy_inference.py")
+    ok, reasons = vi.validate_outputs([0.1] * 13, expect_act=14)
+    assert (not ok) and any("width" in r for r in reasons)
+    # correct width passes
+    ok, _ = vi.validate_outputs([0.1] * 14, expect_act=14)
+    assert ok
+    ok, _ = vi.validate_outputs([[0.1] * 14], expect_act=14)  # nested batch form
+    assert ok
+
+
+def test_inference_validate_inputs_obs_contract():
+    """The HD-1910 robotd hardcodes the input tensor name 'obs' and never reads
+    the ONNX manifest, so any other input name is a guaranteed load failure and
+    must be a hard FAIL here (not advisory)."""
+    vi = _load("verify_policy_inference_test", HERE / "verify_policy_inference.py")
+    ok, _ = vi.validate_inputs(["obs"])
+    assert ok
+    ok, reasons = vi.validate_inputs(["observation", "states"])
+    assert (not ok) and any("obs" in r for r in reasons)
+    ok, reasons = vi.validate_inputs([])
+    assert not ok
+
+
+def test_record_provenance_verify_consistent():
+    """The committed bundle's provenance must match the onnx companion meta on
+    disk — no field drift. Pure stdlib, CI-safe (guards against 'onnx changed
+    but provenance never refreshed')."""
+    rp = _load("record_provenance_test", HERE / "record_provenance.py")
+    bundle = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
+    if not bundle.exists():
+        pytest.skip(f"bundle not present: {bundle}")
+    rc, msgs = rp.verify_bundle(bundle)
+    assert rc == 0, msgs
+
+
+def test_record_provenance_verify_detects_drift(tmp_path):
+    """verify_bundle must FAIL (rc=1) when a stored artifact field disagrees
+    with a fresh recomputation, or when a recorded onnx is missing on disk."""
+    rp = _load("record_provenance_test", HERE / "record_provenance.py")
+    bundle = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
+    if not bundle.exists():
+        pytest.skip(f"bundle not present: {bundle}")
+    data = json.loads(bundle.read_text(encoding="utf-8"))
+    pa = data["provenance"]["per_artifact"]
+    key = next(iter(pa))
+
+    # 1) corrupt a stable artifact field -> DRIFT
+    bad = json.loads(json.dumps(data))
+    bad["provenance"]["per_artifact"][key]["cfg_sha256_16"] = "deadbeefdeadbeef"
+    p1 = tmp_path / "bad1.json"
+    p1.write_text(json.dumps(bad), encoding="utf-8")
+    rc, msgs = rp.verify_bundle(p1)
+    assert rc == 1 and any("DRIFT" in m for m in msgs)
+
+    # 2) a recorded onnx that does not exist on disk -> DRIFT
+    bad2 = json.loads(json.dumps(data))
+    bad2["provenance"]["per_artifact"]["logs/rsl_rl/nonexistent/onnx.onnx"] = {
+        "task": "x", "plant_name": "x", "cfg_sha256_16": "0" * 16,
+        "mdp_sha256_16": "0" * 16, "export_iteration": 1,
+    }
+    p2 = tmp_path / "bad2.json"
+    p2.write_text(json.dumps(bad2), encoding="utf-8")
+    rc, msgs = rp.verify_bundle(p2)
+    assert rc == 1 and any("DRIFT" in m for m in msgs)
+

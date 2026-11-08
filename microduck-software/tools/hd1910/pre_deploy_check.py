@@ -28,8 +28,11 @@ Stages (each is an existing, independently-tested script)
   numeric    policy_numeric_gate.py     G1-G4 absolute-magnitude gate (catches the
                                        deploy61 1157x normaliser blow-up)
   inference  verify_policy_inference.py actually EXECUTES the ONNX via onnxruntime
-                                       and asserts finite / non-exploding / non-degenerate
-                                       output (closes the "static-only" blind spot; SKIP if
+                                       and asserts: input name == "obs" (robotd hardcodes
+                                       it and never reads the manifest), output width ==
+                                       expect-act (catches 28-vs-14 metadata skew), and a
+                                       finite / non-exploding / non-degenerate output
+                                       (closes the "static-only" blind spot; SKIP if
                                        onnx/onnxruntime absent, so a clean checkout without
                                        the runtime is not flagged as a policy fault)
   toml       audit_robotd_toml.py       gain-scale consistency of robotd.toml
