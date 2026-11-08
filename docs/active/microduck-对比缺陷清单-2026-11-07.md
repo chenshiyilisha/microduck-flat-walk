@@ -139,6 +139,16 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 
 ---
 
+## 4.1 Pass10 自主审计（2026-11-08）— 发布链与彩排真收口
+
+- **publish 链真相（一手查证）**：`verify_policy_bundle.py` 文档 + `duck-control/src/policy.rs` / `robotd-params` 确认——**这代 robotd（DuckBuddy-main HL-2915 build）只做 `check_width(inputs[-1]==61)` + `check_width(outputs[-1]==14)` + `Observation::zeroed()` warm-up + input name 硬编码 `"obs"`；从不读 manifest、从不读 ONNX metadata**（grep metadata robotd/duck-control/ 返回 nothing）。`publish`（`microduck_rl` `publish/manifest.py`）写 manifest/metadata 是给「另一代 robotd」（经 robotctl）用的，本代不打开任何 manifest 字段。gap：metadata 携带的布局契约（joint_names/default_joint_pos）本可抓 obs 重排，但本代不读 → 无 metadata 与有错 metadata 对机器人外观相同。
+- **权重是否烤进图（致命风险排除）**：项目记忆反复标记「`publish` 不打包外部权重 → split 导出 3KB 空图上机器人」。用 `verify_policy_bundle.py` 跑三个真实 kp8 onnx：A8 `weights in the file — 10 initializers, all embedded` **全 PASS** —— 导出即单文件，根本不走 publish，无 split 坑。26 项检查：walk/standup 0 fail 0 warn；groundpick 0 fail 1 warn（B4 自描述瑕疵：`observation_names` 列 head/body_command 而 `command_names` 只写 twist，robotd 不读 metadata 故 0 影响）。
+- **rehearsal 假阴性修复**：rehearsal 从没真实跑过（Pass6/7 只修守卫崩溃）。真实跑暴露：groundpick/standup 因 rehearsal 默认喂 `Vel cmd 0.4 m/s` 而它们不响应行走命令 → `moves_forward` 门 FAIL → `all_gates_pass=False` 假阴性（tilt 仅 4.3°/3.2°、fell=n，电机侧健康）。修：`rehearse_hd1910.py` 从 companion runmeta 读 `task` 字段（`Mjlab-GroundPick`/`Mjlab-StandUp` 非行走），non-walking 自动注入 `--cmd-vx 0`，利用 `rehearse_deploy.py` 已有的 `cmd_vx<0.2 → moves_forward not_applicable` 机制消除误导。另修 `_inject_defaults` 守卫在 `_STATE["key"] is None` 时的 KeyError 防御。
+- **测试**：新增 `test_rehearse_injects_cmd_vx_zero_for_nonwalk` + `test_rehearse_keeps_default_for_walk`（喂真实 groundpick/walk onnx，不喂合成名），全套 **35 passed**（33→35）。三个技能 rehearsal 现全 `all_gates_pass=True`。
+- **结论**：kp8 软件栈三维度（conductor 四关 + bundle 26 项 + rehearsal 离线推演）一致确认可部署；发布链「走 publish 会丢权重」的恐惧已实证排除（只走单文件 onnx + conductor/bundle 校验 + 手动拷 toml/onnx）。真正剩余风险只剩硬件端到端（到货后 `bus.joint_ids` 逐关节复核 + 齿隙 7.4V 重测）。
+
+---
+
 ## 5. 证据索引（本轮查证）
 
 - 官方站起修复：`pollen-robotics/microduck_rl@develop` → `src/mjlab_microduck/tasks/microduck_standup_env_cfg.py`（`set_ground_state`、`ground_state_mix`、`face_up_roll_max`）。

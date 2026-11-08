@@ -1,0 +1,31 @@
+{
+  "onnx": ".upstream\\DuckBuddy-main\\training\\policies\\hl2915_standup_v4bl_5999.onnx",
+  "toml": "out\\robotd_hd1910_mode0.toml",
+  "verdict": "FAIL",
+  "stages": [
+    {
+      "name": "contract",
+      "status": "PASS",
+      "rc": 0,
+      "tail": "all pass -- layout, order, home pose and action mapping agree on both sides\n\nnot checked: trunk-frame conventions, sign/offset calibration, and anything about the servos. Those are bench items (B3, B4)."
+    },
+    {
+      "name": "bundle",
+      "status": "FAIL",
+      "rc": 1,
+      "tail": "FAIL  .upstream\\DuckBuddy-main\\training\\policies\\hl2915_standup_v4bl_5999.onnx 26 checks, 2 fail, 0 warn | ! B1 joint_names: 28 names for 14 actions; 28/28 are real joints with `passive_*_backlash` interleaved | ! B2 default_joint_pos: 28 values for 14 actions"
+    },
+    {
+      "name": "numeric",
+      "status": "PASS",
+      "rc": 0,
+      "tail": "\"comment\": \"a healthy policy FAILS this (its stance is ~5x 2%S) while deploy61 PASSES it (S inflated ~128x) -- copy the structure, not the thresholds\""
+    },
+    {
+      "name": "toml",
+      "status": "PASS",
+      "rc": 0,
+      "tail": "\nnot checked: whether robotd is running, what it wrote to reg 50, or whether the bridge answers -- for reg 50 read it back on the robot after robotd starts.\nAlso not in this file: reg6 (baud) and reg33 (mode). robotd CHECKS those and refuses to open the bus on a mismatch (feetech.rs:386); the rate is compiled in (500 kbps) and the servo ships at 1 Mbps, so they must be moved on the servo."
+    }
+  ]
+}

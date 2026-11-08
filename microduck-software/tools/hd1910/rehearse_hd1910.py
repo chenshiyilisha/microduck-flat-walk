@@ -241,6 +241,44 @@ def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
     return _plant_from_filename(stem)
 
 
+def _onnx_task(onnx: pathlib.Path) -> str | None:
+    """Training task name recorded in the ONNX's companion runmeta/heading_meta.
+
+    Used to decide whether the rehearsal's forward-motion gate applies. Only
+    Velocity / Walk policies are expected to move under a velocity command;
+    GroundPick / StandUp policies ignore it and would otherwise trip a spurious
+    ``moves_forward`` failure (see ``_inject_defaults``).
+    """
+    stem = onnx.stem
+    m = re.match(r"\A\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_", stem)
+    if m:
+        stem = stem[m.end():]
+    run = stem
+    if "_it" in run:
+        run = run.rsplit("_it", 1)[0]
+    meta = ROOT / "out" / f"runmeta_{run}.json"
+    if not meta.is_file():
+        meta = ROOT / "out" / f"heading_meta_{run}.json"
+    if meta.is_file():
+        try:
+            d = json.load(open(meta))
+        except (OSError, ValueError):
+            return None
+        task = d.get("task")
+        if task is None:
+            task = (d.get("provenance") or {}).get("task")
+        return task
+    return None
+
+
+def _is_walking_task(task: str | None) -> bool:
+    """A policy that should respond to a velocity command."""
+    if not task:
+        return False
+    t = task.lower()
+    return "velocity" in t or "walk" in t
+
+
 def _rel(p: pathlib.Path) -> str:
     """Path relative to the repo when possible -- user-supplied ones may be outside."""
     try:
@@ -436,7 +474,7 @@ def _inject_defaults(argv: list[str], kp_fw: float) -> list[str]:
     # long as the plant is resolvable from the meta -- the ONNX file itself need
     # not exist yet (e.g. a dry-run guard before the export lands).
     rehearse_key = _STATE["key"]
-    if onnx:
+    if onnx and rehearse_key is not None:
         onnx_key = _onnx_plant_key(onnx)
         if onnx_key and onnx_key != rehearse_key:
             print(
@@ -454,6 +492,13 @@ def _inject_defaults(argv: list[str], kp_fw: float) -> list[str]:
         # a file called *it1600.json holding iter-2500 numbers is a trap.
         tag = onnx.parent.name or onnx.stem or "unknown"
         out = ["--out", str(ROOT / "out" / f"rehearse_{tag}.json"), *out]
+    # Non-walking policies (GroundPick / StandUp) do not respond to a velocity
+    # command, so a non-zero cmd_vx makes rehearsal's moves_forward gate fail
+    # spuriously. Feeding 0 turns that gate into not_applicable in
+    # rehearse_deploy (cmd_vx < 0.2 => forward_gate True + not_applicable). Walk
+    # policies keep rehearsal's default and are genuinely exercised.
+    if "--cmd-vx" not in out and not _is_walking_task(_onnx_task(onnx)):
+        out = ["--cmd-vx", "0", *out]
     _report_onnx(onnx, pathlib.Path(_flag_value(out, "--out") or ""))
     return out
 

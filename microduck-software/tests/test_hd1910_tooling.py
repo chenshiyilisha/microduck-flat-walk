@@ -144,6 +144,43 @@ def test_onnx_plant_key_real_exported_artifacts():
         assert rh._onnx_plant_key(ROOT / p) == "p8", p
 
 
+def test_rehearse_injects_cmd_vx_zero_for_nonwalk():
+    """Non-walking policies (GroundPick / StandUp) must get --cmd-vx 0 so rehearsal's
+    moves_forward gate becomes not_applicable instead of a spurious failure.
+
+    Uses the REAL shipped groundpick onnx (its runmeta records task=
+    Mjlab-GroundPick-Flat-MicroDuck). Regression for the Pass10 fix: before it,
+    rehearse reported all_gates_pass=False for groundpick/standup purely because
+    they ignore the default 0.4 m/s vel command."""
+    rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
+    gp = ROOT / ("logs/rsl_rl/microduck_groundpick_hd1910/2026-11-06_22-17-10_"
+                 "hd1910_groundpick_4096x4000_1106_2216/2026-11-06_22-17-10_"
+                 "hd1910_groundpick_4096x4000_1106_2216.onnx")
+    if not gp.exists():
+        pytest.skip("groundpick onnx not present in this checkout")
+    assert rh._onnx_task(gp) == "Mjlab-GroundPick-Flat-MicroDuck"
+    rh._STATE["key"] = "p8"  # main() sets this before _inject_defaults runs
+    out = rh._inject_defaults(["--onnx", str(gp)], 8.0)
+    # --cmd-vx 0 must be injected (as a pair) for non-walking tasks
+    assert "--cmd-vx" in out
+    assert out[out.index("--cmd-vx") + 1] == "0"
+
+
+def test_rehearse_keeps_default_for_walk():
+    """Walk policies must NOT get --cmd-vx 0: rehearsal's default (0.4 m/s) genuinely
+    exercises the moves_forward gate for them."""
+    rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
+    walk = ROOT / ("logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_"
+                   "p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_"
+                   "p8head_030_4096x3000_resume2999.onnx")
+    if not walk.exists():
+        pytest.skip("walk onnx not present in this checkout")
+    assert rh._is_walking_task(rh._onnx_task(walk)) is True
+    rh._STATE["key"] = "p8"  # main() sets this before _inject_defaults runs
+    out = rh._inject_defaults(["--onnx", str(walk)], 8.0)
+    assert "--cmd-vx" not in out
+
+
 def test_rehearsal_cross_plant_guard():
     """A p8 deploy-candidate ONNX rehearsed at m5 must warn; at p8 must not.
 
