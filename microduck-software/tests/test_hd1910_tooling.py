@@ -1221,3 +1221,130 @@ def test_ci_gate_expect_kp_matches_independently_computed_reg50():
         "the position_kp==reg50 equivalence -- add an explicit expected_reg50 "
         "to the bundle instead of reusing position_kp")
     assert gain == 200, "B14 equivalence premise changed; re-derive expect_kp"
+
+# ── Pass21 / loop R5: the bundle itself must be internally bound ──
+
+def _write_bundle_copy(tmp_path, mutate=None):
+    """Copy the REAL bundle into a temp dir under its canonical filename.
+
+    The plant.id is bound to the filename, so a temp copy must keep the same
+    name or it would go red for the wrong reason. This never touches the real
+    bundle (a Pass21 lesson: an interrupted in-place tamper left it dirty).
+    """
+    data = json.loads((ROOT / "out" / "hd1910_kp8_deploy_bundle.json")
+                      .read_text(encoding="utf-8"))
+    if mutate:
+        mutate(data)
+    p = tmp_path / "hd1910_kp8_deploy_bundle.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                 encoding="utf-8")
+    return p, data
+
+
+def test_bundle_bindings_cli_all_entry_points():
+    """Every CLI mode must really run (a guard nobody invokes is decoration)."""
+    script = HERE / "bundle_bindings.py"
+    default = subprocess.run([sys.executable, str(script)], cwd=ROOT,
+                             capture_output=True, text=True)
+    assert default.returncode == 0, default.stdout + default.stderr
+    assert "VERDICT: PASS" in default.stdout
+
+    js = subprocess.run([sys.executable, str(script), "--json"], cwd=ROOT,
+                        capture_output=True, text=True)
+    assert js.returncode == 0, js.stdout + js.stderr
+    assert json.loads(js.stdout)["verdict"] == "PASS"
+
+    st = subprocess.run([sys.executable, str(script), "--selftest"], cwd=ROOT,
+                        capture_output=True, text=True)
+    assert st.returncode == 0, st.stdout + st.stderr
+    assert "SELFTEST: PASS" in st.stdout
+    assert "[BAD]" not in st.stdout
+
+
+def test_bundle_bindings_detect_every_tamper_family(tmp_path):
+    """Pure-function negative controls: C1/C3/C4/C7 all used to be GREEN."""
+    bb = _load("bundle_bindings_test", HERE / "bundle_bindings.py")
+    real = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
+    assert bb.verify_bindings(json.loads(real.read_text(encoding="utf-8")),
+                              ROOT, real)[0] == 0
+
+    def drop_prov(b):
+        b["provenance"]["per_artifact"].pop(
+            b["artifacts"]["walk"]["rel_path"], None)
+
+    def plant_kp5(b):
+        b["plant"]["id"] = "hd1910_kp5"
+        b["plant"]["kp_fw"] = 5.0
+
+    def claim_false(b):
+        b["deploy_checks"]["walk"]["verdict"] = "FAIL"
+        b["rehearsal"]["walk"] = False
+
+    def swap_walk(b):
+        import hashlib
+        gp = b["artifacts"]["ground_pick"]["rel_path"]
+        raw = (ROOT / gp).read_bytes()
+        b["artifacts"]["walk"] = {"rel_path": gp,
+                                   "sha256": hashlib.sha256(raw).hexdigest(),
+                                   "bytes": len(raw)}
+
+    cases = (
+        ("C1 drop walk provenance", drop_prov, "SUBJECT MISMATCH"),
+        ("C3 plant kp8 to kp5", plant_kp5, "PLANT"),
+        ("C4 falsify claims", claim_false, "verdict"),
+        ("C7 walk replaced by ground_pick", swap_walk, "DUPLICATE"),
+    )
+    for i, (label, mutate, needle) in enumerate(cases):
+        # numeric dir name: Windows forbids '>' and other chars in paths
+        p, data = _write_bundle_copy(tmp_path / f"case_{i}", mutate)
+        rc, msgs = bb.verify_bindings(data, ROOT, p)
+        assert rc == 1, f"{label} was GREEN: {msgs}"
+        assert any(needle in m for m in msgs), f"{label}: {msgs}"
+
+
+def test_record_provenance_verify_now_fails_on_unbound_bundle(tmp_path):
+    """CLI-level proof the CI step `record_provenance --verify` goes red.
+
+    Before Pass21 this returned rc=0 for C1 (a deleted provenance subject).
+    The tamper lives in a temp bundle copy, so the real evidence is untouched.
+    """
+    rp = _load("record_provenance_bind_test", HERE / "record_provenance.py")
+
+    def drop_walk(b):
+        b["provenance"]["per_artifact"].pop(
+            b["artifacts"]["walk"]["rel_path"], None)
+
+    good, _ = _write_bundle_copy(tmp_path / "good")
+    assert rp.verify_bundle(good)[0] == 0, "clean copy must still pass"
+
+    bad, _bad_data = _write_bundle_copy(tmp_path / "bad", drop_walk)
+    rc, msgs = rp.verify_bundle(bad)
+    assert rc == 1, msgs
+    assert any("SUBJECT MISMATCH" in m for m in msgs), msgs
+
+
+def test_ci_gate_targets_rejects_duplicate_policy_artifact(tmp_path):
+    """Emitter (CI gate entry) must refuse C7 even without --verify."""
+    emit = _load("ci_gate_targets_dup_test", HERE / "ci_gate_targets.py")
+
+    def duplicate(b):
+        b["artifacts"]["ground_pick"]["rel_path"] = \
+            b["artifacts"]["walk"]["rel_path"]
+
+    p, data = _write_bundle_copy(tmp_path, duplicate)
+    try:
+        emit.load_targets(p, ROOT)
+        pytest.fail("duplicate onnx targets were accepted -- CI would gate twice")
+    except emit.TargetsError as exc:
+        assert "DUPLICATE POLICY ARTIFACT" in str(exc)
+
+
+def test_workflow_wires_both_binding_guards():
+    """Deleting either guard step must be caught by the local regression suite."""
+    wf = (ROOT.parent / ".github" / "workflows" / "deploy-gate.yml")
+    text = wf.read_text(encoding="utf-8")
+    assert "python tools/hd1910/bundle_bindings.py --selftest" in text
+    assert "python tools/hd1910/bundle_bindings.py --bundle" in text
+    assert "python tools/hd1910/record_provenance.py" in text
+    assert "--verify" in text

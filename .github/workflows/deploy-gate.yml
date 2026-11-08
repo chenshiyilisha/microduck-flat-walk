@@ -99,6 +99,11 @@ jobs:
       - name: CI gate targets negative-control self-test (bundle-driven)
         run: python tools/hd1910/ci_gate_targets.py --selftest
 
+      - name: Bundle bindings negative-control self-test (SLSA subject binding)
+        # Pass21 / R5: proves the bundle's provenance subjects are really
+        # bound to the artifacts it ships (14 tamper cases must go red).
+        run: python tools/hd1910/bundle_bindings.py --selftest
+
       - name: CI verdict assertion negative-control self-test
         run: python tools/hd1910/assert_ci_verdict.py --selftest
 
@@ -116,7 +121,13 @@ jobs:
       - name: Show training provenance of committed policy
         run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --print
 
+      - name: Verify bundle internal bindings (SLSA subject + re-derived claims)
+        run: python tools/hd1910/bundle_bindings.py --bundle out/hd1910_kp8_deploy_bundle.json --json
+
       - name: Verify provenance + bundle artifact hashes (drift detection)
+        # Also runs verify_bindings() internally -- two independent call sites
+        # so deleting either guard cannot silently restore the C1/C3/C4/C7
+        # blind spot. Do not remove this step: it is a real gate, not a print.
         run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --verify
 
       - name: Real deploy gate on committed artifacts

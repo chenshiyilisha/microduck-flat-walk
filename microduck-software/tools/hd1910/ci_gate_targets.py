@@ -84,6 +84,18 @@ def load_targets(bundle_path: Path, root: Path) -> dict:
             raise TargetsError(f"artifacts.{key}: file missing on disk: {rel}")
         policies[key] = rel
 
+    # Pass21 / R5 negative control C7: two policies resolving to the SAME
+    # onnx makes CI gate that file twice and never check the missing policy.
+    # The full SLSA subject binding lives in bundle_bindings.py (called by
+    # record_provenance --verify); this is the gate-entry defence in depth.
+    if len(set(policies.values())) != len(POLICY_KEYS):
+        clashes = {r: [k for k, v in policies.items() if v == r]
+                   for r in set(policies.values())}
+        dup = {r: ks for r, ks in clashes.items() if len(ks) > 1}
+        raise TargetsError(
+            f"DUPLICATE POLICY ARTIFACT: {dup} -- CI would gate the same onnx "
+            "twice and never check the other policy (Pass21 C7)")
+
     toml_meta = artifacts.get("robotd_toml")
     if not isinstance(toml_meta, dict):
         raise TargetsError("bundle.artifacts.robotd_toml is missing")
@@ -186,6 +198,11 @@ def _selftest() -> int:
         expect("onnx file absent on disk",
                bundle(artifacts=good_policies
                       | {"walk": {"rel_path": "out/gone.onnx"}}
+                      | {"robotd_toml": {"rel_path": "out/robotd.toml"}}), False)
+        # Pass21 C7: ground_pick pointing at walk's onnx -> CI gates twice.
+        expect("two policies resolve to the same onnx",
+               bundle(artifacts=good_policies
+                      | {"ground_pick": {"rel_path": "out/walk.onnx"}}
                       | {"robotd_toml": {"rel_path": "out/robotd.toml"}}), False)
         expect("toml artifact missing", bundle(artifacts=good_policies), False)
         expect("plant.position_kp missing", bundle(plant={}), False)

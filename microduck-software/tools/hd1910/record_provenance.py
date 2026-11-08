@@ -331,6 +331,23 @@ def verify_bundle(bundle_path: Path) -> tuple[int, list[str]]:
     msgs.extend(amsgs)
     rc = max(rc, arc)
 
+    # Pass21 / R5: a bundle whose provenance subjects are not BOUND to the
+    # artifacts it ships is decoration. Negative control C7 replaced walk's
+    # onnx with ground_pick's (hash synced) and everything above stayed GREEN:
+    # CI would have gated the same policy twice. SLSA v1.0 "Verifying
+    # artifacts" Step 1.2 requires the subject to match the artifact. Also
+    # re-derive deploy_checks/plant/rehearsal from independent committed
+    # authorities. Single implementation, called here (CI already runs --verify).
+    try:
+        import bundle_bindings  # noqa: PLC0415 (HERE is on sys.path above)
+    except ImportError as exc:
+        msgs.append(f"BINDING GUARD MISSING (fail loud, never SKIP): {exc}")
+        return 1, msgs
+    binding_rc, binding_msgs = bundle_bindings.verify_bindings(
+        bundle, ROOT, bundle_path)
+    msgs.extend(binding_msgs)
+    rc = max(rc, binding_rc)
+
     if rc == 0:
         msgs.append(f"OK provenance consistent for {len(pa)} artifact(s)")
     return rc, msgs
