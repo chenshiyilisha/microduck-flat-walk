@@ -582,3 +582,145 @@ def test_verification_boundary_negative_controls(tmp_path):
     rc, msgs = rp.verify_bundle(tampered)
     assert rc == 1 and any("BOUNDARY DRIFT" in m for m in msgs)
 
+
+# ── Pass17: CI readiness probe (the "clean checkout" precondition) ─────────
+
+
+def test_clean_checkout_probe_cli_selftest_runs():
+    """CLI-level: `--selftest` must run with no checkout/report argument.
+
+    Pass16 shipped assert_ci_verdict.py with `report` as a required positional,
+    so its --selftest died at argparse while all 50 unit tests stayed green
+    (they only called check()). Never add a CLI tool without testing its CLI.
+    """
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "assert_clean_checkout.py"), "--selftest"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stdout[-1200:] + proc.stderr[-1200:]
+    assert "readiness logic wired correctly" in proc.stdout
+
+
+def test_clean_checkout_assess_negative_controls():
+    """A checkout missing ANY input must not be reported as runnable."""
+    acc = _load("assert_clean_checkout_test", HERE / "assert_clean_checkout.py")
+    good = [{"name": "walk", "rel_path": "x/walk.onnx", "exists": True,
+             "tracked": True, "bytes_match": True, "sha_match": True}]
+    ups = [{"rel_path": ".upstream/imu.rs", "exists": True}]
+
+    assert acc.assess(good, ups, True)["ci_full_gate_possible"] is True
+    # The exact Pass13-16 trap: the file exists on the developer's disk but a
+    # fresh checkout never receives it because it is gitignored.
+    untracked = acc.assess([dict(good[0], tracked=False)], ups, True)
+    assert untracked["ci_full_gate_possible"] is False
+    assert any("NOT tracked" in p for p in untracked["problems"])
+    assert acc.assess([dict(good[0], exists=False)], ups, True)["ci_full_gate_possible"] is False
+    assert acc.assess([dict(good[0], sha_match=False)], ups, True)["ci_full_gate_possible"] is False
+    assert acc.assess(good, [dict(ups[0], exists=False)], True)["ci_full_gate_possible"] is False
+    assert acc.assess(good, ups, False)["ci_full_gate_possible"] is False
+    assert acc.assess([], [], True)["ci_full_gate_possible"] is False
+
+
+def test_clean_checkout_probe_reads_bundle_and_flags_untracked(tmp_path):
+    """probe() must verify size + sha AND tracking, not mere existence."""
+    import hashlib
+    acc = _load("assert_clean_checkout_probe_test", HERE / "assert_clean_checkout.py")
+    payload = b"fake onnx graph"
+    f = tmp_path / "policy.onnx"
+    f.write_bytes(payload)
+    bundle = {"artifacts": {"walk": {
+        "rel_path": "policy.onnx",
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }}}
+    bp = tmp_path / "bundle.json"
+    bp.write_text(json.dumps(bundle), encoding="utf-8")
+
+    report = acc.probe(tmp_path, bp)
+    a = report["artifacts"][0]
+    assert a["exists"] and a["bytes_match"] and a["sha_match"]
+    # tmp_path is not a git checkout of this repo, so nothing here is tracked.
+    assert report["ci_full_gate_possible"] is False
+    assert "artifacts" in report and "upstream_sources" in report
+    assert "problems" in report and "reason" in report
+
+
+def test_imu_chain_guard_runs_in_full_stack():
+    """The IMU decode-chain guard must actually EXECUTE somewhere automatic.
+
+    Pass17 found verify_imu_chain.py (13 checks + 15 negative controls, covering
+    the first six observation slots) was only *mentioned* in README/checklist --
+    never called by the conductor, CI, or pytest. The `imu_median = false`
+    deployment decision rests on it, so it needs an automatic execution point.
+
+    It needs scipy + mjlab_microduck + the .upstream Rust source; a lean CI
+    checkout has none of those, so a skip there is HONEST and must be surfaced,
+    never mistaken for a pass. Run pytest with the full .venv-mjlab before ship.
+    """
+    if (importlib.util.find_spec("scipy") is None
+            or importlib.util.find_spec("mjlab_microduck") is None):
+        pytest.skip("scipy / mjlab_microduck absent: IMU-chain guard needs the "
+                    "full training stack (run with .venv-mjlab before shipping)")
+    imu_rs = ROOT / ".upstream" / "DuckBuddy-main" / "duck-control" / "src" / "imu.rs"
+    if not imu_rs.is_file():
+        pytest.skip(".upstream Rust source absent (gitignored in a clean checkout)")
+
+    main = subprocess.run(
+        [sys.executable, str(HERE / "verify_imu_chain.py")],
+        capture_output=True, text=True,
+    )
+    assert main.returncode == 0, main.stdout[-1500:] + main.stderr[-1500:]
+    assert "all pass" in main.stdout
+    assert "trained window 0-1 steps = 0-20 ms" in main.stdout
+
+    selftest = subprocess.run(
+        [sys.executable, str(HERE / "verify_imu_chain.py"), "--selftest"],
+        capture_output=True, text=True,
+    )
+    assert selftest.returncode == 0, selftest.stdout[-1500:] + selftest.stderr[-1500:]
+    assert "all consistent" in selftest.stdout
+
+
+def test_verify_bundle_now_checks_artifact_hashes():
+    """Pass17: the bundle's own artifacts[] sha256/bytes must be verified.
+
+    Pass12 edited robotd_hd1910_mode0.toml (clarifying a comment) but the
+    bundle kept the OLD fingerprint (9007 B / b71a5907) for four audit passes,
+    because verify_bundle() only diffed provenance.per_artifact and the
+    verification_boundary. A single source of truth whose hashes are never
+    checked is decoration. These negative controls prove the new guard bites.
+    """
+    rp = _load("record_provenance_hash_test", HERE / "record_provenance.py")
+    data = json.loads((ROOT / "out" / "hd1910_kp8_deploy_bundle.json")
+                      .read_text(encoding="utf-8"))
+
+    # Clean: after the Pass17 refresh, every stored hash matches disk.
+    rc, msgs = rp.verify_artifact_hashes(data)
+    assert rc == 0, msgs
+    assert any("OK artifacts sha256/bytes match" in m for m in msgs)
+
+    # Negative control 1: a same-length sha edit must be caught.
+    bad = json.loads(json.dumps(data))
+    bad["artifacts"]["robotd_toml"]["sha256"] = "0" * 64
+    rc, msgs = rp.verify_artifact_hashes(bad)
+    assert rc == 1 and any("DRIFT artifact robotd_toml" in m for m in msgs)
+
+    # Negative control 2: a size-only edit must be caught independently.
+    bad2 = json.loads(json.dumps(data))
+    bad2["artifacts"]["robotd_toml"]["bytes"] = 1
+    rc2, msgs2 = rp.verify_artifact_hashes(bad2)
+    assert rc2 == 1 and any("bytes stored=1" in m for m in msgs2)
+
+    # Negative control 3: deleting the whole block must not look like a pass.
+    rc3, msgs3 = rp.verify_artifact_hashes({})
+    assert rc3 == 1 and any("no 'artifacts'" in m for m in msgs3)
+
+    # ...and the full --verify path must reject a tampered bundle too.
+    tmp = pathlib.Path(__file__).parent / "_hash_probe_bundle.json"
+    try:
+        tmp.write_text(json.dumps(bad), encoding="utf-8")
+        rc4, msgs4 = rp.verify_bundle(tmp)
+        assert rc4 == 1 and any("DRIFT artifact robotd_toml" in m for m in msgs4)
+    finally:
+        tmp.unlink(missing_ok=True)
+

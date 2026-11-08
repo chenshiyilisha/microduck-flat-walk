@@ -84,11 +84,24 @@
 
 ⇒ 那工具是给 playground 自己那些**有界动作/LSTM 实验**（篮球、爬桌、秋千）用的，对三个 kp8 主线策略**不适用**。**不是缺口，不要改代码**。这条再次印证「读数与算术上下界矛盾 ⇒ 先怀疑结论而不是急着改」。
 
+## 6.1 Pass17 回填（2026-11-08）：A3 已核实，§5 那条「未查」销项
+
+> 按铁律「『下一步』里写的资料线索 ≠ 已经查过」，本轮把 §7 第 4 条**当场查完并写结果**，不再挂账。
+
+- **读全三条独立一手资料**：`666wsp.../imu_dev_guide.md` 全文（LSM6DSV16X SFLP / 120 Hz / 最坏 8.3 ms / ID 200 / 1 Mbps / 15 B 飞特块含 status+sequence / Dynamixel 兼容块 addr124/12 B / STALE>30 ms / READER_SLOW≥5 样本 / 建议读取 ≥50 Hz）；`avanx-imu/README.md`（同款芯片、挂总线冒充 ID 200、**直接引用本项目 `imu.rs` 的 `DEFAULT_MOUNT`**，第三方交叉印证）；`imu-displace/IMU-MODULE.md`（独立实现，实测 100 Hz / 0.92 ms / 全零块 1–2% / 「50 Hz 周期不被拖慢」验收项）。
+- **本项目侧真跑** `verify_imu_chain.py`：训练 cfg 延迟窗口实读 **`0–1 steps = 0–20 ms`**、median ON = **+20 ms** / OFF = **0**、`ready()` = 50 Hz 下 **500 ms**，13 项全 PASS / 15 条负对照一致。
+- 🔑 **关键差异（之前不知道）**：手册的 15 B 块带 `status`/`sequence`，而本项目 `imu.rs` 的 `IMU_BLOCK_LEN=12` 是手册的 **Dynamixel 兼容块** ⇒ `STALE`/`READER_SLOW` 三个状态位在本部署链**根本不可见**，`ready()` + 全零哨兵是 robotd 自有替代。120 Hz 是芯片 SFLP 输出率，与 50 Hz 同步读**不矛盾**（手册明写建议 ≥50 Hz）。
+- **量化结论**：median OFF ≈ 0–8.3 ms（落在训练窗口内）；median ON = 20 + [0, 8.3] = **20–28.3 ms**，超窗口上界 20 ms。toml 注释的「20–30 ms」是保守近似，方向正确。⇒ **`imu_median=false` 的结论成立，不需改配置**。
+- **负对照否掉一条疑似缺口**：`audit_robotd_toml.py` R14 只把 `imu_median=true` 判 WARN（不影响退出码），看似「危险配置不拦」；但 checklist B20 明写「台架若真看到单块尖峰，改回 true 并记录原因」= **故意的人工豁免通道**，与「只建议不强制」不是同类 ⇒ **不改代码**，只记录 20–28.3 ms 边界。
+- **副产物**：`verify_imu_chain.py`（13 项检查 / 15 负对照、覆盖策略最前 6 个观测数）此前**只被 README/checklist 提及，从未被 conductor / CI / pytest 调用**——本轮已接进 `pytest tests/`，缺完整栈时诚实 SKIP 并显式列出。
+
 ## 7. 建议的下一步（按性价比，均不烧 GPU）
 
-1. **A2 静态对照**：把 loco-diag 三条修复与本项目的 air_time 门控、侧向权重、评测指标逐条比对，看有没有同族残留（纯读 cfg，零成本，且直接关系训练/评测质量）。
-2. **A1 借鉴标定联锁**：把 `configure.py` 的「`calibration_verified` + `imu_pose_verified` 双真才允许 motion」思路，接到本项目部署链（当前 `calibration_verified=false` 只是标记）。
-3. **A1 借鉴诚实边界清单**：把 `release_validation.json` 的 `hardware_tested_this_release` + `limits[]` 结构加进 `out/hd1910_kp8_deploy_bundle.json`，让「硬件端到端未做」成为机读证据而非正文一句话。
-4. **A3 核 IMU 时序**：用 8.3ms / 120Hz 核一次 `[bus] imu_median=false` 的延迟假设。
+1. **A2 静态对照**：✅ Pass16 已完成（结论：本项目 `error_vel_xy` 口径早已独立修得更彻底，air_time/侧漂为第三方反向印证，不需改训练）。
+2. **A1 借鉴标定联锁**：Pass16 已借鉴其语义写入 `verification_boundary`，**未接进 robotd**（两线不同代，不可混用）；若将来要硬联锁须单独评估。
+3. **A1 借鉴诚实边界清单**：✅ Pass16 已完成（`verification_boundary` 块 + `--verify` 交叉核对）。
+4. **A3 核 IMU 时序**：✅ **Pass17 已完成，见 §6.1**。
 
 > 硬件端到端验证仍未启动（硬件未到货）；P3（≥3 seed sweep）用户暂缓；P4 可选。以上均不改变该状态。
+>
+> ⚠️ **Pass17 新增待决策（资产/架构级）**：`git archive HEAD` 干净 checkout 实测证明 CI 的「真闸门」步骤引用的三个 onnx 与 `.upstream/` 都不在 VCS（详见 `docs/active/microduck-对比缺陷清单-2026-11-07.md` §4.7）。本轮已加机读探针 `assert_clean_checkout.py` 让边界可见，但**是否入库 2.27 MiB onnx + 精简 `.upstream` fixture 留待决策**。

@@ -10,6 +10,9 @@
 #   - audit_robotd_toml.py     -> stdlib only (tomllib, Python >= 3.11)
 #   - pre_deploy_check.py      -> stdlib only (shells out to the above via subprocess)
 #   - record_provenance.py     -> stdlib only (reads companion runmeta/heading_meta + git)
+#   - assert_ci_verdict.py     -> stdlib only (asserts a --json gate report is a real run)
+#   - assert_clean_checkout.py -> stdlib only (probes which gate inputs this checkout has)
+#   - tests/                   -> pytest, stdlib only (the tooling regression suite)
 #
 # WHY THIS FILE EXISTS: the repo's only dependency manifest was
 # microduck-software/repo/pyproject.toml, which describes the TRAINING env
@@ -27,12 +30,19 @@
 #   # or, with uv:
 #   uv pip install -r requirements.txt
 #
-# NOTE (Pass12/13 audit sandbox): `onnx` / `onnxruntime` could NOT be pip-installed
-# in the audit sandbox (configured index returned "from versions: none" -- network/
-# proxy restricted), so the inference gate is exercised only where PyPI/mirror access
-# exists. The packages below are the correct pins for the tools' imports; verify on a
-# machine with PyPI/relevant mirror access. The conductor treats a missing runtime as
-# SKIP (rc=2), never as a policy fault.
+# NOTE (Pass16 correction, 2026-11-08): the Pass12/13 note that used to live here
+# claimed "onnx / onnxruntime cannot be pip-installed in this sandbox". That was
+# WRONG. It came from running the SYSTEM Python 3.13 instead of the project's own
+# `.venv-mjlab/Scripts/python.exe` (Python 3.12.13), where torch 2.9.1+cu128,
+# onnx 1.23.2, onnxruntime 1.31.0, numpy, scipy, mjlab_microduck, mujoco and
+# pytest 9.1.1 are all already installed. "Cannot install" was "wrong
+# interpreter" -- check for an existing venv before declaring a dependency absent.
+#
+# Also: this workflow DOES install onnxruntime, and assert_ci_verdict.py therefore
+# requires the `inference` stage to be PASS. An inference SKIP in CI is a BROKEN
+# GATE (Pass16 fixed exactly that), not a clean partial install. Do not
+# reintroduce wording that treats it as an acceptable outcome.
 onnx>=1.20.1
 onnxruntime>=1.24.4
 numpy
+pytest>=8

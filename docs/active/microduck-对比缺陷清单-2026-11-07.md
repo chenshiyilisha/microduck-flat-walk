@@ -26,6 +26,12 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - **Pass14（2026-11-08 · 八轮循环 · 继续循环）—— 审查 Pass13 刚加的 CI 门禁与推理工具本身，戳破两处「门禁是摆设」盲区**：① `verify_policy_inference.py` 只「优先」输入名 `obs`、且 `--expect-act` 不匹配被静默忽略——但本代 robotd **硬编码**输入名 `obs` 且从不读 manifest（已证实 `verify_official_loader.py` 的 `input_name="obs"` 契约 + 我们的 `eval_*.py` 都喂 `{"obs": x}`），且官方 `hl2915_standup` 正是 28-vs-14 元数据错乱的先例；这两种不匹配都会让 onnx「所有静态/执行闸门全过却上机加载必炸」。已改为 **FAIL**：输入名必须 `obs`、`output_len` 必须 `expect_act`，抽 `validate_inputs`/`validate_outputs` 纯 Python 负对照（空输出防 IndexError）。② `record_provenance.py` 的 CI 步骤 `record_provenance.py --print` **缺必填 `--onnx`** 实为空指令（被 `continue-on-error` 掩盖）。已把 `--onnx` 改可选、加 `--verify` 完整性闸门（重算 bundle 记录的 onnx provenance 与伴随 meta 比对，检测「onnx 改了但 provenance 没刷新」，纯 stdlib 可在 CI 跑；code git_commit 仅 WARN 不 FAIL 因提交会变）。CI 工作流改为 `--bundle ... --print` + 新增 provenance-verify 步骤。新增 4 项纯 Python 回归测试（inference 宽度不匹配 FAIL / 输入名 obs 契约 / provenance verify 一致 / verify 抓漂移）。**沙箱可证**：inference selftest 全绿、provenance `--verify` 对真实 bundle 一致（rc=0，git_commit WARN 为预期）、`--print` 不再需 `--onnx`、所有 `--help` 合法、conductor 内 inference.selftest PASS。**结论**：Pass13 把门禁搭起来了，Pass14 让门禁本身「真拦得住」，不烧 GPU 的部署就绪缺口进一步收到上界。
 - **Pass15（2026-11-08 · 九轮循环 · 继续循环）—— 审计整个循环从未打开过的第一道闸门 `verify_policy_contract.py`（obs 布局/关节顺序/HOME/动作映射↔robotd obs.rs）**：精读确认它**不是「只建议」**——`check_joint_order`/`check_home_pose`/`check_block_order` 都是 `a==b`/`max|diff|>tol` 直接 FAIL，未知项 `raise NotChecked` 而非瞎猜；selftest 有 10+ 个真负对照（关节交换/HOME+1°/宽度60/块交换/action_scale 0.5/head↔body 交换/速率100Hz/省略键陷阱）。**但**发现结构性盲区：该关的 `Training` 侧必须 `import mjlab_microduck`（整训练栈 torch+mujoco），而 `tools/hd1910/requirements.txt` 不含它 → `contract.selftest` 在 CI 里 `NotChecked→rc=2→SKIP`，即**最结构化的 obs 布局/关节顺序/HOME/动作映射检查在 CI 里根本没跑**；且 conductor 原 verdict 只含糊写「see SKIPs」，易被读成绿。加固：conductor 抽出 `_verdict(any_fail, skipped)`，当有结构性闸门 SKIP 时 verdict 显式标 **PASS\*** 并列出被 SKIP 的关名（如 contract），不再含糊；JSON 报告加 `skipped_stages`；CI 工作流注释明示 contract 在 CI 跳过、发货前需本地带训练栈跑。新增 1 项测试 `test_conductor_verdict_surfaces_skips` 锁死 PASS\* 分支。**诚实声明**：contract 真执行仍需训练栈（沙箱无 mjlab_microduck，无法实跑其 selftest）；本轮未引入新回归。**结论**：整个 conductor 五关（contract/bundle/numeric/inference/toml）现已全部被审计过「是否真强制」；contract 逻辑正确，唯一缺口是它依赖训练栈、CI 跳过——已用 PASS\* 让该缺口可见而非静默。
 - **Pass16（2026-11-08 · 十轮循环 · 深度挖掘/对照/完善/再挖掘）—— 用完整栈真跑，戳破贯穿 Pass12–15 的错误前提「沙箱装不上 onnx/numpy/pytest」**：本轮改用 `microduck-software/.venv-mjlab/Scripts/python.exe`（此前各轮用系统 Python 3.13），实测 **torch 2.9.1+cu128 / CUDA RTX 4070 / onnx 1.23.2 / onnxruntime 1.31.0 / numpy / mjlab / mjlab_microduck / mujoco / warp / pytest 9.1.1 全部齐备**——所谓「网络受限装不上」是**找错解释器**，不是环境缺依赖（同型于记忆里「格式读不懂≠读不了」）。真跑立刻暴露两个静默漏检：**① conductor 第五关 inference 从未真正执行过**：`pre_deploy_check.py` 把 onnx 路径当**位置参数**传给 `verify_policy_inference.py`，而后者只接受 `--onnx` ⇒ argparse 用法错误退出码 **2**，被 `_classify(rc==2)` 无条件吞成「依赖缺失 SKIP」；CI 自己装了 onnxruntime 却写着「SKIP 也算 meaningful verdict」且 `set -e` 不会拦 SKIP ⇒ **Pass13–15 三轮全绿而该关一直是摆设**。修：传参改 `--onnx`；`_run` 回传完整输出，新增 `_is_argparse_usage_error` + `_stage` 护栏，使 rc=2 的用法错误判 **FAIL** 而非 SKIP（对五关通用）。真实产物验证：三个 kp8 onnx 五关全部 `PASS -- safe to load (all stages verified)`（此前 `PASS*`），inference 真执行图 `input_name=obs shape=[1,61] out_len=1`。**② CI 结构性放水**：新增 `assert_ci_verdict.py` 断言 inference 必须 PASS、只允许 contract SKIP、篡改/额外 SKIP 必 FAIL，接入 deploy-gate.yml；配 5 条负对照 selftest + 真实报告篡改测试。**③ A1 对照出机读边界缺失**：hd1910m 的 `release_validation.json` 用 `hardware_tested_this_release:False` + `gait_qualified:false` + `limits[]` 明确「没验证什么」，本项目 bundle.json 一个 `false` 都没有（全在注释/日志里）⇒ 新增 `verification_boundary` 块（硬件未测/标定未验证/运动禁止/5 条 limits），并在 `record_provenance.py --verify` 加与权威 `installation.json` 交叉核对，任何「悄悄改绿」或删块都变红。**A2 对照结论**：loco-diag 的三条诊断中，`error_vel_xy` 口径本项目**早已独立修得更彻底**（`eval_tracking.py` 明写 official 指标不作判据、`sweep_ckpt.py` 用 `freeze_command` 钉窗口、`summarize_heading_ab.py` 有 `is_true_mean` 硬守卫）；air_time 门控/侧向加权两条是**第三方独立印证的同族问题**，本项目配方已用 standing_envs curriculum + foot_clearance/swing_height + 更严 std 处理，静态对照无新缺口，不需改训练。**再挖掘**：Pass10/11 固化进 bundle 的 `rehearsal.walk=true` 首次用真实产物实跑复现（`all_gates_pass=True`）。全套测试 **52 passed**（此前各轮「手动 harness / 归档沿用」的结论首次真实 pytest 全跑）。**结论**：本轮把「绿」从「看起来合理」拉回「真执行过」；剩余 OPEN 仍是硬件端到端 + P3/P4。
+- **Pass17（2026-11-08 · 十一轮循环 · 深度挖掘/对照/完善/再挖掘）—— 用 `git archive` 干净 checkout 反查 CI，戳破「Pass13–16 四轮改的 CI 从没在 CI 真正拿到的文件集上跑过」**：**深挖 A3**：读全 `.upstream/666wsp-microduck-hd1910/imu_dev_guide.md`（LSM6DSV16X SFLP、**120 Hz**、姿态延迟最坏 **8.3 ms**、ID 200、1 Mbps、`STALE`>30ms / `READER_SLOW`≥5 样本、建议读取 ≥50 Hz）+ `avanx-imu/README.md`（同款芯片、`imu_to_dxl` 挂总线冒充 ID 200、**直接引用本项目 `imu.rs` 的 `DEFAULT_MOUNT`**）+ `imu-displace/IMU-MODULE.md`（独立实现，实测 100 Hz / 0.92 ms 总线 /「50 Hz 周期不被拖慢」验收项）。用完整栈真跑 `verify_imu_chain.py`：**训练 cfg 的 IMU 延迟窗口确为 `0–1 steps = 0–20 ms`**（从 `make_microduck_velocity_env_cfg()` 实读，非记忆推断）、median ON = +20 ms / OFF = 0、13 项全 PASS、15 条负对照一致。🔑 **两处易混差异**：手册飞特紧凑块是 **15 B（含 sequence/status）**，本项目 `imu.rs` 的 `IMU_BLOCK_LEN=12` 对应手册 **Dynamixel 兼容块 addr124/12B** ⇒ `STALE`/`READER_SLOW` 位在本部署链**根本不可见**，`ready()`(25 样本=50 Hz 下 500 ms) + 全零哨兵是 robotd 自有替代；120 Hz 是芯片 SFLP 输出率、与 50 Hz 同步读不矛盾（手册明写建议 ≥50 Hz）。量化边界：median OFF ≈ 0–8.3 ms 落在训练窗口内；median ON = 20 + [0,8.3] = **20–28.3 ms**，超出窗口上界 20 ms（toml 注释「20–30 ms」是保守近似）。`audit_robotd_toml.py` R14 只判 WARN 与 checklist B20「台架见尖峰才改回 true 并记录」的人工豁免一致 ⇒ **负对照否掉「改 FAIL」的冲动，记录边界、不改代码**。
+- **🔴 最大发现（干净 checkout 实测）**：`git archive HEAD` 解出 CI 真正拿到的文件集后实测：`.upstream/` **ABSENT**、三个部署 onnx **count 0**（`*.onnx` + `logs/` 双重 ignore）、`record_provenance.py --verify` **rc=1**（三条 `DRIFT onnx missing on disk` + calibration source missing）、`pre_deploy_check.py --selftest` **rc=1**、`pytest tests/` **25 failed / 18 passed / 9 skipped**；用不存在的 onnx 直跑 conductor 得四关 FAIL + 难懂的 onnxruntime `NO_SUCHFILE` traceback。⇒ **Pass13/14/15/16 四轮都在编辑 deploy-gate.yml、都跑过 selftest、都称 CI 绿，却从没验证过「真闸门」引用的产物根本不在仓库里**——四轮验证的都是「本地完整工作区自洽」。这是 Pass16「inference 关是摆设」的同族、但更底层：不是某一关摆设，而是**整个 CI 的输入前提不成立**。
+- **🔴 第二发现（单一可信源自述失守）**：新探针主跑报 `robotd_toml: SHA-DIFF`——bundle 记录 **9007 B / `b71a5907`**，磁盘实际 **9520 B / `f6ebad3c`**。Pass12 改了 toml 的「Radxa line」措辞注释，bundle 里的指纹从未刷新；而 `verify_bundle()` 只 diff `provenance.per_artifact` 与 `verification_boundary`，**从不校验 `artifacts[]` 的 sha256/bytes**，故 Pass13–16 四轮 `--verify` 全绿。**「记录 hash 但不检查 hash」＝ 装饰**。
+- **修（零争议、全部真跑）**：① 新增 `tools/hd1910/assert_clean_checkout.py`——机读 CI 输入就绪度探针，逐项检查存在 / **git 是否跟踪** / sha256 / bytes / `.upstream` 关键源 / 训练栈，输出 `ci_full_gate_possible` 与 problems；8 条负对照 selftest（含「文件在盘但 gitignored」这一 Pass13–16 精确陷阱）、`--strict`（缺失 rc=1）、`--github-output`，接进 CI 第一步（非阻断但打 `::warning::` + `REAL GATE NOT RUN`）。② `record_provenance.py` 新增 `verify_artifact_hashes()` 并接进 `--verify`：**先跑负对照确认守卫真的变红**，再刷新 bundle 的 toml 指纹。③ `requirements.txt` 删掉 Pass12/13「onnx 装不上、缺依赖当 SKIP 可接受」的**已被 Pass16 推翻**的注释，改写为「找错解释器 + inference SKIP 在 CI 是 BROKEN GATE」，并补 `pytest>=8`。④ 把 `verify_imu_chain.py`（13 项检查 / 15 负对照、覆盖策略最前 6 个观测数）接进 `pytest tests/`——此前它**只被 README/checklist 提及，从未被 conductor / CI / pytest 调用**，`imu_median=false` 这个部署决策却建立在它上面。⑤ deploy-gate.yml 顶部写明 PASS17 验证边界，加探针步骤；**不擅自改版本控制策略**（入库 2.3 MB onnx + 精简 `.upstream` fixture 属资产/架构决策，留待用户定）。
+- **循环自身又抓到 3 个我写的 bug**：`assess()` 里 `sha_match=False` 但 `bytes_match=True`（同长度篡改，最常见 bitrot）两个分支都不进；`artifacts=[]` 时零 problems 被判 `runnable=True`；以及一处把 `assert_ci_verdict` 的 selftest 措辞复制粘贴进探针 CLI 测试。全部由负对照/CLI 层测试当场变红后修正。
+- **实测收口**：`pytest tests/` **57 passed**、`conductor --selftest` PASS、三个 kp8 onnx 五关全 **PASS**（rc=0）、`provenance --verify` **rc=0** 且新增 `OK artifacts sha256/bytes match for 4 file(s)`、探针 `--selftest` PASS / `--strict` rc=1。**结论**：本轮把「CI 绿」从「看起来门禁齐全」拉回「明确知道这个 checkout 到底能验证什么」；剩余 OPEN 仍是硬件端到端 + P3/P4，并新增一条**待决策**：是否让 CI 真闸门在干净 checkout 上可执行。
 
 > **2026-11-08 训练状态（与审计并列）**：P0 行走 kp8 续训完（`model_7999`，指标健康，conductor 四关过）；P1 地面拾取 kp8 评测 **96.9%** 通过（四关过）；P2 站起——官方 `hl2915_standup` 在 kp8 仿真能 100% 站起但被 bundle 关拒（metadata 28 关节名 vs 14 动作），改训 **kp8 原生站起**（4096×4000），导出 onnx 后 conductor 四关过、实测站起 **100%**，三个 kp8 技能全部训练自有/同 plant 验证/闸门全过。P3（≥3 seed sweep）用户裁定暂缓，P4 未启动。硬件未到，真机端到端验证（bus.joint_ids 逐关节复核、齿隙 7.4V 重测）待硬件。
 
@@ -241,6 +247,67 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - **A2 对照结论（不需改代码）**：`loco-diag`（官方 `microduck_rl` issue #46 社区诊断）三条：① `air_time` 只 gate on 指令不 gate on 实际前进；② 侧漂达前向 2×、两轴等权；③ `error_vel_xy` 混五类指令 + 整回合平均 ⇒ 高估约 3×。本项目 live 栈（`.venv-mjlab/.../tasks/`，与 `out/issue46_backup/` 逐字节同尺寸同 mtime）里 `feet_air_time_upright` 确实仍调上游模板、`command_threshold=0.01` ⇒ ① 形式仍在，但配方另有 `standing_envs` 课程（iter 2000 达 25% 站立 env）、`foot_clearance`/`foot_swing_height`（均 target 0.02）、`track_linear_velocity std=√0.1`（比 loco-diag 报的官方 0.5 更严）、`upright 2.0/std²=0.05`、`head_pose_bias` ⇒ **静态对照无新缺口，不需改训练/重训**。② 未发现显式侧向加权，但本项目评测口径独立。③ 本项目**早已发现且修得更彻底**：`tools/eval_tracking.py` 明写 official `error_vel_xy` 单位依赖 `resampling_time_range[1]`、**不作判据**（改用自带 RMSE + lag 搜索）；`sweep_ckpt.py` 用 `freeze_command` 钉窗口使 `metric_window.is_true_mean` 成立；`summarize_heading_ab.py` 有 `is_true_mean` 硬守卫「false 则不得跨 run 比较」。⇒ 第三方独立印证本项目自己的判断。loco-diag 自列「无多种子重复」局限也正好呼应 P3 铁律。
 - **再挖掘（归档结论首次实跑复现）**：Pass10/11 固化进 bundle 的 `rehearsal.walk=true` 此前只是归档；本轮 `rehearse_hd1910.py --onnx <walk7999> --cmd-vx 0.3 --seconds 8` 真跑得 `all_gates_pass=True`，与归档一致。五关 selftest、全套 pytest（`tests/` 两个文件 **52 passed**）、三策略五关、provenance `--verify`、CI verdict 断言均首次在完整依赖栈上真实执行，不再「沿用归档」。
 - **产物**：`tools/hd1910/pre_deploy_check.py`、`assert_ci_verdict.py`（新）、`record_provenance.py`、`tests/test_hd1910_tooling.py`、`out/hd1910_kp8_deploy_bundle.json`、`.github/workflows/deploy-gate.yml`。**结论**：本轮把「绿」从「看起来合理」拉回「真执行过」；剩余 OPEN 仍是硬件端到端（到货后逐关节复核 + 7.4V 齿隙重测）与 P3/P4（用户暂缓/可选）。
+
+---
+
+## 4.7 Pass17 自主审计（2026-11-08）— A3 深挖 + 干净 checkout 反查 CI
+
+**切入点**：§7 建议里唯一还没做的「A3 用 8.3 ms / 120 Hz 核 `[bus] imu_median=false` 的延迟假设」，以及 §5 标注「未读正文」的 IMU / 观测一手源码。零 GPU、纯读源码 + 真跑。
+
+### 4.7.1 A3 一手事实（全部标真源，不靠记忆）
+
+| 事实 | 真源 |
+|---|---|
+| IMU_TO_DXL v1.2 = CH32V203 + **LSM6DSV16X**（SFLP 硬件融合）、从站 **ID 200**、**1 Mbps**、**120 Hz**、姿态延迟最坏 **8.3 ms** | `.upstream/666wsp-microduck-hd1910/imu_dev_guide.md:5-18` |
+| 15 B 飞特紧凑块 addr 56（含 `sequence`@12 / `status`@13）；Dynamixel 兼容块 **addr 124 / 12 B** | 同文件 `:26-46` |
+| `STALE` = 距上次新四元数 >30 ms；`READER_SLOW` = 累积 ≥5 个新样本；**建议读取频率 ≥ 50 Hz** | 同文件 `:99-110`、`:283-287` |
+| 躯干 IMU 就是挂总线冒充 **ID 200** 的 `imu_to_dxl` 板、芯片同为 LSM6DSV16X；**直接引用本项目 `duck-control/src/imu.rs:78-83` 的 `DEFAULT_MOUNT`** | `.upstream/avanx-imu/README.md:2-5`、`:22`、`:66-79` |
+| 另一条独立实现：100 Hz 实测 / 0.92 ms 总线 / 全零块 1–2% / `ready()` 25 帧 / 验收项「50 Hz 周期不被拖慢」 | `.upstream/imu-displace/IMU-MODULE.md:69-77`、`:128-149`、`:169-177` |
+
+**本项目侧真跑**（`.venv-mjlab/Scripts/python.exe tools/hd1910/verify_imu_chain.py`）：13 项全 PASS，训练侧延迟窗口从 `make_microduck_velocity_env_cfg()` 实读为 **`0–1 steps = 0–20 ms`**（不是记忆推断），median ON = +1 tick (**20 ms**) / OFF = **0**，`ready()` 25 样本 = 50 Hz 下 **500 ms**；`--selftest` 15 条负对照全部一致。
+
+**两处关键澄清**：① 手册的 15 B 块带 `status`/`sequence`，本项目 `imu.rs` 的 `IMU_BLOCK_LEN=12` 是手册的 **Dynamixel 兼容块** ⇒ `STALE`/`READER_SLOW` 三个状态位在本部署链**不可见**，`ready()` + 全零哨兵是 robotd 自己的替代，**不能把手册的状态位检查直接移植**。② 120 Hz 是芯片 SFLP 输出率，robotd 50 Hz 同步读拿「当时最新样本」，手册明写建议 ≥50 Hz、30 ms 才 STALE ⇒ **两者不矛盾**。量化：median OFF ≈ 0–8.3 ms（落在训练窗口低端）；median ON = 20 + [0, 8.3] = **20–28.3 ms**，超窗口上界 20 ms。`out/robotd_hd1910_mode0.toml:86-98` 注释写「20–30 ms」是保守近似，方向正确。
+
+**负对照否掉一条疑似缺口**：`audit_robotd_toml.py` R14 把 `imu_median=true` 只判 **WARN**（不影响退出码），看似「已知危险配置闸门不拦」。但 checklist B20 明写「台架若真看到单块尖峰，改回 true 并记录原因」——这是**故意留的人工豁免通道**，与 Pass15/16 的「只建议不强制」不是同一类。⇒ **不改代码**，只在文档记录量化边界（ON 时 20–28.3 ms 超窗口）。同 §6 的 `bake_action_clip` 案例。
+
+### 4.7.2 🔴 干净 checkout 实测：CI 从来没在 CI 的文件集上验证过
+
+不靠推，用 `git archive HEAD | tar -x -C <clean>` 造出 **GitHub Actions 真正拿到的文件集**，逐条真跑：
+
+| 检查 | 干净 checkout 读数 |
+|---|---|
+| `.upstream/` | **ABSENT**（`.gitignore:5` 排除） |
+| 三个部署 onnx | **count 0**（`*.onnx` + `logs/` 双重 ignore，`git ls-files \| grep '\.onnx$'` = 0） |
+| `record_provenance.py --verify` | **rc=1**（3× `DRIFT onnx missing on disk` + `authoritative calibration source missing`） |
+| `pre_deploy_check.py --selftest` | **rc=1** |
+| `pytest tests/ -q` | **25 failed / 18 passed / 9 skipped** |
+| conductor 喂不存在的 onnx | contract/bundle/numeric/inference 四个 **FAIL** + onnxruntime `NO_SUCHFILE` traceback |
+| 能真跑的 | `verify_policy_inference.py --selftest` rc=0、`assert_ci_verdict.py --selftest` rc=0、`record_provenance.py --print` rc=0 |
+
+⇒ **Pass13/14/15/16 四轮都在改 `deploy-gate.yml`，四轮都跑过 selftest、都称 CI 绿，但没有一轮验证过「真闸门」引用的产物根本不在仓库里**。四轮验证的都是「本地完整工作区自洽」。这是 Pass16「inference 关是摆设」的同族且更底层：不是某一关摆设，而是**整个 workflow 的输入前提不成立**。
+
+### 4.7.3 🔴 单一可信源自述失守（四轮漏检）
+
+探针主跑报 `robotd_toml: SHA-DIFF`：bundle 记 **9007 B / `b71a5907…`**，磁盘 **9520 B / `f6ebad3c…`**。根因：Pass12 改了 toml 第 105 行「Radxa line」措辞注释，bundle 的 `artifacts` 指纹从未刷新；而 `verify_bundle()` 只比对 `provenance.per_artifact` 与 `verification_boundary`，**从不校验 `artifacts[]` 的 sha256/bytes** ⇒ Pass13–16 的 `--verify` 全绿。**记录 hash 却不检查 hash = 装饰**。
+
+### 4.7.4 修复与验证（全部真跑，非归档沿用）
+
+| 改动 | 内容 |
+|---|---|
+| `tools/hd1910/assert_clean_checkout.py`（新） | 机读 CI 输入探针：逐项检查存在 / **git 是否跟踪** / sha256 / bytes / 5 个 `.upstream` 源 / 训练栈，输出 `ci_full_gate_possible` + problems；8 条负对照 selftest（含「文件在盘但 gitignored」精确陷阱）、`--strict`（缺失 rc=1）、`--json`、`--github-output` |
+| `.github/workflows/deploy-gate.yml` | 顶部写明 PASS17 边界（附干净 checkout 实测读数）；第一步加非阻断探针，打 `::warning::` + `REAL GATE NOT RUN` |
+| `tools/hd1910/record_provenance.py` | 新增 `verify_artifact_hashes(bundle)` 并接进 `verify_bundle()`（放最后 + `max()`，避免被更早的 `rc=1` 赋值覆盖）；**先跑负对照确认 rc=1 / 两条 DRIFT，再刷新 bundle** |
+| `out/hd1910_kp8_deploy_bundle.json` | `artifacts.robotd_toml` 刷成实际 `f6ebad3c…` / 9520 |
+| `tools/hd1910/requirements.txt` | 删除 Pass12/13「onnx 装不上、inference SKIP 可接受」的**已被 Pass16 推翻**的注释，改写为「找错解释器 + CI 里 inference SKIP = BROKEN GATE」；补 `pytest>=8` |
+| `tests/test_hd1910_tooling.py` | +5 项：探针 CLI selftest / `assess` 负对照 / `probe` 读 bundle 并识别未跟踪 / **`verify_imu_chain.py` 主跑 + selftest 真执行**（它终于有自动执行点）/ artifacts hash 三类负对照 |
+
+**循环自身抓到 3 个本轮写进去的 bug**（都由负对照或 CLI 层测试当场变红）：① `assess()` 中 `sha_match=False & bytes_match=True`（同长度篡改，最常见 bitrot）两个分支都不进；② `artifacts=[]` 零 problems 被判 `runnable=True`；③ 探针 CLI 测试误抄了 `assert_ci_verdict` 的 selftest 措辞。⇒ 再次印证「静默 bug 发生在我自己那一行」与「新增 CLI 必须测 CLI 入口」。
+
+**最终读数**：`pytest tests/` **57 passed in 91.63s**；`conductor --selftest` PASS；三个 kp8 onnx 五关全部 `PASS`（contract/bundle/numeric/inference/toml = PASS，rc=0）；`provenance --verify` **rc=0** 含 `OK artifacts sha256/bytes match for 4 file(s)`；探针 `--selftest` PASS、`--strict` rc=1；`verify_imu_chain.py` 主跑 `all pass` + selftest `all consistent`。
+
+### 4.7.5 本轮**没做**（明确边界，不是遗漏）
+
+CI 架构级修复需要决策：**是否把 3 个已验证 onnx（合计 2,381,098 B ≈ 2.27 MiB）与闸门依赖的少量 `.upstream` Rust 源码作为 fixture 纳入版本控制**。`git add -f` 实测可行，项目 `.gitignore` 注释也确立了「证据必须留在 VCS」原则（bundle.json / deploy_check 报告均已入库）；但第三方源码快照与二进制入库属资产策略变更，本轮**不擅自决定**。当前探针让「CI 绿 ≠ 部署已验证」机读可见，权威验证仍是**本地完整工作区**跑 `pre_deploy_check.py` + `pytest tests/`。剩余 OPEN：硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3 暂缓、P4 可选。
 
 ---
 

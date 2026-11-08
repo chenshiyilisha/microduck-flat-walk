@@ -15,6 +15,18 @@
 # onnxruntime IS installed below, so the inference stage must actually EXECUTE.
 # assert_ci_verdict.py rejects any report where inference is SKIP/FAIL -- a
 # mis-invoked guard must never be able to look like a clean CI pass again.
+#
+# PASS17 BOUNDARY (2026-11-08, measured in a `git archive HEAD` clean checkout):
+# the three verified deploy .onnx and `.upstream/` are BOTH gitignored, so a
+# fresh checkout does NOT receive them. Measured there: `record_provenance.py
+# --verify` rc=1 (three DRIFTs), `pre_deploy_check.py --selftest` rc=1, and
+# `pytest tests/` = 25 failed / 18 passed / 9 skipped. Pass13-16 edited this
+# workflow while only ever running it in a FULL local workspace. The readiness
+# probe below makes that precondition machine-readable; it is NOT a sign-off.
+# A green CI here verifies guard LOGIC ONLY. The real gate, the provenance verify
+# and the full regression suite must be run in the full local workspace before
+# shipping. Fixing that is an asset/architecture decision (commit ~2.3 MB of
+# ONNX evidence + a minimal .upstream fixture), deliberately NOT made here.
 name: deploy-gate
 
 on:
@@ -38,6 +50,17 @@ jobs:
 
       - name: Install deploy-verification toolchain
         run: python -m pip install --upgrade pip && pip install -r tools/hd1910/requirements.txt
+
+      # Pass17: make the checkout's real verification scope visible BEFORE any
+      # guard runs. Non-blocking by design -- it reports, it does not pretend a
+      # green CI is a deployment sign-off. Use --strict in a pre-ship checklist.
+      - name: CI input readiness probe (what can this checkout actually verify?)
+        id: readiness
+        run: |
+          python tools/hd1910/assert_clean_checkout.py \
+            --json out/ci_readiness.json \
+            --github-output "$GITHUB_OUTPUT"
+          cat out/ci_readiness.json
 
       - name: CI verdict assertion negative-control self-test
         run: python tools/hd1910/assert_ci_verdict.py --selftest

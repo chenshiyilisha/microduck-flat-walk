@@ -42,6 +42,7 @@ catching "the onnx changed but provenance was never refreshed".
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -226,6 +227,45 @@ def verify_boundary(bundle: dict) -> tuple[int, list[str]]:
     return rc, msgs
 
 
+def verify_artifact_hashes(bundle: dict) -> tuple[int, list[str]]:
+    """Recheck the `artifacts` block's sha256/bytes against the files on disk.
+
+    Pass17 found this block was NEVER verified: `--verify` only diffed the
+    `provenance.per_artifact` fields (training metadata) and the
+    `verification_boundary`, so robotd_hd1910_mode0.toml could be edited in
+    Pass12 and the bundle's stored sha256/bytes silently stayed stale for four
+    audit passes (9007 B / b71a5907 recorded vs 9520 B / f6ebad3c on disk).
+    A "single source of truth" whose own hashes are not checked is decoration.
+
+    Pure stdlib. Returns (rc, messages); rc=1 on any missing file or mismatch.
+    """
+    arts = bundle.get("artifacts")
+    if not arts:
+        return 1, ["bundle has no 'artifacts' block: the sha256/bytes evidence "
+                    "cannot be checked"]
+    rc, msgs = 0, []
+    for name, meta in arts.items():
+        rel = meta.get("rel_path", "")
+        path = ROOT / rel
+        if not path.is_file():
+            rc = 1
+            msgs.append(f"DRIFT artifact missing on disk: {name} ({rel})")
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        size = path.stat().st_size
+        if digest != meta.get("sha256"):
+            rc = 1
+            msgs.append(f"DRIFT artifact {name}: sha256 stored="
+                        f"{str(meta.get('sha256'))[:12]} recomputed={digest[:12]}")
+        if size != meta.get("bytes"):
+            rc = 1
+            msgs.append(f"DRIFT artifact {name}: bytes stored={meta.get('bytes')} "
+                        f"recomputed={size}")
+    if rc == 0:
+        msgs.append(f"OK artifacts sha256/bytes match for {len(arts)} file(s)")
+    return rc, msgs
+
+
 def verify_bundle(bundle_path: Path) -> tuple[int, list[str]]:
     """Recompute per-artifact provenance from the onnx paths recorded in the
     bundle and diff against the stored block. Pure stdlib (no onnx). Returns
@@ -273,6 +313,14 @@ def verify_bundle(bundle_path: Path) -> tuple[int, list[str]]:
                 rc = 1
                 msgs.append(
                     f"DRIFT {rel}: {f} stored={sv!r} recomputed={cv!r}")
+
+    # Pass17: the artifacts[] sha256/bytes are part of the SAME single source
+    # of truth and were never checked. Keep this last, and use max(), so no
+    # earlier `rc = 1` assignment can overwrite a stricter rc.
+    arc, amsgs = verify_artifact_hashes(bundle)
+    msgs.extend(amsgs)
+    rc = max(rc, arc)
+
     if rc == 0:
         msgs.append(f"OK provenance consistent for {len(pa)} artifact(s)")
     return rc, msgs
