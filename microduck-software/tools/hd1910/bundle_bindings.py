@@ -560,8 +560,12 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bundle", type=Path, default=Path(DEFAULT_BUNDLE),
                     help=f"bundle json (default: {DEFAULT_BUNDLE})")
-    ap.add_argument("--root", type=Path, default=Path.cwd(),
-                     help="checkout root the relative paths resolve against")
+    ap.add_argument("--root", type=Path, default=None,
+                     help="checkout root the relative paths resolve against "
+                          "(default: repo root derived from this script -- "
+                          "microduck-software/ -- so the tool is CWD-independent; "
+                          "pass explicitly only to override, never to 'fix' a "
+                          "wrong launch directory)")
     ap.add_argument("--json", action="store_true",
                      help="emit a machine-readable result")
     ap.add_argument("--selftest", action="store_true",
@@ -571,7 +575,18 @@ def main() -> int:
                           "from (negative controls / staged upgrades only)")
     args = ap.parse_args()
 
-    root = args.root.resolve()
+    # Anchor --root to the repo root (microduck-software/) via this script's own
+    # location, NOT to CWD. Every rel_path in the bundle (logs/rsl_rl/... onnx,
+    # out/... toml) is relative to microduck-software/, so a CWD-dependent default
+    # was the root cause of the "must launch from microduck-software" trap.
+    # This mirrors record_provenance.py's ROOT = HERE.parent.parent exactly.
+    # NOTE: this deliberately does NOT switch the toml [policy] paths to
+    # "../logs/rsl_rl/..." -- robotd resolves policy paths against ITS OWN CWD at
+    # runtime (duck-control/src/policy.rs), not the toml's parent, so a relative
+    # path there is unsafe in production; the correct production fix is absolute
+    # board paths, not a "../" prefix. See docs/active/microduck-upstream-对照-*.md.
+    _HERE = Path(__file__).resolve().parent
+    root = (args.root or _HERE.parent.parent).resolve()
     bundle_path = args.bundle if args.bundle.is_absolute() else root / args.bundle
     if args.selftest:
         return _selftest(root, bundle_path)
