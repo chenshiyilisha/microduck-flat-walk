@@ -262,9 +262,22 @@ def _read_metrics(u) -> dict[str, float]:
     return out
 
 
+def _median3_t(a0, a1, a2):
+    """Per-column median of three [N, C] tensors, matching robotd's `median3_each`.
+
+    imu.rs computes `m(a, b, c) = a.max(b).min(c).max(a.min(b))` -- the standard
+    median of three, applied independently to each IMU component. In steady state
+    the three frames agree and this returns the current sample (no lag); during a
+    transient the middle sample wins, which lags the reading by one control period.
+    A clean sim has no spikes to reject, so the only effect here is that +20 ms of
+    observation latency on the gyro and gravity blocks -- the conservative case.
+    """
+    return torch.maximum(torch.minimum(torch.maximum(a0, a1), a2), torch.minimum(a0, a1))
+
+
 def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         solver_iters=None, solver_ls=None, solver_ncon=None, seed=None,
-        backlash_deg=None, action_scale=None):
+        backlash_deg=None, action_scale=None, imu_median=False):
     from dataclasses import asdict
 
     from mjlab.envs import ManagerBasedRlEnv
@@ -339,6 +352,13 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
 
     obs, _ = env.reset()
     counter_before = pin_curriculum(env)
+
+    # Three-deep history of the actor observation for the optional IMU median-of-three
+    # (`--imu-median`), matching robotd's `median3_each`. Only the gyro (cols 0:3) and
+    # gravity (cols 3:6) blocks are median-filtered; joint/command blocks are left as the
+    # sim produced them, exactly as robotd does.
+    imu_hist = [obs["actor"], obs["actor"], obs["actor"]]
+    imu_median_active = 0  # env-steps where the median actually moved the sample
 
     u = env.unwrapped
     robot = u.scene["robot"]
@@ -435,6 +455,20 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
 
     with torch.no_grad():
         for _k in range(n_steps):
+            # Optional IMU median-of-three: feed the policy the median over the last
+            # three frames of the gyro and gravity blocks, matching robotd's
+            # `imu_median=true`. During a transient this lags the current sample by one
+            # control period; in steady state it is a no-op (verified by imu_median_active).
+            if imu_median:
+                a = obs["actor"]
+                g = a.clone()
+                for c0, c1 in ((0, 3), (3, 6)):
+                    g[:, c0:c1] = _median3_t(
+                        imu_hist[-3][:, c0:c1], imu_hist[-2][:, c0:c1], a[:, c0:c1])
+                if bool((g[:, :6] - a[:, :6]).abs().max() > 1e-4):
+                    imu_median_active += 1
+                obs = {"actor": g}
+
             actions = policy(obs)
             obs, _rew, dones, extras = env.step(actions)
 
@@ -453,6 +487,16 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
                 jp_lo = torch.where(keep_m, jp, jp_lo)
                 jp_hi = torch.where(keep_m, jp, jp_hi)
                 jv_peak = torch.where(keep_m, torch.zeros_like(jv_peak), jv_peak)
+            # Advance the IMU median history with the post-step observation. A fallen
+            # env reports fresh data, so reset its history entries too -- otherwise the
+            # median would blend a pre-respawn sample with the new spawn pose.
+            new_a = obs["actor"]
+            if bool(dones.any()):
+                ids = dones.bool()
+                for k in range(3):
+                    imu_hist[k] = imu_hist[k].clone()
+                    imu_hist[k][ids] = new_a[ids]
+            imu_hist = [imu_hist[-2], imu_hist[-1], new_a]
             jp_lo = torch.minimum(jp_lo, jp)
             jp_hi = torch.maximum(jp_hi, jp)
             jv_peak = torch.maximum(jv_peak, torch.abs(d.joint_vel))
@@ -841,6 +885,14 @@ def run(task_id, checkpoint, num_envs, seconds, device, vx, vy, wz, plant, play,
         # Recorded, not assumed: with seed=None the run is not reproducible, so a
         # reading that later has to be re-checked cannot be re-checked.
         "seed": seed,
+        # The IMU median-of-three injection (`--imu-median`). OFF for every archived
+        # reading; ON only when explicitly requested. `active_frac` is the share of
+        # env-steps where the filter actually moved the gyro/gravity sample away from
+        # the current one -- a no-op in steady state, non-zero only during transients,
+        # which is exactly the +20 ms transient lag the `imu_median=false` decision is
+        # betting does not matter.
+        "imu_median": imu_median,
+        "imu_median_active_frac": (imu_median_active / max(n_steps, 1)) if imu_median else None,
         # Which physical plant produced this reading. cfg/mdp hashes do NOT cover
         # it (the actuator lives one import deeper, in microduck_constants), and
         # it moves vx from 0.316/0%-falls to 0.109/100%-falls. Never omit this.
@@ -885,6 +937,12 @@ def main() -> int:
     ap.add_argument("--cmd-vy", type=float, default=0.0)
     ap.add_argument("--cmd-wz", type=float, default=0.0)
     ap.add_argument("--plant", default="default", choices=list(PLANT_CHOICES))
+    ap.add_argument("--imu-median", action="store_true",
+                    help="inject robotd's median-of-three on the gyro/gravity obs "
+                         "blocks before the policy (the `imu_median=true` deploy "
+                         "filter), to measure whether its +20 ms transient lag breaks "
+                         "the gait. OFF by default; default leaves every archived "
+                         "reading unchanged.")
     ap.add_argument("--solver-iters", type=int, default=None,
                     help="override sim.mujoco.iterations (flat task default: 10)")
     ap.add_argument("--solver-ls", type=int, default=None,
@@ -919,7 +977,7 @@ def main() -> int:
     r = run(a.task, a.checkpoint, a.num_envs, a.seconds, a.device,
             a.cmd_vx, a.cmd_vy, a.cmd_wz, a.plant, a.play,
             a.solver_iters, a.solver_ls, a.solver_ncon, a.seed,
-            a.backlash_deg, a.action_scale)
+            a.backlash_deg, a.action_scale, a.imu_median)
 
     if a.out:
         p = Path(a.out)

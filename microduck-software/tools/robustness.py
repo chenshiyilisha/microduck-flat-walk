@@ -120,6 +120,12 @@ CONDITIONS = {
   "obs_lag_official": dict(official_lag=True),
   "obs_delay_20ms": dict(obs_delay=1),   # stress: every block a period late, joint pos included
   "obs_delay_60ms": dict(obs_delay=3),
+  # The deployment IMU median-of-three (`imu_median=true` in the robot's config). It is the
+  # one observation-side filter robotd applies, and the project's `imu_median=false` decision
+  # currently rests on a delay-window argument rather than a measurement. This condition runs
+  # the SAME 61-D policy with that filter on (gyro and gravity only, +20 ms transient lag),
+  # so the drop versus nominal is the empirical verdict on whether the filter breaks the gait.
+  "median": dict(imu_median=True),
   "sensor_noise": dict(noise=1.0),
   "encoder_bias": dict(encoder_bias=0.015),
   "push_0.3mps": dict(push_dv=0.3, push_period=3.0),
@@ -178,6 +184,18 @@ def load_policy(path):
   return net, ckpt, obs_dim
 
 
+def _median3_block(frames, lo, hi):
+  """robotd's `median3_each`: per-component median of three frames.
+
+  Exact replica of imu.rs `m(a, b, c) = a.max(b).min(c).max(a.min(b))` -- the
+  standard median of three, applied independently to each column of the block.
+  A spike in exactly one of the three frames is discarded; a steady signal
+  returns the current value unchanged.
+  """
+  a, b, c = frames[0][:, lo:hi], frames[1][:, lo:hi], frames[2][:, lo:hi]
+  return np.maximum(np.minimum(np.maximum(a, b), c), np.minimum(a, b))
+
+
 def noisy(obs, layout, rng, level):
   """Add physical noise to the observation blocks a real robot actually measures."""
   out = obs.copy()
@@ -191,7 +209,8 @@ def noisy(obs, layout, rng, level):
 
 def rollout(net, env, obs_dim, command, seconds, seed, act_delay=0, obs_delay=0,
             noise=0.0, push_dv=0.0, push_period=0.0, init_tilt_deg=0.0,
-            encoder_bias=0.0, official_lag=False, act_alpha=0.0, heading_hold=False):
+            encoder_bias=0.0, official_lag=False, act_alpha=0.0, heading_hold=False,
+            imu_median=False):
   """Run one condition and return per-env speed, falls and orientation statistics. """
   layout = LAYOUTS[obs_dim]
   rng = np.random.default_rng(seed + 1)
@@ -237,8 +256,8 @@ def rollout(net, env, obs_dim, command, seconds, seed, act_delay=0, obs_delay=0,
 
   obs = env.obs()
   # Two frames minimum: the official per-term lag needs the previous frame even when the
-  # uniform observation delay is zero.
-  depth = max(2, obs_delay + 1)
+  # uniform observation delay is zero. The IMU median-of-three needs three.
+  depth = max(2, obs_delay + 1, 3 if imu_median else 0)
   hist = collections.deque([obs.copy() for _ in range(depth)], maxlen=depth)
   # An action delay starts from a hold-at-home buffer: the robot does not move before the
   # first command arrives, which is what happens after a policy load.
@@ -299,6 +318,22 @@ def rollout(net, env, obs_dim, command, seconds, seed, act_delay=0, obs_delay=0,
       for block in ("gyro", "grav", "jvel"):
         lo, hi, _ = layout[block]
         seen[:, lo:hi] = hist[-2][:, lo:hi]
+    if imu_median:
+      # robotd's median-of-three on the decoded IMU -- the *deployment* filter that
+      # `imu_median=true` turns on. It runs on the gyro and gravity blocks only (joint
+      # velocity and position are not median-filtered), and is the project's
+      # `imu_median=false` decision betting does not matter. In steady state the three
+      # frames agree, so this returns the current sample (no lag); during a transient
+      # the middle sample wins, which lags the current reading by exactly one control
+      # period (20 ms). A clean sim has no spikes to reject, so the only thing this adds
+      # is that transient +20 ms of observation latency -- the conservative case, because
+      # the real chip stacks another 0-8.3 ms of sampling staleness on top of it. The
+      # drop versus nominal is the empirical verdict on whether the filter breaks the gait.
+      seen = seen.copy()
+      frames = (hist[-3], hist[-2], hist[-1])
+      for block in ("gyro", "grav"):
+        lo, hi, _ = layout[block]
+        seen[:, lo:hi] = _median3_block(frames, lo, hi)
     if noise:
       seen = noisy(seen, layout, rng, noise)
     if encoder_bias:
