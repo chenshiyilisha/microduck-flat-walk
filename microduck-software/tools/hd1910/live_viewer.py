@@ -14,6 +14,19 @@ MicroDuck HD-1910 真机 3D 姿态查看器 —— PC 骨架版
     —— 与 ft1910/duck-ipc-proto/src/lib.rs:536 完全一致，也与我们 toml 注释的
        "left leg 0-4, neck/head/mouth 5-9, right leg 10-14" 一致。
 
+运动学几何（关键，不再是占位值）
+------------------------------
+  * 连杆树、各体相对平移/旋转、关节轴**全部来自 ft1910 的 MJCF**
+    ``.upstream/ft1910/kinematics/assets/alpha/robot_walk.xml``（逐体 pos/quat 与
+    joint axis="0 0 1"，见该文件 6–108 行）。解析与换算由一次性脚本完成，本文件只
+    烘焙结果，保证零依赖也能跑。
+  * 坐标约定：MJCF 本就是 **Z 向上 / X 向前 / Y 向左**，与查看器一致，无需轴交换。
+  * FK 严格按 MuJoCo 帧组合：``frame_child = frame_parent · R(axis,q) · Translate(pos) · R(quat)``，
+    用纯 Python 四元数实现，等价于 MJCF 的关节原点位置（不含连杆自身朝向，仅取关节原点
+    连线画骨架，足够可视化）。
+  * mouth 在 alpha 运动学 MJCF 中无 hinge（只有 head 的 mouth_tip site），故嘴部作为 head_roll
+    下的固定偏移节点，不驱动骨架转动——已诚实标注。
+
 用法
 ----
   # 1) 从真机经 ssh 拉流（最贴近生产的路径）：
@@ -27,11 +40,10 @@ MicroDuck HD-1910 真机 3D 姿态查看器 —— PC 骨架版
 
 设计要点
 --------
-  * 零重依赖也能跑：FK 用纯 Python 矩阵，headless 模式只打印。matplotlib 常见即启用，
+  * 零重依赖也能跑：FK 用纯 Python 矩阵/四元数，headless 模式只打印。matplotlib 常见即启用，
     viser（浏览器 3D）若已装则优先（需 pip install viser）。
   * 关节 ID 体系严格用我们的「1–15 物理 ID + 左腿优先名序」（见对照文档 §1），
     不混入官方 10–14/20–24/30–34。
-  * 链路平移/长度是**占位值**，最终应从 MJCF（robot_walk.xml）读真实几何，见 LINKS。
 """
 
 from __future__ import annotations
@@ -62,83 +74,94 @@ REST_POSITION: list[float] = [
 ]
 
 # ───────────────────────────────────────────────────────────────────────────
-# 2. 运动学骨架（占位几何 —— 真实值请从 robot_walk.xml 读）
-#    每个关节：parent 关节名、相对父关节的平移 (dx,dy,dz, 米)、旋转轴、符号。
-#    坐标：Z 向上，X 向前，Y 向左（右腿为 -Y）。角度绕轴旋转后再叠加平移。
-#    ⚠️ 这些平移/长度是按鸭子大致比例估的，仅用于骨架可视化；要精确必须回填 MJCF。
+# 2. 运动学树（烘焙自 ft1910/kinematics/assets/alpha/robot_walk.xml，6–108 行）
+#    坐标系：Z 向上 / X 向前 / Y 向左（与 MJCF 一致）。
+#    每个体：parent 体名、相对父体的平移 pos、相对父体的旋转 quat(wxyz)、
+#           若含关节则 joint=关节名、axis=关节轴（父体坐标系下，本模型均为 0 0 1）。
+#    关节原点位置 = 该体的原点（joint pos 默认 0，位于父体原点处）。
 # ───────────────────────────────────────────────────────────────────────────
-LINKS: dict[str, dict] = {
-    # 盆骨为根
-    "pelvis":          {"parent": None,     "pos": (0.0, 0.0, 0.0),  "axis": None, "sign": 1.0},
-    # 左腿（Y 为正 = 左）
-    "left_hip_yaw":    {"parent": "pelvis", "pos": (0.0, 0.06, 0.10), "axis": "z", "sign": 1.0},
-    "left_hip_roll":   {"parent": "left_hip_yaw",   "pos": (0,0,0),     "axis": "x", "sign": 1.0},
-    "left_hip_pitch":  {"parent": "left_hip_roll",  "pos": (0,0,0),     "axis": "y", "sign": 1.0},
-    "left_knee":       {"parent": "left_hip_pitch", "pos": (0,-0.10,0), "axis": "y", "sign": 1.0},
-    "left_ankle":      {"parent": "left_knee",      "pos": (0,-0.10,0), "axis": "y", "sign": 1.0},
-    "left_foot":       {"parent": "left_ankle",     "pos": (0.05,-0.03,0), "axis": None, "sign": 1.0},
-    # 右腿（Y 为负 = 右）
-    "right_hip_yaw":   {"parent": "pelvis", "pos": (0.0, -0.06, 0.10), "axis": "z", "sign": 1.0},
-    "right_hip_roll":  {"parent": "right_hip_yaw",  "pos": (0,0,0),     "axis": "x", "sign": 1.0},
-    "right_hip_pitch": {"parent": "right_hip_roll", "pos": (0,0,0),     "axis": "y", "sign": 1.0},
-    "right_knee":      {"parent": "right_hip_pitch","pos": (0,-0.10,0), "axis": "y", "sign": 1.0},
-    "right_ankle":     {"parent": "right_knee",     "pos": (0,-0.10,0), "axis": "y", "sign": 1.0},
-    "right_foot":      {"parent": "right_ankle",    "pos": (0.05,-0.03,0), "axis": None, "sign": 1.0},
-    # 颈 / 头 / 嘴（向上 +Z）
-    "neck_pitch":      {"parent": "pelvis", "pos": (0,0,0.12),  "axis": "y", "sign": 1.0},
-    "head_pitch":      {"parent": "neck_pitch", "pos": (0,0,0.06), "axis": "y", "sign": 1.0},
-    "head_yaw":        {"parent": "head_pitch", "pos": (0,0,0.04), "axis": "z", "sign": 1.0},
-    "head_roll":       {"parent": "head_yaw",   "pos": (0,0,0),    "axis": "x", "sign": 1.0},
-    "mouth":           {"parent": "head_roll",  "pos": (0.06,0,0),  "axis": "y", "sign": 1.0},
-}
+BONES: list[dict] = [
+    {"name": "trunk_base",       "parent": None,                "pos": (0.0, 0.0, 0.12),      "quat": (1.0, 0.0, 0.0, 0.0)},
+    {"name": "yaw2roll",         "parent": "trunk_base",        "pos": (0.006, 0.0175, -0.005), "quat": (0.0, -0.707107, -0.707107, -0.0), "joint": "left_hip_yaw", "axis": (0, 0, 1)},
+    {"name": "hip_l",            "parent": "yaw2roll",          "pos": (-0.0, 0.0165, 0.0125),  "quat": (0.707107, -0.707107, -0.0, 0.0), "joint": "left_hip_roll", "axis": (0, 0, 1)},
+    {"name": "left_upper_leg",   "parent": "hip_l",             "pos": (0.025, 0.0, -0.0185),   "quat": (0.5, -0.5, 0.5, -0.5), "joint": "left_hip_pitch", "axis": (0, 0, 1)},
+    {"name": "leg",              "parent": "left_upper_leg",    "pos": (0.022, 0.0357771, -0.004), "quat": (0.0, 0.707107, 0.707107, -0.0), "joint": "left_knee", "axis": (0, 0, 1)},
+    {"name": "ankle_left",       "parent": "leg",               "pos": (-0.0, 0.042, -0.026),   "quat": (0.0, 1.0, 0.0, -0.0), "joint": "left_ankle", "axis": (0, 0, 1)},
+    {"name": "neck",             "parent": "trunk_base",        "pos": (0.026, 0.0145011, 0.0324424), "quat": (0.0, -0.0, -0.707107, 0.707107), "joint": "neck_pitch", "axis": (0, 0, 1)},
+    {"name": "neck_pitch",       "parent": "neck",              "pos": (0.0, -0.05, 0.0),       "quat": (0.0, 1.0, 0.0, 0.0), "joint": "head_pitch", "axis": (0, 0, 1)},
+    {"name": "yaw_roll_motion",  "parent": "neck_pitch",        "pos": (-0.0, 0.0186931, -0.0145), "quat": (0.0, -0.0, -0.707107, -0.707107), "joint": "head_yaw", "axis": (0, 0, 1)},
+    {"name": "bottom_head_shell","parent": "yaw_roll_motion",   "pos": (-0.0179, 0.0, 0.0145),   "quat": (0.707107, -0.0, -0.707107, 0.0), "joint": "head_roll", "axis": (0, 0, 1)},
+    {"name": "bearing_roll",     "parent": "trunk_base",        "pos": (0.006, -0.0175, -0.005), "quat": (0.0, -0.707107, -0.707107, -0.0), "joint": "right_hip_yaw", "axis": (0, 0, 1)},
+    {"name": "hip_l_2",          "parent": "bearing_roll",      "pos": (-0.0, 0.0165, 0.0125),   "quat": (0.0, -0.0, 0.707107, 0.707107), "joint": "right_hip_roll", "axis": (0, 0, 1)},
+    {"name": "right_upper_leg",  "parent": "hip_l_2",           "pos": (0.025, 0.0, -0.0185),    "quat": (0.5, -0.5, 0.5, -0.5), "joint": "right_hip_pitch", "axis": (0, 0, 1)},
+    {"name": "leg_2",            "parent": "right_upper_leg",   "pos": (-0.022, 0.0357771, -0.004), "quat": (0.0, 1.0, -0.0, -0.0), "joint": "right_knee", "axis": (0, 0, 1)},
+    {"name": "ankle_right",      "parent": "leg_2",             "pos": (-0.042, -0.0, -0.026),   "quat": (0.0, -0.707107, 0.707107, 0.0), "joint": "right_ankle", "axis": (0, 0, 1)},
+    # 脚尖（site，无关节）：left_foot / right_foot，pos 取自 robot_walk.xml 的 site
+    {"name": "left_foot",        "parent": "ankle_left",        "pos": (-0.0, -0.0237879, -0.0140852), "quat": (1.0, 0.0, 0.0, 0.0)},
+    {"name": "right_foot",       "parent": "ankle_right",       "pos": (-0.0, 0.0237879, -0.0140852),  "quat": (1.0, 0.0, 0.0, 0.0)},
+    # 嘴尖（site，无关节）：mouth_tip pos 取自 robot_walk.xml；alpha 运动学无 mouth hinge
+    {"name": "mouth",            "parent": "bottom_head_shell", "pos": (-0.00829334, 0.0, -0.0777383), "quat": (1.0, 0.0, 0.0, 0.0)},
+]
+BONE_BY_NAME: dict[str, dict] = {b["name"]: b for b in BONES}
+JOINT_TO_BONE: dict[str, str] = {b["joint"]: b["name"] for b in BONES if b.get("joint")}
+EDGES: list[tuple[str, str]] = [(b["name"], b["parent"]) for b in BONES if b["parent"]]
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# 3. 纯 Python 3x3 旋转 + 平移（不依赖 numpy）
+# 3. 纯 Python 四元数 + 旋转（不依赖 numpy）
 # ───────────────────────────────────────────────────────────────────────────
-def _rot(axis: str, ang: float) -> list[list[float]]:
+def _quat_to_mat(w: float, x: float, y: float, z: float) -> list[list[float]]:
+    R = [
+        [1 - 2*(y*y + z*z), 2*(x*y - w*z),     2*(x*z + w*y)],
+        [2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+        [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)],
+    ]
+    return R
+
+
+def _axis_angle_to_mat(axis: tuple[float, float, float], ang: float) -> list[list[float]]:
+    x, y, z = axis
+    n = math.sqrt(x*x + y*y + z*z)
+    if n < 1e-12:
+        return [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    x, y, z = x/n, y/n, z/n
     c, s = math.cos(ang), math.sin(ang)
-    if axis == "x":
-        return [[1,0,0],[0,c,-s],[0,s,c]]
-    if axis == "y":
-        return [[c,0,s],[0,1,0],[-s,0,c]]
-    if axis == "z":
-        return [[c,-s,0],[s,c,0],[0,0,1]]
-    return [[1,0,0],[0,1,0],[0,0,1]]
-
-
-def _apply(M: list[list[float]], p: tuple[float,float,float]) -> tuple[float,float,float]:
-    return (M[0][0]*p[0]+M[0][1]*p[1]+M[0][2]*p[2],
-            M[1][0]*p[0]+M[1][1]*p[1]+M[1][2]*p[2],
-            M[2][0]*p[0]+M[2][1]*p[1]+M[2][2]*p[2])
+    C = 1 - c
+    return [
+        [c + x*x*C,     x*y*C - z*s,   x*z*C + y*s],
+        [y*x*C + z*s,   c + y*y*C,     y*z*C - x*s],
+        [z*x*C - y*s,   z*y*C + x*s,   c + z*z*C],
+    ]
 
 
 def _mmul(A: list[list[float]], B: list[list[float]]) -> list[list[float]]:
     return [[sum(A[i][k]*B[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
 
 
-def forward_kinematics(angles: list[float]) -> dict[str, tuple[float,float,float]]:
-    """angles: 长度 15，下标对应 JOINT_NAMES。返回每个 LINKS 节点的世界坐标。"""
+def _mat_vec(M: list[list[float]], p: tuple[float, float, float]) -> tuple[float, float, float]:
+    return (M[0][0]*p[0] + M[0][1]*p[1] + M[0][2]*p[2],
+            M[1][0]*p[0] + M[1][1]*p[1] + M[1][2]*p[2],
+            M[2][0]*p[0] + M[2][1]*p[1] + M[2][2]*p[2])
+
+
+def forward_kinematics(angles: list[float]) -> dict[str, tuple[float, float, float]]:
+    """angles: 长度 15，下标对应 JOINT_NAMES。返回每个 BONE 原点的世界坐标（相对 trunk_base）。"""
     assert len(angles) == N, f"需要 {N} 个关节角，收到 {len(angles)}"
-    world: dict[str, tuple[float,float,float]] = {}
-    # 拓扑序：先 pelvis，再其余（LINKS 已按依赖顺序定义）
-    order = ["pelvis"] + [k for k in LINKS if k != "pelvis"]
-    for name in order:
-        spec = LINKS[name]
-        parent = spec["parent"]
-        p_world = world[parent] if parent else (0.0, 0.0, 0.0)
-        if parent is None:
-            world[name] = (0.0, 0.0, 0.0)
-            continue
-        p_spec = LINKS[parent]
-        # 父节点自身先旋转（用父关节角），再平移到本关节
-        parent_ang = 0.0
-        if parent in JOINT_NAMES:
-            parent_ang = angles[JOINT_NAMES.index(parent)] * (p_spec.get("sign", 1.0))
-        R = _rot(p_spec["axis"], parent_ang) if p_spec["axis"] else [[1,0,0],[0,1,0],[0,0,1]]
-        local = _apply(R, spec["pos"])
-        world[name] = (p_world[0]+local[0], p_world[1]+local[1], p_world[2]+local[2])
-    return world
+    ang = {JOINT_NAMES[i]: angles[i] for i in range(N)}
+    frames: dict[str, tuple[list, tuple]] = {}
+    for b in BONES:
+        if b["parent"] is None:
+            R = _quat_to_mat(*b["quat"])
+            t = list(b["pos"])
+        else:
+            PR, PT = frames[b["parent"]]
+            Rq = _axis_angle_to_mat(b["axis"], ang[b["joint"]]) if b.get("joint") else [[1,0,0],[0,1,0],[0,0,1]]
+            R = _mmul(PR, _mmul(Rq, _quat_to_mat(*b["quat"])))
+            rp = _mat_vec(Rq, b["pos"])           # 关节先转，再平移（MuJoCo：parent·R(q)·T(pos)·R(quat)）
+            t = [PT[i] + sum(PR[i][k]*rp[k] for k in range(3)) for i in range(3)]
+        frames[b["name"]] = (R, tuple(t))
+    origin = frames["trunk_base"][1]
+    return {name: (f[1][0]-origin[0], f[1][1]-origin[1], f[1][2]-origin[2]) for name, f in frames.items()}
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -174,10 +197,11 @@ def parse_state(obj: dict) -> RobotStateView:
 # ───────────────────────────────────────────────────────────────────────────
 # 5. 渲染后端（可插拔）
 # ───────────────────────────────────────────────────────────────────────────
-def _draw_edges(positions: dict[str, tuple[float,float,float]], color="C0"):
-    edges = [(c, LINKS[c]["parent"]) for c in LINKS if LINKS[c]["parent"]]
+def _draw_edges(positions: dict[str, tuple[float, float, float]], color="C0"):
     xs, ys, zs = [], [], []
-    for child, parent in edges:
+    for child, parent in EDGES:
+        if child not in positions or parent not in positions:
+            continue
         a = positions[parent]; b = positions[child]
         xs += [a[0], b[0], None]; ys += [a[1], b[1], None]; zs += [a[2], b[2], None]
     return xs, ys, zs, color
@@ -245,7 +269,7 @@ class ViserViewer:
                 self.handles[name] = h
             h.position = (p[0], p[1], p[2])
         for c in self.handles:
-            parent = LINKS[c]["parent"]
+            parent = BONE_BY_NAME[c]["parent"]
             if parent:
                 self.handles[c].parent = self.handles[parent]
     def close(self): pass
