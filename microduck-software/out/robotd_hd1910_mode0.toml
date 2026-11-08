@@ -31,6 +31,23 @@
 #   reg44 current, reg46 speed = 250, reg41 accel = 0, reg50/51 Kp/Kd, reg40 torque off.
 
 [policy]
+# ── Policy wiring (Pass9 fix, 2026-11-08) ─────────────────────────────────────────────
+# These three paths point at the kp8 policies THIS plant was actually trained with.
+# If a slot is LEFT UNSET, robotd resolves it to the release-directory default
+#   /opt/robot/daemon/current/policies/alpha_<slot>.onnx   (robotd-params/src/lib.rs:604-733)
+# -- i.e. the OFFICIAL alpha gait, NOT the trained one. The conductor's wiring check
+# (audit_robotd_toml.py, driven by pre_deploy_check.py) WARNS on any unset
+# walk/stand/ground_pick and FAILs on a path that does not exist on disk.
+#
+# PRODUCTION: copy these three .onnx onto the board and rewrite the paths below to the
+# absolute locations robotd will see (robotd resolves relative paths against its OWN CWD,
+# duck-control/src/policy.rs -- so a dev-relative path will NOT resolve on the robot).
+# The dev paths here are repo-root-relative and validated by `pre_deploy_check.py`.
+enabled = true
+mode = "walk"
+walk = "logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx"
+stand = "logs/rsl_rl/microduck_standup_hd1910/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308.onnx"
+ground_pick = "logs/rsl_rl/microduck_groundpick_hd1910/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216.onnx"
 # XL330-scale reference (feetech.rs:115). NOT the register value -- leave it at 200.
 gain = 200
 # Training used 1.0; the 0.9 default shrinks every action by 10% before the PD loop.

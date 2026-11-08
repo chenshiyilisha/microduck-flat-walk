@@ -18,6 +18,7 @@ import pathlib
 import subprocess
 import sys
 import contextlib
+import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HERE = ROOT / "tools" / "hd1910"
@@ -120,6 +121,27 @@ def test_onnx_plant_key_real_metas():
     # deprecated XL330-origin samples must NOT be inferred as an HD1910 plant
     assert rh._onnx_plant_key(ROOT / "out" / "deploy61.onnx") is None
     assert rh._onnx_plant_key(ROOT / "out" / "walk_std004_1250.onnx") is None
+
+
+def test_onnx_plant_key_real_exported_artifacts():
+    """The actual policies that ship to the robot are exported by rsl_rl under a
+    timestamped run directory (``2026-11-07_22-12-33_p8head_...``), while the
+    companion runmeta/heading_meta are written WITHOUT that prefix. ``_onnx_plant_key``
+    must strip the leading timestamp so the real artifacts resolve -- Pass9 found the
+    groundpick and standup onnxs returning None, i.e. the guard going silent on exactly
+    the artifact that goes onto the robot."""
+    rh = _load("rehearse_hd1910_test", HERE / "rehearse_hd1910.py")
+    real = [
+        "logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx",
+        "logs/rsl_rl/microduck_groundpick_hd1910/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216.onnx",
+        "logs/rsl_rl/microduck_standup_hd1910/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308.onnx",
+    ]
+    missing = [p for p in real if not (ROOT / p).exists()]
+    if missing:
+        pytest.skip("exported onnx artifacts not present in this checkout: "
+                    + ", ".join(missing))
+    for p in real:
+        assert rh._onnx_plant_key(ROOT / p) == "p8", p
 
 
 def test_rehearsal_cross_plant_guard():

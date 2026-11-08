@@ -1,0 +1,49 @@
+{
+  "plant": {
+    "id": "hd1910_kp8",
+    "kp_fw": 8.0,
+    "servo": "feetech_hls",
+    "position_kp": 16
+  },
+  "artifacts": {
+    "walk": {
+      "rel_path": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx",
+      "sha256": "e1b035c581dcc77e8a0fc8c16a88e107a4f0934b54d40c7936ef8c9b0c4a2e4d",
+      "bytes": 793706
+    },
+    "ground_pick": {
+      "rel_path": "logs/rsl_rl/microduck_groundpick_hd1910/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216.onnx",
+      "sha256": "ee834cce889f49fc8e181abf0277e9368fceb09b3480d5a1c8fa92a254091221",
+      "bytes": 793686
+    },
+    "stand": {
+      "rel_path": "logs/rsl_rl/microduck_standup_hd1910/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308.onnx",
+      "sha256": "90bd0b1f282264d4927c5669adda2809c428c390f5f94eac6b191cb07390ddf4",
+      "bytes": 793706
+    },
+    "robotd_toml": {
+      "rel_path": "out/robotd_hd1910_mode0.toml",
+      "sha256": "b71a590716ca76d024a336d1f51e93476c8756aba6a69d7854075c11d5e428af",
+      "bytes": 9007
+    }
+  },
+  "deploy_checks": {
+    "walk": {
+      "verdict": "PASS",
+      "json": "out/deploy_check_walk7999.json"
+    },
+    "ground_pick": {
+      "verdict": "PASS",
+      "json": "out/deploy_check_groundpick3999.json"
+    },
+    "stand": {
+      "verdict": "PASS",
+      "json": "out/deploy_check_standup_kp8native.json"
+    }
+  },
+  "eval": {
+    "walk": "model_7999, mean_reward 98.63, episode_len 827, fell_over low, heading_tracking 1.93",
+    "ground_pick": "success 0.969 (iqr 0.96-0.98), fall 0.031",
+    "stand": "success 1.00 (iqr 1.00-1.00), fall 0.0"
+  }
+}

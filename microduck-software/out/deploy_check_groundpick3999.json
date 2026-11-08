@@ -1,0 +1,31 @@
+{
+  "onnx": "logs\\rsl_rl\\microduck_groundpick_hd1910\\2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216\\2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216.onnx",
+  "toml": "out\\robotd_hd1910_mode0.toml",
+  "verdict": "PASS",
+  "stages": [
+    {
+      "name": "contract",
+      "status": "PASS",
+      "rc": 0,
+      "tail": "all pass -- layout, order, home pose and action mapping agree on both sides\n\nnot checked: trunk-frame conventions, sign/offset calibration, and anything about the servos. Those are bench items (B3, B4)."
+    },
+    {
+      "name": "bundle",
+      "status": "PASS",
+      "rc": 0,
+      "tail": "  warn  logs\\rsl_rl\\microduck_groundpick_hd1910\\2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216\\2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216.onnx 26 checks, 0 fail, 1 warn\n        ~ B4 splits agree: observation_names carries ['head_command', 'body_command'], but command_names names only ['twist']: the 13-wide block is described two ways by the same metadata, and nothing reconciles them\n=============================================================================="
+    },
+    {
+      "name": "numeric",
+      "status": "PASS",
+      "rc": 0,
+      "tail": "\"comment\": \"a healthy policy FAILS this (its stance is ~5x 2%S) while deploy61 PASSES it (S inflated ~128x) -- copy the structure, not the thresholds\""
+    },
+    {
+      "name": "toml",
+      "status": "PASS",
+      "rc": 0,
+      "tail": "\nnot checked: whether robotd is running, what it wrote to reg 50, or whether the bridge answers -- for reg 50 read it back on the robot after robotd starts.\nAlso not in this file: reg6 (baud) and reg33 (mode). robotd CHECKS those and refuses to open the bus on a mismatch (feetech.rs:386); the rate is compiled in (500 kbps) and the servo ships at 1 Mbps, so they must be moved on the servo."
+    }
+  ]
+}

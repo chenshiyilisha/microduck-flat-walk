@@ -281,7 +281,51 @@ class Report:
             print(f"  {level:4}  {key:<{w}}  {value:<10}  {note}")
 
 
-def audit(cfg: dict, expect_kp: int) -> Report:
+# Policy path wiring (Pass9, 2026-11-08). robotd resolves an UNSET policy.<slot> to the
+# release directory's alpha policy (robotd-params/src/lib.rs:604-733); for a trained-plant
+# deploy every slot we use MUST point at the verified onnx AND that onnx MUST exist on
+# disk -- otherwise the robot silently loads the official alpha gait. Relative paths are
+# resolved against CWD (the convention pre_deploy_check uses) and, failing that, the
+# toml's parent directory; an absolute path is used as-is. (robotd itself resolves
+# relative paths against its own CWD -- duck-control/src/policy.rs -- so production must
+# use absolute board paths; this check only guards the dev artifact.)
+POLICY_SLOTS = ("walk", "stand", "sitstand", "ground_pick",
+                "kick_left", "kick_right", "roulade", "lie")
+_REQUIRED_SLOTS = ("walk", "stand", "ground_pick")
+
+
+def audit_policy_wiring(cfg: dict, toml_path) -> list:
+    """Return (level, key, value, note) rows for the [policy] path wiring."""
+    out = []
+    policy = (cfg.get("policy") or {}) if isinstance(cfg, dict) else {}
+    base = (toml_path.parent if toml_path is not None else Path("."))
+    for slot in POLICY_SLOTS:
+        v = policy.get(slot)
+        if v is None:
+            if slot in _REQUIRED_SLOTS:
+                out.append(("WARN", f"policy.{slot}", "(unset)",
+                            "unset -> robotd loads the release-default alpha policy "
+                            "(lib.rs:722-733), NOT a trained one. For this plant's deploy, "
+                            "point it at the verified onnx."))
+            continue
+        if isinstance(v, str) and v.strip().lower() == "none":
+            continue  # explicit disable
+        if not isinstance(v, str):
+            out.append(("WARN", f"policy.{slot}", v, "not a path string"))
+            continue
+        p = Path(v)
+        if not p.is_absolute():
+            p = p if p.exists() else (base / p)
+        if p.exists():
+            out.append(("ok", f"policy.{slot}", v, "wired onnx exists on disk"))
+        else:
+            out.append(("FAIL", f"policy.{slot}", v,
+                        f"wired onnx does NOT exist: {p} -- robotd would fail to load "
+                        "this slot (or fall back to the release alpha)"))
+    return out
+
+
+def audit(cfg: dict, expect_kp: int, toml_path=None) -> Report:
     rep = Report()
     gain, gain_set = effective(cfg, "policy", "gain")
     pkp, pkp_set = effective(cfg, "bus", "position_kp")
@@ -1115,6 +1159,11 @@ def audit(cfg: dict, expect_kp: int) -> Report:
                     f"current_limit_ma {cl} is within the validate() range and near the 2925 mA "
                     "default (lib.rs:1100, feetech.rs:187)")
 
+    # Pass9: policy path wiring -- an unset required slot loads the release alpha policy;
+    # a set-but-missing path fails to load on the robot.
+    for level, key, value, note in audit_policy_wiring(cfg, toml_path):
+        rep.add(level, key, value, note)
+
     return rep
 
 
@@ -1733,6 +1782,30 @@ def selftest() -> int:
     else:
         print("  skip  whitelist cross-check (no .upstream copy) -- run with --schema-rs")
 
+    # ---- policy path wiring (Pass9): the silent alpha-fallback trap ----
+    # An UNSET required slot makes robotd load the release-directory alpha policy
+    # (lib.rs:722-733); a set-but-missing path fails to load on the robot. Both must be
+    # caught here, because the rest of the conductor only validates the --onnx you pass,
+    # never the paths the toml actually wires.
+    import tempfile as _tf
+    _td = Path(_tf.mkdtemp(prefix="audit_wiring_"))
+    _r_miss = audit(dict(good, policy={**good["policy"], "walk": "no_such_policy.onnx"}),
+                    8, _td / "robotd.toml")
+    check("dangling policy.walk FAILs wiring",
+          any(lv == "FAIL" and k == "policy.walk" for lv, k, _, _ in _r_miss.rows))
+    _r_unset = audit(dict(good, policy={}), 8, _td / "robotd.toml")
+    check("unset policy.walk WARNS (alpha fallback)",
+          any(lv == "WARN" and k == "policy.walk" for lv, k, _, _ in _r_unset.rows))
+    (_td / "real.onnx").write_text("")
+    _r_ok = audit(dict(good, policy={**good["policy"], "walk": "real.onnx"}),
+                  8, _td / "robotd.toml")
+    check("existing policy.walk passes wiring",
+          any(lv == "ok" and k == "policy.walk" for lv, k, _, _ in _r_ok.rows))
+    _r_none = audit(dict(good, policy={**good["policy"], "kick_left": "none"}),
+                    8, _td / "robotd.toml")
+    check("policy.<slot> = \"none\" is not flagged",
+          not any(k == "policy.kick_left" for lv, k, _, _ in _r_none.rows))
+
     print()
     if fails:
         print(f"SELFTEST FAILED ({len(fails)}): {', '.join(fails)}")
@@ -1773,7 +1846,7 @@ def main() -> int:
     elif schema_rs.exists():
         print(f"  ok    schema  {'':<10}  key whitelist re-derived from {schema_rs.name} "
               f"(Params + Bus + BatteryParams + Thermal)")
-    rep = audit(cfg, args.expect_kp)
+    rep = audit(cfg, args.expect_kp, path)
     rep.render()
     print()
     fails = rep.fails + len(problems)

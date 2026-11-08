@@ -22,6 +22,9 @@ out/*
 !out/plantP_*.json
 !out/plantFreq_*.json
 !out/heading_meta_*.json
+!out/hd1910_kp8_deploy_bundle.json
+!out/robotd_hd1910_mode0.toml
+!out/deploy_check_*.json
 # Patterns, not a blanket !out/plant*.json: that also un-ignores last week's
 # run metadata, which is build noise rather than evidence.
 wandb/

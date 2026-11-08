@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -207,6 +208,15 @@ def _onnx_plant_key(onnx: pathlib.Path) -> str | None:
     ``None`` as "unknown", never as a match.
     """
     stem = onnx.stem
+    # rsl_rl names the exported ONNX after its run directory, which carries a leading
+    # timestamp: ``2026-11-07_22-12-33_p8head_030_...`` . The companion runmeta_*.json /
+    # heading_meta_*.json are written WITHOUT that prefix, so strip it before the meta
+    # lookup -- otherwise the real exported policy resolves to None and the cross-plant
+    # guard goes silent on exactly the artifact that goes onto the robot (Pass9 found
+    # the groundpick / standup onnxs returning None).
+    m = re.match(r"\A\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_", stem)
+    if m:
+        stem = stem[m.end():]
     run = stem
     # Strip a trailing _it<digits> (rsl_rl export names) if present.
     if "_it" in run:
