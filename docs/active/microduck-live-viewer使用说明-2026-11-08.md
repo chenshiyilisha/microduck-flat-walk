@@ -6,46 +6,62 @@
 ## 1. 它做什么
 
 把真机实时上报的关节姿态画成一只可旋转的 3D 鸭子骨架，用于**不上真机也能肉眼核对
-`robotd` 有没有在动、各关节角度/目标是否对、跟踪误差多大**。姿态数据来自真机的
-`robotctl monitor --json`（服务端默认降采样 10 Hz），其 `RobotState.joints` / `targets`
-是裸角度数组，索引按 `JOINT_NAMES`（见 §5）。
+`robotd` 有没有在动、各关节角度/目标是否对、跟踪误差多大**，并叠加**体坐标重力箭头 +
+倾角 + IMU 健康**（两条线共用 `robot.state.safety.gravity` 接口面，零改 robotd）。
+姿态数据来自真机的 `robotctl monitor --json`（服务端默认降采样 10 Hz），其
+`RobotState.joints` / `targets` 是裸角度数组，索引按 `JOINT_NAMES`（见 §5）。
 
 ## 2. 依赖
 
-- **零重依赖即可跑**：FK 用纯 Python 四元数/矩阵；`--renderer headless` 只打印数值。
-- 想要图形：装 `matplotlib`（`pip install matplotlib`）得本地 3D 折线图；
-  装 `viser`（`pip install viser`）得浏览器里可旋转/缩放的实时画面（`--renderer auto`
-  会优先 viser，其次 matplotlib，最后 headless）。
+- **零重依赖即可跑**：FK 用纯 Python 四元数/矩阵；`--renderer headless` 只打印数值
+  （含重力/IMU 健康）。
+- 想要图形：装 `matplotlib`（`pip install matplotlib`）得本地 3D **圆柱 mesh + 关节球 +
+  重力箭头**；装 `viser`（`pip install viser`）得浏览器里可旋转/缩放的实时 **mesh** 画面
+  （`--renderer auto` 会优先 viser，其次 matplotlib，最后 headless）。
 
 ## 3. 用法
 
 ```bash
-# A. 最贴近生产：从真机经 ssh 拉流（robotd 经 WebRTC relay 的 mediad 同链路）
+# A. 真机流：经 robotctl 走 WebRTC relay（robotctl 在 PATH + 网络；最贴近生产）
+python live_viewer.py --source robotctl
+python live_viewer.py --source robotctl --host robot-host   # 走 ssh 拉流
+
+# A'. 等价：手动 ssh 管道（robotd 经 mediad 的 WebRTC relay 同链路）
 ssh robot_host 'robotctl monitor --json' | python live_viewer.py --source stdin
 
-# B. 本机无真机：看静止站姿（演示 FK，不需要任何依赖）
+# B. 本机无真机：静止站姿演示（含直立重力 + 健康 IMU）
 python live_viewer.py --demo
 
-# C. 切换渲染后端
-python live_viewer.py --demo --renderer matplotlib     # 本地 3D 折线
-python live_viewer.py --demo --renderer viser          # 浏览器 3D（默认端口 8012）
-python live_viewer.py --demo --renderer headless       # 只打印数值
+# C. 本机无真机：模拟真机流（合成关节摆动 + 倾斜重力 + IMU 过期块），用于端到端验证整条管线
+python live_viewer.py --source mock-relay --renderer matplotlib
 
-# D. 实时帧（等价写法）
-robotctl monitor --json | python live_viewer.py --source stdin --renderer viser
+# D. 渲染后端
+python live_viewer.py --demo --renderer matplotlib     # 本地 3D 圆柱 mesh
+python live_viewer.py --demo --renderer viser          # 浏览器 3D 圆柱 mesh（默认端口 8012）
+python live_viewer.py --demo --renderer headless       # 只打印数值（含重力/IMU）
 ```
 
+> 注意：`--source robotctl` / `mock-relay` 是 **2026-11-08 新增**。前者经 `robotctl monitor --json`
+> 走 mediad 的 WebRTC relay 连真机（需要 operator PC 上 `robotctl` 在 PATH + 网络可达）；后者是
+> 真机流的**本地仿真**（同 JSON 形状），用于没机器人时验证解析 + 重力/IMU + mesh 渲染。
+> 真机实跑请用 A/A'，本沙箱无机器人，已用 `--source mock-relay` 验证全链路。
+
+- `--host`：`--source robotctl` 时指定 ssh 远端主机。
 - `--interval-ms`：matplotlib/viser 的刷新间隔（默认 100）。
 - `Ctrl-C` 退出。
 
 ## 4. 它显示什么
 
 - **headless**：逐帧打印每个关节的 `j`（实测角）、`tgt`（目标角）、`err`（跟踪误差），
-  以及 `max_track_err`。一眼看谁没跟上。
-- **matplotlib/viser**：按真实连杆树画关节原点连线（盆骨→髋→膝→踝→脚尖，颈/头/嘴同理）。
-  若某关节 `targets` 与 `joints` 相差 >1e-3，会叠加一条虚线表示目标姿态。
+  以及 `max_track_err`；并附 **`gravity` 体坐标重力向量 + 倾角 `tilt` + `fallen`/`limp` +
+  IMU 过期块 `imu_stale` / `imu_healthy`**。一眼看谁没跟上、机器人是否要倒、IMU 是否过期。
+- **matplotlib/viser**：按真实连杆树画**圆柱连杆 mesh + 关节球 + 体坐标红色重力箭头**
+  （盆骨→髋→膝→踝→脚尖，颈/头/嘴同理）；躯干画粗、肢体画细。若某关节 `targets` 与
+  `joints` 相差 >1e-3，会叠加一条绿色虚线表示目标姿态。viser 还提供浏览器内旋转/缩放。
 - `velocities` / `currents_ma` 若真机上报则随帧携带，目前仅 headless 打印原始数组；
-  空数组表示「该帧未上报」，查看器**绝不将其当作 0**。
+  空数组表示「该帧未上报」，查看器**绝不将其当作 0**。`safety.gravity` 缺失时标注
+  `gravity=n/a`，`health` 不在 monitor 流里时标注 `imu_health=n/a(robot.health)`（需用
+  `robot.health` RPC 单独查）。
 
 ## 5. 数据契约（务必对齐）
 
@@ -79,8 +95,11 @@ MJCF 独立解析出的 rest pivot 逐项吻合（误差 < 1e-4 m）。
 - **嘴部**：alpha 运动学 MJCF 里 `mouth` 没有 hinge（只有 `head_roll` 下的 `mouth_tip`
   site），故嘴部作为 `head_roll` 下的固定偏移节点，**不驱动骨架转动**。真机若上报
   `mouth` 角，查看器只记录不旋转该节点。
-- **无连杆实体/网格**：只看关节原点连线（骨架），不含连杆几何体或 mesh；不反映各体
-  自身 `quat` 决定的连杆朝向（仅取关节原点位置画骨架，足够姿态核对）。
+- **连杆是占位圆柱，不是真实 mesh/skin**：matplotlib/viser 用**等半径圆柱**近似每段连杆
+  （躯干粗、肢体细），足够姿态核对，但不反映各体自身 `quat` 决定的真实连杆截面/外观
+  （无 mesh 皮肤）。要更真实的外观需另接 `robot_walk.xml` 的 mesh 资产。
+- **重力箭头在体坐标系**：红色箭头锚在躯干原点、沿 `safety.gravity` 方向（直立 ≈ 指向 -Z），
+  与 FK 同一 trunk 坐标系，直接看机器人相对“下”的偏移。
 - **脚尖/嘴尖**是 MJCF 的 site，位置随父体世界变换移动，已纳入 FK。
 
 ## 7. 典型排错

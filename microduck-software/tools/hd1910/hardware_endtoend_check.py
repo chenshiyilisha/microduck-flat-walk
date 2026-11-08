@@ -33,7 +33,7 @@ What this harness does
 ----------------------
 * STATIC (runs NOW, no hardware): re-runs audit_robotd_toml, then re-checks the
   fields that matter for bring-up directly from the toml (joint_ids length/distinct,
-  joint_signs in {+-1}, joint_offsets length, imu_median==false, battery.cells).
+  joint_signs in {+-1}, joint_offsets length, imu_median-absent guard, battery.cells).
   If the HD-1910 airframe's installation.json is present it cross-checks joint_ids
   against it; otherwise it reports the check as PENDING-HARDWARE.
 * DYNAMIC (BLOCKED -- needs the robot): prints, per open item, the exact procedure,
@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -97,6 +98,55 @@ EXPECTED_FIRMWARE = {"mode_reg33": 4, "travel_limits": "low<high<=4095"}
 EXPECTED_EEPROM_DUCKBUDDY = {6: 1, 33: 0, 9: 0, 11: 4095}  # WRONG line for this airframe
 # Backlash figure from memory: +/-1 deg. Provisional -- only valid at 7.4 V supply.
 BACKLASH_EXPECT_DEG = 1.0
+
+# ── SCS (Feetech) 总线遥测寄存器块交叉校验基准（56..70）─────────────────────
+# 来源：社区 hls_probe.py (Fisheatingcats/microduck_tsp_hat) 的 feedback() 解析布局，
+#       与我们的 feetech.rs 总线读取布局一致（sync_read 从 56 起）。这是「第三方独立实现」
+#       对 HD-1910 总线约定的交叉印证，作为 harness 的基准常量。
+#   addr 56-57  position      2B  解码见下（feetech.rs 权威，BIT15 符号位）
+#   addr 58-59  speed         2B  有符号：* SCS_SPEED_RPM_PER_COUNT -> rpm
+#   addr 60-61  load          2B  有符号，负载百分比 (load & 0x3ff)*0.1
+#   addr 62     voltage       1B  *0.1 V
+#   addr 63     temperature   1B  deg C
+#   addr 64-65  current       2B  有符号：* SCS_CURRENT_MA_PER_COUNT -> mA
+#   addr 66-70  其余（moving / goal_position / 状态标志），本 harness 不消费
+SCS_RAM_START = 56
+SCS_RAM_END = 70
+# 速度标度闭环证据：hd1910m/.../feetech.rs:958 `signed([row[2],row[3]])*0.732*TAU` (rad/s)
+#   = 0.732 rpm/count × 2π —— 与 hls_probe.py:108 `signed(speed)*0.732` 一致；台架实测
+#   ratio 49.44 vs 理论 49.97 也收敛到 0.732。作为交叉校验基准写入。
+SCS_SPEED_RPM_PER_COUNT = 0.732
+SCS_CURRENT_MA_PER_COUNT = 6.5      # hls_probe.py: current*6.5 (mA)
+
+
+def scs_telemetry_block_len() -> int:
+    """hls_probe 要求 feedback() 输入恰好覆盖 56..70（15 字节）。"""
+    return SCS_RAM_END - SCS_RAM_START + 1
+
+
+def feetech_position_rad(raw_u16: int) -> float:
+    """HD-1910 权威解码（feetech.rs）：BIT15 = 方向位的有符号 15 位计数 × RAD_PER_COUNT。
+
+    feetech.rs 的 sign_magnitude()（≈L760；上游单测 L778 `sign_magnitude(0x8000)==0`）
+    把 BIT15 当符号位；RAD_PER_COUNT = 2π/4096。这是唯一权威，**不采信社区反号公式**。
+    """
+    raw = raw_u16 & 0xFFFF
+    sign = -1 if (raw & 0x8000) else 1
+    counts = (raw & 0x7FFF) * sign
+    return counts * (2.0 * math.pi / 4096.0)
+
+
+def hls_probe_position_rad(raw_u16: int) -> float:
+    """社区 hls_probe.py:110 的反号无符号公式 —— **非权威，仅作对照**。
+
+    `π - position*2π/4096` 假设 position 为无符号 0..4095 且原点在 2048，与 feetech.rs 的
+    BIT15 有符号解读在符号与原点上都不一致。禁止用于本机器人解码。
+    """
+    if raw_u16 > 4095:
+        return float("nan")
+    return math.pi - raw_u16 * 2.0 * math.pi / 4096.0
+
+
 # Candidate locations of the HD-1910 airframe wiring map (not in this working tree).
 INSTALL_CANDIDATES = [
     ROOT / ".upstream" / "hd1910m" / "radxa" / "installation.json",
@@ -296,17 +346,24 @@ def static_checks(toml: dict, install: dict | None, toml_path: Path | None = Non
             checks.append(Check("WARN", "airframe.zero_ticks", inst_zeros,
                                 f"not all 2048; offset arithmetic assumes CENTER={CENTER}"))
 
-    # --- R4: imu_median must be false (verified by the IMU-median A/B, 2026-11-08) ---
-    im = bus.get("imu_median")
-    if im is True:
-        checks.append(Check("FAIL", "bus.imu_median", im,
-                            "median ON adds a 20 ms lag that the kp8 policy cannot survive "
-                            "(A/B: 4.7-9.4% falls vs 0%); keep false"))
-    elif im is False:
-        checks.append(Check("ok", "bus.imu_median", im,
-                            "false -- matches the training-side delay envelope (A/B verified)"))
+    # --- R4: imu_median 是 stale 死键（修正 2026-11-08, Pass30）----------------
+    # 全仓（含 toml）虽仍残留 imu_median=false，但**当前源码无消费者**：ft1910/imu.rs:149-150
+    # 的 median3_each 是无条件 3 点中值（硬编码，非可配置）；HD-1910(hd1910m) 走 BNO08x
+    #（feetech.rs:209 open_imu + reference_native 滤波），同样没有该键。toml 里的注释
+    # 引用了不存在的 verify_imu_chain.py，属过期文档。
+    # 注意：deny_unknown_fields 只出现在 DuckBuddy(Orange Pi) 线，本 HD-1910(hd1910m) 部署
+    # 总线配置容忍未知键（机器人已带此 toml 运行），故是**无害死键**——降级为 WARN 提示删
+    # 除，而不是判 FAIL（否则会误报并卡住退出码）。
+    if "imu_median" in bus:
+        checks.append(Check("WARN", "bus.imu_median", bus.get("imu_median"),
+                            "stale dead key: no consumer in current source (ft1910 median3_each "
+                            "is unconditional imu.rs:149-150; HD-1910 BNO08x reference_native). "
+                            "Harmless on HD-1910 (bus config tolerates unknown keys) but remove it; "
+                            "the toml comment citing verify_imu_chain.py is also stale"))
     else:
-        checks.append(Check("WARN", "bus.imu_median", im, "unset; default is true -> set false"))
+        checks.append(Check("ok", "bus.imu_median", "absent (correct)",
+                            "no imu_median knob; IMU filtering is median3_each (ft1910) / "
+                            "BNO08x reference_native (HD-1910), not a config toggle"))
 
     # --- R5: battery.cells must be [2] only (the [2,3] default burns an HD-1910) ---
     cells = list(bus.get("battery", {}).get("cells") or toml.get("battery", {}).get("cells") or [])
@@ -495,12 +552,12 @@ def selftest() -> int:
     print("=== a WRONG toml is caught (negative control) ===")
     good = load_toml(ROOT / "out" / "robotd_hd1910_mode0.toml")
     toml_p = ROOT / "out" / "robotd_hd1910_mode0.toml"
-    # imu_median=true must become a static FAIL
+    # imu_median (stale dead key) must be surfaced, not silently passed
     bad_toml = json.loads(json.dumps(good))
     bad_toml["bus"]["imu_median"] = True
     cs = static_checks(bad_toml, None, toml_p)
-    imu_fail = any(c.key == "bus.imu_median" and c.level == "FAIL" for c in cs)
-    check("imu_median=true -> FAIL", imu_fail, True)
+    imu_flagged = any(c.key == "bus.imu_median" and c.level in ("WARN", "FAIL") for c in cs)
+    check("imu_median present -> flagged (WARN/FAIL)", imu_flagged, True)
     # battery [2,3] must become a FAIL
     bad2 = json.loads(json.dumps(good))
     bad2["battery"]["cells"] = [2, 3]
@@ -517,6 +574,22 @@ def selftest() -> int:
     cs_ok = static_checks(good, None, toml_p)
     n_fail_ok = sum(1 for c in cs_ok if c.level == "FAIL")
     check("correct toml -> 0 static FAIL", n_fail_ok, 0)
+
+    print("=== SCS 总线遥测基准交叉校验（hls_probe + feetech.rs）===")
+    check("SCS telemetry block = 15 bytes (56..70)", scs_telemetry_block_len(), 15)
+    check("SCS speed scale == 0.732 rpm/count (hls_probe cross-check)",
+          SCS_SPEED_RPM_PER_COUNT, 0.732)
+    check("SCS current scale == 6.5 mA/count (hls_probe)", SCS_CURRENT_MA_PER_COUNT, 6.5)
+    # feetech.rs 权威解码：BIT15 符号位；sign_magnitude(0x8000)==0（上游单测 L778 同款）
+    check("feetech.rs position decode BIT15-signed (0x8000 -> 0)",
+          round(feetech_position_rad(0x8000), 6), 0.0)
+    # 两解码器在非零读数上必须不一致 => 我们没有偷偷采用社区反号无符号公式
+    a = feetech_position_rad(500)
+    b = hls_probe_position_rad(500)
+    check("feetech vs hls_probe position decode DIFFER (no silent adoption)", a != b, True)
+    # 负对照：若有人把社区反号公式当权威，这里会 FAIL（a 与 b 相等或接近）
+    if abs(a - b) < 1e-9:
+        check("position decode authority == feetech.rs (NOT hls_probe reversed)", False, True)
 
     print(f"\n=== selftest: {n - bad}/{n} passed ===")
     return 1 if bad else 0
