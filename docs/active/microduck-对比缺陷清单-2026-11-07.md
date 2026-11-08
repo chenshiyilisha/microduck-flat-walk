@@ -586,7 +586,9 @@ for name in MUST_PASS: ...                                                     #
 ### 4.12.5 验证读数
 
 - 本地：`py_compile` OK；`bundle_bindings.py --selftest` **22 条全 PASS**（共享改造后 needle 全保持）；`assert_ci_verdict.py --selftest` **17 条全 PASS**；真实 bundle `--json` = PASS；`record_provenance.py --verify rc=0`（import 链通）；真实 lean-CI 风格报告走 CLI `rc=0`，把同一份报告裁到只剩 `inference` 后 `rc=1` 且逐条点名 `stage set ... != current conductor FULL_STAGES`。
-- **真实 GitHub Actions run 读数待推送后回填。**
+- **带 `.git` 干净 clone**（`0cc0f07`）：新 `deploy_stages.py` 确认已 tracked 且存在；探针 `--strict rc=0`（scope=true / full=false，与真实 CI 一致）、live verdict selftest 17 条 PASS、bundle selftest 22 条 PASS、真实 bundle `--json`=PASS、`provenance --verify rc=0`、pytest **59 passed / 26 skipped**、三策略 conductor `rc=0` + `assert_ci_verdict rc=0`。
+- ✅ **第七次真实 GitHub Actions run `42469990368` / headSha `0cc0f07cb145cc470c446adedc7c6601a88e3d9f` = `success` / `completed` / `push`**（`gh run watch --exit-status` rc=0 + `gh run view --json` 机读）。真实日志：`workflow DISCOVERABLE`、`ci_scope_gate_possible=true (4/5)` / `ci_full_gate_possible=false`、探针 `39/39 passed`、**live verdict selftest 17 条 `[ok]`**、**bundle bindings selftest 22 条 `[ok]`**、`59 passed, 26 skipped in 4.52s`、`OK artifacts sha256/bytes match for 4 file(s)`、verify 打印 `FULL_STAGES=['contract','bundle','numeric','inference','toml']`、三份 `OK: verdict=PASS* stages={'contract':'SKIP', ...}` + `VERDICT: PASS -- gate really executed`、`scope_gate=true / full_gate=false / workflow_discoverable=true`、治理边界与 `CONTRACT STAGE NOT VERIFIED IN CI` 均打印；无 `::error::` / `[BAD]` / `SELFTEST: FAIL` / `VERDICT: FAIL`。
+- 🔑 **不只信顶层 conclusion**：按本轮主题用 `gh api repos/<owner>/<repo>/actions/runs/<id>/jobs` 做逐项机读复核 —— **1 job / 20 steps 全部 `success`**、`head_sha` 与本地 HEAD 完全一致、8 个关键守卫步骤（readiness / probe / emitter / 两个 selftest / regression / provenance / bundle bindings / real gate）全部在列 ⇒ `PER-STEP VERDICT: PASS`。
 
 ### 4.12.6 准则（可泛化）
 
