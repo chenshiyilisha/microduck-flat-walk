@@ -47,7 +47,7 @@
     "stand": "success 1.00 (iqr 1.00-1.00), fall 0.0"
   },
   "bundle_audit": {
-    "tool": "verify_policy_bundle.py (A/B/C/R/D/E groups, 22 negative-control self-tests)",
+    "tool": "verify_policy_bundle.py (A/B/C/R/D/E groups; --selftest = 39 assertions: 11 contract + 1 clean + 27 negative-control across 22 defect scenarios N1-N22)",
     "weights_inlined": "PASS -- A8: 10 initializers, all embedded (single-file onnx; no split/external-data pitfall that publish would upload as a 3KB graph)",
     "checks": {
       "walk": "26 checks, 0 fail, 0 warn",

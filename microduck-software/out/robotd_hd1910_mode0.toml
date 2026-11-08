@@ -102,12 +102,16 @@ imu_median = false
 # and it refuses rather than guesses: "a guess drives one joint with another's targets"
 # (main.rs:5495).
 #
-# RESOLVED for this airframe (HD-1910 / Radxa line) from the authoritative wiring map
-# .upstream/hd1910m/radxa/installation.json (mapping_confirmed=true), which lists each
-# joint's Dynamixel ID in JOINT_NAMES order. This is NOT the XL330 reference map
-# duck-control/src/model.rs:15 ([20,21,22,23,24, 30,31,32,33,34, 10,11,12,13,14]); the
-# HD-1910 airframe uses a different assignment, so the audit_robotd_toml.py WARN about
-# "not the reference set" is expected and is not a failure.
+# 关节映射解析自 HD-1910 机体的权威接线图 .upstream/hd1910m/radxa/installation.json
+# （mapping_confirmed=true），按 JOINT_NAMES 顺序列出每个关节的 servo ID 与方向。
+# 注意：路径里的 "radxa" 只是上游目录名（HD-1910 机体接线图恰好放在那里），
+# **不代表本 toml 跑在 Radxa/FT-SCS 那一代 robotd 上**——本 toml 的 servo="feetech_hls"
+# + 上面第 69-77 行注释明确指向 **DuckBuddy-main 这一代 robotd**（Orange Pi A733 +
+# HL-2915 Feetech，500 kbps）。那一代才会做 EEPROM 开机硬校验（reg6/reg33/reg9/reg11，
+# feetech.rs:386，checked not corrected），所以这几个 servo 寄存器必须在机器人上电前
+# 用 servo_probe 改好，否则总线打不开。HD-1910 机体用的是 1-15 体系，与 XL330 参考图
+# duck-control/src/model.rs:15 ([20,21,22,23,24, 30,31,32,33,34, 10,11,12,13,14]) 不同，
+# 因此 audit_robotd_toml.py 报的 "not the reference set" 属预期、非失败。
 joint_ids = [10, 9, 8, 7, 6, 12, 11, 14, 13, 15, 5, 4, 3, 2, 1]
 #
 # joint_signs (+-1) in the same JOINT_NAMES order, also from radxa/installation.json
