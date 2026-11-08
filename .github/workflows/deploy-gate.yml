@@ -100,8 +100,11 @@ jobs:
         run: python tools/hd1910/ci_gate_targets.py --selftest
 
       - name: Bundle bindings negative-control self-test (SLSA subject binding)
-        # Pass21 / R5: proves the bundle's provenance subjects are really
-        # bound to the artifacts it ships (14 tamper cases must go red).
+        # Pass21/R5 + Pass22/R6: EVERY tamper case must go red. R6 additionally
+        # re-derives each archived report's verdict from its own stages and
+        # binds the stage set to the CURRENT pre_deploy_check.py FULL_STAGES,
+        # so a report predating a newly added stage cannot pass as evidence.
+        # Do NOT pin a case count here: it silently rotted 14 -> 15 -> 22.
         run: python tools/hd1910/bundle_bindings.py --selftest
 
       - name: CI verdict assertion negative-control self-test

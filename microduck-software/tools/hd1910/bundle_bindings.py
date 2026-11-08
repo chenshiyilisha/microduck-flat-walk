@@ -43,7 +43,10 @@ What this module CAN verify, from independent committed authorities:
     duplicates (two policies may never resolve to the same artifact).
   * deploy_checks: the referenced JSON report really exists, says PASS, and
     its `onnx` / `toml` fields (Windows backslashes normalised) name exactly
-    the artifacts this bundle ships.
+    the artifacts this bundle ships. Its top-level verdict is RE-DERIVED from
+    its own per-stage status/rc, and its stage set must equal FULL_STAGES read
+    out of the CURRENT pre_deploy_check.py source (Pass22/R6: the three
+    archived reports predated the inference stage and were still accepted).
   * plant: servo/position_kp/gain vs the real robotd toml (stdlib tomllib);
     kp_fw and id vs tools/hd1910/plant_spec.py's canonical table and the
     apply_to_live.py kp->id mapping; id vs the bundle filename.
@@ -65,6 +68,7 @@ Usage (cwd = microduck-software):
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import importlib.util
 import json
@@ -117,22 +121,71 @@ def _canonical_plants(root: Path) -> tuple[dict[float, str], float | None, str |
         return {}, None, f"cannot read canonical plant table: {exc}"
 
 
+def _full_stages(source: Path) -> tuple[list[str], str | None]:
+    """Read FULL_STAGES out of the conductor SOURCE (ast; never import/execute).
+
+    The expected stage set is a property of the CURRENT gate, so it must be
+    derived from the gate's own source. Keeping a second literal list here
+    would rot exactly like Pass20's third copy of the onnx list. Fail loud if
+    the constant is missing, unparsable or not a flat list of unique names.
+    """
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"),
+                         filename=str(source))
+    except (OSError, SyntaxError, ValueError) as exc:
+        return [], f"STAGE AUTHORITY UNREADABLE: {source}: {exc}"
+    raw = None
+    for node in tree.body:
+        target = value = None
+        if isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        if isinstance(target, ast.Name) and target.id == "FULL_STAGES" \
+                and value is not None:
+            raw = value
+            break
+    if raw is None:
+        return [], (f"STAGE AUTHORITY MISSING: {source} has no module-level "
+                    "FULL_STAGES constant; refusing to guess the stage set")
+    try:
+        stages = ast.literal_eval(raw)
+    except (ValueError, TypeError, SyntaxError) as exc:
+        return [], f"STAGE AUTHORITY UNPARSEABLE: {source}: {exc}"
+    if not isinstance(stages, (list, tuple)) or not stages \
+            or not all(isinstance(s, str) and s for s in stages) \
+            or len(set(stages)) != len(stages):
+        return [], (f"STAGE AUTHORITY INVALID: {source} FULL_STAGES="
+                    f"{stages!r}; expected a non-empty flat list of unique names")
+    return list(stages), None
+
+
 def verify_bindings(bundle: dict, root: Path,
-                     bundle_path: Path | None = None) -> tuple[int, list[str]]:
+                     bundle_path: Path | None = None,
+                     stage_source: Path | None = None) -> tuple[int, list[str]]:
     """Verify the bundle's internal bindings. Pure stdlib, no file writes.
 
     Returns (0, ["OK ..."]) or (1, [problem, ...]). Every problem names the
     exact block so a red CI points at the edit instead of saying "drift".
+    `stage_source` exists so negative controls can PROVE the binding drives
+    behaviour (change the conductor's FULL_STAGES -> old reports must go red).
     """
     root = Path(root)
     problems: list[str] = []
+    stage_src = (Path(stage_source) if stage_source is not None
+                 else Path(__file__).resolve().parent / "pre_deploy_check.py")
+    full_stages, stage_err = _full_stages(stage_src)
 
     def bad(msg: str) -> None:
         problems.append(msg)
 
+    if stage_err:
+        bad(stage_err)
+
     arts = bundle.get("artifacts")
     if not isinstance(arts, dict):
-        return 1, ["bundle has no 'artifacts' object"]
+        bad("bundle has no 'artifacts' object")
+        return 1, problems
 
     # ── 1. policy identities: three distinct, real, unique onnx paths ──
     rels: dict[str, str] = {}
@@ -205,6 +258,58 @@ def verify_bindings(bundle: dict, root: Path,
             if rpt.get("verdict") != "PASS":
                 bad(f"deploy_checks.{key}: report {jrel} verdict="
                     f"{rpt.get('verdict')!r} != PASS")
+            # Two INDEPENDENT algorithms for the same quantity: re-derive the
+            # verdict from the report's OWN stage list, then compare with its
+            # top-level claim. GitHub's own docs explain why this is needed:
+            # "When a continue-on-error step fails, the outcome is failure,
+            # but the final conclusion is success", and skipped/neutral checks
+            # "are treated as a success for dependent checks" -- a green
+            # aggregate is not evidence that each component passed. The
+            # stage set itself comes from the CURRENT conductor source, so a
+            # newly added 6th stage invalidates every stale archived report
+            # instead of merely printing an advisory note.
+            derived = "PASS"
+            stages = rpt.get("stages")
+            if not isinstance(stages, list) or not stages:
+                bad(f"deploy_checks.{key}: report {jrel} has no structured "
+                    "stages -- its PASS cannot be re-derived")
+                derived = "FAIL"
+            else:
+                offenders = []
+                stage_names: list[str] = []
+                for stage in stages:
+                    if not isinstance(stage, dict):
+                        offenders.append(repr(stage))
+                        continue
+                    name = stage.get("name")
+                    stage_names.append(name if isinstance(name, str)
+                                       else repr(name))
+                    if (stage.get("status") != "PASS"
+                            or stage.get("rc") not in (0, None)):
+                        offenders.append(f"{stage.get('name')}:"
+                                         f"{stage.get('status')}/rc={stage.get('rc')}")
+                if offenders:
+                    bad(f"deploy_checks.{key}: report {jrel} claims PASS but its "
+                        f"own stages disagree: {offenders}")
+                    derived = "FAIL"
+                if len(set(stage_names)) != len(stage_names):
+                    bad(f"deploy_checks.{key}: report {jrel} has duplicate "
+                        f"stage names: {stage_names}")
+                    derived = "FAIL"
+                if full_stages:
+                    missing = [s for s in full_stages if s not in stage_names]
+                    extra = [s for s in stage_names if s not in full_stages]
+                    if missing or extra:
+                        bad(f"deploy_checks.{key}: report {jrel} stage set "
+                            f"{stage_names} != current conductor FULL_STAGES "
+                            f"{full_stages} (missing={missing}, extra={extra}); "
+                            "archived evidence predates a gate change -- "
+                            "regenerate it with pre_deploy_check.py --json")
+                        derived = "FAIL"
+            if rpt.get("verdict") != derived:
+                bad(f"deploy_checks.{key}: report {jrel} verdict="
+                    f"{rpt.get('verdict')!r} disagrees with its own stages "
+                    f"(re-derived {derived!r})")
             if _norm(rpt.get("onnx")) != rels.get(key):
                 bad(f"deploy_checks.{key}: report {jrel} names onnx "
                     f"{_norm(rpt.get('onnx'))!r}, but bundle.artifacts.{key} "
@@ -291,8 +396,10 @@ def verify_bindings(bundle: dict, root: Path,
     if problems:
         return 1, problems
     return 0, ["OK bundle bindings verified: SLSA subject, distinct onnx "
-               "targets, deploy_checks reports, plant x3 authorities, claim "
-               "structure (prose content NOT machine-verifiable)"]
+               "targets, deploy_checks reports (verdict re-derived from stages "
+               "AND stage set bound to the current conductor FULL_STAGES="
+               f"{full_stages}), plant x3 authorities, claim structure (prose "
+               "content NOT machine-verifiable)"]
 
 
 def _selftest(root: Path, bundle_path: Path) -> int:
@@ -394,6 +501,112 @@ def _selftest(root: Path, bundle_path: Path) -> int:
     ):
         run_case(label, fn, want)
 
+    # C9: an archived report whose top-level verdict says PASS while one of
+    # its own stages says FAIL. This needs a real file on disk, so it gets a
+    # dedicated case instead of going through run_case().
+    with tempfile.TemporaryDirectory(prefix="hd1910_bindings_stage_") as td:
+        tdp = Path(td)
+        real_report = json.loads(
+            (root / base["deploy_checks"]["walk"]["json"])
+            .read_text(encoding="utf-8"))
+        real_report["stages"][1]["status"] = "FAIL"
+        real_report["stages"][1]["rc"] = 1
+        bad_report = tdp / "bad_stage_report.json"
+        bad_report.write_text(json.dumps(real_report), encoding="utf-8")
+        b = copy.deepcopy(base)
+        b["deploy_checks"]["walk"]["json"] = str(bad_report.resolve())
+        bp = tdp / bundle_path.name
+        bp.write_text(json.dumps(b, ensure_ascii=False, indent=2) + "\n",
+                      encoding="utf-8")
+        rc, msgs = verify_bindings(b, root, bp)
+        good = rc == 1 and any("own stages disagree" in m for m in msgs)
+        ok &= good
+        print(f"  [{'ok' if good else 'BAD'}] C9 report PASS but stage FAIL: "
+              f"rc={rc} (expect 1)")
+        if not good:
+            for m in msgs[:4]:
+                print("        ", m[:150])
+
+    # C10-C16: the stage-set binding must DRIVE behaviour, not just print an
+    # advisory note. GitHub docs: a skipped/neutral component is "treated as a
+    # success for dependent checks", so an aggregate verdict is not evidence.
+    # C14/C15 are the R4 lesson: changing the SINGLE authority must change the
+    # verdict, otherwise we only moved the hard-coded list to another file.
+    conductor = root / "tools" / "hd1910" / "pre_deploy_check.py"
+    src_text = conductor.read_text(encoding="utf-8")
+    marker = '    "contract", "bundle", "numeric", "inference", "toml",\n'
+    with tempfile.TemporaryDirectory(prefix="hd1910_bindings_scope_") as td:
+        tdp = Path(td)
+        real_report = json.loads(
+            (root / base["deploy_checks"]["walk"]["json"])
+            .read_text(encoding="utf-8"))
+        if marker not in src_text:
+            ok = False
+            print("  [BAD] FULL_STAGES marker missing -- cannot build controls")
+        conductor6 = tdp / "conductor6.py"
+        conductor4 = tdp / "conductor4.py"
+        no_authority = tdp / "no_authority.py"
+        conductor6.write_text(
+            src_text.replace(marker, marker.replace('"toml",',
+                                                    '"toml", "future_stage",')),
+            encoding="utf-8")
+        conductor4.write_text(
+            src_text.replace(marker, marker.replace('"inference", ', '')),
+            encoding="utf-8")
+        no_authority.write_text("x = 1\n", encoding="utf-8")
+
+        case_no = [0]
+
+        def stage_case(label, mutate_report, source, want_rc, needle):
+            nonlocal ok
+            case_no[0] += 1
+            b = copy.deepcopy(base)
+            r = copy.deepcopy(real_report)
+            if mutate_report is not None:
+                mutate_report(r)
+            rp = tdp / f"report_{case_no[0]}.json"
+            rp.write_text(json.dumps(r), encoding="utf-8")
+            b["deploy_checks"]["walk"]["json"] = str(rp.resolve())
+            bp = tdp / bundle_path.name
+            bp.write_text(json.dumps(b, ensure_ascii=False, indent=2) + "\n",
+                          encoding="utf-8")
+            rc, msgs = verify_bindings(b, root, bp, stage_source=source)
+            good = rc == want_rc and (needle is None or
+                                      any(needle in m for m in msgs))
+            ok &= good
+            print(f"  [{'ok' if good else 'BAD'}] {label}: rc={rc} "
+                  f"(expect {want_rc})")
+            if not good:
+                for m in msgs[:4]:
+                    print("        ", m[:150])
+
+        def drop_inference(r):
+            r["stages"] = [s for s in r["stages"]
+                           if s.get("name") != "inference"]
+
+        def skip_one_stage(r):
+            r["stages"][1]["status"] = "SKIP"
+            r["stages"][1]["rc"] = 2
+
+        def duplicate_stage(r):
+            r["stages"].append(dict(r["stages"][0]))
+
+        needle_set = "!= current conductor FULL_STAGES"
+        stage_case("C10 report drops inference stage", drop_inference,
+                   None, 1, needle_set)
+        stage_case("C11 skipped stage still claims PASS", skip_one_stage,
+                   None, 1, "own stages disagree")
+        stage_case("C12 duplicate stage names", duplicate_stage,
+                   None, 1, "duplicate stage names")
+        stage_case("C13 current conductor + intact report = green", None,
+                   None, 0, None)
+        stage_case("C14 conductor gains a 6th stage -> old report red", None,
+                   conductor6, 1, needle_set)
+        stage_case("C15 conductor loses inference -> new report red", None,
+                   conductor4, 1, needle_set)
+        stage_case("C16 stage authority missing -> fail loud", None,
+                   no_authority, 1, "STAGE AUTHORITY MISSING")
+
     print("SELFTEST: " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
@@ -410,6 +623,9 @@ def main() -> int:
                      help="emit a machine-readable result")
     ap.add_argument("--selftest", action="store_true",
                      help="run negative controls on a copy of the real bundle")
+    ap.add_argument("--stage-source", type=Path, default=None,
+                     help="override the conductor source FULL_STAGES is read "
+                          "from (negative controls / staged upgrades only)")
     args = ap.parse_args()
 
     root = args.root.resolve()
@@ -424,7 +640,8 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         print(f"ERROR: cannot read bundle: {exc}", file=sys.stderr)
         return 1
-    rc, msgs = verify_bindings(bundle, root, bundle_path)
+    rc, msgs = verify_bindings(bundle, root, bundle_path,
+                               stage_source=args.stage_source)
     if args.json:
         print(json.dumps({"verdict": "PASS" if rc == 0 else "FAIL",
                           "bundle": str(bundle_path), "problems": msgs},

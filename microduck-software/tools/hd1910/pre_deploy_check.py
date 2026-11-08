@@ -59,6 +59,18 @@ NUMERIC = HERE / "policy_numeric_gate.py"
 INFERENCE = HERE / "verify_policy_inference.py"
 TOML_AUDIT = HERE / "audit_robotd_toml.py"
 
+# SINGLE AUTHORITY for the set of stages this conductor can execute.
+# bundle_bindings.py parses this constant OUT OF THIS FILE (ast, no import)
+# and refuses any archived deploy_check report whose stage set differs. So
+# adding a 6th stage here automatically invalidates stale evidence instead of
+# letting a 5-stage report keep looking green. Do NOT keep a second copy of
+# this list: Pass20 proved that a third copy of an input list rots in silence.
+# `toml` only runs when --toml is supplied; every report used as shipping
+# evidence is generated with --toml, so FULL_STAGES is its expected shape.
+FULL_STAGES: tuple[str, ...] = (
+    "contract", "bundle", "numeric", "inference", "toml",
+)
+
 
 @dataclass
 class StageResult:
@@ -258,6 +270,16 @@ def main() -> int:
                               "--toml", str(args.toml),
                               "--expect-kp", str(args.expect_kp)))
 
+    # Fail loud if someone adds a stage without updating the single authority
+    # above (the bundle-evidence guard derives its expectations from it).
+    if args.toml:
+        ran = tuple(r.name for r in results)
+        if ran != FULL_STAGES:
+            raise RuntimeError(
+                f"stage set drift: conductor ran {ran} but FULL_STAGES="
+                f"{FULL_STAGES}; update the single authority in "
+                "pre_deploy_check.py and regenerate the archived reports")
+
     # ── report ──
     print()
     print(f"{'STAGE':<10} {'RESULT':<6} DETAIL")
@@ -290,6 +312,7 @@ def main() -> int:
             "toml": str(args.toml) if args.toml else None,
             "verdict": "FAIL" if any_fail else ("PASS*" if skipped else "PASS"),
             "skipped_stages": skipped,
+            "full_stage_set": list(FULL_STAGES),
             "stages": [
                 {"name": r.name, "status": r.status, "rc": r.rc, "tail": r.tail}
                 for r in results

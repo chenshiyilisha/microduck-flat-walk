@@ -498,6 +498,46 @@ provenance --verify rc = 0
 
 ---
 
+## 4.11 Pass21/R5 → Pass22/R6（2026-11-08）：bundle 的证据范围绑定到当前闸门
+
+### 4.11.1 R5 留下的下一层：证据比闸门少一关
+
+R5 把 SLSA `subject` 与 `artifacts` 绑定，堵住了 C1/C3/C4/C7（walk 被 ground_pick 替换仍全绿）。随后对 `deploy_checks` 再挖掘时加了一条「从报告自己的 `stages` 重新派生顶层 `verdict`」的守卫，并**如实打印**三份归档报告是历史 4 关、缺 `inference`。问题在于：**打印 note 不是拦截**。当前 `pre_deploy_check.py` 已是 5 关（Pass13 新增 inference 真执行），而 bundle 引用的三份报告仍是 4 关产物；任何读 bundle 的人或机器都无法知道「这份 PASS 是否由当前闸门产生」。闸门加第 6 关时，旧报告照样会全绿。同族于 R4 的「第三份清单」与 Pass17 的「记录 hash 没人重算」。
+
+**一手资料（先查再判，非推断）**：GitHub Docs `contexts` 原文——「When a `continue-on-error` step fails, the outcome is failure, but the final **conclusion is success**」；`status-checks` 原文——`skipped` / `neutral` 「is treated as a **success** for dependent checks」；`troubleshooting-required-status-checks` 原文——「如果作业失败，则将跳过依赖于已失败的作业的任何作业，并且**不报告失败**……要对依赖于其他作业的作业使用必需的检查，则除 `needs` 之外，还应使用 `always()`」。⇒ 平台自身就要求「逐项显式断言 + 独立重派生」，顶层绿色结论不是证据。
+
+### 4.11.2 判最优：消除 note，从 conductor 源码派生阶段全集
+
+| 方案 | 判决 |
+|---|---|
+| 在 `bundle_bindings.py` 里硬编码 5 关名清单 | ❌ 否决：又一份副本，加关时照样 rot（R4） |
+| 保留历史 4 关 note，只做「顶层 verdict ↔ stages」一致性 | ❌ 否决：证据范围仍与当前闸门脱钩 |
+| **从 `pre_deploy_check.py` 源码读 `FULL_STAGES` 作为唯一权威** | ✅ 采用：加第 6 关自动使旧证据变红，且没有新副本 |
+
+### 4.11.3 落地（全部真跑）
+
+- `pre_deploy_check.py`：新增模块级 `FULL_STAGES`（单一权威）；写报告时加 `full_stage_set` 字段；带 `--toml` 运行时自检「实际跑的阶段元组 == FULL_STAGES」，漏改常量立即 `RuntimeError`（fail loud）。
+- `bundle_bindings.py`：`_full_stages()` 用 **AST** 从 conductor 源码解析常量（不 import、不执行）；`verify_bindings(..., stage_source=...)` 要求每份报告的 stage 名集合与 `FULL_STAGES` **完全相等**（缺/多/重复都红）、逐阶段 `status=PASS` 且 `rc∈{0,None}`、顶层 verdict 与重派生一致；权威缺失/不可解析一律 fail loud。CLI 新增 `--stage-source` 供负对照使用。
+- 三份归档报告用 `.venv-mjlab` **重跑当前 5 关 conductor** 重新生成：`contract/bundle/numeric/inference/toml` 全 PASS，inference 真执行 `input_name=obs shape=[1,61]`。
+- `deploy-gate.yml`：`bundle_bindings --selftest` 注释里的「14 tamper cases」已先后漂移到 15、22 ⇒ 改成「EVERY tamper case must go red」并写明不再钉计数（Pass12 自述计数口径同族）。
+- `tests/test_hd1910_tooling.py` +2：① 两条独立算法（AST 解析 vs 实际 import conductor 常量）核对阶段全集 + 三份报告逐关全 PASS + C9 负对照；② 绑定真的驱动行为（6 关 conductor 副本必红 / 权威缺失必红 / SKIP 阶段仍宣称 PASS 必红）+ **CLI 层** `--stage-source` 真跑必红。
+- selftest 从 15 条扩到 **22 条**（C10 缺关、C11 SKIP、C12 重复名、C13 正对照、C14 加第 6 关、C15 去掉 inference、C16 权威缺失）。
+
+**先负对照再修证据**：新守卫接上后，磁盘上三份旧 4 关报告立刻 `rc=1`，逐份点名 `missing=['inference']`；重生成后 `rc=0`。⇒ 不是「改完看起来绿」，而是「旧证据真的会红」。
+
+### 4.11.4 验证读数
+
+- 完整栈 `pytest tests/` **83 passed / 121s**；8 个闸门 CLI 入口逐一真跑全部 `rc=0`（探针 `--strict` scope/full=true/true、探针/emitter/verdict/conductor/inference selftest、provenance `--verify`、`bundle_bindings`）。
+- `bundle_bindings.py --selftest` **22 条全 PASS**；真实 bundle `--json` = PASS，OK 消息含 `FULL_STAGES=['contract','bundle','numeric','inference','toml']`。
+- lean CI 模拟（`sitecustomize` 屏蔽训练栈 + `bam`）**57 passed / 26 skipped**；skip 明细逐条核过 = 25 条 `test_hd1910_configs.py` kinematics + 1 条 IMU 链守卫，**无 tooling/闸门测试被静默跳过**；探针 `--strict rc=0`（scope=true/full=false）；conductor selftest `PARTIAL rc=0`（contract.selftest 显式白名单）；三策略各 `PASS*` + `assert_ci_verdict --allow-skip contract` `rc=0`（`stages={'contract':'SKIP','bundle':'PASS','numeric':'PASS','inference':'PASS','toml':'PASS'}`）。
+- 负对照矩阵：旧 4 关报告红、报告含 FAIL/SKIP 红、重复 stage 名红、conductor 改 6 关红、conductor 去掉 inference 红、权威文件无常量红、CLI `--stage-source` 改 6 关 rc=1 而默认 rc=0。
+
+### 4.11.5 准则（可泛化）
+
+**「顶层 verdict 与逐项结论一致」还不够：项集合本身必须绑定到当前实现的单一权威源码。** 只打印「这是旧版 4 关报告」是说明，不是拦截；改权威常量后旧证据必须自动变红，才能证明不是把硬编码换了个地方。另：**CI/报告的聚合结论要按平台一手语义来设计**——`continue-on-error`、skipped/neutral 都会让失败在顶层消失，所以必须逐项断言（官方做法正是 `always()` + `needs.*.result`）。
+
+---
+
 ## 5. 证据索引（本轮查证）
 
 - 官方站起修复：`pollen-robotics/microduck_rl@develop` → `src/mjlab_microduck/tasks/microduck_standup_env_cfg.py`（`set_ground_state`、`ground_state_mix`、`face_up_roll_max`）。
