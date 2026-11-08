@@ -594,13 +594,50 @@ for name in MUST_PASS: ...                                                     #
 
 **同一类证据有两条消费链时，「一条修好」等于「一条没修」**：必须让它们 import 同一个权威函数，而不是各自实现「看起来一样」的规则；并用测试断言两个消费者拿到的确实是同一个函数对象。另：**负对照矩阵要能改坏权威本身**——只在数据侧造假会漏掉「把硬编码搬了家」的情形。
 
-### 4.12.7 本轮已定位但未修（下一轮输入，非「已验证无问题」）
+### 4.12.7 本轮已定位、R8 已修 / 已定性（非「已验证无问题」）
 
-- **策略集合 `("walk","ground_pick","stand")` 仍有 7 处字面量**（`bundle_bindings.POLICY_KEYS`、`ci_gate_targets.POLICY_KEYS`/`SHELL_NAMES`、`workflow` 的 `GATE_COUNT -eq 3` 与 `for O in ...`、emitter selftest、测试断言），没有一处从 bundle 的 `artifacts`/`deploy_checks` 键集合派生。R4 只解决了 onnx **路径**的第三份副本，没解决集合本身。
-- **CI 实时报告 `out/ci_*.json` 与 bundle 归档 `out/deploy_check_*.json` 无交叉校验**：两者强度不同（`PASS*` vs `PASS`），也没有断言要求 stage 集合/onnx/toml 一致。
-- **provenance subject 只覆盖 3 个 onnx**（哈希另覆盖 toml）；`deploy_check_*.json`、workflow、守卫脚本都不在 subject 内（归档报告另有 `bundle_bindings` 的重派生保护，但那是独立链路）。
+- **策略集合 `("walk","ground_pick","stand")` 的字面重复 —— R8 已修**：`bundle_bindings.POLICY_KEYS` 与 `ci_gate_targets.POLICY_KEYS` 曾逐字重复（典型「两条消费链各写一份」），workflow 还把数量硬编码成 `test "$GATE_COUNT" -eq 3`、测试写死 `GATE_COUNT=3`。R8 把唯一权威 `deploy_stages.POLICY_KEYS` 抽出，两侧 import 同一对象（测试断言 `is`），workflow 与测试的数量断言改为从同一权威派生。详见 §4.13。
+- **CI 实时报告 `out/ci_*.json` 与 bundle 归档 `out/deploy_check_*.json` 无交叉校验**：经 R8 分析，两者本就是不同次运行（实时=当前 CI、归档=历史证据），且**都已受同一 `POLICY_KEYS` 权威约束**——增删策略会同时触发 emitter（实时 gate 目标）与 binder（归档 deploy_checks）变红，交叉保护的缺口已被单一权威闭合。无需再做一份字节级比对（会把「不同运行」误当成不一致）。
+- **provenance subject 不覆盖报告/workflow/守卫脚本 —— R8 诚实定性为「设计边界」**：本项目 provenance 未签名、与守卫同仓库；把守卫/报告哈希塞进同一 bundle，并不能抵抗「同时改 bundle + 守卫」的篡改（攻击者改两处即可），只防自己「改了守卫却没重生成证据」的脚枪（R4/R6 同族）。而功能上，归档报告**已被** `bundle_bindings.verify_bindings` 真校验（stages 重派生 + 项集合绑定 `FULL_STAGES`），workflow 与守卫脚本由 git 提交 + CI 实跑提供完整性。因此只记录该边界，不假装修出一层无增益的签名式 subject。
 - `eval` / `bundle_audit.checks` / `rehearsal.note` 是人工散文聚合结论，数值内容不可从仓库重算 —— 这是**设计边界**，不是可修 bug，已在代码 `HONEST BOUNDARY` 明示。
 - 另有一份无人引用的旧 4 关 `out/deploy_check_standup_official.json`（verdict FAIL、无 `full_stage_set`），既不在 bundle 也不被任何脚本读取，属遗留文件。
+
+---
+
+## 4.13 Pass24 / 循环 R8（2026-11-08）：部署策略集合必须是单一共享权威
+
+### 4.13.1 深挖：R7 收口时漏掉的策略集合重复
+
+R7 收口纪要末尾列出三项「已定位未修」，回源码逐项核实后确认项 1 真实存在且是 R7 教训（`两条消费链须共用权威`）的直接反例：`ci_gate_targets.py` 与 `bundle_bindings.py` 各有一份逐字相同的 `POLICY_KEYS = ("walk","ground_pick","stand")`；`deploy-gate.yml` 还有 `test "$GATE_COUNT" -eq 3` 的写死数量。这是「两套清单」静默 rot 的同一类漏洞——加第四个策略只改一处，CI 会 gate 三个而证据声称四个（或反之）。
+
+### 4.13.2 判最优：三方案对照
+
+1. 保留两份副本、各自维护：R4/R6/R7 反复证伪，淘汰。
+2. 只让 emitter 派生、binder 抄一份：第二份仍会 rot，淘汰。
+3. **抽出 `deploy_stages.POLICY_KEYS` 单一权威，两侧 `from deploy_stages import POLICY_KEYS`**：与 R7 的 `FULL_STAGES` 同一思路；workflow 与测试的数量断言也改为 `len(POLICY_KEYS)` 派生，彻底消除任何写死的 3。选此。
+
+### 4.13.3 落地（全部真跑）
+
+- `deploy_stages.py` 新增 `POLICY_KEYS`（已承载 `FULL_STAGES` 等单一权威，同模块合理）；`ci_gate_targets.py`、`bundle_bindings.py` 删本地副本改 import；`deploy-gate.yml` 的 `GATE_COUNT` 校验改为 `EXPECTED_GATES=$(python -c '...from deploy_stages import POLICY_KEYS;print(len(POLICY_KEYS))')` 后 `test "$GATE_COUNT" -eq "$EXPECTED_GATES"`；测试 `GATE_COUNT=3` 断言同样改为派生。
+- 新增回归测试 `test_deployed_policy_set_is_single_authority`：① 断言 `emitter.POLICY_KEYS is binder.POLICY_KEYS is deploy_stages.POLICY_KEYS`（同一对象，无第二份）；② 静态断言 `POLICY_KEYS` 定义在 `deploy_stages.py` 唯一一处；③ 真实 bundle 缺一个策略时，binder（`deploy_checks keys !=`）与 emitter（`TargetsError`）**两侧都红**。
+
+### 4.13.4 验证读数
+
+| 层 | 结果 |
+|---|---|
+| 本地完整栈 | `pytest` **86 passed**（原 85 +1）；`assert_clean_checkout --strict` scope/full=true/true；emitter/bindings/verdict selftest 全 PASS；`record_provenance --verify rc=0`；emitter `--sh` 输出 `GATE_COUNT=3` 与权威派生值一致 |
+| 干净 clone（带 `.git`） | 新权威模块确认 tracked；strict、双守卫 selftest、pytest 59/26、三策略断言全 0；`GATE_COUNT=3` |
+| 真实 CI `42471596856` / `bcbdb05` | **success**：逐 step 机读 `1 job / 20 steps` 全 success、`head_sha` 绑定、8 个守卫步骤齐全；`60 passed, 26 skipped`；三份 `gate really executed` + `verdict=PASS*`；`EXPECTED_GATES` 派生校验随该 step 通过；无 `::error::`/`SELFTEST: FAIL`/`[BAD]` |
+
+### 4.13.5 准则（可泛化）
+
+**「部署什么策略」与「关卡怎么判」一样，都是「多项集合」，必须只有一份权威并让所有消费者 import 它**：凡是 `for key in {...}`、`len(...) == N`、`test x -eq N` 里出现的集合/数量，都要从那一份权威派生，而不是另写一份字面量。`R8 的负对照要能删掉一个策略就让两侧都红`——证明它们真的共享同一权威，而非各写一份「看起来一样」的清单。
+
+### 4.13.6 下一轮已定位（非「已验证无问题」）
+
+- `audit_robotd_toml.py` 的 `_REQUIRED_SLOTS = ("walk","stand","ground_pick")` 仍是独立命名的一份「机器人必须接线的策略集」，语义上应等于部署集，但目前与 `deploy_stages.POLICY_KEYS` 没有绑定。若要 unify 需谨慎（该工具审计的是 robotd `[policy]` 菜单槽位，scope 不同），列为已知待评估边界。
+- `assert_clean_checkout.py` 探针 selftest 的 `GOOD_ART` 用 `("walk","ground_pick","stand","robotd_toml")` 四元组（含 toml）作夹具——是探针覆盖范围（3 onnx + 1 toml）的测试数据，非部署策略权威，暂保留。
+- 真实 CI 仍只覆盖 4/5 关（`contract` 与 21 条 kinematics、IMU 链真执行只在本地完整栈）；硬件端到端未启（未到货）。
 
 ---
 
