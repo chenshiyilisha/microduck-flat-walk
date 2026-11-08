@@ -1,27 +1,38 @@
-# Deploy-verification toolchain dependencies (Pass12, 2026-11-08).
+# Deploy-verification toolchain dependencies (Pass12 + Pass13, 2026-11-08).
 #
-# These are the pip packages needed to RUN the four-dimension deploy gate that lives in
-# this directory:
+# These are the pip packages needed to RUN the deploy gate that lives in this
+# directory:
 #   - verify_policy_bundle.py  -> needs onnx (+ numpy for the numeric normaliser checks)
 #   - rehearse_hd1910.py       -> needs onnx (reads runmeta/heading_meta to infer plant)
+#   - verify_policy_inference.py -> needs onnxruntime (+ numpy) to EXECUTE the ONNX and
+#                                  sanity-check its output (the "static-only" blind-spot
+#                                  closer; SKIPs cleanly if these are absent)
 #   - audit_robotd_toml.py     -> stdlib only (tomllib, Python >= 3.11)
 #   - pre_deploy_check.py      -> stdlib only (shells out to the above via subprocess)
+#   - record_provenance.py     -> stdlib only (reads companion runmeta/heading_meta + git)
 #
 # WHY THIS FILE EXISTS: the repo's only dependency manifest was
 # microduck-software/repo/pyproject.toml, which describes the TRAINING env
-# (microduck-mjbatch: mujoco / torch / mjbatch) and does NOT declare onnx. A fresh
-# `git clone` + `uv sync` therefore could not re-run the bundle/rehearsal gates, so the
-# "deploy-ready" verdict was not reproducible. This file pins the verification toolchain
-# separately from training.
+# (microduck-mjbatch: mujoco / torch / mjbatch) and does NOT declare onnx or
+# onnxruntime. A fresh `git clone` + `uv sync` therefore could not re-run the
+# bundle/rehearsal/inference gates, so the "deploy-ready" verdict was not
+# reproducible. This file pins the verification toolchain separately from training.
+#
+# VERSION PINS mirror upstream pollen-robotics/microduck_rl's pyproject.toml
+# (onnx>=1.20.1, onnxruntime>=1.24.4) so the verification env matches the project
+# that produces these policies. numpy is needed by the inference/bundle numeric paths.
 #
 # INSTALL (from this directory):
 #   python -m pip install -r requirements.txt
 #   # or, with uv:
 #   uv pip install -r requirements.txt
 #
-# NOTE (Pass12 sandbox): `onnx` could NOT be pip-installed in the audit sandbox
-# (configured index returned "from versions: none" -- network/proxy restricted), so the
-# install line below is declared-but-unverified in that environment. The packages are
-# correct for the tools' imports; verify on a machine with PyPI/relevant mirror access.
-onnx
+# NOTE (Pass12/13 audit sandbox): `onnx` / `onnxruntime` could NOT be pip-installed
+# in the audit sandbox (configured index returned "from versions: none" -- network/
+# proxy restricted), so the inference gate is exercised only where PyPI/mirror access
+# exists. The packages below are the correct pins for the tools' imports; verify on a
+# machine with PyPI/relevant mirror access. The conductor treats a missing runtime as
+# SKIP (rc=2), never as a policy fault.
+onnx>=1.20.1
+onnxruntime>=1.24.4
 numpy

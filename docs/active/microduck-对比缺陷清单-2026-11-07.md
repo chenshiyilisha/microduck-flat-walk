@@ -22,6 +22,8 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 
 - **Pass12（2026-11-08 · 六轮循环 · 继续审计）—— 戳破「闸门关了就一定能复现」盲区：部署验证工具链 onnx 依赖未声明**。Pass9 把 conductor 四关接到真实 kp8 onnx 后，本轮不信任归档 JSON、直接实跑验证当前磁盘：① `sha256sum` 三 kp8 onnx + toml 与 `hd1910_kp8_deploy_bundle.json` 记录**逐字节一致**（无 bitrot）；② `audit_robotd_toml.py`（仅 stdlib，沙箱可实跑）对当前 toml 退出 0、all pass，三策略路径均存在、reg50=16 增益标度匹配，唯一 WARN 是 HD-1910 机体非 XL330 参考集（预期）；③ toml 的 `joint_ids`/`joint_signs` 与权威 `.upstream/hd1910m/radxa/installation.json` 逐条比对**完全一致**，关掉「照抄别的项目 ⇒ 15 颗全错位」风险（源 `calibration_verified=false` 仍须真机复核）。**新盲区**：`verify_policy_bundle.py`/`rehearse_hd1910.py` 需 onnx+numpy，但仓库唯一依赖清单 `repo/pyproject.toml` 是训练环境且不含 onnx——`git clone`+`uv sync` 后无法再跑 bundle/rehearsal 闸门，部署结论不可复现。修法：新增 `tools/hd1910/requirements.txt` 显式声明 onnx/numpy。另修正两处自述口径：bundle「22 negative-control self-tests」改为准确「39 断言=11 contract+1 clean+27 负对照（22 个 N 场景）」；toml「HD-1910 / Radxa line」措辞澄清——本 toml 走 DuckBuddy-main 那代 robotd（feetech_hls，会做 EEPROM 开机硬校验），radxa 只是上游目录名、非 FT-SCS 那代。**结论**：Pass9 收口在格式/策略接线层面成立，但「可复现」层面漏了工具链依赖，本轮补上。
 
+- **Pass13（2026-11-08 · 七轮循环 · 对照开源项目）—— 对照 upstream `pollen-robotics/microduck_rl` 与业界（reflex-vla / ETARS / LeRobot / lerobot_humanoid_runtime）部署验证做法，戳破「静态检查全过 = 策略能跑」盲区**：① 上游 `find_onnx_source.py` 用 bit-exact 权重匹配把部署 onnx 回溯到训练 checkpoint，且 `pyproject.toml` 显式声明 `onnxruntime>=1.24.4`+`onnx>=1.20.1`；reflex-vla 的 `reflex validate export` 做 ONNX↔PyTorch 机器精度 parity（退出码 0/1/2 供 CI）+ `--init-ci` 自动生成 GH Actions；ETARS 有 `test_compare_policies.py` 跨后端数值比对；`lerobot_humanoid_runtime` 强调「Calibration mandatory + 分阶段安全运行器」。对照暴露我们两个真缺口：**(a) bundle 只记 sha256、无训练 provenance（commit/seed/env/配置哈希）**；**(b) 验证只做静态检查（IO 宽度/权重嵌入），从不真正执行策略图**——一个导出时图层错/常量/爆炸的动作，静态闸门全过却上机「看起来走然后摔」。修：新 `record_provenance.py` 从伴随 `runmeta_*.json`/`heading_meta_*.json`（task/seed/envs/iters、`cfg_sha256_16`/`mdp_sha256_16` 环境配置哈希、created 时间戳、完整 CLI、plant 来源文件）+ 复用既有 `_provenance.capture_provenance`（git branch/dirty/`git diff HEAD` sha256 指纹）提取 provenance 注入 `hd1910_kp8_deploy_bundle.json`（不依赖 onnx）；新 `verify_policy_inference.py` **真用 onnxruntime 执行 onnx** 并断言输出 finite / 非爆炸 / 非退化常量（依赖缺失 rc=2 SKIP 而非误判失败），检查逻辑纯 Python（不依赖 numpy）故负对照 selftest 在干净环境可证；前者挂进 conductor 成第五关（inference）。另加 `.github/workflows/deploy-gate.yml` 把闸门配进 CI（reflex `--init-ci` 模式）防 bitrot；`requirements.txt` 补 `onnxruntime>=1.24.4` 并对齐上游 onnx 版本。新增 5 项回归测试（provenance 提取 3 + 推理负对照 2）。**诚实声明**：本沙箱仍装不上 onnx/onnxruntime/numpy（网络受限），故 inference「真执行 onnx」与 bundle/numeric 两关 selftest 未在沙箱实跑（CI 装好依赖后会跑）；此限制 Pass12 已记、Pass13 未引入新回归。**结论**：Pass12 收口「可复现依赖」后，Pass13 把验证从「静态」补到「执行 + 可追溯 + CI 门禁」，不烧 GPU 的软件/工程就绪缺口已到很扎实的上界。
+
 > **2026-11-08 训练状态（与审计并列）**：P0 行走 kp8 续训完（`model_7999`，指标健康，conductor 四关过）；P1 地面拾取 kp8 评测 **96.9%** 通过（四关过）；P2 站起——官方 `hl2915_standup` 在 kp8 仿真能 100% 站起但被 bundle 关拒（metadata 28 关节名 vs 14 动作），改训 **kp8 原生站起**（4096×4000），导出 onnx 后 conductor 四关过、实测站起 **100%**，三个 kp8 技能全部训练自有/同 plant 验证/闸门全过。P3（≥3 seed sweep）用户裁定暂缓，P4 未启动。硬件未到，真机端到端验证（bus.joint_ids 逐关节复核、齿隙 7.4V 重测）待硬件。
 
 ---
@@ -159,6 +161,28 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - **两处口径修正**：① bundle 的 `bundle_audit.tool` 把「22 negative-control self-tests」改为准确「39 断言 = 11 contract + 1 clean + 27 负对照（跨 22 个 N1-N22 缺陷场景）」；② toml 第 105 行「HD-1910 / Radxa line」措辞澄清——本 toml 走 **DuckBuddy-main 那代 robotd**（Orange Pi A733 + HL-2915 + feetech_hls + 500 kbps，会做 EEPROM 开机硬校验 reg6/reg33/reg9/reg11），`radxa` 只是上游目录名（HD-1910 机体接线图恰好放那里），非 FT-SCS 那代；两线混淆 = 电机乱躜、判错无效。
 - **沙箱限制**：本环境 Python 3.13 + pip 镜像返回 onnx「from versions: none」（网络/代理受限），无法实跑 onnx 闸门自证；以 sha256 + toml 闸门实跑 + installation.json 对照替代证明，onnx 闸门结论沿用归档（d3a94f3/d9d6b19 时实跑 PASS）。
 - **结论**：Pass9 部署闸门在「格式/策略接线」层面成立，但「可复现」层面漏了工具链依赖，Pass12 补齐。剩余 OPEN 仍是硬件端到端（`bus.joint_ids` 逐关节复核 + 齿隙 7.4V 重测，台架 4.6V 欠压）与 P3/P4（暂缓/可选）。
+
+---
+
+## 4.3 Pass13 自主审计（2026-11-08）— 对照开源项目：执行 + 可追溯 + CI 门禁
+
+- **对照对象（一手查证的资料）**：
+  - upstream `pollen-robotics/microduck_rl` @ `develop`：根目录有 `scripts/export.py`/`infer_policy.py`/`find_onnx_source.py`/`testbench_sim2real.py`/`validate_bam_testbench.py`、`docs/training_checkpoints.md`、`scripts/hf`（策略传 HF）；`pyproject.toml` 显式声明 `onnxruntime>=1.24.4`、override `onnx>=1.20.1`。**关键**：上游把「部署 onnx → 训练来源」当一等公民（`find_onnx_source.py` bit-exact 权重匹配回溯 checkpoint），且 **`infer_policy.py` 真的用 onnxruntime 跑策略**（BAM 执行器模型，并用 `tests/test_infer_policy_bam.py` 把执行器常量「锁死」）。
+  - `reflex-vla`（开源 VLA 部署层）：`reflex validate export` 做 ONNX↔PyTorch 机器精度 parity（退出码 0/1/2 供 CI），还能 `reflex validate --init-ci` 自动脚手架 `.github/workflows/reflex-validate.yml`。
+  - `ETARS`（LeRobot 扩展）：`tests/test_compare_policies.py` 跨后端（onnxruntime vs torch）数值一致性比对。
+  - `lerobot_humanoid_runtime`：**Calibration mandatory before deployment**；`deploy/run_real_policy_sequential.py` 分阶段安全运行器（state_only→检查→control→enable motors→zero pose→gains→policy）。
+- **我们 vs 对照，确认的两个真缺口**：
+  1. **provenance 缺失**：bundle 只记 sha256，无训练 commit/seed/env/配置哈希。上游用 wandb；我们本地每个训练 run 已写伴随 `runmeta_*.json`/`heading_meta_*.json`，含 `cfg_sha256_16`/`mdp_sha256_16`（环境/MDO 配置哈希）、`created`、`passthrough_args`（完整 CLI）、`task`、`seed`、`envs`、`iters`、`plant.source_file`。
+  2. **只做静态检查，从不执行图**：`verify_policy_bundle.py` 查 IO 宽度 + 权重嵌入，但从不跑 onnx。导出时图层错/常量/爆炸的动作会漏过所有静态闸门。
+- **修（新增/改动文件）**：
+  - `tools/hd1910/record_provenance.py`（新增）：从伴随 meta + 复用 `_provenance.capture_provenance` 提取 provenance，注入 bundle 的 `provenance.code`（git commit/branch/dirty/diff_patch_id/toplevel）+ `provenance.per_artifact`（每个 onnx 的 task/plant/envs/iters/seed/cfg+mdp sha/created/export_iter/companion_meta）。纯 stdlib，**不依赖 onnx**。
+  - `tools/hd1910/verify_policy_inference.py`（新增）：onnxruntime 真执行 onnx，断言输出 finite / 非爆炸（|a|<1e3）/ 非退化常量（WARN）。`check_inference_output` 纯 Python（不依赖 numpy），负对照 selftest 在干净环境可证；依赖缺失 rc=2 SKIP。
+  - `tools/hd1910/pre_deploy_check.py`：挂 inference 成第五关（加 `INFERENCE` 常量、docstring、selftest 列表、main 流程）。
+  - `tools/hd1910/requirements.txt`：补 `onnxruntime>=1.24.4`，对齐上游 onnx 版本，注明 inference 用。
+  - `.github/workflows/deploy-gate.yml`（新增）：push/PR 跑 conductor selftest + inference selftest + 真实闸门（装好 requirements 后 inference 真跑）。
+  - `tests/test_hd1910_tooling.py`（+5）：provenance 提取（真实 walk onnx + 无 meta 诚实标 absent + strip/parse）+ 推理负对照（NaN/Inf/explode 必抓、constant=WARN、empty=FAIL）+ inference selftest runs。
+  - `out/hd1910_kp8_deploy_bundle.json`：新增 `provenance` 块。
+- **沙箱限制（诚实）**：本环境装不上 onnx/onnxruntime/numpy（pip 镜像「from versions: none」），故 inference 真执行 onnx 与 bundle/numeric 两关 selftest 未在沙箱实跑；CI 装好依赖后跑。inference.selftest + toml.selftest 在 numpy-less 环境 PASS（前者纯 Python 负对照可证）。此限制 Pass12 已记、Pass13 未引入新回归。
 
 ---
 

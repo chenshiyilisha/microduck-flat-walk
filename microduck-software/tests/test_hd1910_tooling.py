@@ -233,3 +233,86 @@ def test_provenance_keys():
     assert rec["command"] == ["train", "--agent.seed", "42"]
     # Dependencies are best-effort but must be a dict, not an error.
     assert isinstance(rec["versions"], dict)
+
+
+# ── Pass13: deploy-bundle provenance + inference smoke (对照开源项目) ──
+
+def test_record_provenance_walk_deploy_onnx():
+    """Provenance for the real walk deploy onnx must be harvested from its
+    companion heading_meta (task / plant / cfg+mdp config hashes / created /
+    export iteration) and merged with the code-side git fingerprint — without
+    needing ``onnx``. This is the local analogue of upstream find_onnx_source."""
+    rp = _load("record_provenance_test", HERE / "record_provenance.py")
+    walk = ROOT / ("logs/rsl_rl/microduck_velocity_hd1910/"
+                   "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/"
+                   "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx")
+    if not walk.exists():
+        pytest.skip(f"deploy onnx not present: {walk}")
+    pv = rp.provenance_for_onnx(walk)
+    assert pv.companion_meta == "heading_meta"
+    assert pv.task == "Mjlab-Velocity-Flat-MicroDuck"
+    assert pv.plant_name == "hd1910_kp8"
+    assert pv.cfg_sha256_16 == "75a0430b814ac749"
+    assert pv.mdp_sha256_16 == "9f9b77c05d16a1a3"
+    assert pv.export_iteration == 2999
+    # code-side fingerprint reuses _provenance.capture_provenance
+    code = rp._provenance.capture_provenance(ROOT)  # noqa: SLF001
+    assert isinstance(code["git_commit"], str) and len(code["git_commit"]) >= 40
+
+
+def test_record_provenance_absent_meta_is_honest():
+    """An onnx with NO companion meta must be reported as 'absent', never a
+    fabricated success. The shipped deploy candidates (p8head_2999) carry only a
+    short name, so this is the honest path."""
+    rp = _load("record_provenance_test", HERE / "record_provenance.py")
+    bare = ROOT / "out" / "p8head_2999.onnx"
+    if not bare.exists():
+        pytest.skip(f"bare onnx not present: {bare}")
+    pv = rp.provenance_for_onnx(bare)
+    assert pv.companion_meta == "absent"
+    assert pv.task is None and pv.cfg_sha256_16 is None
+
+
+def test_record_provenance_strip_and_parse():
+    rp = _load("record_provenance_test", HERE / "record_provenance.py")
+    assert rp.strip_timestamp("2026-11-07_22-12-33_p8head_030_4096x3000_resume2999") \
+        == "p8head_030_4096x3000_resume2999"
+    assert rp.parse_iteration("p8head_030_4096x3000_resume2999") == 2999
+    assert rp.parse_iteration("p3head030_4096x2000_it1600") == 1600
+    assert rp.parse_envxiter("hd1910_groundpick_4096x4000_1106_2216") == (4096, 4000)
+    assert rp.parse_envxiter("2026-11-07_22-12-33_p8head_030_4096x3000_resume2999") \
+        == (4096, 3000)
+
+
+def test_inference_check_negative_control():
+    """The output validator must catch every real failure mode (NaN/Inf, explode)
+    and must NOT pass a broken output. Pure-Python, so this is provable on a clean
+    checkout without onnxruntime/numpy — guarding the gate's logic, not just its
+    wiring."""
+    vi = _load("verify_policy_inference_test", HERE / "verify_policy_inference.py")
+    check = vi.check_inference_output
+    ok, reasons = check([0.1, -0.2, 0.05, 0.3, -0.1, 0.0, 0.2, -0.3,
+                         0.15, 0.1, -0.05, 0.25, 0.0, -0.15])
+    assert ok and not reasons
+    ok, reasons = check([0.1, float("nan"), 0.2] + [0.0] * 11)
+    assert (not ok) and any("NaN" in r for r in reasons)
+    ok, reasons = check([float("inf")] * 14)
+    assert (not ok) and any("Inf" in r for r in reasons)
+    ok, reasons = check([1.0e9] * 14)
+    assert (not ok) and any("explode" in r for r in reasons)
+    # a degenerate constant is a WARN only -> still ok (no false FAIL)
+    ok, reasons = check([0.0] * 14)
+    assert ok and any("WARN" in r for r in reasons)
+    ok, reasons = check([])
+    assert not ok
+
+
+def test_inference_selftest_runs():
+    """verify_policy_inference.py --selftest exercises the negative-control logic
+    with no heavy deps; must exit 0."""
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "verify_policy_inference.py"), "--selftest"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+

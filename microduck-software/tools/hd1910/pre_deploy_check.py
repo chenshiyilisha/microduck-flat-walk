@@ -27,6 +27,11 @@ Stages (each is an existing, independently-tested script)
                                        EXTERNAL weights, joint_names in metadata
   numeric    policy_numeric_gate.py     G1-G4 absolute-magnitude gate (catches the
                                        deploy61 1157x normaliser blow-up)
+  inference  verify_policy_inference.py actually EXECUTES the ONNX via onnxruntime
+                                       and asserts finite / non-exploding / non-degenerate
+                                       output (closes the "static-only" blind spot; SKIP if
+                                       onnx/onnxruntime absent, so a clean checkout without
+                                       the runtime is not flagged as a policy fault)
   toml       audit_robotd_toml.py       gain-scale consistency of robotd.toml
                                        (only when --toml is given; --expect-kp 8)
 
@@ -48,6 +53,7 @@ HERE = Path(__file__).resolve().parent
 CONTRACT = HERE / "verify_policy_contract.py"
 BUNDLE = HERE / "verify_policy_bundle.py"
 NUMERIC = HERE / "policy_numeric_gate.py"
+INFERENCE = HERE / "verify_policy_inference.py"
 TOML_AUDIT = HERE / "audit_robotd_toml.py"
 
 
@@ -94,6 +100,7 @@ def run_selftest() -> int:
         _stage("contract.selftest", CONTRACT, "--selftest"),
         _stage("bundle.selftest", BUNDLE, "--selftest"),
         _stage("numeric.selftest", NUMERIC, "--selftest"),
+        _stage("inference.selftest", INFERENCE, "--selftest"),
         _stage("toml.selftest", TOML_AUDIT, "--selftest"),
     ]
     ok = True
@@ -155,6 +162,9 @@ def main() -> int:
     results.append(_stage("bundle", BUNDLE, *bundle_args))
 
     results.append(_stage("numeric", NUMERIC, str(args.onnx)))
+
+    results.append(_stage("inference", INFERENCE, str(args.onnx),
+                          "--expect-obs", "61", "--expect-act", "14"))
 
     if args.toml:
         results.append(_stage("toml", TOML_AUDIT,
