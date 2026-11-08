@@ -855,3 +855,81 @@ def test_upstream_closure_feeds_bundle_contract():
         broken = vpb.load_contract(duck=duck, rl=rl)
         assert broken.problems, "removing policy.rs must break contract parsing"
 
+
+# ── Pass19: GitHub discovers workflows ONLY at <repo-root>/.github/workflows ──
+
+
+def test_ci_workflow_is_at_repo_root():
+    """Pass13-18 kept deploy-gate.yml under microduck-software/.github/ and
+    never pushed it; the remote Actions API reported total_count=0. A workflow
+    that GitHub never registers cannot guard anything, and CI cannot report
+    its own absence -- so this is a LOCAL structural assertion."""
+    repo = ROOT.parent
+    wf = repo / ".github" / "workflows" / "deploy-gate.yml"
+    assert wf.is_file(), f"CI workflow missing at repo root: {wf}"
+    text = wf.read_text(encoding="utf-8")
+    assert "on:" in text and "jobs:" in text, "root workflow has no triggers/jobs"
+    assert "working-directory: microduck-software" in text, (
+        "workflow moved to repo root must keep running inside microduck-software")
+    # An orphan copy in a subdirectory would never be discovered and would
+    # mislead the next person into editing the wrong file.
+    orphan_dir = ROOT / ".github" / "workflows"
+    orphans = (list(orphan_dir.glob("*.yml")) + list(orphan_dir.glob("*.yaml"))
+               if orphan_dir.is_dir() else [])
+    assert not orphans, f"orphan(never-discovered) workflows: {orphans}"
+
+
+def test_workflow_placement_negative_controls():
+    acc = _load("assert_clean_checkout_wf", HERE / "assert_clean_checkout.py")
+    good = {"root_workflow_exists": True, "root_workflow_valid": True,
+            "orphan_workflows": []}
+    assert acc.workflow_problems(good) == []
+    assert "NOT DISCOVERABLE" in " ".join(
+        acc.workflow_problems(dict(good, root_workflow_exists=False)))
+    assert "NOT USABLE" in " ".join(
+        acc.workflow_problems(dict(good, root_workflow_valid=False)))
+    assert "ORPHAN" in " ".join(acc.workflow_problems(
+        dict(good, orphan_workflows=["microduck-software/.github/workflows/x.yml"])))
+
+
+def test_workflow_probe_cli_detects_missing_root_workflow(tmp_path):
+    """CLI-level control: --strict must go red when the root workflow is gone,
+    and must clear that problem when it is restored. Tests the real entry
+    point, not just workflow_problems()."""
+    script = HERE / "assert_clean_checkout.py"
+    fake_root = tmp_path / "microduck-software"
+    (fake_root / "out").mkdir(parents=True)
+    bundle = fake_root / "out" / "hd1910_kp8_deploy_bundle.json"
+    bundle.write_text(json.dumps({"artifacts": {}}), encoding="utf-8")
+    report = fake_root / "out" / "readiness.json"
+
+    def run():
+        return subprocess.run(
+            [sys.executable, str(script), "--root", str(fake_root),
+             "--bundle", "out/hd1910_kp8_deploy_bundle.json",
+             "--strict", "--json", str(report)],
+            capture_output=True, text=True,
+        )
+
+    missing = run()
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert missing.returncode == 1, missing.stdout + missing.stderr
+    assert any("NOT DISCOVERABLE" in p for p in data["workflow_problems"]), data
+    assert "NOT DISCOVERABLE" in missing.stdout
+
+    wf = tmp_path / ".github" / "workflows" / "deploy-gate.yml"
+    wf.parent.mkdir(parents=True)
+    wf.write_text("name: x\non:\n  push:\njobs:\n  j:\n"
+                  "    runs-on: ubuntu-latest\n"
+                  "    defaults:\n      run:\n"
+                  "        working-directory: microduck-software\n",
+                  encoding="utf-8")
+    restored = run()
+    data2 = json.loads(report.read_text(encoding="utf-8"))
+    assert data2["workflow"]["root_workflow_exists"] is True
+    assert data2["workflow"]["root_workflow_valid"] is True
+    assert data2["workflow_problems"] == [], data2["workflow_problems"]
+    assert "NOT DISCOVERABLE" not in restored.stdout
+    # Other problems (empty bundle) still keep --strict red: no false green.
+    assert restored.returncode == 1
+

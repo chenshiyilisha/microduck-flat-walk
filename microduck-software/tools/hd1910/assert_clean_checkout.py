@@ -27,6 +27,17 @@ UPSTREAM_SOURCES list had only 5 entries and MISSED four files that
 verify_policy_bundle.load_contract() really reads; the list below was derived
 by emptying a clean checkout until load_contract() reported 0 problems again.
 
+Pass19 (2026-11-08): even a fully supplied checkout is worthless if GitHub
+never registers the workflow at all. Pass13-18 kept deploy-gate.yml at
+microduck-software/.github/workflows/ (a SUBDIRECTORY), and never pushed it:
+GET /repos/.../actions/workflows returned total_count=0 and
+GET /contents/.github/workflows returned 404. GitHub discovers workflows
+ONLY in <repo-root>/.github/workflows (docs.github.com quickstart: "For GitHub
+to discover any GitHub Actions workflows in your repository, you must save the
+workflow files in a directory called .github/workflows"). CI cannot guard its
+own existence -- if the file is misplaced, no job runs to complain -- so this
+LOCAL probe (--strict) plus a pytest test pin the placement.
+
 TWO verdicts, because CI and a developer workstation cannot verify the same
 things (do not collapse them into one boolean):
   * ci_scope_gate_possible -- all committed gate inputs present/tracked/identical.
@@ -70,6 +81,8 @@ DEFAULT_BUNDLE = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
 # microduck_rl-develop's publish/manifest.py -- a probe that under-reports its
 # own inputs is exactly the Pass13-16 failure mode. Keep this list in sync with
 # .gitignore's force-add note (these nine ARE tracked, via `git add -f`).
+WORKFLOW_REL = ".github/workflows/deploy-gate.yml"
+
 UPSTREAM_SOURCES = (
     ".upstream/hd1910m/radxa/installation.json",
     ".upstream/DuckBuddy-main/duck-control/src/obs.rs",
@@ -103,6 +116,83 @@ def _tracked(root: Path, rel: str) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return proc.returncode == 0
+
+
+def _repo_root(root: Path) -> tuple[Path, str]:
+    """Find the git root. `root` is the microduck-software subdirectory."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=root,
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return Path(proc.stdout.strip()), "git"
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    # `git archive` copies have no .git; the repo root is still root.parent.
+    return root.parent, "fallback-parent"
+
+
+def probe_workflow(root: Path) -> dict:
+    """Is the CI workflow somewhere GitHub can actually DISCOVER it?
+
+    A workflow file in a subdirectory looks like CI but is never registered.
+    This must be a LOCAL guard: GitHub cannot run a job to report that no job
+    can run. Borderline cases (root workflow missing, present but not a valid
+    workflow text, or an orphan copy in a subdirectory) all become problems.
+    """
+    repo, how = _repo_root(root)
+    wf = repo / WORKFLOW_REL
+    exists = wf.is_file()
+    valid = False
+    if exists:
+        text = wf.read_text(encoding="utf-8", errors="replace")
+        # Deliberately text-only: no PyYAML in the lean CI dependency set.
+        valid = ("on:" in text and "jobs:" in text
+                 and "working-directory:" in text)
+
+    # Only two directory levels are scanned (this repo's layout), rather than
+    # rglob over the whole tree -- the local workspace contains .venv-mjlab and
+    # large third-party snapshots under .upstream/.
+    orphans: list[str] = []
+    for depth in (1, 2):
+        prefix = "/".join(["*"] * depth)
+        for ext in ("yml", "yaml"):
+            for p in repo.glob(f"{prefix}/.github/workflows/*.{ext}"):
+                rel = p.relative_to(repo)
+                parts = rel.parts
+                if ".upstream" in parts or ".git" in parts or "third_party" in parts:
+                    continue
+                if any(seg.startswith(".venv") for seg in parts):
+                    continue
+                orphans.append(rel.as_posix())
+
+    return {
+        "repo_root": str(repo),
+        "repo_root_source": how,
+        "root_workflow": WORKFLOW_REL,
+        "root_workflow_exists": exists,
+        "root_workflow_valid": valid,
+        "orphan_workflows": sorted(set(orphans)),
+    }
+
+
+def workflow_problems(wf: dict) -> list[str]:
+    """Pure logic: turn a workflow-placement observation into problems."""
+    out: list[str] = []
+    if not wf.get("root_workflow_exists"):
+        out.append(
+            f"WORKFLOW NOT DISCOVERABLE: {WORKFLOW_REL} is missing at the repo "
+            "root; GitHub only registers workflows in <repo-root>/.github/workflows")
+    elif not wf.get("root_workflow_valid"):
+        out.append(
+            f"WORKFLOW NOT USABLE: {WORKFLOW_REL} exists but has no on:/jobs:/"
+            "working-directory: content")
+    for rel in wf.get("orphan_workflows", []):
+        out.append(
+            f"ORPHAN WORKFLOW: {rel} sits in a subdirectory -- GitHub will "
+            "NEVER discover or run it; move it to <repo-root>/.github/workflows")
+    return out
 
 
 def assess(artifacts: list[dict], upstream: list[dict], training_stack: bool) -> dict:
@@ -194,6 +284,22 @@ def probe(root: Path, bundle_path: Path) -> dict:
                 for rel in UPSTREAM_SOURCES]
     training_stack = importlib.util.find_spec("mjlab_microduck") is not None
     out = assess(artifacts, upstream, training_stack)
+
+    # Pass19: an undiscoverable workflow makes EVERY other input irrelevant.
+    # It belongs in the scope verdict too (it is a committed-file problem, not
+    # a missing heavy dependency), so --strict fails locally before shipping.
+    wf = probe_workflow(root)
+    wp = workflow_problems(wf)
+    out["workflow"] = wf
+    out["workflow_problems"] = wp
+    if wp:
+        out["scope_problems"] = wp + out["scope_problems"]
+        out["problems"] = wp + out["problems"]
+        out["ci_scope_gate_possible"] = False
+        out["ci_full_gate_possible"] = False
+        out["reason"] = ("CI workflow is NOT discoverable by GitHub -- "
+                         + out["reason"])
+
     out["bundle"] = str(bundle_path.relative_to(root)) if bundle_path.is_relative_to(root) \
         else str(bundle_path)
     out["artifacts"] = artifacts
@@ -245,6 +351,12 @@ def main() -> int:
     for u in report["upstream_sources"]:
         print(f"  upstream       {'present' if u['exists'] else 'MISSING'}  {u['rel_path']}")
     print(f"  training stack: {'present' if report['training_stack'] else 'MISSING'}")
+    wf = report["workflow"]
+    print(f"  workflow      : "
+          f"{'DISCOVERABLE' if not report['workflow_problems'] else 'NOT DISCOVERABLE'}"
+          f"  {wf['root_workflow']} (repo root via {wf['repo_root_source']})")
+    for orphan in wf["orphan_workflows"]:
+        print(f"  orphan workflow: {orphan}")
     print()
     print(f"ci_scope_gate_possible = {str(scope_ok).lower()}  (4/5 stages in CI)")
     print(f"ci_full_gate_possible  = {str(full_ok).lower()}  (5/5, needs training stack)")
@@ -278,6 +390,8 @@ def main() -> int:
         with args.github_output.open("a", encoding="utf-8") as fh:
             fh.write(f"scope_gate={str(scope_ok).lower()}\n")
             fh.write(f"full_gate={str(full_ok).lower()}\n")
+            fh.write(f"workflow_discoverable="
+                     f"{str(not report['workflow_problems']).lower()}\n")
 
     demand_full = args.strict or args.strict_full
     if args.strict_full and not full_ok:
@@ -349,6 +463,30 @@ def _selftest() -> int:
                 and all(any(k in p for p in UPSTREAM_SOURCES) for k in required))
     ok &= complete
     print(f"  [{'ok' if complete else 'BAD'}] upstream closure lists all 9 parsed sources")
+
+    # Pass19: GitHub only discovers workflows at <repo-root>/.github/workflows.
+    # A misplaced workflow silently means "no CI at all", so every one of
+    # these must produce a problem. These are LOCAL guards on purpose.
+    good_wf = {"root_workflow_exists": True, "root_workflow_valid": True,
+               "orphan_workflows": [], "root_workflow": WORKFLOW_REL}
+    wf_cases = [
+        ("workflow at repo root", good_wf, 0, ""),
+        ("workflow file absent", dict(good_wf, root_workflow_exists=False), 1,
+         "NOT DISCOVERABLE"),
+        ("root file is not a workflow", dict(good_wf, root_workflow_valid=False), 1,
+         "NOT USABLE"),
+        ("orphan copy in subdirectory",
+         dict(good_wf, orphan_workflows=[
+             "microduck-software/.github/workflows/deploy-gate.yml"]),
+         1, "ORPHAN WORKFLOW"),
+    ]
+    for label, wf, want_n, needle in wf_cases:
+        got = workflow_problems(wf)
+        good = (len(got) == want_n and (not needle or any(needle in p for p in got)))
+        ok &= good
+        print(f"  [{'ok' if good else 'BAD'}] {label}: "
+              f"{len(got)} problem(s), expect {want_n}")
+
     print()
     print("self-test: " + ("PASS -- readiness logic wired correctly"
                            if ok else "FAIL -- negative control misclassified"))

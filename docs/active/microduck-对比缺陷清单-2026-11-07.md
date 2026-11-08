@@ -33,6 +33,7 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - **循环自身又抓到 3 个我写的 bug**：`assess()` 里 `sha_match=False` 但 `bytes_match=True`（同长度篡改，最常见 bitrot）两个分支都不进；`artifacts=[]` 时零 problems 被判 `runnable=True`；以及一处把 `assert_ci_verdict` 的 selftest 措辞复制粘贴进探针 CLI 测试。全部由负对照/CLI 层测试当场变红后修正。
 - **实测收口**：`pytest tests/` **57 passed**、`conductor --selftest` PASS、三个 kp8 onnx 五关全 **PASS**（rc=0）、`provenance --verify` **rc=0** 且新增 `OK artifacts sha256/bytes match for 4 file(s)`、探针 `--selftest` PASS / `--strict` rc=1。**结论**：本轮把「CI 绿」从「看起来门禁齐全」拉回「明确知道这个 checkout 到底能验证什么」；剩余 OPEN 仍是硬件端到端 + P3/P4，并新增一条**待决策**：是否让 CI 真闸门在干净 checkout 上可执行。
 - **Pass18（2026-11-08 · 十二轮循环 · 用户裁定「按最优的来」· 深度挖掘/对照/完善/再挖掘）—— 把上轮那条待决策判成「入库并打通 CI 真闸门」，而不是降级成永久显式边界**：深挖用 `git archive` 干净副本 + 逐项补齐实测出 CI 真正需要的输入闭包 = **3 个部署 onnx（2,381,098 B）+ 9 个 upstream 只读契约源（450,193 B）+ runmeta/heading_meta 伴随元数据**，合计约 2.84 MiB。🔴 **纠正 Pass17 探针自己的盲区**：`UPSTREAM_SOURCES` 只列 5 个，判据是 `verify_policy_bundle.load_contract()` 在干净副本里报 8 条 problems、退化成 `obs_len=0/action_len=0/joint_names=0`；补齐 `duck-control/src/policy.rs`、`duck-ipc-proto/src/lib.rs`、`duck-control/src/feetech.rs`、`microduck_rl-develop/src/mjlab_microduck/publish/manifest.py` 后才恢复 `61/14/15/15/'obs'、0 problems`。🔴 **纠正「干净副本 pytest 21 个 configs 失败＝资产缺失」的错误前提**：真因是 `tests/test_hd1910_configs.py` 经 `plant_spec.LIVE_CONSTANTS` 把 `.venv-mjlab/Lib/site-packages` 拼在 cwd 下，干净副本没有该目录 ⇒ `FileNotFoundError`；本地完整工作区单独跑同一条 **PASS**。改为 `importlib.util.find_spec("mjlab_microduck")` 动态定位已安装包源码，lean 环境才做诚实 skip。**对照发现项目早有证据入库惯例**：`microduck-software/out/` 已入库 283 个文件、全仓已有 2 个 force-add 的 `.onnx`（`artifacts/flat_walk/`）、`.gitignore` 已给 `!out/heading_meta_*.json` 开例外（23 个在库），唯独 `runmeta_*.json` 无例外（0 个在库）⇒ 干净副本缺 32 个伴随 meta，造成 `provenance --verify` 两条 `task stored=... recomputed=None` DRIFT 与 4 个 tooling 失败。 ⇒ 入库不是新策略，只是补齐漏掉的**主体**；降级方案会把 Pass13–16「真闸门从不在 CI 执行」永久固化。**落地**：两层 `.gitignore` 标注 force-add 证据 + 补 `!out/runmeta_*.json`；`git add -f` 12 个文件、add 34 个 runmeta；`assert_clean_checkout.py` 改成**双 verdict**（`ci_scope_gate_possible` = CI 四关 / `ci_full_gate_possible` = 五关含训练栈），`--strict` 只管已提交输入、`--strict-full` 额外管训练栈，selftest 补 4 条分层/闭包负对照；`pre_deploy_check.py` 加**默认空白名单**的 `--selftest-allow-skip`（白名单内 SKIP 打印 PARTIAL 而非 PASS，未知名字 rc=2，FAIL 仍红）；`deploy-gate.yml` 首次跑 `pytest tests/ -q -rs`、`--strict` 探针、三策略真闸门，并显式打印 `CONTRACT STAGE NOT VERIFIED IN CI`。**验证不靠推断**：pip 镜像装不上 lean venv（`onnx>=1.20.1 from versions: none`），改用 `sitecustomize.py` 精确屏蔽 `mjlab_microduck/torch/mujoco/warp/scipy`（同时让 `import` 抛错、`find_spec` 返回 None），复用本机 onnx/numpy/onnxruntime/pytest 真跑整套 CI 命令。**读数**：本地完整栈 `pytest tests/` **62 passed**；lean CI 模拟：探针 `--strict` rc=0（scope=true / full=false）、selftest **PARTIAL rc=0** 而不带白名单 **rc=1**、`pytest` **36 passed / 26 skipped**（skip 理由逐条可见）、`provenance --verify` rc=0、三策略 `PASS*`（`contract=SKIP` + 其余四关真 PASS）、`assert_ci_verdict` rc=0。**负对照**：改坏入库 onnx 的 1 字节 ⇒ 4 关 FAIL + verdict FAIL + 断言 rc=1；临时移走 `policy.rs` ⇒ 探针 `--strict` rc=1 并点名该源，恢复后 rc=0。**循环自身又抓到 2 个错**：YAML step name 里 `strict: real` 的 `: ` 被 PyYAML 判 mapping 语法错；以及负对照 B 最初在 **Pass17 旧代码的干净副本**上做（那份探针清单本就不含 policy.rs，当然不红）⇒ 换到新代码重做才变红。**结论**：CI 首次在**它自己拿到的文件集**上真跑 4/5 关；唯一无法在 lean CI 复现的 `contract` 关（需 torch/mujoco/mjlab_microduck）保留显式 SKIP + 本地 `.venv-mjlab` 五关全 PASS 作为发货前权威验证。剩余 OPEN 不变：硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3 暂缓、P4 可选。
+- **🔴 Pass19（2026-11-08 · 十三轮循环 · 深度挖掘/对照/按最优完善/再挖掘）—— 戳破比 Pass17 更根本的一层：workflow 从来没被 GitHub 发现过**：`git rev-parse --show-toplevel` 证实仓库根是 `E:/WorkBuddyData/.../`，而 `deploy-gate.yml` 一直在**子目录** `microduck-software/.github/workflows/`；根目录**根本没有 `.github/`**。上网核官方文档（GitHub quickstart 原文「For GitHub to discover any GitHub Actions workflows in your repository, you must save the workflow files in a directory called `.github/workflows`」；workflow syntax「You must store workflow files in the `.github/workflows` directory of your repository」），再用 GitHub 官方 API 拿三条独立实证：`GET /repos/.../actions/workflows` → **`total_count = 0`**（已发现的 workflow 数为零）、`GET /contents/.github/workflows` → **404**、仓库根目录列表无 `.github`；`git ls-remote` + `git rev-list` 显示远端 HEAD `228933d0`、落后 **33 个提交**、`pushed_at 2026-11-07` ⇒ Pass13–18 全部只在本地提交。**即：Pass17 修的是「CI 拿到文件后能验证什么」，Pass18 修的是「输入是否在 VCS」，但 CI 本身从未被 GitHub 注册、更没跑过一次。** 判「最优」= **`git mv` 到仓库根 `.github/workflows/` + 真正推送 + 本地机读防复发**，否决「保留子目录只加说明」与「把 contract 关冻结成训练侧快照」（后者会让两个独立实时来源退化成与静态证据比对，正是 Pass17 `artifacts` hash 四轮 bitrot 的同族）。**官方 RUNTIME 对照结论**：`desk-climb/RUNTIME.md` + `runtime/policy_pair.py` + `evidence/cpu-export-parity.json` 三件套，本项目已有**等价且更强**的 `tools/check_onnx_parity.py`（独立 numpy 重建 + `--control` 强制「去掉归一化必须发散」负对照）与 4 份 parity JSON ⇒ 不新增；官方把 joint order/HOME 嵌 ONNX metadata 的路线在本代 robotd 上不适用（不读 manifest）。**落地**：`assert_clean_checkout.py` 新增 `probe_workflow()` / `workflow_problems()`（根 workflow 存在 + 文本含 `on:/jobs:/working-directory:` + 子目录孤儿扫描，纯 stdlib 不引入 PyYAML），problems 并入 `scope_problems` 使 `--strict` 变红、报告加 `workflow` 段、`GITHUB_OUTPUT` 加 `workflow_discoverable`；`tests/test_hd1910_tooling.py` +3 条（根位置/孤儿断言、纯函数 4 负对照、**真实 CLI 正+负对照**）。**诚实边界**：CI 若位置错就根本不跑，故这必须是**本地**门禁，不能自称「CI 自守」。**读数**：本地完整栈 `pytest` **65 passed**、lean CI 模拟 **39 passed / 26 skipped**、探针 selftest 15 条全 PASS、`--strict` rc=0；**文件系统级负对照**：移走根 workflow ⇒ `--strict` rc=1 且点名 `NOT DISCOVERABLE` + 位置测试红；造子目录孤儿 ⇒ rc=1 点名 `ORPHAN WORKFLOW` + 位置测试红；恢复 ⇒ rc=0。
 
 > **2026-11-08 训练状态（与审计并列）**：P0 行走 kp8 续训完（`model_7999`，指标健康，conductor 四关过）；P1 地面拾取 kp8 评测 **96.9%** 通过（四关过）；P2 站起——官方 `hl2915_standup` 在 kp8 仿真能 100% 站起但被 bundle 关拒（metadata 28 关节名 vs 14 动作），改训 **kp8 原生站起**（4096×4000），导出 onnx 后 conductor 四关过、实测站起 **100%**，三个 kp8 技能全部训练自有/同 plant 验证/闸门全过。P3（≥3 seed sweep）用户裁定暂缓，P4 未启动。硬件未到，真机端到端验证（bus.joint_ids 逐关节复核、齿隙 7.4V 重测）待硬件。
 
@@ -367,6 +368,51 @@ CI 架构级修复需要决策：**是否把 3 个已验证 onnx（合计 2,381,
 ### 4.8.5 剩余边界
 
 CI 现可真跑 4/5 关；`contract` 关与 `tests/test_hd1910_configs.py` 的 21 条 kinematics、IMU 链真执行仍**只在本地完整栈**发生，workflow 显式打印该边界。硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3（≥3 seed sweep，用户暂缓）、P4（VelStand/手柄，可选）状态不变。
+
+---
+
+## 4.9 Pass19（2026-11-08）：workflow 从未被 GitHub 发现
+
+### 4.9.1 三条独立一手证据（不是推断）
+
+1. **官方文档**：`docs.github.com/actions/writing-workflows/quickstart` 原文
+   > "For GitHub to discover any GitHub Actions workflows in your repository, you must save the workflow files in a directory called `.github/workflows`."
+   
+   `.../reference/workflows-and-actions/workflow-syntax` 原文
+   > "You must store workflow files in the `.github/workflows` directory of your repository."
+   
+   即仓库根的 `.github/workflows`，子目录同名目录**不具备发现语义**。
+2. **本地文件树**：`git rev-parse --show-toplevel` = `E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15`，根目录 `ls -la .github/` → **不存在**；`git ls-files | grep '\.github/workflows'` 只有一条 `microduck-software/.github/workflows/deploy-gate.yml`。
+3. **GitHub 官方 API（远端实数）**：`GET /repos/chenshiyilisha/microduck-flat-walk/contents/` 根目录列表无 `.github`；`GET /contents/.github/workflows` → **404 Not Found**；`GET /actions/workflows` → **`total_count = 0`**（已注册 workflow 数为零）。另 `git rev-list --count origin/main..HEAD = 33`、远端 HEAD `228933d0`、`pushed_at 2026-11-07T01:57:36Z` ⇒ Pass13–18 的提交**从未推送**。
+
+⇒ Pass17 修的是「CI 拿到文件后能验证什么」，Pass18 修的是「输入是否在 VCS」；**这一轮才看见 CI 本身从来没被 GitHub 注册过**。四轮「CI 绿」全部是本地完整工作区自洽，且比 Pass16 的「某一关摆设」更底层。
+
+### 4.9.2 对照判决表
+
+| 候选 | 一手事实 | 判决 |
+|---|---|---|
+| 保留子目录 + 加说明 | 官方文档 + Actions API `total_count=0` | ❌ 否决：文件仍永不被发现 |
+| **`git mv` 到仓库根 + 推送** | 根 `.gitignore` 不排除 `.github`（`git check-ignore` 实测 NOT ignored）；`defaults.run.working-directory: microduck-software` 在根位置仍成立 | ✅ **最优**：最小改动让文件集与触发条件同时成立 |
+| CI 内自检 workflow 位置 | workflow 位置错 ⇒ 没有 job 运行 | ❌ 不可能自守，必须**本地**门禁 |
+| contract 关在 lean CI 里用训练侧冻结快照 | `verify_policy_contract.py:190-228` 需 `MICRODUCK_WALK_ROBOT_CFG.spec_fn().compile()`（MuJoCo）+ live cfg；该关全部价值＝两个独立**实时**来源互比 | ❌ 否决：冻结快照＝退化成与静态证据比，与 Pass17 的 `artifacts` hash 四轮 bitrot 同族 |
+| 照抄官方 RUNTIME 三件套 | 官方 `RUNTIME.md` + `runtime/policy_pair.py` + `cpu-export-parity.json`（2.63e-6 / 9.54e-7，300 samples，明写「not bit-exact recorded action parity」） | ⭕ **已有等价且更强**：本项目 `tools/check_onnx_parity.py` 独立 numpy 重建、`--control` 强制「去掉归一化必须发散」负对照 + 4 份 parity JSON；不新增。官方把 joint order/HOME 嵌 ONNX metadata 的路线在本代 robotd 上不适用（不读 manifest） |
+
+### 4.9.3 落地改动
+
+- `.github/workflows/deploy-gate.yml`：`git mv` 从子目录到仓库根；头部写明位置约束与 Pass13–18 史实；末尾边界打印加 `workflow_discoverable`。`working-directory` 仍为 `microduck-software`，无需改任何步骤。
+- `tools/hd1910/assert_clean_checkout.py`：新增 `WORKFLOW_REL`、`_repo_root()`（`git rev-parse`，`git archive` 副本 fallback 到 `root.parent`）、`probe_workflow()`（根 workflow 存在 + 纯文本校验 `on:/jobs:/working-directory:`、两层子目录孤儿扫描、排除 `.upstream`/`.venv*`/`third_party`）、`workflow_problems()` 纯函数；problems 并入 `scope_problems` 使 `--strict` 变红，报告加 `workflow` / `workflow_problems` 段，`GITHUB_OUTPUT` 写 `workflow_discoverable`；selftest +4 条负对照（共 15 条）。**纯 stdlib，不引入 PyYAML。**
+- `tests/test_hd1910_tooling.py` +3：根位置/孤儿结构断言、纯函数 4 负对照、**真实 CLI** 正+负对照（`tmp_path` 造无根 workflow 镜像 → rc=1 且 `NOT DISCOVERABLE`；补回有效根 workflow → `workflow_problems == []`，空 bundle 仍保持 rc=1 不假绿）。
+
+### 4.9.4 验证读数（全部真跑）
+
+- 本地完整栈 `pytest tests/` **65 passed**；lean CI 模拟（`sitecustomize` 屏蔽训练栈）**39 passed / 26 skipped**。
+- 探针 `--selftest` 15 条全 PASS；本工作区 `--strict` **rc=0**，`workflow : DISCOVERABLE .github/workflows/deploy-gate.yml (repo root via git)`，`ci_scope/full = true/true`；YAML 解析 OK（13 steps、`working-directory: microduck-software`）、bundle JSON OK。
+- **文件系统级负对照**：移走根 workflow ⇒ `--strict` **rc=1** + `NOT DISCOVERABLE` + `ci_scope=false`，`test_ci_workflow_is_at_repo_root` 变红；造 `microduck-software/.github/workflows/orphan.yml` ⇒ **rc=1** + `ORPHAN WORKFLOW` + 位置测试变红；恢复 ⇒ rc=0、位置测试 PASS。
+- **远端复核**：见本轮收口读数（`GET /actions/workflows` 与 `GET /actions/runs`），以推送后实数为准。
+
+### 4.9.5 剩余边界
+
+`contract` 关（需 torch/mujoco/mjlab_microduck）与 21 条 kinematics、IMU 链真执行仍只在本地完整栈发生；workflow 显式打印。硬件端到端、P3 暂缓、P4 可选状态不变。**workflow 位置守卫是本地门禁，不是 CI 自守**——若有人把文件挪回子目录，CI 不会报错，只有本地 `--strict` / `pytest` 会红。
 
 ---
 

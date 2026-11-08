@@ -1,4 +1,17 @@
-# Deploy-gate CI (Pass13, extended Pass18 2026-11-08).
+# Deploy-gate CI (Pass13, extended Pass18/Pass19 2026-11-08).
+#
+# PASS19 -- THIS FILE MUST LIVE AT THE REPOSITORY ROOT.
+# GitHub only discovers workflows stored in <repo-root>/.github/workflows
+# (docs.github.com quickstart: "For GitHub to discover any GitHub Actions
+# workflows in your repository, you must save the workflow files in a directory
+# called .github/workflows"). Pass13-18 kept this file at
+# microduck-software/.github/workflows/ and never pushed it: the remote
+# Actions API returned total_count=0 (zero discovered workflows) and
+# GET /contents/.github/workflows returned 404. Four rounds of "green CI" were
+# green ONLY inside a local full workspace -- GitHub had never registered this
+# workflow at all. assert_clean_checkout.py --strict now checks placement;
+# a local pytest test pins it (CI cannot self-guard its own existence: if the
+# file is in the wrong place, CI never runs to complain).
 #
 # Mirrors the industry pattern where a policy-deploy validation step is wired into
 # CI (e.g. reflex-vla's `reflex validate export --init-ci` scaffolds a GitHub
@@ -110,4 +123,5 @@ jobs:
         run: |
           echo "scope_gate=${{ steps.readiness.outputs.scope_gate }}"
           echo "full_gate=${{ steps.readiness.outputs.full_gate }}"
+          echo "workflow_discoverable=${{ steps.readiness.outputs.workflow_discoverable }}"
           echo "CONTRACT STAGE NOT VERIFIED IN CI -- run pre_deploy_check.py and pytest tests/ with .venv-mjlab before shipping."
