@@ -35,6 +35,8 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - **Pass18（2026-11-08 · 十二轮循环 · 用户裁定「按最优的来」· 深度挖掘/对照/完善/再挖掘）—— 把上轮那条待决策判成「入库并打通 CI 真闸门」，而不是降级成永久显式边界**：深挖用 `git archive` 干净副本 + 逐项补齐实测出 CI 真正需要的输入闭包 = **3 个部署 onnx（2,381,098 B）+ 9 个 upstream 只读契约源（450,193 B）+ runmeta/heading_meta 伴随元数据**，合计约 2.84 MiB。🔴 **纠正 Pass17 探针自己的盲区**：`UPSTREAM_SOURCES` 只列 5 个，判据是 `verify_policy_bundle.load_contract()` 在干净副本里报 8 条 problems、退化成 `obs_len=0/action_len=0/joint_names=0`；补齐 `duck-control/src/policy.rs`、`duck-ipc-proto/src/lib.rs`、`duck-control/src/feetech.rs`、`microduck_rl-develop/src/mjlab_microduck/publish/manifest.py` 后才恢复 `61/14/15/15/'obs'、0 problems`。🔴 **纠正「干净副本 pytest 21 个 configs 失败＝资产缺失」的错误前提**：真因是 `tests/test_hd1910_configs.py` 经 `plant_spec.LIVE_CONSTANTS` 把 `.venv-mjlab/Lib/site-packages` 拼在 cwd 下，干净副本没有该目录 ⇒ `FileNotFoundError`；本地完整工作区单独跑同一条 **PASS**。改为 `importlib.util.find_spec("mjlab_microduck")` 动态定位已安装包源码，lean 环境才做诚实 skip。**对照发现项目早有证据入库惯例**：`microduck-software/out/` 已入库 283 个文件、全仓已有 2 个 force-add 的 `.onnx`（`artifacts/flat_walk/`）、`.gitignore` 已给 `!out/heading_meta_*.json` 开例外（23 个在库），唯独 `runmeta_*.json` 无例外（0 个在库）⇒ 干净副本缺 32 个伴随 meta，造成 `provenance --verify` 两条 `task stored=... recomputed=None` DRIFT 与 4 个 tooling 失败。 ⇒ 入库不是新策略，只是补齐漏掉的**主体**；降级方案会把 Pass13–16「真闸门从不在 CI 执行」永久固化。**落地**：两层 `.gitignore` 标注 force-add 证据 + 补 `!out/runmeta_*.json`；`git add -f` 12 个文件、add 34 个 runmeta；`assert_clean_checkout.py` 改成**双 verdict**（`ci_scope_gate_possible` = CI 四关 / `ci_full_gate_possible` = 五关含训练栈），`--strict` 只管已提交输入、`--strict-full` 额外管训练栈，selftest 补 4 条分层/闭包负对照；`pre_deploy_check.py` 加**默认空白名单**的 `--selftest-allow-skip`（白名单内 SKIP 打印 PARTIAL 而非 PASS，未知名字 rc=2，FAIL 仍红）；`deploy-gate.yml` 首次跑 `pytest tests/ -q -rs`、`--strict` 探针、三策略真闸门，并显式打印 `CONTRACT STAGE NOT VERIFIED IN CI`。**验证不靠推断**：pip 镜像装不上 lean venv（`onnx>=1.20.1 from versions: none`），改用 `sitecustomize.py` 精确屏蔽 `mjlab_microduck/torch/mujoco/warp/scipy`（同时让 `import` 抛错、`find_spec` 返回 None），复用本机 onnx/numpy/onnxruntime/pytest 真跑整套 CI 命令。**读数**：本地完整栈 `pytest tests/` **62 passed**；lean CI 模拟：探针 `--strict` rc=0（scope=true / full=false）、selftest **PARTIAL rc=0** 而不带白名单 **rc=1**、`pytest` **36 passed / 26 skipped**（skip 理由逐条可见）、`provenance --verify` rc=0、三策略 `PASS*`（`contract=SKIP` + 其余四关真 PASS）、`assert_ci_verdict` rc=0。**负对照**：改坏入库 onnx 的 1 字节 ⇒ 4 关 FAIL + verdict FAIL + 断言 rc=1；临时移走 `policy.rs` ⇒ 探针 `--strict` rc=1 并点名该源，恢复后 rc=0。**循环自身又抓到 2 个错**：YAML step name 里 `strict: real` 的 `: ` 被 PyYAML 判 mapping 语法错；以及负对照 B 最初在 **Pass17 旧代码的干净副本**上做（那份探针清单本就不含 policy.rs，当然不红）⇒ 换到新代码重做才变红。**结论**：CI 首次在**它自己拿到的文件集**上真跑 4/5 关；唯一无法在 lean CI 复现的 `contract` 关（需 torch/mujoco/mjlab_microduck）保留显式 SKIP + 本地 `.venv-mjlab` 五关全 PASS 作为发货前权威验证。剩余 OPEN 不变：硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3 暂缓、P4 可选。
 - **🔴 Pass19（2026-11-08 · 十三轮循环 · 深度挖掘/对照/按最优完善/再挖掘）—— 戳破比 Pass17 更根本的一层：workflow 从来没被 GitHub 发现过**：`git rev-parse --show-toplevel` 证实仓库根是 `E:/WorkBuddyData/.../`，而 `deploy-gate.yml` 一直在**子目录** `microduck-software/.github/workflows/`；根目录**根本没有 `.github/`**。上网核官方文档（GitHub quickstart 原文「For GitHub to discover any GitHub Actions workflows in your repository, you must save the workflow files in a directory called `.github/workflows`」；workflow syntax「You must store workflow files in the `.github/workflows` directory of your repository」），再用 GitHub 官方 API 拿三条独立实证：`GET /repos/.../actions/workflows` → **`total_count = 0`**（已发现的 workflow 数为零）、`GET /contents/.github/workflows` → **404**、仓库根目录列表无 `.github`；`git ls-remote` + `git rev-list` 显示远端 HEAD `228933d0`、落后 **33 个提交**、`pushed_at 2026-11-07` ⇒ Pass13–18 全部只在本地提交。**即：Pass17 修的是「CI 拿到文件后能验证什么」，Pass18 修的是「输入是否在 VCS」，但 CI 本身从未被 GitHub 注册、更没跑过一次。** 判「最优」= **`git mv` 到仓库根 `.github/workflows/` + 真正推送 + 本地机读防复发**，否决「保留子目录只加说明」与「把 contract 关冻结成训练侧快照」（后者会让两个独立实时来源退化成与静态证据比对，正是 Pass17 `artifacts` hash 四轮 bitrot 的同族）。**官方 RUNTIME 对照结论**：`desk-climb/RUNTIME.md` + `runtime/policy_pair.py` + `evidence/cpu-export-parity.json` 三件套，本项目已有**等价且更强**的 `tools/check_onnx_parity.py`（独立 numpy 重建 + `--control` 强制「去掉归一化必须发散」负对照）与 4 份 parity JSON ⇒ 不新增；官方把 joint order/HOME 嵌 ONNX metadata 的路线在本代 robotd 上不适用（不读 manifest）。**落地**：`assert_clean_checkout.py` 新增 `probe_workflow()` / `workflow_problems()`（根 workflow 存在 + 文本含 `on:/jobs:/working-directory:` + 子目录孤儿扫描，纯 stdlib 不引入 PyYAML），problems 并入 `scope_problems` 使 `--strict` 变红、报告加 `workflow` 段、`GITHUB_OUTPUT` 加 `workflow_discoverable`；`tests/test_hd1910_tooling.py` +3 条（根位置/孤儿断言、纯函数 4 负对照、**真实 CLI 正+负对照**）。**诚实边界**：CI 若位置错就根本不跑，故这必须是**本地**门禁，不能自称「CI 自守」。**读数**：本地完整栈 `pytest` **65 passed**、lean CI 模拟 **39 passed / 26 skipped**、探针 selftest 15 条全 PASS、`--strict` rc=0；**文件系统级负对照**：移走根 workflow ⇒ `--strict` rc=1 且点名 `NOT DISCOVERABLE` + 位置测试红；造子目录孤儿 ⇒ rc=1 点名 `ORPHAN WORKFLOW` + 位置测试红；恢复 ⇒ rc=0。**推送后复检（§4.9.4）**：workflow 确已被 GitHub 发现（`total_count` 0→1）并触发史上首个 run，但该 run **failure** —— `core.autocrlf=true` 让 bundle 记了 CRLF 工作树字节（9520 B），而 Linux CI checkout 拿到 LF blob（9382 B）⇒ `robotd_toml SHA-DIFF`、后 9 步全 skipped；已用 `.gitattributes` 钉 LF + 指纹锚定 VCS blob + 2 条跨平台不变式测试修复。**这是「本地全绿」第四层前提错误：文件集对了、位置对了，字节却因平台换行而不同。** 第二次真实 run 又红（`bam` 顶层 import 拖垮 7 条纯逻辑测试 + 本地 lean 模拟器欠屏蔽该依赖而假绿），改为惰性导入并把模拟器纳入版本控制。**第三次真实 run `42452793362` / `1ba236e` = success**：14/14 步全绿、`44 passed / 26 skipped`（26 skip 逐个核过全是训练栈依赖）、三策略 `PASS*`、探针 `scope_gate=true / full_gate=false / workflow_discoverable=true`、显式打印 `CONTRACT STAGE NOT VERIFIED IN CI`；本地完整栈在最终 HEAD 补跑 **70 passed** + 三策略五关 `PASS`（contract 真 PASS，非 SKIP）⇒ 分层 verdict 如实、发货前 5/5 有权威兜底。**三次 run 里前两次的红都只有真实 GitHub runner 才暴露**（本地模拟两次假绿）⇒ 真实 CI 是最终验证。详见 §4.9.4。
 
+- **Pass20（2026-11-08 · 十四轮循环 / R4 · 深度挖掘/对照/按最优完善/再挖掘）—— 上移到「仓库治理」层，抓到 CI 真闸门的第三份硬编码清单**：深挖 GitHub 官方 API 三条实数：`branches/main/protection` → **404 `Branch not protected`**、`rulesets` → **`[]`**、`pulls?state=all` → **0 个 PR** 且前 4 次 run 的 `event` 全为 `push`；两次 failure 的提交 `dac3cf5a` / `86e6acd` 经 `git merge-base --is-ancestor` 实测**都是 main 的祖先** ⇒ 红 CI 从未阻止提交进入 main，CI 是 **post-push advisory、不是合并门禁**（实证非推断）。查官方一手语义后判**这是设计约束不是缺陷**：`about-protected-branches` 明写 required status checks 是 "before **merging**" 且 "By default ... **don't apply to people with admin permissions**"（本账号 `admin=true`）；`available-rules-for-rulesets` 把「Restrict updates（拦 push）」列为**独立**规则；`status-checks` 原文 "A job that is **skipped** will report its status as **'Success'. It will not prevent a pull request from merging, even if it is a required check**" ⇒ 加 protection 既拦不住直推、又被 admin 绕过、还引入新假绿通道，**「按最优」＝写清边界 + 强化本地门禁，不做装饰性远端配置**（未擅自改仓库设置）。🔴 **真静默漏检**：workflow 的 `Real deploy gate` 把三个 onnx 路径 + toml + `--expect-kp 16` **硬编码**成第三份清单；负对照把 groundpick 改成 `STALE_STALE.onnx` 后 `--strict rc=0`、pytest 11 passed、`provenance --verify rc=0` **三套守卫全绿**（同族 Pass17 hash bitrot / Pass9 接错策略）。**按最优消除第三份清单而非再加一份同步检查**：新增纯 stdlib `ci_gate_targets.py` 从 bundle 读目标并校验路径安全/文件存在/kp（13 条负对照，`--sh`/`--json`/`--selftest` 三 CLI），workflow 改为 `source` 其 `GATE_*` 变量；探针加 `gate_target_problems()` 文本守卫（+5 负对照共 20 条）使 `--strict` 与 pytest 在有人重新硬编码时变红；测试 +5 条（含文件系统级负对照与「两条独立算法算 `expect_kp == register_kp(200,16)`」守卫）。**修复后同样篡改 → `--strict rc=1` 且 pytest 变红**；把 bundle 的 kp 改 8 → emitter 输出 8 → toml 关 FAIL、conductor rc=1，证明值真驱动闸门而非换个地方硬编码。**读数**：本地完整栈 **75 passed** / lean 模拟 **49 passed 26 skipped** / 端到端新 gate 链三策略 `PASS*` + `gate really executed`；🔑 方法纠正：`git archive` 副本无 `.git` 会误报 5 条既有 git 依赖测试失败，改用**带 `.git` 的本地 clone** 复验得 `--strict rc=0`、49 passed 26 skipped（与真实 CI 一致）。✅ **第五次真实 run `42456241221` / `e8c1666` = success**：新增 emitter selftest 步骤真跑、三个 gate 路径从 `GATE_*` 解析、49 passed 26 skipped、治理边界打印生效。详见 §4.10。
+
 > **2026-11-08 训练状态（与审计并列）**：P0 行走 kp8 续训完（`model_7999`，指标健康，conductor 四关过）；P1 地面拾取 kp8 评测 **96.9%** 通过（四关过）；P2 站起——官方 `hl2915_standup` 在 kp8 仿真能 100% 站起但被 bundle 关拒（metadata 28 关节名 vs 14 动作），改训 **kp8 原生站起**（4096×4000），导出 onnx 后 conductor 四关过、实测站起 **100%**，三个 kp8 技能全部训练自有/同 plant 验证/闸门全过。P3（≥3 seed sweep）用户裁定暂缓，P4 未启动。硬件未到，真机端到端验证（bus.joint_ids 逐关节复核、齿隙 7.4V 重测）待硬件。
 
 ---
@@ -435,6 +437,64 @@ CI 现可真跑 4/5 关；`contract` 关与 `tests/test_hd1910_configs.py` 的 2
 ### 4.9.5 剩余边界
 
 `contract` 关（需 torch/mujoco/mjlab_microduck）与 21 条 kinematics、IMU 链真执行仍只在本地完整栈发生；workflow 显式打印。**这一边界已在最终 HEAD `1ba236e` 上实测兑现**（本地完整栈 70 passed + 三策略五关 `PASS`、contract 真 PASS、探针 `ci_full_gate_possible=true`），因此 `full_gate=false` 是分层 verdict 如实上报，不是「发货前验证从未做过」。硬件端到端、P3 暂缓、P4 可选状态不变。**workflow 位置守卫是本地门禁，不是 CI 自守**——若有人把文件挪回子目录，CI 不会报错，只有本地 `--strict` / `pytest` 会红。
+
+## 4.10 Pass20 / 循环 R4（2026-11-08）：CI 真闸门的第三份清单 + 治理边界
+
+### 4.10.1 深挖：从「闸门内容」上移到「仓库治理」
+
+推送 `cbe3d98`（R3 收口）后第四次真实 run `42453745804` 也是 success。继续「再挖掘」，把视角从「CI 里验证什么」上移到「CI 的结论 gate 住什么」，用 GitHub 官方 API 取三条实数：
+
+- `GET /repos/.../branches/main/protection` → **404 `Branch not protected`**；`GET /repos/.../rulesets` → **`[]`**；仓库 `allow_merge_commit/rebase/squash` 全开、`default_branch=main`、`private=false`。
+- `GET /pulls?state=all` → **0 个 PR**；`GET /actions/runs` 的 `event` 去重 → **只有 `push`**（前 4 次 run 全是 push）。
+- **两次 failure 的提交 `dac3cf5a` / `86e6acd` 都是 `main` 的祖先**（`git merge-base --is-ancestor` 实测），对应 check-run `deploy-gate: failure`。⇒ 红 CI 从未阻止提交进入 main，**CI 是 post-push advisory，不是合并门禁**，这是实证不是推断。
+
+### 4.10.2 官方一手语义（先查资料，不自己推）
+
+| 官方文档 | 原文要点 | 对本仓库的含义 |
+|---|---|---|
+| `about-protected-branches` | "Require status checks **before merging**"；"By default, the restrictions of a branch protection rule **don't apply to people with admin permissions**" | 本账号 `permissions.admin=true`，默认可绕过；且这是 PR 语义 |
+| `available-rules-for-rulesets` | "**Restrict updates**: only users with bypass permissions can push" 是**独立于** "Require status checks to pass before merging" 的另一条规则 | 要拦直接 push 得单独开 restrict updates，只加 required check 不拦 |
+| `status-checks` | "A job that is **skipped** will report its status as **'Success'. It will not prevent a pull request from merging, even if it is a required check**"；"GitHub Actions generates **checks**, not commit statuses" | 加 required check 反而多一条假绿通道 |
+| `troubleshooting-rules` | "Required status checks **do not take workflow, matrix, or event trigger types into account**" | 同名 check 来自别的 workflow 也会算满足 |
+| `skipping-workflow-runs` | `[skip ci]` / `skip-checks: true` 可跳过 push 与 pull_request 的 workflow，此时 checks 保持 Pending | 单人直推工作流下无人可拦 |
+
+⇒ **判决：治理层是设计约束，不是缺陷**。本仓库单人直推 main、0 PR、全是 push 事件、账号是 admin；加 branch protection / ruleset 既拦不住直接 push、又被 admin 默认绕过、还引入 `skipped=Success` 假绿。**「按最优」＝写清边界 + 强化本地 pre-push 门禁，而不是加装饰性远端配置**；workflow 头注释与末尾打印均写明 `CI IS A POST-PUSH ADVISORY CHECK, NOT A MERGE GATE`。未擅自改远端仓库设置（这是用户的治理决策）。
+
+### 4.10.3 🔴 真静默漏检：workflow 里第三份硬编码清单
+
+深挖 workflow 的 `Real deploy gate` 步骤，发现它把**三个 onnx 路径、`out/robotd_hd1910_mode0.toml`、`--expect-kp 16` 全部硬编码**在 shell 里——这是与 bundle `artifacts`、探针 `UPSTREAM_SOURCES` 并列的**第三份输入清单**，却没有任何守卫校验它与 bundle 同步。
+
+**负对照坐实**（同族于 Pass17「记录 hash 却没人重算」、Pass9「四关全过却接错策略」）：把 groundpick 路径改成 `2026-11-06_22-17-10_STALE_STALE.onnx` 后——
+
+```
+probe --strict rc = 0          (ci_scope/full = true/true)
+pytest (workflow/bundle/clean_checkout) rc = 0   11 passed
+provenance --verify rc = 0
+```
+
+三套守卫**全绿**。若有人更新 bundle 换策略却忘改 workflow，CI 会继续验证旧策略并全绿，而 bundle 声明发货的是新策略。
+
+### 4.10.4 按最优落地：单一可信源，不是「再加一份同步检查」
+
+否决「加一条 workflow↔bundle 一致性检查」（仍是两份清单，且检查本身会漏报）。改为**消除第三份清单**：
+
+- 新增 `tools/hd1910/ci_gate_targets.py`（纯 stdlib）：从 `out/hd1910_kp8_deploy_bundle.json` 读三个 onnx + toml + `plant.position_kp`，校验键齐全 / 路径安全（白名单 `[A-Za-z0-9_./-]`、禁 `..` 与 shell 元字符）/ 文件真实存在 / kp 为正整数，输出 shell-safe 的 `GATE_*` 变量；`--sh` / `--json` / `--selftest` 三个 CLI 出口，13 条负对照。
+- `deploy-gate.yml` 的 real-gate 步骤 `source` emitter 输出，用 `$GATE_WALK/$GATE_GROUND_PICK/$GATE_STAND/$GATE_TOML/$GATE_EXPECT_KP`；新增 CI 步骤跑 emitter selftest。
+- `assert_clean_checkout.py` 新增纯文本守卫 `gate_target_problems()`（过滤注释行、正则抓 `.onnx|.toml` 字面量与硬编码 `--expect-kp`、emitter 调用被删也报），problems 并入 `scope_problems` 使 `--strict` 变红；selftest +5 条负对照（共 20 条）。
+- `tests/test_hd1910_tooling.py` +5 条：CLI 入口真跑、坏 bundle 必拒、真实 workflow 结构 + 3 条纯函数负对照、**文件系统级 `--strict` 负对照**、以及「两条独立算法算同一个量」守卫：`expect_kp == register_kp(gain=200, position_kp=16)`（toml 用 `tomllib` 独立解析）。该等价只在 `gain=200` 成立，emitter 注释明写「gain 改变须改用显式 `expected_reg50`」。
+
+**修复后的负对照**（同样篡改）：`--strict rc=1` + 点名 `CI GATE TARGETS HARD-CODED`，pytest 结构测试 `1 failed`。⇒ 之前全绿的地方现在真的会红。
+
+**「单一可信源不是换个地方硬编码」的独立验证**：把临时 bundle 的 `plant.position_kp` 改成 8 → emitter 输出 `GATE_EXPECT_KP=8` → 喂给真实 toml 关得到 `toml FAIL`、conductor `rc=1`。值真的驱动闸门。
+
+### 4.10.5 验证读数（全部真跑 + 真实 runner）
+
+- 本地完整栈 `pytest tests/` **75 passed / 105s**；探针 `--selftest` 20 条全 PASS、`--strict` **rc=0**（scope/full = true/true）；emitter selftest 13 条 PASS；`provenance --verify` **rc=0**（`OK artifacts sha256/bytes match for 4 file(s)`，唯一 WARN 是 git_commit 随提交变化）。
+- lean CI 模拟（屏蔽训练栈 + `bam`）**49 passed / 26 skipped**、探针 `--strict` rc=0（scope=true/full=false）；emitter 用**纯系统 Python** 在干净副本跑 selftest 也 PASS ⇒ 零隐藏依赖。
+- **端到端真跑 workflow 新 gate 块**：emitter → source → 三策略 conductor → `assert_ci_verdict.py --allow-skip contract`，三份 `PASS*` + `VERDICT: PASS -- gate really executed`。
+- 🔑 **方法纠正**：`git archive` 副本**没有 `.git`**，探针的 `_tracked()` 与 `git show HEAD:` 测试会误报 5 条失败（全是既有 git 依赖测试，非本轮新增）。真实 CI 用 `actions/checkout`（有 `.git`），故改用**本地 `git clone` 造带 `.git` 的干净副本**：`--strict rc=0`（scope=true/full=false，与真实 CI 一致）、pytest **49 passed / 26 skipped**。
+- ✅ **第五次真实 GitHub Actions run `42456241221` / `e8c1666` = success**（14+ 步全绿，新增 `CI gate targets negative-control self-test` 真跑）。真实日志读数：`39/39 passed`（探针 selftest）、`SELFTEST: PASS`（emitter）、`49 passed, 26 skipped in 2.67s`、三个 `=== gate: <GATE_* 解析出的真实路径> ===`、三份 `OK: verdict=PASS* stages={'contract':'SKIP','bundle':'PASS','numeric':'PASS','inference':'PASS','toml':'PASS'}` + `VERDICT: PASS -- gate really executed`、`scope_gate=true / full_gate=false / workflow_discoverable=true`、末尾 `CI IS A POST-PUSH ADVISORY CHECK, NOT A MERGE GATE` 与 `CONTRACT STAGE NOT VERIFIED IN CI` 均生效。
+- **剩余边界不变**：`contract` 关与 21 条 kinematics、IMU 链真执行仍只在本地完整栈；硬件端到端未启、P3 暂缓、P4 可选。本轮未做长时训练。非阻断 runner 注解：Node.js 20 deprecated 被强制 Node.js 24、ubuntu-latest 未来迁移 Ubuntu 26（不影响 job conclusion）。
 
 ---
 
