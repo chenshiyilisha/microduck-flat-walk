@@ -540,6 +540,68 @@ R5 把 SLSA `subject` 与 `artifacts` 绑定，堵住了 C1/C3/C4/C7（walk 被 
 
 ---
 
+## 4.12 Pass23 / 循环 R7（2026-11-08）：两条证据链的 verdict 规则必须同源
+
+### 4.12.1 深挖：R6 只修了归档链，CI 实时链仍在信自报结论
+
+R6 让 `bundle_bindings.py` 从 `stages` 重派生 verdict 并把项集合绑定到 conductor 的 `FULL_STAGES`。R7 全仓盘点发现**另一条证据链用的是不同规则**：workflow 里 `pre_deploy_check.py --json` 当场产出的三份 `out/ci_*.json`，只由 `assert_ci_verdict.py` 检查：
+
+```python
+stages = {s.get("name"): s.get("status") for s in report.get("stages", [])}  # 重复名静默覆盖
+if verdict not in ("PASS", "PASS*"): ...                                      # 只信顶层字符串
+for name in MUST_PASS: ...                                                     # 只强制 inference
+```
+
+既不重派生 verdict、也不认 `FULL_STAGES`、也不核 `skipped_stages` 与 stages 是否脱钩。**先证明可利用，再动手**：在真实工作区对当前守卫跑篡改矩阵，5 个样本全部 `ACCEPTED (HOLE)`：
+
+| 篡改 | 旧断言 |
+|---|---|
+| stages 裁到只剩 `inference`（丢 4 关），顶层仍称 `PASS*` | 接受 |
+| 重复 stage 名，把一个 `FAIL` 藏在后面的 `PASS` 后面 | 接受 |
+| 混入未知第 6 关 | 接受 |
+| `skipped_stages` 与 stage 状态脱钩 | 接受 |
+| FAIL stage 被遮蔽而顶层 verdict 不变 | 接受 |
+
+### 4.12.2 官方一手语义（先查资料，不自己推）
+
+- GitHub Docs《Troubleshooting required status checks》：作业因条件被跳过时「报告成功」；依赖失败作业的作业「被跳过且不报告失败」；官方修法是 `always()` + 对 `needs.*.result` 逐项显式断言。⇒ **顶层聚合结论不是证据**。
+- GitHub Docs《Using jobs》：`needs` 链上失败/跳过会向下传播，除非用 `always()` 并逐项判定。
+- SLSA v1.0《Verifying artifacts》：untrusted `externalParameters` **MUST** 被下游验证，「Any unrecognized externalParameters SHOULD cause verification to fail」；`subject` 必须与被检产物的 digest 匹配。⇒ 未识别的 `--allow-skip` 名字必须拒绝，不能当成宽松配置放过。
+
+### 4.12.3 判最优：三方案对照
+
+| 方案 | 判决 |
+|---|---|
+| 把 R6 的严格逻辑复制进 `assert_ci_verdict.py` | 否决：制造第二份规则副本，正是 R4「第三份清单」与 R6「硬编码搬家」的同族 |
+| 只扩 `MUST_PASS` / 加计数断言 | 否决：仍信顶层 verdict，重复名覆盖、脱钩、加第 6 关仍可绕过 |
+| **抽共享模块，两条链共用单一权威** | ✅ 采用：`deploy_stages.py` 提供 `stage_authority`（AST 读 conductor 源码，不 import/执行）、`authority_variant`（从解析出的权威改名，供负对照用，不产生第三份字面清单）、`derive_verdict`（按 stages/status/rc 重派生） |
+
+### 4.12.4 落地
+
+- 新增 `tools/hd1910/deploy_stages.py`（纯 stdlib）。`bundle_bindings.py` 删掉本地 `_full_stages` 与手写重派生段，改用共享实现；`assert_ci_verdict.py` 重写 `check()`。
+- 实时断言现在要求：stage 集合与权威 `FULL_STAGES` **完全相等**（缺/多/重复都红）、逐项 `PASS` 或显式授权的 `SKIP`、`skipped_stages` 与 stages 派生的 SKIP 集合一致、`full_stage_set` 存在且等于权威、顶层 verdict 等于重派生值、`inference` 必 PASS、未知或豁免 `inference` 的 `--allow-skip` 直接拒绝。新增 CLI `--stage-source` 供负对照。
+- `assert_ci_verdict.py --selftest` 从 5 条扩到 **17 条**（含 5 条 R7 篡改、改权威为 6 关/4 关/删权威必红），样例报告与变体全部**从当前权威派生**；`bundle_bindings.py` 的 C14/C15 与测试里的 `_STAGE_MARKER` 也换成 `authority_variant`，消除两份硬编码 stage 清单。
+- `tests/test_hd1910_tooling.py`：+3 条（篡改矩阵、CLI 级 `--stage-source` 负对照、两守卫确实用同一个函数对象），并修掉一处写死 5 个 stage 名的断言。workflow 两处自述注释同步更新，不钉计数。
+
+### 4.12.5 验证读数
+
+- 本地：`py_compile` OK；`bundle_bindings.py --selftest` **22 条全 PASS**（共享改造后 needle 全保持）；`assert_ci_verdict.py --selftest` **17 条全 PASS**；真实 bundle `--json` = PASS；`record_provenance.py --verify rc=0`（import 链通）；真实 lean-CI 风格报告走 CLI `rc=0`，把同一份报告裁到只剩 `inference` 后 `rc=1` 且逐条点名 `stage set ... != current conductor FULL_STAGES`。
+- **真实 GitHub Actions run 读数待推送后回填。**
+
+### 4.12.6 准则（可泛化）
+
+**同一类证据有两条消费链时，「一条修好」等于「一条没修」**：必须让它们 import 同一个权威函数，而不是各自实现「看起来一样」的规则；并用测试断言两个消费者拿到的确实是同一个函数对象。另：**负对照矩阵要能改坏权威本身**——只在数据侧造假会漏掉「把硬编码搬了家」的情形。
+
+### 4.12.7 本轮已定位但未修（下一轮输入，非「已验证无问题」）
+
+- **策略集合 `("walk","ground_pick","stand")` 仍有 7 处字面量**（`bundle_bindings.POLICY_KEYS`、`ci_gate_targets.POLICY_KEYS`/`SHELL_NAMES`、`workflow` 的 `GATE_COUNT -eq 3` 与 `for O in ...`、emitter selftest、测试断言），没有一处从 bundle 的 `artifacts`/`deploy_checks` 键集合派生。R4 只解决了 onnx **路径**的第三份副本，没解决集合本身。
+- **CI 实时报告 `out/ci_*.json` 与 bundle 归档 `out/deploy_check_*.json` 无交叉校验**：两者强度不同（`PASS*` vs `PASS`），也没有断言要求 stage 集合/onnx/toml 一致。
+- **provenance subject 只覆盖 3 个 onnx**（哈希另覆盖 toml）；`deploy_check_*.json`、workflow、守卫脚本都不在 subject 内（归档报告另有 `bundle_bindings` 的重派生保护，但那是独立链路）。
+- `eval` / `bundle_audit.checks` / `rehearsal.note` 是人工散文聚合结论，数值内容不可从仓库重算 —— 这是**设计边界**，不是可修 bug，已在代码 `HONEST BOUNDARY` 明示。
+- 另有一份无人引用的旧 4 关 `out/deploy_check_standup_official.json`（verdict FAIL、无 `full_stage_set`），既不在 bundle 也不被任何脚本读取，属遗留文件。
+
+---
+
 ## 5. 证据索引（本轮查证）
 
 - 官方站起修复：`pollen-robotics/microduck_rl@develop` → `src/mjlab_microduck/tasks/microduck_standup_env_cfg.py`（`set_ground_state`、`ground_state_mix`、`face_up_roll_max`）。

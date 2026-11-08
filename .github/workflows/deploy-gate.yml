@@ -108,6 +108,11 @@ jobs:
         run: python tools/hd1910/bundle_bindings.py --selftest
 
       - name: CI verdict assertion negative-control self-test
+        # Pass23/R7: the LIVE report assertion now shares deploy_stages.py with
+        # the archived-evidence guard. It re-derives the verdict from the stages
+        # and binds the stage set to the conductor's FULL_STAGES, so a trimmed,
+        # duplicated or forged live report must go red here instead of passing
+        # as a green aggregate.
         run: python tools/hd1910/assert_ci_verdict.py --selftest
 
       - name: Conductor self-test (guard wiring; contract.selftest explicitly skipped)
@@ -142,8 +147,11 @@ jobs:
         # source of truth) and emits GATE_* vars; a local guard in
         # assert_clean_checkout.py fails if .onnx paths are hard-coded again.
         # onnxruntime IS installed above, so inference must actually EXECUTE.
-        # Only `contract` may SKIP (needs mjlab_microduck); assert_ci_verdict.py
-        # rejects any other SKIP/FAIL, so a broken guard cannot look green.
+        # Only `contract` may SKIP (needs mjlab_microduck). Pass23/R7:
+        # assert_ci_verdict.py re-derives the verdict from the stages and binds
+        # the stage set to FULL_STAGES via the shared deploy_stages.py -- a
+        # trimmed, duplicated or forged live report cannot look green. The
+        # SAME authority guards the archived bundle reports.
         run: |
           set -e
           BUNDLE="out/hd1910_kp8_deploy_bundle.json"

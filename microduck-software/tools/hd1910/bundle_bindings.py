@@ -47,6 +47,9 @@ What this module CAN verify, from independent committed authorities:
     its own per-stage status/rc, and its stage set must equal FULL_STAGES read
     out of the CURRENT pre_deploy_check.py source (Pass22/R6: the three
     archived reports predated the inference stage and were still accepted).
+    Pass23/R7: this re-derivation and stage authority now live in the SHARED
+    deploy_stages.py, also used by assert_ci_verdict.py for the report CI
+    produces live -- previously the two chains used different rules.
   * plant: servo/position_kp/gain vs the real robotd toml (stdlib tomllib);
     kp_fw and id vs tools/hd1910/plant_spec.py's canonical table and the
     apply_to_live.py kp->id mapping; id vs the bundle filename.
@@ -68,7 +71,6 @@ Usage (cwd = microduck-software):
 from __future__ import annotations
 
 import argparse
-import ast
 import copy
 import importlib.util
 import json
@@ -76,6 +78,17 @@ import sys
 import tempfile
 import tomllib
 from pathlib import Path
+
+# This module is also loaded via importlib.spec_from_file_location (tests and
+# record_provenance.py), so the sibling module is not importable by name until
+# its directory is on sys.path. Pass23/R7: the stage authority and the verdict
+# re-derivation are SHARED with assert_ci_verdict.py -- two independent copies
+# of "what a PASS means" is exactly the rot this project keeps finding.
+_TOOLS_DIR = str(Path(__file__).resolve().parent)
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+from deploy_stages import (authority_variant, derive_verdict,  # noqa: E402
+                           stage_authority as _full_stages)
 
 POLICY_KEYS = ("walk", "ground_pick", "stand")
 DEFAULT_BUNDLE = "out/hd1910_kp8_deploy_bundle.json"
@@ -121,43 +134,10 @@ def _canonical_plants(root: Path) -> tuple[dict[float, str], float | None, str |
         return {}, None, f"cannot read canonical plant table: {exc}"
 
 
-def _full_stages(source: Path) -> tuple[list[str], str | None]:
-    """Read FULL_STAGES out of the conductor SOURCE (ast; never import/execute).
-
-    The expected stage set is a property of the CURRENT gate, so it must be
-    derived from the gate's own source. Keeping a second literal list here
-    would rot exactly like Pass20's third copy of the onnx list. Fail loud if
-    the constant is missing, unparsable or not a flat list of unique names.
-    """
-    try:
-        tree = ast.parse(source.read_text(encoding="utf-8"),
-                         filename=str(source))
-    except (OSError, SyntaxError, ValueError) as exc:
-        return [], f"STAGE AUTHORITY UNREADABLE: {source}: {exc}"
-    raw = None
-    for node in tree.body:
-        target = value = None
-        if isinstance(node, ast.AnnAssign):
-            target, value = node.target, node.value
-        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target, value = node.targets[0], node.value
-        if isinstance(target, ast.Name) and target.id == "FULL_STAGES" \
-                and value is not None:
-            raw = value
-            break
-    if raw is None:
-        return [], (f"STAGE AUTHORITY MISSING: {source} has no module-level "
-                    "FULL_STAGES constant; refusing to guess the stage set")
-    try:
-        stages = ast.literal_eval(raw)
-    except (ValueError, TypeError, SyntaxError) as exc:
-        return [], f"STAGE AUTHORITY UNPARSEABLE: {source}: {exc}"
-    if not isinstance(stages, (list, tuple)) or not stages \
-            or not all(isinstance(s, str) and s for s in stages) \
-            or len(set(stages)) != len(stages):
-        return [], (f"STAGE AUTHORITY INVALID: {source} FULL_STAGES="
-                    f"{stages!r}; expected a non-empty flat list of unique names")
-    return list(stages), None
+# `_full_stages` is now the shared deploy_stages.stage_authority (imported
+# above). Pass23/R7: assert_ci_verdict.py reads the SAME authority, so the
+# archived-evidence guard and the live-CI guard can no longer disagree about
+# which stages a report must contain or what its verdict means.
 
 
 def verify_bindings(bundle: dict, root: Path,
@@ -258,54 +238,17 @@ def verify_bindings(bundle: dict, root: Path,
             if rpt.get("verdict") != "PASS":
                 bad(f"deploy_checks.{key}: report {jrel} verdict="
                     f"{rpt.get('verdict')!r} != PASS")
-            # Two INDEPENDENT algorithms for the same quantity: re-derive the
-            # verdict from the report's OWN stage list, then compare with its
-            # top-level claim. GitHub's own docs explain why this is needed:
-            # "When a continue-on-error step fails, the outcome is failure,
-            # but the final conclusion is success", and skipped/neutral checks
-            # "are treated as a success for dependent checks" -- a green
-            # aggregate is not evidence that each component passed. The
-            # stage set itself comes from the CURRENT conductor source, so a
-            # newly added 6th stage invalidates every stale archived report
-            # instead of merely printing an advisory note.
-            derived = "PASS"
-            stages = rpt.get("stages")
-            if not isinstance(stages, list) or not stages:
-                bad(f"deploy_checks.{key}: report {jrel} has no structured "
-                    "stages -- its PASS cannot be re-derived")
-                derived = "FAIL"
-            else:
-                offenders = []
-                stage_names: list[str] = []
-                for stage in stages:
-                    if not isinstance(stage, dict):
-                        offenders.append(repr(stage))
-                        continue
-                    name = stage.get("name")
-                    stage_names.append(name if isinstance(name, str)
-                                       else repr(name))
-                    if (stage.get("status") != "PASS"
-                            or stage.get("rc") not in (0, None)):
-                        offenders.append(f"{stage.get('name')}:"
-                                         f"{stage.get('status')}/rc={stage.get('rc')}")
-                if offenders:
-                    bad(f"deploy_checks.{key}: report {jrel} claims PASS but its "
-                        f"own stages disagree: {offenders}")
-                    derived = "FAIL"
-                if len(set(stage_names)) != len(stage_names):
-                    bad(f"deploy_checks.{key}: report {jrel} has duplicate "
-                        f"stage names: {stage_names}")
-                    derived = "FAIL"
-                if full_stages:
-                    missing = [s for s in full_stages if s not in stage_names]
-                    extra = [s for s in stage_names if s not in full_stages]
-                    if missing or extra:
-                        bad(f"deploy_checks.{key}: report {jrel} stage set "
-                            f"{stage_names} != current conductor FULL_STAGES "
-                            f"{full_stages} (missing={missing}, extra={extra}); "
-                            "archived evidence predates a gate change -- "
-                            "regenerate it with pre_deploy_check.py --json")
-                        derived = "FAIL"
+            # GitHub's own docs explain why a top-level aggregate is not
+            # evidence: a continue-on-error step fails but concludes success,
+            # and skipped/neutral checks are "treated as a success for
+            # dependent checks". Re-derive the verdict from the report's OWN
+            # stages with the SAME shared logic the live-CI assertion uses
+            # (deploy_stages.derive_verdict). Archived evidence must be
+            # all-PASS, so allow_skip is deliberately empty here.
+            derived, stage_problems = derive_verdict(
+                rpt, full_stages, allow_skip=())
+            for problem in stage_problems:
+                bad(f"deploy_checks.{key}: report {jrel} {problem}")
             if rpt.get("verdict") != derived:
                 bad(f"deploy_checks.{key}: report {jrel} verdict="
                     f"{rpt.get('verdict')!r} disagrees with its own stages "
@@ -534,25 +477,27 @@ def _selftest(root: Path, bundle_path: Path) -> int:
     # verdict, otherwise we only moved the hard-coded list to another file.
     conductor = root / "tools" / "hd1910" / "pre_deploy_check.py"
     src_text = conductor.read_text(encoding="utf-8")
-    marker = '    "contract", "bundle", "numeric", "inference", "toml",\n'
+    full_now, authority_err = _full_stages(conductor)
+    # Build the mutated authorities FROM the parsed authority. A hard-coded
+    # marker string would be a second copy of the stage list (R4 lesson) and
+    # would silently rot when the conductor changes.
+    src6 = authority_variant(src_text, add=("future_stage",))
+    src4 = (authority_variant(src_text, drop=(full_now[-1],))
+            if full_now else None)
     with tempfile.TemporaryDirectory(prefix="hd1910_bindings_scope_") as td:
         tdp = Path(td)
         real_report = json.loads(
             (root / base["deploy_checks"]["walk"]["json"])
             .read_text(encoding="utf-8"))
-        if marker not in src_text:
+        if authority_err or not src6 or not src4:
             ok = False
-            print("  [BAD] FULL_STAGES marker missing -- cannot build controls")
+            print("  [BAD] cannot derive stage-authority variants -- "
+                  "cannot build controls")
         conductor6 = tdp / "conductor6.py"
         conductor4 = tdp / "conductor4.py"
         no_authority = tdp / "no_authority.py"
-        conductor6.write_text(
-            src_text.replace(marker, marker.replace('"toml",',
-                                                    '"toml", "future_stage",')),
-            encoding="utf-8")
-        conductor4.write_text(
-            src_text.replace(marker, marker.replace('"inference", ', '')),
-            encoding="utf-8")
+        conductor6.write_text(src6 or "", encoding="utf-8")
+        conductor4.write_text(src4 or "", encoding="utf-8")
         no_authority.write_text("x = 1\n", encoding="utf-8")
 
         case_no = [0]
@@ -602,7 +547,7 @@ def _selftest(root: Path, bundle_path: Path) -> int:
                    None, 0, None)
         stage_case("C14 conductor gains a 6th stage -> old report red", None,
                    conductor6, 1, needle_set)
-        stage_case("C15 conductor loses inference -> new report red", None,
+        stage_case("C15 conductor loses a stage -> current report red", None,
                    conductor4, 1, needle_set)
         stage_case("C16 stage authority missing -> fail loud", None,
                    no_authority, 1, "STAGE AUTHORITY MISSING")

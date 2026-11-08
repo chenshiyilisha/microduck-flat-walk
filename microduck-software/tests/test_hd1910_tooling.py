@@ -129,38 +129,136 @@ def test_ci_verdict_cli_selftest_runs():
 
 
 def test_ci_verdict_assertion_negative_controls():
-    """The CI assertion must reject the exact Pass13-15 failure mode: a report
-    where inference is SKIP while CI installed onnxruntime."""
+    """The live-CI assertion must reject the Pass13-15 mode AND the R7 matrix.
+
+    Pass23/R7: the old assertion folded stages into a dict (duplicate names
+    silently overwrite) and trusted the self-reported top-level verdict. Five
+    tampered reports were all ACCEPTED. The fixture here is built from the
+    CURRENT stage authority so adding a stage cannot rot this test.
+    """
     ac = _load("assert_ci_verdict_test", HERE / "assert_ci_verdict.py")
+    ds = sys.modules["deploy_stages"]  # loaded by the guards themselves above
+    full, err = ds.stage_authority(HERE / "pre_deploy_check.py")
+    assert err is None, err
+
+    def stage(report, name):
+        return next(s for s in report["stages"] if s["name"] == name)
+
     good = {
         "verdict": "PASS*",
         "skipped_stages": ["contract"],
+        "full_stage_set": list(full),
         "stages": [
-            {"name": "contract", "status": "SKIP"},
-            {"name": "bundle", "status": "PASS"},
-            {"name": "numeric", "status": "PASS"},
-            {"name": "inference", "status": "PASS"},
-            {"name": "toml", "status": "PASS"},
+            {"name": n, "status": "SKIP" if n == "contract" else "PASS",
+             "rc": 2 if n == "contract" else 0}
+            for n in full
         ],
     }
     assert ac.check(good) == []
+    other = next(n for n in full if n not in ("contract", "inference"))
 
     # Negative control 1: inference SKIP must be rejected.
     bad = json.loads(json.dumps(good))
-    bad["stages"][3]["status"] = "SKIP"
+    stage(bad, "inference")["status"] = "SKIP"
+    stage(bad, "inference")["rc"] = 2
+    bad["skipped_stages"] = sorted(set(bad["skipped_stages"] + ["inference"]))
     assert any("inference" in p for p in ac.check(bad))
 
     # Negative control 2: an extra unexpected skip must be rejected.
     bad2 = json.loads(json.dumps(good))
-    bad2["stages"][2]["status"] = "SKIP"
-    bad2["skipped_stages"] = ["contract", "numeric"]
+    stage(bad2, other)["status"] = "SKIP"
+    stage(bad2, other)["rc"] = 2
+    bad2["skipped_stages"] = sorted(set(bad2["skipped_stages"] + [other]))
     assert any("unexpected SKIP" in p for p in ac.check(bad2))
 
     # Negative control 3: FAIL verdict / empty stages must be rejected.
     bad3 = json.loads(json.dumps(good))
     bad3["verdict"] = "FAIL"
     assert any("FAIL" in p for p in ac.check(bad3))
-    assert ac.check({"verdict": "PASS", "skipped_stages": [], "stages": []})
+    assert ac.check({"verdict": "PASS", "skipped_stages": [], "stages": [],
+                     "full_stage_set": list(full)})
+
+    # R7 tamper matrix: each of these was accepted by the OLD assertion.
+    tampered = []
+    t = json.loads(json.dumps(good))
+    t["stages"] = [stage(t, "inference")]
+    tampered.append(("trimmed to one stage", t))
+    t = json.loads(json.dumps(good))
+    hidden = dict(stage(t, other))
+    hidden["status"], hidden["rc"] = "FAIL", 1
+    t["stages"].append(hidden)
+    tampered.append(("duplicate name masks a FAIL", t))
+    t = json.loads(json.dumps(good))
+    t["stages"].append({"name": "mystery", "status": "PASS", "rc": 0})
+    tampered.append(("unknown extra stage", t))
+    t = json.loads(json.dumps(good))
+    t["skipped_stages"] = []
+    tampered.append(("skipped_stages detached", t))
+    t = json.loads(json.dumps(good))
+    t["verdict"] = "PASS"
+    tampered.append(("verdict contradicts stages", t))
+    t = json.loads(json.dumps(good))
+    t.pop("full_stage_set")
+    tampered.append(("no full_stage_set", t))
+    t = json.loads(json.dumps(good))
+    t["full_stage_set"] = list(full)[:-1]
+    tampered.append(("stale full_stage_set", t))
+    for label, report in tampered:
+        assert ac.check(report), label
+
+    # An unrecognised --allow-skip must fail verification (SLSA v1.0).
+    assert any("unknown stage" in p
+               for p in ac.check(good, ("contract", "mystery")))
+    assert any("forbidden" in p
+               for p in ac.check(good, ("contract", "inference")))
+
+
+def test_ci_verdict_cli_stage_source_negative_control(tmp_path):
+    """CLI entry point: an intact live report is green, but changing the SINGLE
+    authority must make the SAME report red (R4 lesson, R7 application)."""
+    bb = _load("bundle_bindings_share_test", HERE / "bundle_bindings.py")
+    shared = sys.modules["deploy_stages"]
+    assert bb._full_stages is shared.stage_authority
+    assert bb.derive_verdict is shared.derive_verdict
+
+    full, err = shared.stage_authority(HERE / "pre_deploy_check.py")
+    assert err is None, err
+    src = (HERE / "pre_deploy_check.py").read_text(encoding="utf-8")
+    six = shared.authority_variant(src, add=("future_stage",))
+    assert six, "authority_variant could not rewrite FULL_STAGES"
+    conductor6 = tmp_path / "conductor6.py"
+    conductor6.write_text(six, encoding="utf-8")
+
+    report = tmp_path / "ci_report.json"
+    report.write_text(json.dumps({
+        "verdict": "PASS*",
+        "skipped_stages": ["contract"],
+        "full_stage_set": list(full),
+        "stages": [
+            {"name": n, "status": "SKIP" if n == "contract" else "PASS",
+             "rc": 2 if n == "contract" else 0}
+            for n in full
+        ],
+    }), encoding="utf-8")
+    cmd = [sys.executable, str(HERE / "assert_ci_verdict.py"),
+           str(report), "--allow-skip", "contract"]
+    ok = subprocess.run(cmd, capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    red = subprocess.run(cmd + ["--stage-source", str(conductor6)],
+                         capture_output=True, text=True)
+    assert red.returncode == 1, red.stdout + red.stderr
+    assert "FULL_STAGES" in red.stdout
+
+
+def test_both_report_guards_share_one_stage_authority():
+    """The archived-evidence guard and the live-CI guard must use the SAME
+    authority and the SAME verdict derivation, not two copies that can rot."""
+    bb = _load("bundle_bindings_shared_test", HERE / "bundle_bindings.py")
+    ac = _load("assert_ci_verdict_shared_test", HERE / "assert_ci_verdict.py")
+    shared = sys.modules["deploy_stages"]
+    assert bb._full_stages is shared.stage_authority
+    assert ac.stage_authority is shared.stage_authority
+    assert bb.derive_verdict is ac.derive_verdict is shared.derive_verdict
 
 
 def test_ci_verdict_assertion_on_real_conductor_report(tmp_path):
@@ -1366,13 +1464,12 @@ def test_bundle_bindings_rederives_verdict_from_report_stages(tmp_path):
 
     rc0, msgs0 = bb.verify_bindings(base, ROOT, real)
     assert rc0 == 0, msgs0
-    assert any("FULL_STAGES=['contract', 'bundle', 'numeric', 'inference', "
-               "'toml']" in m for m in msgs0), msgs0
     assert not any("historical 4-stage report" in m for m in msgs0), msgs0
 
     # Algorithm 1: AST read of the conductor source (no import, no execution).
     stages, err = bb._full_stages(HERE / "pre_deploy_check.py")
     assert err is None, err
+    assert any(f"FULL_STAGES={stages}" in m for m in msgs0), msgs0
     # Algorithm 2: actually import the conductor module and read the constant.
     conductor = _load("conductor_stages_test", HERE / "pre_deploy_check.py")
     assert tuple(stages) == tuple(conductor.FULL_STAGES)
@@ -1400,17 +1497,14 @@ def test_bundle_bindings_rederives_verdict_from_report_stages(tmp_path):
     assert any("own stages disagree" in m for m in msgs), msgs
 
 
-_STAGE_MARKER = '    "contract", "bundle", "numeric", "inference", "toml",\n'
-
-
 def _six_stage_conductor(tmp_path):
+    """Rewrite FULL_STAGES FROM the parsed authority (no second literal copy)."""
+    shared = sys.modules["deploy_stages"]
     src = (HERE / "pre_deploy_check.py").read_text(encoding="utf-8")
-    assert _STAGE_MARKER in src, "conductor FULL_STAGES literal changed"
+    six = shared.authority_variant(src, add=("future_stage",))
+    assert six, "conductor FULL_STAGES could not be rewritten"
     p = tmp_path / "conductor_six.py"
-    p.write_text(src.replace(
-        _STAGE_MARKER,
-        _STAGE_MARKER.replace('"toml",', '"toml", "future_stage",')),
-        encoding="utf-8")
+    p.write_text(six, encoding="utf-8")
     return p
 
 
