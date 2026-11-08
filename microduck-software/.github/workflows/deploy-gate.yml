@@ -12,8 +12,9 @@
 #   4. the REAL gate on each committed deploy onnx + robotd.toml (contract/bundle/
 #      numeric/inference/toml)  -- this is the actual "safe to load?" verdict
 #
-# The inference stage SKIPs (not fails) if onnxruntime is unavailable, so a partial
-# install still yields a meaningful verdict.
+# onnxruntime IS installed below, so the inference stage must actually EXECUTE.
+# assert_ci_verdict.py rejects any report where inference is SKIP/FAIL -- a
+# mis-invoked guard must never be able to look like a clean CI pass again.
 name: deploy-gate
 
 on:
@@ -37,6 +38,9 @@ jobs:
 
       - name: Install deploy-verification toolchain
         run: python -m pip install --upgrade pip && pip install -r tools/hd1910/requirements.txt
+
+      - name: CI verdict assertion negative-control self-test
+        run: python tools/hd1910/assert_ci_verdict.py --selftest
 
       - name: Conductor self-test (guard wiring)
         run: python tools/hd1910/pre_deploy_check.py --selftest
@@ -66,5 +70,10 @@ jobs:
           TOML="out/robotd_hd1910_mode0.toml"
           for O in "$WALK" "$GP" "$SU"; do
             echo "=== gate: $O ==="
-            python tools/hd1910/pre_deploy_check.py --onnx "$O" --toml "$TOML" --expect-kp 16 --json "out/ci_$(basename "$O" .onnx).json"
+            REPORT="out/ci_$(basename "$O" .onnx).json"
+            python tools/hd1910/pre_deploy_check.py --onnx "$O" --toml "$TOML" --expect-kp 16 --json "$REPORT"
+            # A SKIP in inference is a BROKEN GATE, not a partial install:
+            # this workflow installs onnxruntime in the step above. contract is
+            # the only stage allowed to skip (needs the full training stack).
+            python tools/hd1910/assert_ci_verdict.py "$REPORT" --allow-skip contract
           done

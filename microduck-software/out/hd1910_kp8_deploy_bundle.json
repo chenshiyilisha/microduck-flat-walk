@@ -162,5 +162,28 @@
         "companion_meta": "runmeta"
       }
     }
+  },
+  "verification_boundary": {
+    "_why": "Machine-readable 'what was NOT verified'. A green deploy gate only proves the ONNX bytes, contracts and offline rehearsal; it does NOT prove the robot walks. Mirrors hd1910m/docs/release_validation.json (hardware_tested_this_release + limits[]) so an operator cannot read a PASS as a hardware sign-off.",
+    "hardware_tested": false,
+    "calibration_verified": false,
+    "imu_pose_verified": false,
+    "mapping_confirmed": true,
+    "calibration_source": ".upstream/hd1910m/radxa/installation.json",
+    "authoritative_flags": {
+      "calibration_verified": false,
+      "imu_pose_verified": false,
+      "mapping_confirmed": true
+    },
+    "motion_permitted": false,
+    "motion_gate": "hd1910m/scripts/configure.py refuses --allow-motion unless BOTH calibration_verified and imu_pose_verified are true; this bundle does not satisfy that gate. Do not enable torque on a real robot from this bundle alone.",
+    "limits": [
+      "No physical robot test: bus.joint_ids / joint_signs / zero offsets verified only against the upstream installation.json wiring map, not on the delivered hardware.",
+      "All three skill evaluations are MuJoCo simulation (walk / ground_pick / standup); no hardware gait qualification.",
+      "Backlash readings were taken at 4.6 V bench supply (under-voltage for a 7.4 V servo); re-measure at 7.4 V before trusting duty/backlash figures.",
+      "Single seed per skill: the >=3-seed sweep (P3) is deliberately deferred by the user; no seed-robustness claim.",
+      "The deploy gate is offline/static + CPU ONNX execution; it does not exercise the real servo bus, IMU bridge, or the 50 Hz control loop on hardware."
+    ],
+    "note": "Kept intentionally conservative. Flip these flags ONLY after the corresponding physical verification is recorded; record_provenance.py --verify cross-checks them against the authoritative installation.json."
   }
 }

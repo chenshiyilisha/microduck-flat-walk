@@ -76,6 +76,30 @@ def _classify(rc: int) -> str:
     return "FAIL"
 
 
+# argparse exits 2 on a CLI usage error -- the SAME rc the guards use to mean
+# "SKIP (dependency absent)". Pass13-15 shipped an inference stage called with
+# a positional onnx path while the script expects --onnx, so on a machine WITH
+# onnxruntime the stage was silently reported "SKIP" instead of running. A
+# broken guard invocation is a FAIL, never a skip: keep the two apart by the
+# output signature, not by rc alone.
+_USAGE_ERROR_MARKERS = (
+    "error: unrecognized arguments",
+    "error: the following arguments are required",
+    "error: argument ",
+    "error: ambiguous option",
+)
+
+
+def _is_argparse_usage_error(text: str) -> bool:
+    """True only for an argparse CLI-usage failure (rc 2), not a genuine SKIP.
+
+    Requires BOTH the usage banner and an argparse error line, so a policy
+    output that merely mentions the word "usage" cannot trip it.
+    """
+    low = text.lower()
+    return "usage:" in low and any(m in low for m in _USAGE_ERROR_MARKERS)
+
+
 def _verdict(any_fail: bool, skipped: list[str]) -> str:
     """A SKIP is 'could not be checked', NOT a pass. Surface the skipped stage
     names so an operator never reads 'PASS' as 'fully verified' when (e.g.) the
@@ -89,25 +113,33 @@ def _verdict(any_fail: bool, skipped: list[str]) -> str:
     return "PASS -- safe to load (all stages verified)"
 
 
-def _run(script: Path, *args: str) -> tuple[int, str, list[str]]:
+def _run(script: Path, *args: str) -> tuple[int, str, list[str], str]:
     try:
         proc = subprocess.run(
             [sys.executable, str(script), *args],
             capture_output=True, text=True,
         )
     except OSError as e:  # noqa: BLE001
-        return 127, f"could not launch {script.name}: {e}", []
-    out = (proc.stdout + proc.stderr).strip().splitlines()
+        return 127, f"could not launch {script.name}: {e}", [], ""
+    full = (proc.stdout + proc.stderr).strip()
+    out = full.splitlines()
     # Surface the actual problem lines (FAIL / "!" negative-control markers /
     # ERROR) so the summary tells the operator *why* a stage failed.
     problems = [l.strip() for l in out if any(k in l for k in ("FAIL", "! ", "ERROR", "BAD"))]
-    return proc.returncode, "\n".join(out[-3:]) if out else "", problems
+    return proc.returncode, "\n".join(out[-3:]) if out else "", problems, full
 
 
 def _stage(name: str, script: Path, *args: str) -> StageResult:
-    rc, tail, problems = _run(script, *args)
+    rc, tail, problems, full = _run(script, *args)
     detail = " | ".join(problems[-3:]) if problems else tail
-    return StageResult(name=name, rc=rc, status=_classify(rc), tail=detail)
+    status = _classify(rc)
+    if rc == 2 and _is_argparse_usage_error(full):
+        # A guard that rejected our arguments is NOT "dependency absent".
+        # Without this, a wrong parameterization is indistinguishable from a
+        # clean SKIP and the whole stage silently stops protecting anything.
+        status = "FAIL"
+        detail = "GUARD INVOCATION BROKEN (argparse usage error, not a SKIP): " + detail
+    return StageResult(name=name, rc=rc, status=status, tail=detail)
 
 
 def run_selftest() -> int:
@@ -179,7 +211,11 @@ def main() -> int:
 
     results.append(_stage("numeric", NUMERIC, str(args.onnx)))
 
-    results.append(_stage("inference", INFERENCE, str(args.onnx),
+    # verify_policy_inference.py takes --onnx (an option), NOT a positional
+    # path. Passing it positionally makes argparse exit 2, which used to be
+    # swallowed as "SKIP / onnxruntime absent" -- hiding the broken stage.
+    results.append(_stage("inference", INFERENCE,
+                          "--onnx", str(args.onnx),
                           "--expect-obs", "61", "--expect-act", "14"))
 
     if args.toml:

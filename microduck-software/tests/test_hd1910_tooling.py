@@ -64,6 +64,142 @@ def test_conductor_selftest_runs():
     assert proc.returncode == 0, proc.stderr[-2000:]
 
 
+def test_conductor_argparse_usage_error_is_not_a_skip():
+    """rc=2 means 'SKIP' ONLY for a genuinely unavailable side. argparse also
+    exits 2 on a CLI usage error; swallowing that as SKIP hides a broken guard
+    (Pass13-15 shipped exactly this: inference invoked with a positional onnx
+    while the script expects --onnx, reported as 'onnxruntime absent')."""
+    pc = _load("pre_deploy_check_usage_test", HERE / "pre_deploy_check.py")
+
+    usage = ("usage: verify_policy_inference.py [-h] [--onnx ONNX]\n"
+             "verify_policy_inference.py: error: unrecognized arguments: x.onnx")
+    assert pc._is_argparse_usage_error(usage)
+
+    # Negative control: a genuine dependency-missing SKIP must stay a SKIP.
+    real_skip = ("== inference smoke ==\n  status: SKIP\n"
+                 "  reason: missing dependency: onnxruntime\nVERDICT: SKIP")
+    assert not pc._is_argparse_usage_error(real_skip)
+    assert pc._classify(2) == "SKIP"
+
+    # Negative control 2: a bare 'usage:' without an argparse error line is
+    # not enough -- otherwise any policy log mentioning 'usage' trips a FAIL.
+    assert not pc._is_argparse_usage_error("the word usage: appears in a report")
+
+
+def test_conductor_inference_stage_rejects_positional_onnx():
+    """Feed the REAL guard the OLD (broken) invocation. It must come back FAIL,
+    not SKIP. This is the negative control that proves the new detector fires
+    on the exact bug that was shipped -- not just on a hand-written string."""
+    pc = _load("pre_deploy_check_invoke_test", HERE / "pre_deploy_check.py")
+    onnx = (ROOT / "logs/rsl_rl/microduck_velocity_hd1910/"
+            "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/"
+            "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx")
+    if not onnx.exists():
+        pytest.skip("real walk onnx not present in this checkout")
+    r = pc._stage("inference", pc.INFERENCE, str(onnx),
+                  "--expect-obs", "61", "--expect-act", "14")
+    assert r.rc == 2, r.tail
+    assert r.status == "FAIL", r.tail
+    assert "GUARD INVOCATION BROKEN" in r.tail
+
+
+def test_ci_verdict_cli_selftest_runs():
+    """CLI-level regression: `--selftest` must work WITHOUT a report argument.
+    Only testing check() left a green suite while the CI step actually failed
+    at argparse. This guards the entry point the workflow really calls."""
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "assert_ci_verdict.py"), "--selftest"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr[-1200:]
+    assert "PASS -- negative-control logic wired correctly" in proc.stdout
+
+
+def test_ci_verdict_assertion_negative_controls():
+    """The CI assertion must reject the exact Pass13-15 failure mode: a report
+    where inference is SKIP while CI installed onnxruntime."""
+    ac = _load("assert_ci_verdict_test", HERE / "assert_ci_verdict.py")
+    good = {
+        "verdict": "PASS*",
+        "skipped_stages": ["contract"],
+        "stages": [
+            {"name": "contract", "status": "SKIP"},
+            {"name": "bundle", "status": "PASS"},
+            {"name": "numeric", "status": "PASS"},
+            {"name": "inference", "status": "PASS"},
+            {"name": "toml", "status": "PASS"},
+        ],
+    }
+    assert ac.check(good) == []
+
+    # Negative control 1: inference SKIP must be rejected.
+    bad = json.loads(json.dumps(good))
+    bad["stages"][3]["status"] = "SKIP"
+    assert any("inference" in p for p in ac.check(bad))
+
+    # Negative control 2: an extra unexpected skip must be rejected.
+    bad2 = json.loads(json.dumps(good))
+    bad2["stages"][2]["status"] = "SKIP"
+    bad2["skipped_stages"] = ["contract", "numeric"]
+    assert any("unexpected SKIP" in p for p in ac.check(bad2))
+
+    # Negative control 3: FAIL verdict / empty stages must be rejected.
+    bad3 = json.loads(json.dumps(good))
+    bad3["verdict"] = "FAIL"
+    assert any("FAIL" in p for p in ac.check(bad3))
+    assert ac.check({"verdict": "PASS", "skipped_stages": [], "stages": []})
+
+
+def test_ci_verdict_assertion_on_real_conductor_report(tmp_path):
+    """Feed a REAL --json report from the conductor, then corrupt it and prove
+    the assertion turns red. Uses the actual artifact, not a hand-built dict."""
+    onnx = (ROOT / "logs/rsl_rl/microduck_velocity_hd1910/"
+            "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/"
+            "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx")
+    if not onnx.exists():
+        pytest.skip("real walk onnx not present in this checkout")
+    report = tmp_path / "gate.json"
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "pre_deploy_check.py"),
+         "--onnx", str(onnx), "--toml", str(ROOT / "out/robotd_hd1910_mode0.toml"),
+         "--expect-kp", "16", "--json", str(report)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stdout[-800:]
+    data = json.loads(report.read_text(encoding="utf-8"))
+    # In a full stack nothing is skipped -> plain PASS, which is also accepted.
+    assert not ac_check(data), data
+
+    # Corrupt: mark inference SKIP -> assertion must reject the real report.
+    data["stages"] = [{"name": s["name"], "status": "SKIP" if s["name"] == "inference"
+                       else s["status"]} for s in data["stages"]]
+    data["skipped_stages"] = sorted(set(data["skipped_stages"] + ["inference"]))
+    assert any("inference" in p for p in ac_check(data))
+
+
+def ac_check(report):
+    mod = _load("assert_ci_verdict_real_test", HERE / "assert_ci_verdict.py")
+    return mod.check(report)
+
+
+def test_conductor_inference_stage_uses_onnx_option():
+    """The CORRECTED invocation must actually execute the graph and PASS when
+    onnxruntime is installed (and be a genuine SKIP when it is not)."""
+    pc = _load("pre_deploy_check_invoke_ok_test", HERE / "pre_deploy_check.py")
+    onnx = (ROOT / "logs/rsl_rl/microduck_velocity_hd1910/"
+            "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/"
+            "2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx")
+    if not onnx.exists():
+        pytest.skip("real walk onnx not present in this checkout")
+    r = pc._stage("inference", pc.INFERENCE, "--onnx", str(onnx),
+                  "--expect-obs", "61", "--expect-act", "14")
+    # With onnxruntime present it must be a real PASS; absent -> honest SKIP.
+    # What it must NEVER be is a FAIL (that would mean the arguments are wrong).
+    assert r.status in ("PASS", "SKIP"), r.tail
+    if r.status == "PASS":
+        assert "VERDICT: PASS" in r.tail or "status: PASS" in r.tail, r.tail
+
+
 def _meta_for(onnx: pathlib.Path) -> pathlib.Path | None:
     """Locate the companion runmeta/heading_meta for an ONNX stem (or None)."""
     run = onnx.stem
@@ -399,4 +535,50 @@ def test_record_provenance_verify_detects_drift(tmp_path):
     p2.write_text(json.dumps(bad2), encoding="utf-8")
     rc, msgs = rp.verify_bundle(p2)
     assert rc == 1 and any("DRIFT" in m for m in msgs)
+
+
+def test_verification_boundary_negative_controls(tmp_path):
+    """A green deploy gate must not be quietly upgradeable to a hardware
+    sign-off. Every attempt to flip/remove the boundary has to turn the
+    verification red. Cross-checks the REAL installation.json, not a mock."""
+    rp = _load("record_provenance_boundary_test", HERE / "record_provenance.py")
+    bundle = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
+    if not bundle.exists() or not rp._CALIBRATION_SOURCE.is_file():  # noqa: SLF001
+        pytest.skip("bundle or authoritative installation.json not present")
+    data = json.loads(bundle.read_text(encoding="utf-8"))
+    assert rp.verify_boundary(data)[0] == 0
+
+    # Negative control 1: claim calibration verified while the authoritative
+    # file still says false -> DRIFT.
+    bad = json.loads(json.dumps(data))
+    bad["verification_boundary"]["calibration_verified"] = True
+    rc, msgs = rp.verify_boundary(bad)
+    assert rc == 1 and any("BOUNDARY DRIFT" in m for m in msgs)
+
+    # Negative control 2: claim hardware was tested while calibration is
+    # unverified -> CONTRADICTION (two sources disagree).
+    bad2 = json.loads(json.dumps(data))
+    bad2["verification_boundary"]["hardware_tested"] = True
+    rc, msgs = rp.verify_boundary(bad2)
+    assert rc == 1 and any("CONTRADICTION" in m for m in msgs)
+
+    # Negative control 3: enable motion without verified calibration + IMU.
+    bad3 = json.loads(json.dumps(data))
+    bad3["verification_boundary"]["motion_permitted"] = True
+    rc, msgs = rp.verify_boundary(bad3)
+    assert rc == 1 and any("CONTRADICTION" in m for m in msgs)
+
+    # Negative control 4: delete the whole boundary block / empty limits.
+    bad4 = json.loads(json.dumps(data))
+    del bad4["verification_boundary"]
+    assert rp.verify_boundary(bad4)[0] == 1
+    bad5 = json.loads(json.dumps(data))
+    bad5["verification_boundary"]["limits"] = []
+    assert rp.verify_boundary(bad5)[0] == 1
+
+    # ...and the full --verify path must reject a tampered bundle too.
+    tampered = tmp_path / "tampered.json"
+    tampered.write_text(json.dumps(bad), encoding="utf-8")
+    rc, msgs = rp.verify_bundle(tampered)
+    assert rc == 1 and any("BOUNDARY DRIFT" in m for m in msgs)
 

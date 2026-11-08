@@ -176,6 +176,55 @@ _ARTIFACT_FIELDS = (
     "task", "plant_name", "cfg_sha256_16", "mdp_sha256_16", "export_iteration",
 )
 
+# Machine-readable "what was NOT verified" block. Cross-checked against the
+# authoritative installation.json so the boundary cannot be quietly flipped to
+# green by editing the bundle alone. Mirrors hd1910m's release_validation.json.
+_BOUNDARY_FLAGS = ("calibration_verified", "imu_pose_verified", "mapping_confirmed")
+_CALIBRATION_SOURCE = ROOT / ".upstream" / "hd1910m" / "radxa" / "installation.json"
+
+
+def verify_boundary(bundle: dict) -> tuple[int, list[str]]:
+    """Check the bundle's verification_boundary against the authoritative
+    calibration file. Pure stdlib. Returns (rc, messages)."""
+    b = bundle.get("verification_boundary")
+    if not b:
+        return 1, ["bundle has no 'verification_boundary' block: a PASS cannot "
+                    "be distinguished from a hardware sign-off"]
+    if not _CALIBRATION_SOURCE.is_file():
+        return 2, [f"authoritative calibration source missing: {_CALIBRATION_SOURCE}"]
+    src = json.loads(_CALIBRATION_SOURCE.read_text(encoding="utf-8"))
+    msgs: list[str] = []
+    rc = 0
+    for flag in _BOUNDARY_FLAGS:
+        want = src.get(flag)
+        got = b.get(flag)
+        if got != want:
+            rc = 1
+            msgs.append(
+                f"BOUNDARY DRIFT {flag}: bundle={got!r} but installation.json={want!r}")
+        if b.get("authoritative_flags", {}).get(flag) != want:
+            rc = 1
+            msgs.append(
+                f"BOUNDARY DRIFT authoritative_flags.{flag}: "
+                f"{b.get('authoritative_flags', {}).get(flag)!r} != {want!r}")
+    # A hardware sign-off must never be claimed while calibration is unverified.
+    if b.get("hardware_tested") and not (b.get("calibration_verified")
+                                        and b.get("imu_pose_verified")):
+        rc = 1
+        msgs.append("BOUNDARY CONTRADICTION: hardware_tested=true while calibration "
+                     "or IMU pose is unverified")
+    if b.get("motion_permitted") and not (b.get("calibration_verified")
+                                          and b.get("imu_pose_verified")):
+        rc = 1
+        msgs.append("BOUNDARY CONTRADICTION: motion_permitted=true without verified "
+                     "calibration + IMU pose (hd1910m configure.py would refuse)")
+    if not b.get("limits"):
+        rc = 1
+        msgs.append("BOUNDARY DRIFT: limits[] is empty; unverified scope must be listed")
+    if rc == 0:
+        msgs.append("OK verification_boundary consistent with installation.json")
+    return rc, msgs
+
 
 def verify_bundle(bundle_path: Path) -> tuple[int, list[str]]:
     """Recompute per-artifact provenance from the onnx paths recorded in the
@@ -191,6 +240,13 @@ def verify_bundle(bundle_path: Path) -> tuple[int, list[str]]:
         return 1, ["bundle has no 'provenance' block to verify"]
     msgs: list[str] = []
     rc = 0
+
+    # The "what was NOT verified" boundary is part of the same single source
+    # of truth. Check it against installation.json so a PASS cannot be quietly
+    # upgraded to a hardware sign-off by editing the bundle.
+    brc, bmsgs = verify_boundary(bundle)
+    msgs.extend(bmsgs)
+    rc = max(rc, brc)
 
     cur_code = _provenance.capture_provenance(ROOT)
     stored_code = prov.get("code", {})
