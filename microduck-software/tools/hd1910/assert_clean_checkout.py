@@ -66,6 +66,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -142,6 +143,51 @@ def _repo_root(root: Path) -> tuple[Path, str]:
     return root.parent, "fallback-parent"
 
 
+# Pass20 / loop R4: a hard-coded .onnx path in the workflow is a THIRD copy
+# of the input list (bundle.json is the first, this probe's closure the
+# second). Negative control proved it can rot in silence: pointing the CI
+# gate's ground_pick at a stale onnx left `--strict`, pytest and
+# provenance --verify ALL green. So the gate must read targets from the bundle
+# via tools/hd1910/ci_gate_targets.py. Text-only on purpose (no PyYAML).
+_HARDCODED_TARGET = re.compile(
+    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]*\.(?:onnx|toml)")
+_HARDCODED_KP = re.compile(r"--expect-kp\s+\d+")
+
+
+def _code_lines(text: str) -> str:
+    """Strip YAML comments: prose describing a path is not a hard-coded target.
+
+    The real third copy lived inside the `run: |` shell block, never in a
+    comment. Keeping comments out avoids flagging the workflow's own history
+    notes (which legitimately mention `artifacts/flat_walk/*.onnx`).
+    """
+    return "\n".join(line for line in text.splitlines()
+                     if not line.lstrip().startswith("#"))
+
+
+def gate_target_problems(text: str) -> list[str]:
+    """Pure text check: CI gate targets must come from the bundle, not literals."""
+    out: list[str] = []
+    code = _code_lines(text)
+    literals = sorted({m.group(0) for m in _HARDCODED_TARGET.finditer(code)})
+    if literals:
+        out.append(
+            "CI GATE TARGETS HARD-CODED: workflow names .onnx/.toml paths literally "
+            f"({', '.join(literals[:3])}{' ...' if len(literals) > 3 else ''}) -- "
+            "these silently diverge from out/hd1910_kp8_deploy_bundle.json; "
+            "read them with tools/hd1910/ci_gate_targets.py --sh instead")
+    if _HARDCODED_KP.search(code):
+        out.append(
+            "CI GATE --expect-kp HARD-CODED: read it from bundle.plant via "
+            "ci_gate_targets.py (GATE_EXPECT_KP) instead of a literal")
+    if "pre_deploy_check.py" in code and "ci_gate_targets.py" not in code:
+        out.append(
+            "CI GATE NOT BUNDLE-DRIVEN: workflow runs pre_deploy_check.py but "
+            "never sources ci_gate_targets.py, so its targets have no single "
+            "source of truth")
+    return out
+
+
 def probe_workflow(root: Path) -> dict:
     """Is the CI workflow somewhere GitHub can actually DISCOVER it?
 
@@ -149,16 +195,19 @@ def probe_workflow(root: Path) -> dict:
     This must be a LOCAL guard: GitHub cannot run a job to report that no job
     can run. Borderline cases (root workflow missing, present but not a valid
     workflow text, or an orphan copy in a subdirectory) all become problems.
+    Also checks (Pass20) that the gate reads its targets from the bundle.
     """
     repo, how = _repo_root(root)
     wf = repo / WORKFLOW_REL
     exists = wf.is_file()
     valid = False
+    gate_problems: list[str] = []
     if exists:
         text = wf.read_text(encoding="utf-8", errors="replace")
         # Deliberately text-only: no PyYAML in the lean CI dependency set.
         valid = ("on:" in text and "jobs:" in text
                  and "working-directory:" in text)
+        gate_problems = gate_target_problems(text)
 
     # Only two directory levels are scanned (this repo's layout), rather than
     # rglob over the whole tree -- the local workspace contains .venv-mjlab and
@@ -183,12 +232,17 @@ def probe_workflow(root: Path) -> dict:
         "root_workflow_exists": exists,
         "root_workflow_valid": valid,
         "orphan_workflows": sorted(set(orphans)),
+        "gate_target_problems": gate_problems,
     }
 
 
 def workflow_problems(wf: dict) -> list[str]:
     """Pure logic: turn a workflow-placement observation into problems."""
     out: list[str] = []
+    # Pass20: a stale/hard-coded third copy of the onnx list is a silent
+    # wrong-policy gate. Synthetic workflows built by tests may omit this key;
+    # only a real probe() result carries it.
+    out.extend(wf.get("gate_target_problems", []))
     if not wf.get("root_workflow_exists"):
         out.append(
             f"WORKFLOW NOT DISCOVERABLE: {WORKFLOW_REL} is missing at the repo "
@@ -494,6 +548,35 @@ def _selftest() -> int:
     ]
     for label, wf, want_n, needle in wf_cases:
         got = workflow_problems(wf)
+        good = (len(got) == want_n and (not needle or any(needle in p for p in got)))
+        ok &= good
+        print(f"  [{'ok' if good else 'BAD'}] {label}: "
+              f"{len(got)} problem(s), expect {want_n}")
+
+    # Pass20: THE workflow gate must be bundle-driven. A hard-coded onnx path
+    # is a third copy of the input list that can rot in silence -- prove the
+    # guard bites on every way someone could reintroduce one.
+    clean_gate = (
+        'run: |\n'
+        '  python tools/hd1910/ci_gate_targets.py --bundle "$BUNDLE" --sh > "$SH"\n'
+        '  . "$SH"\n'
+        '  python tools/hd1910/pre_deploy_check.py --onnx "$GATE_WALK" '
+        '--expect-kp "$GATE_EXPECT_KP"\n')
+    gate_cases = [
+        ("bundle-driven gate (clean)", clean_gate, 0, ""),
+        ("hard-coded onnx path reintroduced",
+         clean_gate + 'WALK="logs/rsl_rl/foo/walk.onnx"\n', 1, "HARD-CODED"),
+        ("hard-coded toml path reintroduced",
+         clean_gate + 'TOML="out/robotd_hd1910_mode0.toml"\n', 1, "HARD-CODED"),
+        ("hard-coded --expect-kp literal",
+         clean_gate + '  --expect-kp 16\n', 1, "--expect-kp HARD-CODED"),
+        ("emitter call removed, gate still runs",
+         clean_gate.replace("tools/hd1910/ci_gate_targets.py --bundle", "echo"),
+         1, "NOT BUNDLE-DRIVEN"),
+    ]
+    for label, text, want_n, needle in gate_cases:
+        got = workflow_problems(dict(good_wf, gate_target_problems=
+                                     gate_target_problems(text)))
         good = (len(got) == want_n and (not needle or any(needle in p for p in got)))
         ok &= good
         print(f"  [{'ok' if good else 'BAD'}] {label}: "

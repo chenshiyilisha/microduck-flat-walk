@@ -36,7 +36,21 @@
 #   3. pytest tests/               -> the tooling/config regression suite
 #   4. real gate on each committed deploy onnx: bundle / numeric / inference /
 #      toml REALLY execute; `contract` is an explicit SKIP asserted by
-#      assert_ci_verdict.py --allow-skip contract
+#      assert_ci_verdict.py --allow-skip contract. PASS20: the three onnx paths,
+#      the toml and --expect-kp are READ FROM THE BUNDLE by ci_gate_targets.py,
+#      not hard-coded here (a third copy of the list rotted silently).
+#
+# PASS20 GOVERNANCE BOUNDARY (verified against GitHub docs, not assumed):
+# this is a POST-PUSH ADVISORY CHECK, not a merge gate. `main` has no branch
+# protection and no rulesets; this repo has 0 PRs and every one of the first
+# four runs was a `push` event, so a red run never stopped a commit landing on
+# main (two failing runs are ancestors of main). Adding a "required status
+# check" would be decorative here: docs say required checks apply "before
+# merging" (PRs), admins are exempt by default, and "A job that is skipped
+# will report its status as 'Success'. It will not prevent a pull request
+# from merging, even if it is a required check." The REAL gate is the LOCAL
+# pre-push workflow: `assert_clean_checkout.py --strict` + pytest + the five
+# stages with .venv-mjlab. Do not read a green run as a merge gate.
 #
 # HONEST BOUNDARY: `contract` compares the ONNX obs layout / joint order / home
 # pose against the LIVE training cfg and needs mjlab_microduck (torch + mujoco).
@@ -82,6 +96,9 @@ jobs:
       - name: Probe negative-control self-test
         run: python tools/hd1910/assert_clean_checkout.py --selftest
 
+      - name: CI gate targets negative-control self-test (bundle-driven)
+        run: python tools/hd1910/ci_gate_targets.py --selftest
+
       - name: CI verdict assertion negative-control self-test
         run: python tools/hd1910/assert_ci_verdict.py --selftest
 
@@ -103,19 +120,27 @@ jobs:
         run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --verify
 
       - name: Real deploy gate on committed artifacts
+        # PASS20 / R4: targets come from the BUNDLE, not a hard-coded third copy.
+        # The old shell literals went stale in silence: pointing ground_pick at a
+        # non-existent onnx left `--strict`, pytest and provenance --verify all
+        # green, so CI would validate a policy the bundle does not ship. Now
+        # ci_gate_targets.py reads out/hd1910_kp8_deploy_bundle.json (the single
+        # source of truth) and emits GATE_* vars; a local guard in
+        # assert_clean_checkout.py fails if .onnx paths are hard-coded again.
         # onnxruntime IS installed above, so inference must actually EXECUTE.
         # Only `contract` may SKIP (needs mjlab_microduck); assert_ci_verdict.py
         # rejects any other SKIP/FAIL, so a broken guard cannot look green.
         run: |
           set -e
-          WALK="logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx"
-          GP="logs/rsl_rl/microduck_groundpick_hd1910/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216.onnx"
-          SU="logs/rsl_rl/microduck_standup_hd1910/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308.onnx"
-          TOML="out/robotd_hd1910_mode0.toml"
-          for O in "$WALK" "$GP" "$SU"; do
+          BUNDLE="out/hd1910_kp8_deploy_bundle.json"
+          TARGETS_SH="${RUNNER_TEMP:-/tmp}/gate_targets.sh"
+          python tools/hd1910/ci_gate_targets.py --bundle "$BUNDLE" --sh > "$TARGETS_SH"
+          . "$TARGETS_SH"
+          test "$GATE_COUNT" -eq 3
+          for O in "$GATE_WALK" "$GATE_GROUND_PICK" "$GATE_STAND"; do
             echo "=== gate: $O ==="
             REPORT="out/ci_$(basename "$O" .onnx).json"
-            python tools/hd1910/pre_deploy_check.py --onnx "$O" --toml "$TOML" --expect-kp 16 --json "$REPORT"
+            python tools/hd1910/pre_deploy_check.py --onnx "$O" --toml "$GATE_TOML" --expect-kp "$GATE_EXPECT_KP" --json "$REPORT"
             python tools/hd1910/assert_ci_verdict.py "$REPORT" --allow-skip contract
           done
 
@@ -124,4 +149,5 @@ jobs:
           echo "scope_gate=${{ steps.readiness.outputs.scope_gate }}"
           echo "full_gate=${{ steps.readiness.outputs.full_gate }}"
           echo "workflow_discoverable=${{ steps.readiness.outputs.workflow_discoverable }}"
+          echo "CI IS A POST-PUSH ADVISORY CHECK, NOT A MERGE GATE -- main is unprotected (no branch protection / no rulesets); a red run does not stop a commit."
           echo "CONTRACT STAGE NOT VERIFIED IN CI -- run pre_deploy_check.py and pytest tests/ with .venv-mjlab before shipping."

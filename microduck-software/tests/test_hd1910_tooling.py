@@ -1065,3 +1065,159 @@ def test_lean_ci_simulator_blocks_every_missing_dependency():
     # in the simulated environment. A simulation that forgets it is a false green.
     assert "bam" in blocked
 
+
+# ── Pass20 / loop R4: CI gate targets must come from the bundle ──
+
+def test_ci_gate_targets_cli_emits_bundle_paths(tmp_path):
+    """CLI entry point, not just the pure function: --sh must expose exactly the
+    three policies + toml + expect_kp recorded in the real bundle, and --json
+    must agree. Negative control: a bundle missing an artifact must fail."""
+    script = HERE / "ci_gate_targets.py"
+    bundle = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
+    expected = json.loads(bundle.read_text(encoding="utf-8"))
+
+    sh = subprocess.run([sys.executable, str(script), "--bundle", str(bundle),
+                         "--root", str(ROOT), "--sh"],
+                        capture_output=True, text=True)
+    assert sh.returncode == 0, sh.stdout + sh.stderr
+    assert f"GATE_WALK={expected['artifacts']['walk']['rel_path']}" in sh.stdout
+    assert f"GATE_GROUND_PICK={expected['artifacts']['ground_pick']['rel_path']}" in sh.stdout
+    assert f"GATE_STAND={expected['artifacts']['stand']['rel_path']}" in sh.stdout
+    assert f"GATE_TOML={expected['artifacts']['robotd_toml']['rel_path']}" in sh.stdout
+    assert f"GATE_EXPECT_KP={int(expected['plant']['position_kp'])}" in sh.stdout
+    assert "GATE_COUNT=3" in sh.stdout
+
+    js = subprocess.run([sys.executable, str(script), "--bundle", str(bundle),
+                         "--root", str(ROOT), "--json"],
+                        capture_output=True, text=True)
+    assert js.returncode == 0, js.stdout + js.stderr
+    got = json.loads(js.stdout)
+    assert got["policies"]["ground_pick"] == expected["artifacts"]["ground_pick"]["rel_path"]
+    assert got["expect_kp"] == int(expected["plant"]["position_kp"])
+
+
+def test_ci_gate_targets_cli_selftest_and_negative_control(tmp_path):
+    """The emitter must reject a bundle whose targets cannot be trusted, and
+    its own --selftest CLI must run (a guard nobody invokes is decoration)."""
+    script = HERE / "ci_gate_targets.py"
+    selftest = subprocess.run([sys.executable, str(script), "--selftest"],
+                             capture_output=True, text=True)
+    assert selftest.returncode == 0, selftest.stdout + selftest.stderr
+    assert "SELFTEST: PASS" in selftest.stdout
+
+    bundle = json.loads((ROOT / "out" / "hd1910_kp8_deploy_bundle.json")
+                        .read_text(encoding="utf-8"))
+    # Bad bundle: a stale path that no longer exists on disk. This is exactly
+    # the Pass20 negative control (the OLD workflow had such a literal and all
+    # other guards stayed green), so the emitter MUST refuse to emit it.
+    bundle["artifacts"]["ground_pick"]["rel_path"] = "logs/rsl_rl/STALE_STALE.onnx"
+    bad = tmp_path / "bundle.json"
+    bad.write_text(json.dumps(bundle), encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(script), "--bundle", str(bad),
+                           "--root", str(ROOT), "--sh"],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "ERROR" in proc.stderr
+    assert "GATE_WALK" not in proc.stdout
+
+    # Shell-injection-shaped rel_path must be refused before shlex quoting.
+    bundle["artifacts"]["ground_pick"]["rel_path"] = "logs/x; rm -rf /.onnx"
+    bad.write_text(json.dumps(bundle), encoding="utf-8")
+    proc2 = subprocess.run([sys.executable, str(script), "--bundle", str(bad),
+                            "--root", str(ROOT), "--sh"],
+                           capture_output=True, text=True)
+    assert proc2.returncode == 1, proc2.stdout + proc2.stderr
+
+
+def test_ci_workflow_gate_is_bundle_driven_and_unhardcoded():
+    """Structural: the workflow must NOT contain a third copy of the onnx/toml
+    list, must source ci_gate_targets.py, and the probe must go red if anyone
+    reintroduces a literal. Covers both the real file and pure-function controls.
+    """
+    acc = _load("assert_clean_checkout_gate", HERE / "assert_clean_checkout.py")
+    wf = (ROOT.parent / ".github" / "workflows" / "deploy-gate.yml")
+    text = wf.read_text(encoding="utf-8")
+    assert acc.gate_target_problems(text) == [], acc.gate_target_problems(text)
+    assert "ci_gate_targets.py" in text
+    assert "--sh" in text
+    assert "$GATE_WALK" in text and "$GATE_EXPECT_KP" in text
+    assert "--expect-kp 16" not in text, "expect-kp must come from the bundle"
+
+    # Negative control 1: a hard-coded onnx literal anywhere in code lines.
+    dirty = text.replace('          BUNDLE="out/hd1910_kp8_deploy_bundle.json"',
+                         '          BUNDLE="out/hd1910_kp8_deploy_bundle.json"\n'
+                         '          WALK="logs/rsl_rl/stale/walk.onnx"')
+    assert any("HARD-CODED" in p for p in acc.gate_target_problems(dirty)), (
+        "guard failed to notice a reintroduced hard-coded onnx path")
+    # Negative control 2: emitter removed while the gate still runs.
+    no_emitter = text.replace("ci_gate_targets.py", "old_hardcoded_list.sh")
+    assert any("NOT BUNDLE-DRIVEN" in p
+               for p in acc.gate_target_problems(no_emitter))
+    # Negative control 3: comments describing paths must NOT be flagged.
+    assert acc.gate_target_problems(
+        "# history: artifacts/flat_walk/*.onnx was force-added\n" + text) == []
+
+
+def test_clean_checkout_strict_detects_hardcoded_gate_targets(tmp_path):
+    """CLI-level: --strict must go red when the workflow re-hardcodes a path.
+    The Pass20 discovery was that --strict, pytest and provenance --verify ALL
+    stayed green on exactly this change; that must never happen again."""
+    script = HERE / "assert_clean_checkout.py"
+    fake_root = tmp_path / "microduck-software"
+    (fake_root / "out").mkdir(parents=True)
+    (fake_root / "out" / "hd1910_kp8_deploy_bundle.json").write_text(
+        json.dumps({"artifacts": {}}), encoding="utf-8")
+    wf = tmp_path / ".github" / "workflows" / "deploy-gate.yml"
+    wf.parent.mkdir(parents=True)
+    clean = ("name: x\non:/n  push:/njobs:/n  j:/n    runs-on: ubuntu-latest\n"
+            "    defaults:/n      run:/n"
+            "        working-directory: microduck-software\n"
+            "    steps:/n      - run: |\n"
+            "          python tools/hd1910/ci_gate_targets.py --sh > t.sh\n"
+            "          . t.sh\n"
+            "          python tools/hd1910/pre_deploy_check.py --onnx \"$GATE_WALK\"\n")
+
+    def run():
+        return subprocess.run(
+            [sys.executable, str(script), "--root", str(fake_root),
+             "--bundle", "out/hd1910_kp8_deploy_bundle.json",
+             "--strict", "--json", str(fake_root / "out" / "r.json")],
+            capture_output=True, text=True)
+
+    wf.write_text(clean, encoding="utf-8")
+    base = run()
+    data = json.loads((fake_root / "out" / "r.json").read_text(encoding="utf-8"))
+    assert not any("HARD-CODED" in p for p in data["workflow_problems"]), data
+    assert base.returncode == 1, "empty bundle must still keep --strict red"
+
+    wf.write_text(clean + '          WALK="logs/rsl_rl/stale/walk.onnx"\n',
+                  encoding="utf-8")
+    dirty = run()
+    data2 = json.loads((fake_root / "out" / "r.json").read_text(encoding="utf-8"))
+    assert any("HARD-CODED" in p for p in data2["workflow_problems"]), data2
+    assert "HARD-CODED" in dirty.stdout, dirty.stdout
+
+
+def test_ci_gate_expect_kp_matches_independently_computed_reg50():
+    """Two INDEPENDENT algorithms for the same quantity (the user's own rule
+    for catching axis/unit bugs): emitter reads bundle.plant.position_kp, while
+    audit_robotd_toml.register_kp() recomputes reg50 from the REAL toml's gain
+    and position_kp. They are equal ONLY because gain=200 (B14). If gain ever
+    changes, this goes red instead of silently feeding a wrong --expect-kp.
+    """
+    import tomllib  # stdlib on Python >= 3.11 (CI uses 3.12)
+
+    emit = _load("ci_gate_targets_test", HERE / "ci_gate_targets.py")
+    audit = _load("audit_robotd_toml_kp", HERE / "audit_robotd_toml.py")
+    cfg = tomllib.loads((ROOT / "out" / "robotd_hd1910_mode0.toml")
+                        .read_text(encoding="utf-8"))
+    gain = cfg["policy"]["gain"]
+    p_kp = cfg["bus"]["position_kp"]
+    reg50 = audit.register_kp(gain, p_kp)
+    targets = emit.load_targets(ROOT / "out" / "hd1910_kp8_deploy_bundle.json", ROOT)
+    assert targets["expect_kp"] == reg50, (
+        f"bundle says expect_kp={targets['expect_kp']} but toml gives "
+        f"reg50={reg50} (gain={gain}, position_kp={p_kp}); gain != 200 breaks "
+        "the position_kp==reg50 equivalence -- add an explicit expected_reg50 "
+        "to the bundle instead of reusing position_kp")
+    assert gain == 200, "B14 equivalence premise changed; re-derive expect_kp"
