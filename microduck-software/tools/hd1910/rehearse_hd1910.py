@@ -52,8 +52,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "hd1910"))
 
-# Register HD1910Actuator before any bam.model.load_model(json_file=…).
-import bam_actuators  # noqa: E402,F401
+# BAM is a TRAINING/SIMULATION dependency (a gitignored .upstream snapshot),
+# NOT part of tools/hd1910/requirements.txt. Registering HD1910Actuator must
+# therefore stay LAZY (see _patch_upstream): the plant-string / filename logic
+# below is pure stdlib and its regression tests must run in lean CI. Pass19:
+# a top-level `import bam_actuators` made 7 tooling tests fail on the first
+# real GitHub Actions run with ModuleNotFoundError: No module named 'bam'.
 import rehearse_deploy as rd  # noqa: E402
 from plant_spec import (  # noqa: E402
     HD1910_FTSERVO_OFFICIAL_M6,
@@ -377,6 +381,17 @@ def resolve_plant(spec: str) -> tuple[str, dict]:
 
 def _patch_upstream(mod):
     """Replace XL330 motor_name lookup with the resolved HD1910 preset."""
+    # Register HD1910Actuator only when a rehearsal is actually built. BAM is
+    # absent from the lean CI toolchain, so a top-level import would break the
+    # pure plant-resolution helpers and their regression tests in CI.
+    try:
+        import bam_actuators  # noqa: F401  (registers HD1910Actuator in bam.actuators)
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "rehearsal needs the BAM simulation stack (tools/bam_actuators.py -> "
+            "`bam`); run it with .venv-mjlab, not the lean CI toolchain"
+        ) from exc
+
     plant = _STATE["plant"]
     if plant is None:  # pragma: no cover - main() always resolves first
         raise SystemExit("bug: plant not resolved before load_upstream")

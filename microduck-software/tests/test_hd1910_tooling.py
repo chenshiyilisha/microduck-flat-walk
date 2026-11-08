@@ -994,3 +994,74 @@ def test_evidence_toml_is_lf_and_pinned_by_gitattributes(tmp_path):
     tampered.write_bytes(crlf + b"\n[extra]\nx = 1\n")
     assert acc._eol_only_drift(tampered, meta["sha256"]) is False
 
+
+# ── Pass19: lean CI has NO `bam`; rehearsal must import it lazily ──
+
+
+def test_rehearse_hd1910_has_no_top_level_bam_import():
+    """Pass19: the second real CI run failed 7 tooling tests with
+    ModuleNotFoundError: No module named 'bam', because rehearse_hd1910.py had a
+    top-level `import bam_actuators`. BAM is a training/simulation dependency,
+    not part of tools/hd1910/requirements.txt. Pin the lazy-import structure.
+    """
+    import ast
+    tree = ast.parse((HERE / "rehearse_hd1910.py").read_text(encoding="utf-8"))
+    top = []
+    for node in tree.body:  # module level ONLY; function-level imports are fine
+        if isinstance(node, ast.Import):
+            top += [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            top.append(node.module or "")
+    bad = [n for n in top if n == "bam" or n.startswith("bam.")
+           or n == "bam_actuators"]
+    assert not bad, f"top-level BAM import breaks lean CI: {bad}"
+
+
+def test_rehearsal_pure_logic_imports_without_bam():
+    """CLI-level negative control: a fresh interpreter where `import bam` fails
+    exactly as it does in CI must still be able to load the module and use the
+    pure plant-resolution helpers."""
+    code = """
+import importlib.abc, importlib.util, sys
+class _NoBam(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] == 'bam':
+            raise ModuleNotFoundError("No module named 'bam'", name=fullname)
+        return None
+sys.meta_path.insert(0, _NoBam())
+sys.path.insert(0, %r)
+spec = importlib.util.spec_from_file_location('rh_no_bam', %r)
+m = importlib.util.module_from_spec(spec)
+sys.modules['rh_no_bam'] = m
+spec.loader.exec_module(m)
+assert hasattr(m, '_normalize_plant')
+print('OK lean import')
+""" % (str(HERE), str(HERE / "rehearse_hd1910.py"))
+    proc = subprocess.run([sys.executable, "-c", code],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "OK lean import" in proc.stdout
+
+
+def test_lean_ci_simulator_blocks_every_missing_dependency():
+    """Pass19: the local lean-CI stand-in lives in a temp dir and its BLOCKED
+    set omitted `bam`, so 7 tests passed locally that real CI failed. Pin the
+    committed copy's block list so an under-blocking simulation cannot recur.
+    """
+    import ast
+    path = HERE / "sitecustomize_lean_ci.py"
+    assert path.is_file(), "committed lean-CI simulator is missing"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    blocked = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "BLOCKED" for t in node.targets):
+            blocked = {ast.literal_eval(e) for e in node.value.elts}
+            break
+    assert blocked is not None, "BLOCKED set not found at module level"
+    required = {"mjlab_microduck", "torch", "mujoco", "warp", "scipy", "bam"}
+    assert required <= blocked, f"lean-CI simulator under-blocks: {required - blocked}"
+    # Negative control: the whole point is that `bam` must NOT be importable
+    # in the simulated environment. A simulation that forgets it is a false green.
+    assert "bam" in blocked
+

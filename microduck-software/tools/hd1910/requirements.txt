@@ -54,6 +54,15 @@
 # (3 onnx + 9 upstream contract sources + companion meta) is present and
 # byte-identical, so 4 of 5 conductor stages really execute in CI.
 # Before shipping, run conductor + pytest locally with .venv-mjlab for 5/5.
+#
+# PASS19 ADDENDUM (2026-11-08): lean CI also has NO `bam` -- it lives in a
+# gitignored .upstream simulation snapshot on the dev workstation only.
+# The second real CI run lost 7 tooling tests to a top-level
+# `import bam_actuators` in rehearse_hd1910.py. That registration is now
+# LAZY (inside _patch_upstream()), so the pure plant-resolution helpers stay
+# importable here; an actual rehearsal still fails loudly without BAM.
+# When simulating lean CI locally, block `bam` too -- an under-blocking
+# simulation is itself a source of false greens.
 onnx>=1.20.1
 onnxruntime>=1.24.4
 numpy
