@@ -933,3 +933,64 @@ def test_workflow_probe_cli_detects_missing_root_workflow(tmp_path):
     # Other problems (empty bundle) still keep --strict red: no false green.
     assert restored.returncode == 1
 
+
+# ── Pass19: evidence fingerprints must be platform-independent ──
+
+
+def test_bundle_artifact_hashes_match_committed_blobs():
+    """The first real GitHub Actions run (Pass19) failed with
+    "artifact robotd_toml: sha256 differs from bundle": the bundle had recorded
+    the WINDOWS working-tree bytes (CRLF, 9520 B) while git stored and CI
+    checked out the LF blob (9382 B). Evidence must be anchored to what a clean
+    checkout receives, not to whichever EOL this machine happens to use.
+    """
+    import hashlib
+    bundle = json.loads(
+        (ROOT / "out" / "hd1910_kp8_deploy_bundle.json").read_text(encoding="utf-8"))
+    repo = ROOT.parent
+    assert bundle["artifacts"], "bundle has no artifacts to verify"
+    for name, meta in bundle["artifacts"].items():
+        rel = "microduck-software/" + meta["rel_path"]
+        proc = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=repo,
+                              capture_output=True, check=True)
+        blob = proc.stdout
+        assert len(blob) == meta["bytes"], (name, len(blob), meta["bytes"])
+        assert hashlib.sha256(blob).hexdigest() == meta["sha256"], (
+            f"{name}: bundle fingerprint is not the committed blob's")
+
+
+def test_evidence_toml_is_lf_and_pinned_by_gitattributes(tmp_path):
+    """Negative control for the EOL trap: a CRLF working tree must NOT hash to
+    the committed fingerprint, and .gitattributes must pin this file to LF."""
+    import hashlib
+    path = ROOT / "out" / "robotd_hd1910_mode0.toml"
+    raw = path.read_bytes()
+    assert b"\r\n" not in raw, (
+        "evidence TOML has CRLF in the working tree; core.autocrlf or a "
+        "missing .gitattributes will make CI see different bytes")
+    bundle = json.loads(
+        (ROOT / "out" / "hd1910_kp8_deploy_bundle.json").read_text(encoding="utf-8"))
+    meta = bundle["artifacts"]["robotd_toml"]
+    assert hashlib.sha256(raw).hexdigest() == meta["sha256"]
+    # If the file were converted back to CRLF, both the size and the digest
+    # would drift -- i.e. the invariant above really can detect the regression.
+    crlf = raw.replace(b"\n", b"\r\n")
+    assert len(crlf) != len(raw)
+    assert hashlib.sha256(crlf).hexdigest() != meta["sha256"]
+
+    attr = subprocess.run(
+        ["git", "check-attr", "text", "eol", "--",
+         "microduck-software/out/robotd_hd1910_mode0.toml"],
+        cwd=ROOT.parent, capture_output=True, text=True, check=True)
+    assert "eol: lf" in attr.stdout, attr.stdout
+
+    # The probe must be able to NAME an EOL-only drift, and must NOT mislabel
+    # real content tampering as one.
+    acc = _load("assert_clean_checkout_eol", HERE / "assert_clean_checkout.py")
+    crlf_file = tmp_path / "crlf.toml"
+    crlf_file.write_bytes(crlf)
+    assert acc._eol_only_drift(crlf_file, meta["sha256"]) is True
+    tampered = tmp_path / "tampered.toml"
+    tampered.write_bytes(crlf + b"\n[extra]\nx = 1\n")
+    assert acc._eol_only_drift(tampered, meta["sha256"]) is False
+

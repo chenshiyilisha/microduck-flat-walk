@@ -1,0 +1,20 @@
+# Deploy evidence is hashed BYTE-FOR-BYTE by assert_clean_checkout.py and
+# record_provenance.py --verify, and CI runs on Linux while this workspace is
+# Windows with core.autocrlf=true.
+#
+# Pass19: the first real GitHub Actions run failed at the readiness probe with
+#   "artifact robotd_toml: sha256 differs from bundle"
+# because the bundle recorded the WINDOWS WORKING-TREE bytes (CRLF, 9520 B,
+# f6ebad3c...) while git stored / CI checked out the LF blob (9382 B,
+# 2b054f78...). Three .onnx artifacts were byte-identical on both sides
+# because git never text-converts binaries.
+#
+# Fix the root cause: pin this evidence file to LF in EVERY checkout, and keep
+# the bundle fingerprints anchored to the committed blob bytes. A regression
+# test (test_bundle_artifact_hashes_match_committed_blobs) checks that
+# invariant using `git show HEAD:<path>` so no platform can drift silently.
+.gitattributes text eol=lf
+microduck-software/out/robotd_hd1910_mode0.toml text eol=lf
+
+# Never let a future text-conversion rule touch the deployed policy graphs.
+*.onnx binary

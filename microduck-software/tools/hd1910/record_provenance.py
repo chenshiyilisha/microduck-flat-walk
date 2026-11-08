@@ -251,12 +251,22 @@ def verify_artifact_hashes(bundle: dict) -> tuple[int, list[str]]:
             rc = 1
             msgs.append(f"DRIFT artifact missing on disk: {name} ({rel})")
             continue
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
         size = path.stat().st_size
         if digest != meta.get("sha256"):
             rc = 1
+            # Pass19: on Windows with core.autocrlf=true the same text file is
+            # CRLF on disk but LF in the VCS blob. Say so explicitly instead of
+            # leaving a bare "sha256 differs" that looks like real bitrot.
+            eol_only = (b"\r\n" in raw
+                        and hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+                        == meta.get("sha256"))
+            hint = ("  <- EOL-ONLY difference (CRLF working tree vs LF committed "
+                    "blob); fix core.autocrlf / .gitattributes and anchor the "
+                    "fingerprint to the committed bytes" if eol_only else "")
             msgs.append(f"DRIFT artifact {name}: sha256 stored="
-                        f"{str(meta.get('sha256'))[:12]} recomputed={digest[:12]}")
+                        f"{str(meta.get('sha256'))[:12]} recomputed={digest[:12]}{hint}")
         if size != meta.get("bytes"):
             rc = 1
             msgs.append(f"DRIFT artifact {name}: bytes stored={meta.get('bytes')} "

@@ -23,8 +23,8 @@
     },
     "robotd_toml": {
       "rel_path": "out/robotd_hd1910_mode0.toml",
-      "sha256": "f6ebad3c49d9147e3db1994028e9e107c898204812f31b0776390e241315d1cf",
-      "bytes": 9520
+      "sha256": "2b054f7893db85f5977092dcc093eabc9a774182e2cc4a4163bf58501d83ae9a",
+      "bytes": 9382
     }
   },
   "deploy_checks": {

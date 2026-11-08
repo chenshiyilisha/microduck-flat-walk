@@ -106,6 +106,15 @@ def _sha256(path: Path) -> str | None:
     return h.hexdigest()
 
 
+def _eol_only_drift(path: Path, stored_sha: str | None) -> bool:
+    """Pass19: distinguish a CRLF/LF mismatch from real content bitrot."""
+    if not stored_sha or not path.is_file():
+        return False
+    raw = path.read_bytes()
+    return (b"\r\n" in raw
+            and hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest() == stored_sha)
+
+
 def _tracked(root: Path, rel: str) -> bool:
     """A file only helps CI if a fresh checkout actually receives it."""
     try:
@@ -215,8 +224,10 @@ def assess(artifacts: list[dict], upstream: list[dict], training_stack: bool) ->
         # sha mismatch MUST be checked independently of size: the classic
         # bitrot case is a same-length edit, where bytes_match stays True.
         if not a.get("sha_match"):
+            hint = ("  <- EOL-ONLY difference (CRLF working tree vs LF committed "
+                    "blob); check core.autocrlf / .gitattributes" if a.get("eol_only") else "")
             problems.append(f"artifact {name}: sha256 differs from bundle "
-                            f"(bitrot or a stale bundle)")
+                            f"(bitrot or a stale bundle){hint}")
         elif not a.get("bytes_match"):
             problems.append(f"artifact {name}: size differs from bundle")
         if not a.get("tracked"):
@@ -278,6 +289,7 @@ def probe(root: Path, bundle_path: Path) -> dict:
             "bytes_match": path.stat().st_size == meta.get("bytes")
                            if path.is_file() else False,
             "sha_match": digest == meta.get("sha256"),
+            "eol_only": _eol_only_drift(path, meta.get("sha256")),
         })
 
     upstream = [{"rel_path": rel, "exists": (root / rel).is_file()}
