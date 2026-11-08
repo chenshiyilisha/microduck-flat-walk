@@ -56,12 +56,25 @@ def test_conductor_verdict_surfaces_skips():
 
 
 def test_conductor_selftest_runs():
-    """The four guards must self-validate with no real policy / no robot."""
-    proc = subprocess.run(
-        [sys.executable, str(HERE / "pre_deploy_check.py"), "--selftest"],
-        capture_output=True, text=True,
-    )
-    assert proc.returncode == 0, proc.stderr[-2000:]
+    """The guards must self-validate with no real policy / no robot.
+
+    Pass18: lean CI has no mjlab_microduck, so contract.selftest returns a
+    genuine SKIP. That is only acceptable when the caller names it explicitly;
+    the same run without the allow-list must be a FAIL (tested below). On a full
+    training stack there must be NO PARTIAL at all -- otherwise a silently
+    skipped guard would look like a pass again.
+    """
+    lean = importlib.util.find_spec("mjlab_microduck") is None
+    cmd = [sys.executable, str(HERE / "pre_deploy_check.py"), "--selftest"]
+    if lean:
+        cmd += ["--selftest-allow-skip", "contract.selftest"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+    if lean:
+        assert "PARTIAL" in proc.stdout, proc.stdout[-2000:]
+    else:
+        assert "PARTIAL" not in proc.stdout, proc.stdout[-2000:]
+        assert "PASS -- conductor + guards wired correctly" in proc.stdout
 
 
 def test_conductor_argparse_usage_error_is_not_a_skip():
@@ -723,4 +736,117 @@ def test_verify_bundle_now_checks_artifact_hashes():
         assert rc4 == 1 and any("DRIFT artifact robotd_toml" in m for m in msgs4)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+# ── Pass18: lean-CI boundaries and the committed-input closure ────────────
+
+def test_conductor_selftest_skip_requires_explicit_allowlist():
+    """A skipped guard selftest must be a FAIL unless the caller names it.
+
+    Negative controls in both directions: an unlisted SKIP is red, a whitelisted
+    SKIP is allowed (but PARTIAL), an unknown allow-list entry is rejected, and
+    a real FAIL stays red even when whitelisted.
+    """
+    pc = _load("pc_selftest_allow_test", HERE / "pre_deploy_check.py")
+    real_stage = pc._stage
+
+    def one_skip(name, script, *args):
+        status = "SKIP" if name == "contract.selftest" else "PASS"
+        return pc.StageResult(name, 2 if status == "SKIP" else 0, status, "")
+
+    try:
+        pc._stage = one_skip
+        assert pc.run_selftest() == 1
+        assert pc.run_selftest(("contract.selftest",)) == 0
+        assert pc.run_selftest(("typo.selftest",)) == 2
+
+        pc._stage = lambda name, script, *args: pc.StageResult(
+            name, 1, "FAIL", "deliberately broken")
+        assert pc.run_selftest(("contract.selftest",)) == 1
+    finally:
+        pc._stage = real_stage
+
+
+def test_conductor_selftest_allowlist_cli():
+    """CLI level: the new option must actually work when invoked (Pass16 lesson)."""
+    base = [sys.executable, str(HERE / "pre_deploy_check.py"), "--selftest"]
+    ok = subprocess.run(base + ["--selftest-allow-skip", "contract.selftest"],
+                         capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stdout[-1500:] + ok.stderr[-1500:]
+    bad = subprocess.run(base + ["--selftest-allow-skip", "typo.selftest"],
+                          capture_output=True, text=True)
+    assert bad.returncode == 2
+    assert "no such guard" in (bad.stdout + bad.stderr)
+
+
+def test_clean_checkout_layered_verdicts():
+    """Scope (4/5 stages) and full (5/5) must not collapse into one boolean."""
+    acc = _load("acc_layered_test", HERE / "assert_clean_checkout.py")
+    art = [{"name": "walk", "rel_path": "x/walk.onnx", "exists": True,
+            "tracked": True, "bytes_match": True, "sha_match": True}]
+    ups = [{"rel_path": f".upstream/{i}", "exists": True} for i in range(9)]
+
+    full = acc.assess(art, ups, True)
+    lean = acc.assess(art, ups, False)
+    assert full["ci_scope_gate_possible"] and full["ci_full_gate_possible"]
+    assert lean["ci_scope_gate_possible"] and not lean["ci_full_gate_possible"]
+    assert lean["scope_problems"] == []
+    assert any("training stack" in p for p in lean["problems"])
+
+    missing = acc.assess(art, [dict(ups[3], exists=False)] + ups[:3] + ups[4:], False)
+    assert not missing["ci_scope_gate_possible"]
+
+
+def test_clean_checkout_cli_strict_and_strict_full():
+    """--strict is the CI gate; --strict-full must additionally turn red
+    when the training stack is absent (an honest negative control)."""
+    lean = importlib.util.find_spec("mjlab_microduck") is None
+    base = [sys.executable, str(HERE / "assert_clean_checkout.py")]
+    strict = subprocess.run(base + ["--strict"], cwd=ROOT,
+                            capture_output=True, text=True)
+    assert strict.returncode == 0, strict.stdout[-1500:] + strict.stderr[-1500:]
+    assert "ci_scope_gate_possible = true" in strict.stdout
+
+    strict_full = subprocess.run(base + ["--strict-full"], cwd=ROOT,
+                                 capture_output=True, text=True)
+    assert strict_full.returncode == (1 if lean else 0), \
+        strict_full.stdout[-1500:] + strict_full.stderr[-1500:]
+
+
+def test_upstream_closure_feeds_bundle_contract():
+    """The probe's source list is only useful if it really is the parser's
+    closure. Positive: all 9 parse to a clean 61/14/15 contract. Negative:
+    removing ONE source must make load_contract() report problems."""
+    import shutil
+
+    acc = _load("acc_closure_test", HERE / "assert_clean_checkout.py")
+    vpb = _load("vpb_closure_test", HERE / "verify_policy_bundle.py")
+    for rel in acc.UPSTREAM_SOURCES:
+        assert (ROOT / rel).is_file(), f"committed contract source missing: {rel}"
+    clean = vpb.load_contract()
+    assert clean.problems == [], clean.problems
+    assert (clean.obs_len, clean.action_len, len(clean.joint_names)) == (61, 14, 15)
+
+    # Build a throwaway tree with exactly the same layout, minus one file.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td)
+        duck = base / "DuckBuddy-main"
+        rl = base / "microduck_rl-develop"
+        rels = []
+        for rel in acc.UPSTREAM_SOURCES:
+            prefix = ".upstream/DuckBuddy-main/"
+            if rel.startswith(prefix):
+                dst = duck / rel[len(prefix):]
+            elif rel.startswith(".upstream/microduck_rl-develop/"):
+                dst = rl / rel[len(".upstream/microduck_rl-develop/"):]
+            else:
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / rel, dst)
+            rels.append(dst)
+        assert vpb.load_contract(duck=duck, rl=rl).problems == []
+        (duck / "duck-control" / "src" / "policy.rs").unlink()
+        broken = vpb.load_contract(duck=duck, rl=rl)
+        assert broken.problems, "removing policy.rs must break contract parsing"
 

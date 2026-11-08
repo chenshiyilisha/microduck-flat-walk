@@ -1,0 +1,17 @@
+{
+  "run": "hd1910_groundpick_smoke_1106_2139",
+  "task": "Mjlab-GroundPick-Flat-MicroDuck",
+  "plant": "hd1910_official_m6_kp8",
+  "kp_fw": 8.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "official_m6_stslaw_sha256_16": "799800a2ea0d5593",
+  "delay_min_lag": 3,
+  "delay_max_lag": 6,
+  "envs": 64,
+  "iters": 5,
+  "ref": "GroundPick HD1910 suite twin; plant = deployment kp8 (NOT m5/kp32)"
+}

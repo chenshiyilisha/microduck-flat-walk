@@ -1,0 +1,20 @@
+{
+  "run": "hd1910_kp5_head015_4096x4000_resume_1030_0841",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_kp5",
+  "kp_fw": 5.0,
+  "rel_heading_envs": 0.15,
+  "device": "cuda:0",
+  "envs": 4096,
+  "target_abs_iter": 4000,
+  "max_iterations_delta": 2001,
+  "resume": true,
+  "load_run": "2026-10-29_13-47-45_hd1910_kp5_head015_4096x2000_1029_1347",
+  "load_checkpoint": "model_1999.pt",
+  "warm_start": "0",
+  "solver": {
+    "iterations": 100,
+    "ls_iterations": 50
+  },
+  "ref": "same recipe resume head0.15 kp5; abs 1999->4000"
+}

@@ -1,0 +1,18 @@
+{
+  "run": "hd1910_roller_formal_1107_formal",
+  "task": "Mjlab-Velocity-Flat-MicroDuck-Rollers",
+  "plant": "hd1910_kp8",
+  "kp_fw": 8.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "official_m6_stslaw_sha256_16": "799800a2ea0d5593",
+  "delay_min_lag": 3,
+  "delay_max_lag": 6,
+  "envs": 4096,
+  "iters": 4000,
+  "baseline": "official roller.onnx on this env = 17.2% fall",
+  "ref": "HD1910 roller retrain; beat roller.onnx baseline; kp8=deploy plant"
+}

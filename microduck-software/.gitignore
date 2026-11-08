@@ -22,6 +22,7 @@ out/*
 !out/plantP_*.json
 !out/plantFreq_*.json
 !out/heading_meta_*.json
+!out/runmeta_*.json
 !out/hd1910_kp8_deploy_bundle.json
 !out/robotd_hd1910_mode0.toml
 !out/deploy_check_*.json
@@ -31,6 +32,19 @@ wandb/
 *.pt
 *.onnx
 MUJOCO_LOG.TXT
+
+# Pass18 (2026-11-08): the three *deployed* policies and the nine read-only
+# robotd/RL contract sources ARE tracked, via `git add -f`. A parent directory
+# ignore (`logs/`, `.upstream/`) cannot be re-included by a nested `!` rule,
+# and the workspace-root .gitignore repeats both patterns; force-adding is the
+# same mechanism already used for artifacts/flat_walk/*.onnx. They are deploy
+# EVIDENCE, not build output: out/hd1910_kp8_deploy_bundle.json records their
+# sha256, and tools/hd1910/assert_clean_checkout.py fails --strict if any of
+# them stops being tracked. Do not remove them from VCS to "clean up".
+#   logs/rsl_rl/*/*.onnx                     (3 files, 2.27 MiB)
+#   .upstream/DuckBuddy-main/...            (8 files)
+#   .upstream/hd1910m/radxa/installation.json
+#   .upstream/microduck_rl-develop/.../manifest.py
 
 __pycache__/
 *.py[cod]

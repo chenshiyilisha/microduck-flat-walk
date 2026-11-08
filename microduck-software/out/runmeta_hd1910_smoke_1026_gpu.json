@@ -1,0 +1,14 @@
+{
+  "run": "hd1910_smoke_1026_gpu",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_openmicroduck_m5",
+  "kp_fw": 32.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "m5_sha256_16": "ec85c34dfbec850a",
+  "envs": 64,
+  "iters": 5
+}

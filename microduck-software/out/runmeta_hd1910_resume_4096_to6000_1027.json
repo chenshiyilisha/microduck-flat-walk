@@ -1,0 +1,19 @@
+{
+  "run": "hd1910_resume_4096_to6000_1027",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_openmicroduck_m5",
+  "kp_fw": 32.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "m5_sha256_16": "ec85c34dfbec850a",
+  "envs": 4096,
+  "max_iterations": 2700,
+  "resume": true,
+  "load_run": "2026-10-26_16-30-03_hd1910_resume_4096_plus1500_until1800",
+  "load_checkpoint": "model_3300.pt",
+  "warm_start": "0",
+  "ref": "resume from 4096 explore toward RL_duck ~590M env steps"
+}

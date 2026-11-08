@@ -23,9 +23,12 @@ touches the robot XML or the env-cfg reward/curriculum definitions. So the tests
 do NOT depend on which plant is currently "live":
 
 * The kinematic tests load each HD-1910 plant's constants **in isolation**
-  (``_load_constants_for_plant``), straight from source, without mutating the
-  live site-packages file. They therefore verify the HD-1910 robot on any host,
-  in CI, regardless of ``--plant`` choice.
+  (``_load_constants_for_plant``), straight from the *installed package's*
+  source (``_live_constants_path``), without mutating the live site-packages
+  file. They therefore verify the HD-1910 robot on any host where the training
+  stack is installed, regardless of ``--plant`` choice. Pass18 replaced a
+  hard-coded ``<repo>/.venv-mjlab/...`` path that made all 21 of them fail in
+  a clean checkout even when ``mjlab_microduck`` WAS importable.
 * The env-cfg tests assert plant-independent reward/curriculum definitions and
   run unconditionally (the env-cfg module is identical across plants within this
   fork).
@@ -59,9 +62,33 @@ sys.path.insert(0, str(REPO / "tools" / "hd1910"))
 HD1910_PLANTS = ["hd1910", "hd1910_kp5", "hd1910_kp8", "hd1910_ftservo_m6"]
 
 
+def _live_constants_path() -> Path:
+    """Locate microduck_constants.py through the INSTALLED package.
+
+    Pass18: `plant_spec.LIVE_CONSTANTS` hard-codes
+    `<repo>/.venv-mjlab/Lib/site-packages/...`. That path exists on the
+    developer's machine but not in a `git archive` clean checkout, so every
+    kinematic test died with FileNotFoundError while still looking like a
+    "checkout problem". The invariant under test is the installed training
+    stack's source, so resolve it via importlib instead of guessing a layout.
+    """
+    spec = importlib.util.find_spec("mjlab_microduck")
+    if spec is None or not spec.submodule_search_locations:
+        raise FileNotFoundError("mjlab_microduck package not importable")
+    pkg = Path(next(iter(spec.submodule_search_locations)))
+    path = pkg / "robot" / "microduck_constants.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"no microduck_constants.py under {pkg}")
+    return path
+
+
 def _mjlab_importable() -> tuple[bool, str]:
     try:
         import mjlab_microduck.tasks  # noqa: F401  (side effect: registers tasks)
+        live = _live_constants_path()
+        # _load_constants_for_plant writes a temp module next to the real one.
+        if not os.access(live.parent, os.W_OK):
+            return False, f"cannot write temp constants next to {live}"
     except Exception as e:  # pragma: no cover - depends on install state
         return False, f"{type(e).__name__}: {e}"
     return True, ""
@@ -85,13 +112,14 @@ def _load_constants_for_plant(plant: str):
     any bytecode are always cleaned up.
     """
     from apply_to_live import _find_kwargs_span
-    from plant_spec import LIVE_CONSTANTS, kwargs_block
+    from plant_spec import kwargs_block
 
-    src = LIVE_CONSTANTS.read_text(encoding="utf-8")
+    live = _live_constants_path()
+    src = live.read_text(encoding="utf-8")
     block = kwargs_block(plant) + "\n"
     start, end = _find_kwargs_span(src)
     new = src[:start] + block + src[end:]
-    tmp = LIVE_CONSTANTS.parent / f"_consts_{plant}_{os.getpid()}.py"
+    tmp = live.parent / f"_consts_{plant}_{os.getpid()}.py"
     prev_dont_write = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
     tmp.write_text(new, encoding="utf-8")

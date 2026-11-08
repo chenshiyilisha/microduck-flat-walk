@@ -142,7 +142,23 @@ def _stage(name: str, script: Path, *args: str) -> StageResult:
     return StageResult(name=name, rc=rc, status=status, tail=detail)
 
 
-def run_selftest() -> int:
+def run_selftest(allow_skip: tuple[str, ...] = ()) -> int:
+    """Run each guard's --selftest.
+
+    A SKIP means "one side was unavailable", never "the guard passed". By
+    default that is a FAIL. Lean CI (no mjlab_microduck) genuinely cannot run
+    `contract.selftest`, so CI must name it EXPLICITLY via
+    --selftest-allow-skip; the result is then printed as PARTIAL, not PASS.
+    This mirrors assert_ci_verdict.py's --allow-skip for the real gate.
+    """
+    known = ("contract.selftest", "bundle.selftest", "numeric.selftest",
+             "inference.selftest", "toml.selftest")
+    unknown = sorted(set(allow_skip) - set(known))
+    if unknown:
+        print(f"ERROR: --selftest-allow-skip names no such guard: {unknown}",
+              file=sys.stderr)
+        return 2
+
     print("== pre_deploy_check self-test (runs each guard's --selftest) ==")
     results: list[StageResult] = [
         _stage("contract.selftest", CONTRACT, "--selftest"),
@@ -152,17 +168,30 @@ def run_selftest() -> int:
         _stage("toml.selftest", TOML_AUDIT, "--selftest"),
     ]
     ok = True
+    skipped: list[str] = []
     for r in results:
-        mark = "ok" if r.status == "PASS" else "BAD"
-        if r.status != "PASS":
+        if r.status == "PASS":
+            mark = "ok"
+        elif r.status == "SKIP" and r.name in allow_skip:
+            mark = "skip"
+            skipped.append(r.name)
+        else:
+            mark = "BAD"
             ok = False
         print(f"  [{mark}] {r.name}: {r.status}")
         if r.tail:
             for line in r.tail.splitlines():
                 print(f"        {line}")
     print()
-    print("self-test: " + ("PASS -- conductor + guards wired correctly"
-                           if ok else "FAIL -- a guard's --selftest did not pass"))
+    if not ok:
+        print("self-test: FAIL -- a guard's --selftest did not pass")
+    elif skipped:
+        print(f"self-test: PARTIAL -- {len(skipped)} guard selftest(s) skipped by "
+              f"explicit allow-list ({', '.join(skipped)}); NOT a full verification")
+        print("GUARD SELFTEST NOT FULLY VERIFIED -- rerun with the full training "
+              "stack (.venv-mjlab) before shipping")
+    else:
+        print("self-test: PASS -- conductor + guards wired correctly")
     return 0 if ok else 1
 
 
@@ -184,10 +213,16 @@ def main() -> int:
     ap.add_argument("--json", type=Path, help="write the full report as JSON")
     ap.add_argument("--selftest", action="store_true",
                     help="run each guard's --selftest; needs no real policy")
+    ap.add_argument("--selftest-allow-skip", default="",
+                    help="comma-separated guard selftests allowed to SKIP in lean CI "
+                         "(only 'contract.selftest' is legitimate). Default empty: "
+                         "any SKIP is a FAIL. A whitelisted SKIP prints PARTIAL.")
     args = ap.parse_args()
 
     if args.selftest:
-        return run_selftest()
+        allow = tuple(s.strip() for s in args.selftest_allow_skip.split(",")
+                      if s.strip())
+        return run_selftest(allow)
 
     if not args.onnx:
         ap.error("--onnx is required (or use --selftest)")

@@ -1,0 +1,14 @@
+{
+  "run": "hd1910_ab_m5_1024x500_1026_1455",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "ab_leg": "m5",
+  "plant_arg": "hd1910",
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "envs": 1024,
+  "iters": 500,
+  "seed": 42
+}

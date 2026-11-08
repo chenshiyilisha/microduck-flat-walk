@@ -32,6 +32,7 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 - **修（零争议、全部真跑）**：① 新增 `tools/hd1910/assert_clean_checkout.py`——机读 CI 输入就绪度探针，逐项检查存在 / **git 是否跟踪** / sha256 / bytes / `.upstream` 关键源 / 训练栈，输出 `ci_full_gate_possible` 与 problems；8 条负对照 selftest（含「文件在盘但 gitignored」这一 Pass13–16 精确陷阱）、`--strict`（缺失 rc=1）、`--github-output`，接进 CI 第一步（非阻断但打 `::warning::` + `REAL GATE NOT RUN`）。② `record_provenance.py` 新增 `verify_artifact_hashes()` 并接进 `--verify`：**先跑负对照确认守卫真的变红**，再刷新 bundle 的 toml 指纹。③ `requirements.txt` 删掉 Pass12/13「onnx 装不上、缺依赖当 SKIP 可接受」的**已被 Pass16 推翻**的注释，改写为「找错解释器 + inference SKIP 在 CI 是 BROKEN GATE」，并补 `pytest>=8`。④ 把 `verify_imu_chain.py`（13 项检查 / 15 负对照、覆盖策略最前 6 个观测数）接进 `pytest tests/`——此前它**只被 README/checklist 提及，从未被 conductor / CI / pytest 调用**，`imu_median=false` 这个部署决策却建立在它上面。⑤ deploy-gate.yml 顶部写明 PASS17 验证边界，加探针步骤；**不擅自改版本控制策略**（入库 2.3 MB onnx + 精简 `.upstream` fixture 属资产/架构决策，留待用户定）。
 - **循环自身又抓到 3 个我写的 bug**：`assess()` 里 `sha_match=False` 但 `bytes_match=True`（同长度篡改，最常见 bitrot）两个分支都不进；`artifacts=[]` 时零 problems 被判 `runnable=True`；以及一处把 `assert_ci_verdict` 的 selftest 措辞复制粘贴进探针 CLI 测试。全部由负对照/CLI 层测试当场变红后修正。
 - **实测收口**：`pytest tests/` **57 passed**、`conductor --selftest` PASS、三个 kp8 onnx 五关全 **PASS**（rc=0）、`provenance --verify` **rc=0** 且新增 `OK artifacts sha256/bytes match for 4 file(s)`、探针 `--selftest` PASS / `--strict` rc=1。**结论**：本轮把「CI 绿」从「看起来门禁齐全」拉回「明确知道这个 checkout 到底能验证什么」；剩余 OPEN 仍是硬件端到端 + P3/P4，并新增一条**待决策**：是否让 CI 真闸门在干净 checkout 上可执行。
+- **Pass18（2026-11-08 · 十二轮循环 · 用户裁定「按最优的来」· 深度挖掘/对照/完善/再挖掘）—— 把上轮那条待决策判成「入库并打通 CI 真闸门」，而不是降级成永久显式边界**：深挖用 `git archive` 干净副本 + 逐项补齐实测出 CI 真正需要的输入闭包 = **3 个部署 onnx（2,381,098 B）+ 9 个 upstream 只读契约源（450,193 B）+ runmeta/heading_meta 伴随元数据**，合计约 2.84 MiB。🔴 **纠正 Pass17 探针自己的盲区**：`UPSTREAM_SOURCES` 只列 5 个，判据是 `verify_policy_bundle.load_contract()` 在干净副本里报 8 条 problems、退化成 `obs_len=0/action_len=0/joint_names=0`；补齐 `duck-control/src/policy.rs`、`duck-ipc-proto/src/lib.rs`、`duck-control/src/feetech.rs`、`microduck_rl-develop/src/mjlab_microduck/publish/manifest.py` 后才恢复 `61/14/15/15/'obs'、0 problems`。🔴 **纠正「干净副本 pytest 21 个 configs 失败＝资产缺失」的错误前提**：真因是 `tests/test_hd1910_configs.py` 经 `plant_spec.LIVE_CONSTANTS` 把 `.venv-mjlab/Lib/site-packages` 拼在 cwd 下，干净副本没有该目录 ⇒ `FileNotFoundError`；本地完整工作区单独跑同一条 **PASS**。改为 `importlib.util.find_spec("mjlab_microduck")` 动态定位已安装包源码，lean 环境才做诚实 skip。**对照发现项目早有证据入库惯例**：`microduck-software/out/` 已入库 283 个文件、全仓已有 2 个 force-add 的 `.onnx`（`artifacts/flat_walk/`）、`.gitignore` 已给 `!out/heading_meta_*.json` 开例外（23 个在库），唯独 `runmeta_*.json` 无例外（0 个在库）⇒ 干净副本缺 32 个伴随 meta，造成 `provenance --verify` 两条 `task stored=... recomputed=None` DRIFT 与 4 个 tooling 失败。 ⇒ 入库不是新策略，只是补齐漏掉的**主体**；降级方案会把 Pass13–16「真闸门从不在 CI 执行」永久固化。**落地**：两层 `.gitignore` 标注 force-add 证据 + 补 `!out/runmeta_*.json`；`git add -f` 12 个文件、add 34 个 runmeta；`assert_clean_checkout.py` 改成**双 verdict**（`ci_scope_gate_possible` = CI 四关 / `ci_full_gate_possible` = 五关含训练栈），`--strict` 只管已提交输入、`--strict-full` 额外管训练栈，selftest 补 4 条分层/闭包负对照；`pre_deploy_check.py` 加**默认空白名单**的 `--selftest-allow-skip`（白名单内 SKIP 打印 PARTIAL 而非 PASS，未知名字 rc=2，FAIL 仍红）；`deploy-gate.yml` 首次跑 `pytest tests/ -q -rs`、`--strict` 探针、三策略真闸门，并显式打印 `CONTRACT STAGE NOT VERIFIED IN CI`。**验证不靠推断**：pip 镜像装不上 lean venv（`onnx>=1.20.1 from versions: none`），改用 `sitecustomize.py` 精确屏蔽 `mjlab_microduck/torch/mujoco/warp/scipy`（同时让 `import` 抛错、`find_spec` 返回 None），复用本机 onnx/numpy/onnxruntime/pytest 真跑整套 CI 命令。**读数**：本地完整栈 `pytest tests/` **62 passed**；lean CI 模拟：探针 `--strict` rc=0（scope=true / full=false）、selftest **PARTIAL rc=0** 而不带白名单 **rc=1**、`pytest` **36 passed / 26 skipped**（skip 理由逐条可见）、`provenance --verify` rc=0、三策略 `PASS*`（`contract=SKIP` + 其余四关真 PASS）、`assert_ci_verdict` rc=0。**负对照**：改坏入库 onnx 的 1 字节 ⇒ 4 关 FAIL + verdict FAIL + 断言 rc=1；临时移走 `policy.rs` ⇒ 探针 `--strict` rc=1 并点名该源，恢复后 rc=0。**循环自身又抓到 2 个错**：YAML step name 里 `strict: real` 的 `: ` 被 PyYAML 判 mapping 语法错；以及负对照 B 最初在 **Pass17 旧代码的干净副本**上做（那份探针清单本就不含 policy.rs，当然不红）⇒ 换到新代码重做才变红。**结论**：CI 首次在**它自己拿到的文件集**上真跑 4/5 关；唯一无法在 lean CI 复现的 `contract` 关（需 torch/mujoco/mjlab_microduck）保留显式 SKIP + 本地 `.venv-mjlab` 五关全 PASS 作为发货前权威验证。剩余 OPEN 不变：硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3 暂缓、P4 可选。
 
 > **2026-11-08 训练状态（与审计并列）**：P0 行走 kp8 续训完（`model_7999`，指标健康，conductor 四关过）；P1 地面拾取 kp8 评测 **96.9%** 通过（四关过）；P2 站起——官方 `hl2915_standup` 在 kp8 仿真能 100% 站起但被 bundle 关拒（metadata 28 关节名 vs 14 动作），改训 **kp8 原生站起**（4096×4000），导出 onnx 后 conductor 四关过、实测站起 **100%**，三个 kp8 技能全部训练自有/同 plant 验证/闸门全过。P3（≥3 seed sweep）用户裁定暂缓，P4 未启动。硬件未到，真机端到端验证（bus.joint_ids 逐关节复核、齿隙 7.4V 重测）待硬件。
 
@@ -305,9 +306,63 @@ _日期：2026-11-07 · 对照对象：`pollen-robotics/microduck`（运行时�
 
 **最终读数**：`pytest tests/` **57 passed in 91.63s**；`conductor --selftest` PASS；三个 kp8 onnx 五关全部 `PASS`（contract/bundle/numeric/inference/toml = PASS，rc=0）；`provenance --verify` **rc=0** 含 `OK artifacts sha256/bytes match for 4 file(s)`；探针 `--selftest` PASS、`--strict` rc=1；`verify_imu_chain.py` 主跑 `all pass` + selftest `all consistent`。
 
-### 4.7.5 本轮**没做**（明确边界，不是遗漏）
+### 4.7.5 本轮**没做**（明确边界，不是遗漏）— ✅ 已于 Pass18 解决
 
 CI 架构级修复需要决策：**是否把 3 个已验证 onnx（合计 2,381,098 B ≈ 2.27 MiB）与闸门依赖的少量 `.upstream` Rust 源码作为 fixture 纳入版本控制**。`git add -f` 实测可行，项目 `.gitignore` 注释也确立了「证据必须留在 VCS」原则（bundle.json / deploy_check 报告均已入库）；但第三方源码快照与二进制入库属资产策略变更，本轮**不擅自决定**。当前探针让「CI 绿 ≠ 部署已验证」机读可见，权威验证仍是**本地完整工作区**跑 `pre_deploy_check.py` + `pytest tests/`。剩余 OPEN：硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3 暂缓、P4 可选。
+
+> **Pass18 判决（用户「按最优的来」）**：选「入库并打通」，不降级。理由与全部实测见 §4.8。
+
+---
+
+## 4.8 Pass18 自主审计（2026-11-08）— 按最优方案打通 CI 真闸门
+
+### 4.8.1 深挖：用实测（不是推断）定出 CI 输入闭包
+
+`git archive HEAD` 解出的干净副本先补候选文件、再跑到 `verify_policy_bundle.load_contract()` 不再报缺，得到最小闭包：
+
+| 类别 | 文件 | 体积 |
+|---|---|---|
+| 部署策略 | 3 个 `logs/rsl_rl/*/*.onnx` | 2,381,098 B |
+| robotd/RL 契约源 | `DuckBuddy-main/duck-control/src/{obs,model,policy,imu,feetech}.rs`、`duck-ipc-proto/src/lib.rs`、`robotd-params/src/lib.rs`、`microduck_rl-develop/.../publish/manifest.py`、`hd1910m/radxa/installation.json` | 450,193 B |
+| 伴随元数据 | `out/runmeta_*.json` + `out/heading_meta_*.json` 中未入库的 32 个 | ≈ 93 KB |
+
+补齐后 `load_contract()`：`obs_len=61 / action_len=14 / joint_names=15 / home=15 / input='obs' / problems=[]`。**Pass17 探针的 5 项清单漏了 4 个真正被解析的文件**——「查全比查到更重要」再次命中；探针自己漏报输入，正是 Pass13–16 的同族失效。
+
+另纠正一条错误前提：干净副本 `pytest` 的 21 个 `test_hd1910_configs.py` 失败**不是资产缺失**，而是 `plant_spec.LIVE_CONSTANTS` 把 `<repo>/.venv-mjlab/Lib/site-packages/...` 拼在 cwd 下；本地同条 PASS。改成 `importlib.util.find_spec("mjlab_microduck")` 从已安装包解析源码位置，lean 环境才由 module-level skipif 诚实跳过。
+
+### 4.8.2 对照：为什么「入库」比「降级为显式边界」最优
+
+项目**早有**证据入库惯例，不是新策略：`microduck-software/out/` 已入库 **283** 个文件、全仓已有 **2** 个 force-add 的 `.onnx`（`artifacts/flat_walk/`）、`.gitignore` 已给 `!out/heading_meta_*.json` 开例外（23 个在库）；根注释明写「every bench file had to be force-added by hand」。缺的只是 `!out/runmeta_*.json`（0 个在库）与被校验的**主体**。总增量 ≈ 2.84 MiB，远小于任何训练产物。降级方案会让 CI 永久只能验证「守卫逻辑」，真闸门 `safe to load` 永远不在 CI 执行 ⇒ Pass13–16 的病根被文档化而非治愈。
+
+唯一不可在 lean CI 复现的是 `contract` 关（需 `mjlab_microduck` + torch + mujoco）。保留**显式 SKIP**（`assert_ci_verdict.py --allow-skip contract`）+ 本地 `.venv-mjlab` 五关全 PASS 作为发货前权威验证，不伪装成 5/5。
+
+### 4.8.3 落地改动
+
+- 两层 `.gitignore` 标注 force-add 证据清单（父目录 ignore 无法用嵌套 `!` 反包含，沿用项目既有 `git add -f` 惯例）；子文件补 `!out/runmeta_*.json`。
+- `assert_clean_checkout.py`：`UPSTREAM_SOURCES` 5 → **9**；`assess()` 拆成 `ci_scope_gate_possible`（4/5，CI）与 `ci_full_gate_possible`（5/5，含训练栈），`scope_problems` 独立；`--strict` 管前者、`--strict-full` 管后者；`--github-output` 同时写 `scope_gate` / `full_gate`；selftest 补 4 条分层与闭包负对照。
+- `pre_deploy_check.py`：`run_selftest(allow_skip=())`，**默认空白名单** ⇒ 任何 SKIP 都是 FAIL；CI 必须显式传 `--selftest-allow-skip contract.selftest`，结果打印 `PARTIAL` + `GUARD SELFTEST NOT FULLY VERIFIED`；未知白名单名 rc=2，FAIL 仍红。
+- `deploy-gate.yml`：探针改 `--strict`（硬门禁）、新增 `pytest tests/ -q -rs`、conductor selftest 带白名单、三策略真闸门保留、末尾显式打印验证边界。
+- `requirements.txt` 写明 lean 边界；`tests/test_hd1910_tooling.py` 新增 5 条（selftest 白名单双向负对照、CLI 入口、分层 verdict、`--strict-full` 环境感断言、9 源闭包正/负对照）。
+
+### 4.8.4 验证读数（lean CI 模拟，非归档沿用）
+
+本机 pip 镜像装不上 `onnx>=1.20.1`（`from versions: none`）⇒ 造 lean venv 失败。改用 `sitecustomize.py` 精确屏蔽 `mjlab_microduck / mjlab / torch / mujoco / warp / scipy`：`meta_path` finder 让 `import` 抛 `ModuleNotFoundError`，同时包裹 `importlib.util.find_spec` 让判据返回 `None`；onnx / numpy / onnxruntime / pytest 全部复用本机已装版本。所有子进程通过 `PYTHONPATH` 继承该屏蔽。
+
+| 检查 | 本地完整栈 | lean CI 模拟 |
+|---|---|---|
+| `pytest tests/` | **62 passed** | **36 passed / 26 skipped**（skip 理由逐条可见） |
+| `assert_clean_checkout.py --strict` | rc=0，scope/full 均 true | rc=0，**scope=true / full=false** + `CONTRACT STAGE NOT VERIFIED IN CI` |
+| `pre_deploy_check.py --selftest` | PASS | 带白名单 **PARTIAL rc=0**；不带白名单 **rc=1** |
+| `record_provenance.py --verify` | rc=0 | rc=0 |
+| 三策略真闸门 | 五关全 `PASS` | 三份 `PASS*`：`contract=SKIP`，`bundle/numeric/inference/toml=PASS`，断言 rc=0 |
+
+**负对照**：① 改坏入库 onnx 的 1 字节 ⇒ `contract/bundle/numeric/inference` 四关 FAIL、`VERDICT: FAIL`、断言 rc=1；② 临时移走 `policy.rs` ⇒ 探针 `--strict` rc=1 且点名缺失源，恢复后 rc=0。
+
+**循环自身抓到的 2 个错**：workflow step name 里 `strict: real` 的 `: ` 被 PyYAML 判 `mapping values are not allowed`（加引号修）；负对照 B 最初在 **Pass17 旧代码的干净副本**上做，那份探针清单本就没有 `policy.rs`，「删了不红」是验证设计错，不是守卫失效 ⇒ 换到新代码重做才变红。
+
+### 4.8.5 剩余边界
+
+CI 现可真跑 4/5 关；`contract` 关与 `tests/test_hd1910_configs.py` 的 21 条 kinematics、IMU 链真执行仍**只在本地完整栈**发生，workflow 显式打印该边界。硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3（≥3 seed sweep，用户暂缓）、P4（VelStand/手柄，可选）状态不变。
 
 ---
 

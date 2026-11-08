@@ -1,0 +1,22 @@
+{
+  "run": "p8head_030_4096x3000",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_official_m6_kp8",
+  "kp_fw": 8.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "official_m6_stslaw_sha256_16": "799800a2ea0d5593",
+  "rel_heading_envs": 0.3,
+  "heading_hold_weight": 1.0,
+  "heading_tracking_final_weight": 3.0,
+  "ang_vel_z_clip": 0.5,
+  "heading_stage_iters": "0,1000,1750,2500",
+  "pin_action_rate_weight": null,
+  "expected_heading_x_forward_overlap": 0.06,
+  "envs": 4096,
+  "iters": 3000,
+  "ref": "p8 plant (hd1910_official_m6_kp8) + heading closed loop (yaw gap fix)"
+}

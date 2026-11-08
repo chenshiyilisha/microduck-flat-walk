@@ -18,19 +18,33 @@ gets -- and found that the workflow had never been validated against it:
 Pass13-16 had all been editing that workflow while only ever running it in a
 full local workspace. A green-looking CI config is not evidence that CI can
 run. This probe makes the precondition explicit and machine-checked: it lists
-which required inputs are present, tracked, and byte-identical to the bundle,
-and writes `ci_full_gate_possible=false` when the real gate cannot execute.
+which required inputs are present, tracked, and byte-identical to the bundle.
 
-This is deliberately a PROBE, not a green-light: by default it exits 0 so CI can
-still run the checks that ARE possible, but it prints `::warning::` plus a JSON
-report saying the full gate was NOT run. Use --strict to turn a missing input
-into a hard failure (e.g. from a local pre-ship checklist).
+Pass18 FIX (2026-11-08): those inputs are now committed -- 3 deployed .onnx
+(2.27 MiB), the 9 read-only robotd/RL contract sources the guards actually
+parse (450 KiB), and the runmeta/heading_meta companions. The probe's old
+UPSTREAM_SOURCES list had only 5 entries and MISSED four files that
+verify_policy_bundle.load_contract() really reads; the list below was derived
+by emptying a clean checkout until load_contract() reported 0 problems again.
+
+TWO verdicts, because CI and a developer workstation cannot verify the same
+things (do not collapse them into one boolean):
+  * ci_scope_gate_possible -- all committed gate inputs present/tracked/identical.
+    This is what `--strict` asserts in CI. With it true, four of the five
+    conductor stages really execute.
+  * ci_full_gate_possible  -- the above AND an importable mjlab_microduck training
+    stack. Only this makes the `contract` stage (obs layout / joint order / home
+    pose vs the live training cfg) execute. CI on ubuntu-latest installs only
+    tools/hd1910/requirements.txt, so it is legitimately false there; that
+    stage stays an EXPLICIT SKIP via assert_ci_verdict.py --allow-skip contract
+    and must be run locally with .venv-mjlab before shipping.
 
 Usage
 -----
     python tools/hd1910/assert_clean_checkout.py
     python tools/hd1910/assert_clean_checkout.py --json out/ci_readiness.json
-    python tools/hd1910/assert_clean_checkout.py --strict
+    python tools/hd1910/assert_clean_checkout.py --strict          # CI scope
+    python tools/hd1910/assert_clean_checkout.py --strict-full    # incl. training stack
     python tools/hd1910/assert_clean_checkout.py --selftest
 
 Exit: 0 probe ok / 1 --strict found missing inputs / 2 bad input.
@@ -48,13 +62,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BUNDLE = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
 
-# The authoritative third-party snapshot the guards read, gitignored on purpose.
+# The authoritative read-only contract sources the guards PARSE. Derived by
+# measurement (Pass18): with all nine present in a clean checkout,
+# verify_policy_bundle.load_contract() reports obs_len=61 / action_len=14 /
+# 15 joint names / 15 home values / input 'obs' and zero problems. The old
+# 5-entry list missed policy.rs, duck-ipc-proto/lib.rs, feetech.rs and
+# microduck_rl-develop's publish/manifest.py -- a probe that under-reports its
+# own inputs is exactly the Pass13-16 failure mode. Keep this list in sync with
+# .gitignore's force-add note (these nine ARE tracked, via `git add -f`).
 UPSTREAM_SOURCES = (
     ".upstream/hd1910m/radxa/installation.json",
-    ".upstream/DuckBuddy-main/duck-control/src/imu.rs",
     ".upstream/DuckBuddy-main/duck-control/src/obs.rs",
     ".upstream/DuckBuddy-main/duck-control/src/model.rs",
+    ".upstream/DuckBuddy-main/duck-control/src/policy.rs",
+    ".upstream/DuckBuddy-main/duck-control/src/imu.rs",
+    ".upstream/DuckBuddy-main/duck-control/src/feetech.rs",
+    ".upstream/DuckBuddy-main/duck-ipc-proto/src/lib.rs",
     ".upstream/DuckBuddy-main/robotd-params/src/lib.rs",
+    ".upstream/microduck_rl-develop/src/mjlab_microduck/publish/manifest.py",
 )
 
 
@@ -109,21 +134,39 @@ def assess(artifacts: list[dict], upstream: list[dict], training_stack: bool) ->
                             f"(a clean checkout will not receive it)")
     for u in upstream:
         if not u.get("exists"):
-            problems.append(f"upstream source missing: {u.get('rel_path')}")
+            problems.append(f"upstream contract source missing: {u.get('rel_path')}")
+
+    # Split BEFORE the training-stack condition. A lean CI checkout has every
+    # committed input but no mjlab_microduck; that is a legitimate, explicitly
+    # declared SKIP for the contract stage -- NOT a missing gate input. Merging
+    # the two made `--strict` permanently red in CI (Pass17's own blind spot).
+    scope_problems = list(problems)
     if not training_stack:
         problems.append("training stack (mjlab_microduck) not importable: "
-                        "contract / IMU-chain stages cannot execute")
+                        "contract stage must be an EXPLICIT SKIP "
+                        "(assert_ci_verdict.py --allow-skip contract)")
+
+    scope_ok = not scope_problems
+    full_ok = not problems
+    if not scope_ok:
+        reason = ("committed gate inputs are missing/untracked/stale; the real "
+                  "deploy gate MUST be run in a full local workspace")
+    elif not full_ok:
+        reason = ("CI scope is complete (4/5 conductor stages execute); "
+                  "contract stage needs the training stack and MUST be run "
+                  "locally with .venv-mjlab before shipping")
+    else:
+        reason = "all gate inputs present, tracked and byte-identical; training stack present"
 
     return {
-        "ci_full_gate_possible": not problems,
+        "ci_scope_gate_possible": scope_ok,
+        "ci_full_gate_possible": full_ok,
+        "scope_problems": scope_problems,
         "problems": problems,
         "n_artifacts": len(artifacts),
         "n_upstream_sources": len(upstream),
         "training_stack": bool(training_stack),
-        "reason": ("all gate inputs present, tracked and byte-identical"
-                   if not problems else
-                   "this checkout cannot run the full deploy gate; the checks that "
-                   "need these inputs MUST be run in a full local workspace"),
+        "reason": reason,
     }
 
 
@@ -166,9 +209,13 @@ def main() -> int:
     ap.add_argument("--json", type=Path, dest="json_out",
                      help="write the machine-readable report here")
     ap.add_argument("--github-output", type=Path,
-                     help="append full_gate=<true|false> to this file ($GITHUB_OUTPUT)")
+                     help="append scope_gate/full_gate=<true|false> ($GITHUB_OUTPUT)")
     ap.add_argument("--strict", action="store_true",
-                     help="exit 1 when any gate input is missing/untracked")
+                     help="exit 1 when a COMMITTED gate input is missing/untracked/stale "
+                          "(the CI scope; does not require the training stack)")
+    ap.add_argument("--strict-full", action="store_true",
+                     help="as --strict, and also require an importable mjlab_microduck "
+                          "training stack (local pre-ship checklist)")
     ap.add_argument("--selftest", action="store_true",
                      help="run negative controls, no checkout needed")
     args = ap.parse_args()
@@ -187,7 +234,8 @@ def main() -> int:
         print(f"ERROR: cannot probe: {exc}", file=sys.stderr)
         return 2
 
-    ok = report["ci_full_gate_possible"]
+    scope_ok = report["ci_scope_gate_possible"]
+    full_ok = report["ci_full_gate_possible"]
     print(f"== CI input readiness ({bundle.name}) ==")
     for a in report["artifacts"]:
         flags = ("present" if a["exists"] else "MISSING",
@@ -198,17 +246,26 @@ def main() -> int:
         print(f"  upstream       {'present' if u['exists'] else 'MISSING'}  {u['rel_path']}")
     print(f"  training stack: {'present' if report['training_stack'] else 'MISSING'}")
     print()
-    print(f"ci_full_gate_possible = {str(ok).lower()}  ({report['reason']})")
+    print(f"ci_scope_gate_possible = {str(scope_ok).lower()}  (4/5 stages in CI)")
+    print(f"ci_full_gate_possible  = {str(full_ok).lower()}  (5/5, needs training stack)")
+    print(f"reason: {report['reason']}")
     for p in report["problems"]:
         print(f"  - {p}")
 
-    if not ok:
+    if not scope_ok:
         print()
-        print("::warning:: deploy-gate CANNOT run the full gate on this checkout. "
+        print("::warning:: deploy-gate CANNOT run the real gate on this checkout. "
               "A green CI here verifies guard LOGIC only, not a deploy policy. "
               "Run pre_deploy_check.py + pytest tests/ in the full local workspace "
               "before shipping.")
         print("REAL GATE NOT RUN -- do not read a green CI as a deployment sign-off")
+    elif not full_ok:
+        print()
+        print("::notice:: CI scope complete: 4/5 conductor stages will REALLY execute. "
+              "The `contract` stage needs mjlab_microduck (torch/mujoco) and is an "
+              "EXPLICIT SKIP here, asserted by assert_ci_verdict.py --allow-skip "
+              "contract. Run pre_deploy_check.py locally with .venv-mjlab before ship.")
+        print("CONTRACT STAGE NOT VERIFIED IN CI -- do not read a green CI as full sign-off")
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -219,9 +276,13 @@ def main() -> int:
     # otherwise try to append to a directory. Guard it explicitly.
     if args.github_output and str(args.github_output) not in ("", "."):
         with args.github_output.open("a", encoding="utf-8") as fh:
-            fh.write(f"full_gate={str(ok).lower()}\n")
+            fh.write(f"scope_gate={str(scope_ok).lower()}\n")
+            fh.write(f"full_gate={str(full_ok).lower()}\n")
 
-    return 0 if (ok or not args.strict) else 1
+    demand_full = args.strict or args.strict_full
+    if args.strict_full and not full_ok:
+        return 1
+    return 0 if (scope_ok or not demand_full) else 1
 
 
 def _selftest() -> int:
@@ -261,6 +322,33 @@ def _selftest() -> int:
     named = any("NOT tracked" in p for p in r["problems"])
     ok &= named
     print(f"  [{'ok' if named else 'BAD'}] untracked input is named in problems")
+
+    # Pass18: the two verdicts must stay DISTINCT. Collapsing them made
+    # --strict permanently red in lean CI, which is how a real gate could be
+    # mistaken for "impossible" and quietly dropped again.
+    lean = assess(good_art, good_up, False)
+    layered = (lean["ci_scope_gate_possible"] is True
+               and lean["ci_full_gate_possible"] is False
+               and lean["scope_problems"] == []
+               and any("training stack" in p for p in lean["problems"]))
+    ok &= layered
+    print(f"  [{'ok' if layered else 'BAD'}] lean CI: scope=True full=False "
+          "(contract is an explicit SKIP, not a missing input)")
+
+    missing_contract = assess(
+        good_art, [dict(good_up[0], exists=False)] + good_up[1:], False)
+    scope_red = (not missing_contract["ci_scope_gate_possible"]
+                 and not missing_contract["ci_full_gate_possible"])
+    ok &= scope_red
+    print(f"  [{'ok' if scope_red else 'BAD'}] missing contract source turns BOTH verdicts red")
+
+    # The Pass17 list had 5 entries and missed four files that
+    # verify_policy_bundle.load_contract() actually parses. Pin the closure.
+    required = ("policy.rs", "duck-ipc-proto", "feetech.rs", "microduck_rl-develop")
+    complete = (len(UPSTREAM_SOURCES) == 9
+                and all(any(k in p for p in UPSTREAM_SOURCES) for k in required))
+    ok &= complete
+    print(f"  [{'ok' if complete else 'BAD'}] upstream closure lists all 9 parsed sources")
     print()
     print("self-test: " + ("PASS -- readiness logic wired correctly"
                            if ok else "FAIL -- negative control misclassified"))

@@ -1,0 +1,17 @@
+{
+  "run": "p3head030_4096x2000",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_official_m6_kp5",
+  "kp_fw": 5.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "official_m6_stslaw_sha256_16": "799800a2ea0d5593",
+  "rel_heading_envs": 0.3,
+  "expected_heading_x_forward_overlap": 0.06,
+  "envs": 4096,
+  "iters": 2000,
+  "ref": "P3 plant + heading closed loop (P2 yaw gap fix)"
+}

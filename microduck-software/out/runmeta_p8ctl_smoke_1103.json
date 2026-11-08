@@ -1,0 +1,25 @@
+{
+  "run": "p8ctl_smoke_1103",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "arm": "control (no heading rewards)",
+  "paired_with": "2026-11-03_08-33-18_p8head_030_4096x3000",
+  "plant": "hd1910_official_m6_kp8",
+  "kp_fw": 8.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "official_m6_stslaw_sha256_16": "799800a2ea0d5593",
+  "delay_min_lag": 3,
+  "delay_max_lag": 6,
+  "rel_heading_envs": 0.3,
+  "ang_vel_z_clip": 0.5,
+  "heading_rewards": null,
+  "heading_hold_weight": null,
+  "heading_tracking_final_weight": null,
+  "seed": 42,
+  "envs": 64,
+  "iters": 5,
+  "ref": "reward-free arm: same command loop and turn range as the reward arm"
+}

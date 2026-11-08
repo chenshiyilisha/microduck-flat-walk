@@ -1,0 +1,74 @@
+{
+  "run": "vel_4096x2000_std004_1025",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "envs": 4096,
+  "iters": 2000,
+  "created": "2026-10-25T16:17:58",
+  "cfg_sha256_16": "75a0430b814ac749",
+  "mdp_sha256_16": "9f9b77c05d16a1a3",
+  "cfg_byte_identical_to_upstream": true,
+  "extra_args": "--env.rewards.track-linear-velocity.params.std 0.2",
+  "switches": {
+    "MICRODUCK_WARM_START": "0",
+    "MICRODUCK_JOY_PAIR_MIN": "0",
+    "MICRODUCK_JOY_PHASE_RSI": "0",
+    "MICRODUCK_JOY_SYMMETRY": "0"
+  },
+  "solver": {
+    "cli_iterations": 100,
+    "cli_ls_iterations": 50,
+    "cfg_default_iterations": 10,
+    "cfg_default_ls_iterations": 20,
+    "nconmax": 35
+  },
+  "rewards_effective": {
+    "track_linear_velocity": {
+      "weight": 2.0,
+      "std": 0.2,
+      "std_sq": 0.04000000000000001,
+      "std_over_cmd_max": 0.5
+    },
+    "track_angular_velocity": {
+      "weight": 2.0,
+      "std": 0.7071067811865476,
+      "std_sq": 0.5000000000000001,
+      "std_over_cmd_max": 1.7677669529663689
+    },
+    "action_rate_l2": {
+      "weight": -0.1
+    }
+  },
+  "command": {
+    "lin_vel_x": [
+      -0.4,
+      0.4
+    ],
+    "cmd_max": 0.4
+  },
+  "rl": {
+    "actor_hidden_dims": [
+      512,
+      256,
+      128
+    ],
+    "critic_hidden_dims": [
+      512,
+      256,
+      128
+    ],
+    "activation": "elu",
+    "obs_normalization": true,
+    "init_std": 1.0,
+    "std_type": "scalar",
+    "learning_rate": 0.001,
+    "schedule": "adaptive",
+    "entropy_coef": 0.01,
+    "clip_param": 0.2,
+    "gamma": 0.99,
+    "lam": 0.95,
+    "desired_kl": 0.01,
+    "num_learning_epochs": 5,
+    "num_mini_batches": 4,
+    "num_steps_per_env": 24
+  }
+}

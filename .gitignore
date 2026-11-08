@@ -84,6 +84,10 @@ artifacts/flat_walk/videos/*
 
 .upstream/
 microduck-software/.upstream/
+# Pass18 exception: nine specific read-only contract sources under
+# microduck-software/.upstream/ are force-added (`git add -f`) as deploy-gate
+# evidence. The blanket rules above stay in force for everything else.
+# See microduck-software/.gitignore for the full list and rationale.
 
 microduck-hf/
 microduck-software/repo/

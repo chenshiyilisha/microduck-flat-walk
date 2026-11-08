@@ -1,0 +1,15 @@
+{
+  "run": "p8head_smoke_1102_2125",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_official_m6_kp8",
+  "kp_fw": 8.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "official_m6_stslaw_sha256_16": "799800a2ea0d5593",
+  "rel_heading_envs": 0.3,
+  "envs": 64,
+  "iters": 5
+}

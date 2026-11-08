@@ -42,6 +42,18 @@
 # requires the `inference` stage to be PASS. An inference SKIP in CI is a BROKEN
 # GATE (Pass16 fixed exactly that), not a clean partial install. Do not
 # reintroduce wording that treats it as an acceptable outcome.
+#
+# PASS18 BOUNDARY (2026-11-08): this is deliberately the LEAN verification
+# toolchain. It does NOT install mjlab_microduck / torch / mujoco / scipy, which
+# the `contract` conductor stage and the cfg/IMU regression tests need. In CI
+# those are EXPLICIT SKIPs:
+#   * pre_deploy_check.py --selftest-allow-skip contract.selftest -> PARTIAL
+#   * assert_ci_verdict.py --allow-skip contract                  -> PASS*
+#   * tests/test_hd1910_configs.py and the IMU-chain test skip with a reason
+# `assert_clean_checkout.py --strict` asserts that every COMMITTED gate input
+# (3 onnx + 9 upstream contract sources + companion meta) is present and
+# byte-identical, so 4 of 5 conductor stages really execute in CI.
+# Before shipping, run conductor + pytest locally with .venv-mjlab for 5/5.
 onnx>=1.20.1
 onnxruntime>=1.24.4
 numpy

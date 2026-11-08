@@ -1,32 +1,38 @@
-# Deploy-gate CI (Pass13, 2026-11-08).
+# Deploy-gate CI (Pass13, extended Pass18 2026-11-08).
 #
 # Mirrors the industry pattern where a policy-deploy validation step is wired into
 # CI (e.g. reflex-vla's `reflex validate export --init-ci` scaffolds a GitHub
-# Actions workflow). Our four-dimension deploy gate must not be allowed to silently
-# bitrot between commits: this workflow re-runs it on every push/PR.
+# Actions workflow). Our deploy gate must not be allowed to silently bitrot
+# between commits: this workflow re-runs it on every push/PR.
 #
-# What it runs (all CPU-only, no GPU, no robot):
-#   1. conductor --selftest     proves the guard wiring is intact (no real policy)
-#   2. inference --selftest      proves the output negative-control logic (stdlib-only)
-#   3. record_provenance --print shows the training provenance of the committed policy
-#   4. the REAL gate on each committed deploy onnx + robotd.toml (contract/bundle/
-#      numeric/inference/toml)  -- this is the actual "safe to load?" verdict
+# PASS18 -- the real gate inputs ARE NOW COMMITTED (git add -f, same mechanism
+# already used for artifacts/flat_walk/*.onnx):
+#   * 3 deployed .onnx (2.27 MiB) whose sha256/bytes are recorded in
+#     out/hd1910_kp8_deploy_bundle.json
+#   * the 9 read-only robotd/RL contract sources the guards actually parse
+#   * out/runmeta_*.json + out/heading_meta_*.json companions
+# Pass13-17 had edited this workflow without ever checking it against a clean
+# checkout: those files were gitignored, so `record_provenance --verify` returned
+# rc=1, `conductor --selftest` rc=1 and the "real gate" step got four FAILs.
+# assert_clean_checkout.py --strict now makes that precondition a hard gate.
 #
-# onnxruntime IS installed below, so the inference stage must actually EXECUTE.
-# assert_ci_verdict.py rejects any report where inference is SKIP/FAIL -- a
-# mis-invoked guard must never be able to look like a clean CI pass again.
+# What runs here (all CPU-only, no GPU, no robot):
+#   1. readiness probe --strict   -> every committed gate input present/tracked
+#   2. assertion + guard selftests (contract.selftest is an EXPLICIT allow-listed
+#      SKIP because the training stack is not installed here)
+#   3. pytest tests/               -> the tooling/config regression suite
+#   4. real gate on each committed deploy onnx: bundle / numeric / inference /
+#      toml REALLY execute; `contract` is an explicit SKIP asserted by
+#      assert_ci_verdict.py --allow-skip contract
 #
-# PASS17 BOUNDARY (2026-11-08, measured in a `git archive HEAD` clean checkout):
-# the three verified deploy .onnx and `.upstream/` are BOTH gitignored, so a
-# fresh checkout does NOT receive them. Measured there: `record_provenance.py
-# --verify` rc=1 (three DRIFTs), `pre_deploy_check.py --selftest` rc=1, and
-# `pytest tests/` = 25 failed / 18 passed / 9 skipped. Pass13-16 edited this
-# workflow while only ever running it in a FULL local workspace. The readiness
-# probe below makes that precondition machine-readable; it is NOT a sign-off.
-# A green CI here verifies guard LOGIC ONLY. The real gate, the provenance verify
-# and the full regression suite must be run in the full local workspace before
-# shipping. Fixing that is an asset/architecture decision (commit ~2.3 MB of
-# ONNX evidence + a minimal .upstream fixture), deliberately NOT made here.
+# HONEST BOUNDARY: `contract` compares the ONNX obs layout / joint order / home
+# pose against the LIVE training cfg and needs mjlab_microduck (torch + mujoco).
+# That stack is not in tools/hd1910/requirements.txt. CI therefore verifies 4/5
+# stages, and the conductor prints a PASS* verdict naming the skipped stage.
+# Before shipping, run `pre_deploy_check.py --onnx ... --toml ...` AND
+# `pytest tests/` locally with .venv-mjlab so all 5 stages execute.
+# A green CI here is NOT a deployment sign-off.
+
 name: deploy-gate
 
 on:
@@ -51,40 +57,42 @@ jobs:
       - name: Install deploy-verification toolchain
         run: python -m pip install --upgrade pip && pip install -r tools/hd1910/requirements.txt
 
-      # Pass17: make the checkout's real verification scope visible BEFORE any
-      # guard runs. Non-blocking by design -- it reports, it does not pretend a
-      # green CI is a deployment sign-off. Use --strict in a pre-ship checklist.
-      - name: CI input readiness probe (what can this checkout actually verify?)
+      - name: "CI input readiness probe (strict - real gate inputs must be committed)"
         id: readiness
         run: |
           python tools/hd1910/assert_clean_checkout.py \
+            --strict \
             --json out/ci_readiness.json \
             --github-output "$GITHUB_OUTPUT"
           cat out/ci_readiness.json
 
+      - name: Probe negative-control self-test
+        run: python tools/hd1910/assert_clean_checkout.py --selftest
+
       - name: CI verdict assertion negative-control self-test
         run: python tools/hd1910/assert_ci_verdict.py --selftest
 
-      - name: Conductor self-test (guard wiring)
-        run: python tools/hd1910/pre_deploy_check.py --selftest
+      - name: Conductor self-test (guard wiring; contract.selftest explicitly skipped)
+        run: |
+          python tools/hd1910/pre_deploy_check.py --selftest \
+            --selftest-allow-skip contract.selftest
 
       - name: Inference negative-control self-test (stdlib-only)
         run: python tools/hd1910/verify_policy_inference.py --selftest
 
+      - name: Regression suite (tooling + config invariants)
+        run: python -m pytest tests/ -q -rs
+
       - name: Show training provenance of committed policy
         run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --print
 
-      - name: Verify provenance matches committed onnx (drift detection)
+      - name: Verify provenance + bundle artifact hashes (drift detection)
         run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --verify
 
       - name: Real deploy gate on committed artifacts
-        # NOTE: the "contract" stage (obs 61 / joint-order / home-pose / action
-        # mapping vs robotd's own source) is SKIPPED here because it needs the
-        # full training stack (mjlab_microduck + torch + mujoco), which is NOT in
-        # tools/hd1910/requirements.txt. The conductor prints a "PASS*" verdict
-        # naming the skipped stages, so a green CI run is NOT a full verification.
-        # Before shipping, run pre_deploy_check.py locally with the training env
-        # + onnxruntime installed so the contract stage actually executes.
+        # onnxruntime IS installed above, so inference must actually EXECUTE.
+        # Only `contract` may SKIP (needs mjlab_microduck); assert_ci_verdict.py
+        # rejects any other SKIP/FAIL, so a broken guard cannot look green.
         run: |
           set -e
           WALK="logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx"
@@ -95,8 +103,11 @@ jobs:
             echo "=== gate: $O ==="
             REPORT="out/ci_$(basename "$O" .onnx).json"
             python tools/hd1910/pre_deploy_check.py --onnx "$O" --toml "$TOML" --expect-kp 16 --json "$REPORT"
-            # A SKIP in inference is a BROKEN GATE, not a partial install:
-            # this workflow installs onnxruntime in the step above. contract is
-            # the only stage allowed to skip (needs the full training stack).
             python tools/hd1910/assert_ci_verdict.py "$REPORT" --allow-skip contract
           done
+
+      - name: Print the verification boundary (do not read green CI as full sign-off)
+        run: |
+          echo "scope_gate=${{ steps.readiness.outputs.scope_gate }}"
+          echo "full_gate=${{ steps.readiness.outputs.full_gate }}"
+          echo "CONTRACT STAGE NOT VERIFIED IN CI -- run pre_deploy_check.py and pytest tests/ with .venv-mjlab before shipping."

@@ -1,0 +1,15 @@
+{
+  "run": "hd1910_standup_smoke_1027_1603",
+  "task": "Mjlab-StandUp-Flat-MicroDuck",
+  "plant": "hd1910_openmicroduck_m5",
+  "kp_fw": 32.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "m5_sha256_16": "d1553204e7560050",
+  "envs": 64,
+  "iters": 5,
+  "ref": "upstream StandUp Flat; HD1910 m5; 4070 Ti pack"
+}

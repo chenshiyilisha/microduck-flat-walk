@@ -1,0 +1,35 @@
+{
+  "run": "p8_standup_4096x4000_1108_0308",
+  "task": "Mjlab-StandUp-Flat-MicroDuck",
+  "plant": "hd1910_official_m6_kp8",
+  "kp_fw": 8.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "sha256_16": "799800a2ea0d5593",
+  "envs": 4096,
+  "iters": 4000,
+  "ref": "AGENTS.md explore; upstream StandUp Flat; HD1910 p8; 4070 Ti",
+  "provenance": {
+    "captured_at": "2026-11-08T03:08:23",
+    "git_commit": "e661c48e23c9cb860a0cddab43c4e5b3458ae148",
+    "git_branch": "main",
+    "git_dirty": true,
+    "git_diff_patch_id": "e3b0c44298fc1c14",
+    "git_diff_stat": "",
+    "git_toplevel": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15",
+    "seed": 42,
+    "command": "tools/hd1910/explore_standup.sh Mjlab-StandUp-Flat-MicroDuck envs=4096 iters=4000 plant=hd1910_official_m6_kp8 seed=42",
+    "versions": {
+      "torch": "2.9.1+cu128",
+      "rsl_rl": "<absent>",
+      "mjlab": "1.3.0",
+      "onnxruntime": "1.31.0",
+      "onnx": "1.23.2",
+      "numpy": "2.5.4"
+    },
+    "_command_note": "reconstructed from runmeta + --via; the exact rsl_rl flag set is fixed in the launching script named by --via"
+  }
+}

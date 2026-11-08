@@ -1,0 +1,34 @@
+{
+  "plant": "hd1910_openmicroduck_m5",
+  "envs": 1024,
+  "run": "hd1910_explore_1024x2000_1026",
+  "kp_fw": 32.0,
+  "iters": 2000,
+  "device": "cuda:0",
+  "mujoco_gl": "glfw",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "gpu_ids": [
+    0
+  ],
+  "m5_sha256_16": "ec85c34dfbec850a",
+  "provenance": {
+    "captured_at": "2026-11-07T20:04:35",
+    "git_commit": "77de78d90cdf87fc985f6843e0eabc1dd8d8b55f",
+    "git_branch": "main",
+    "git_dirty": true,
+    "git_diff_patch_id": "5e2b7e386e492498",
+    "git_diff_stat": "microduck-software/tools/hd1910/explore_ground_pick.sh | 1 +\n microduck-software/tools/hd1910/explore_standup.sh     | 1 +\n microduck-software/tools/hd1910/resume_standup.sh      | 1 +\n microduck-software/tools/hd1910/train_roller.sh        | 1 +\n microduck-software/tools/train_heading_variant.py      | 9 +++++++++\n 5 files changed, 13 insertions(+)",
+    "git_toplevel": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15",
+    "seed": null,
+    "command": "tools/hd1910/explore_standup.sh Mjlab-Velocity-Flat-MicroDuck envs=1024 iters=2000 plant=hd1910_openmicroduck_m5",
+    "versions": {
+      "torch": "2.9.1+cu128",
+      "rsl_rl": "<unknown>",
+      "mjlab": "<unknown>",
+      "onnxruntime": "1.31.0",
+      "onnx": "1.23.2",
+      "numpy": "2.5.4"
+    },
+    "_command_note": "reconstructed from runmeta + --via; the exact rsl_rl flag set is fixed in the launching script named by --via"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "run": "hd1910_smoke_1026_1145",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_openmicroduck_m5",
+  "kp_fw": 32.0,
+  "m5_sha256_16": "ec85c34dfbec850a",
+  "envs": 64,
+  "iters": 5
+}

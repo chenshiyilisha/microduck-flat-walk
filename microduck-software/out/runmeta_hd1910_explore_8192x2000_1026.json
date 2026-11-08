@@ -1,0 +1,15 @@
+{
+  "run": "hd1910_explore_8192x2000_1026",
+  "task": "Mjlab-Velocity-Flat-MicroDuck",
+  "plant": "hd1910_openmicroduck_m5",
+  "kp_fw": 32.0,
+  "device": "cuda:0",
+  "gpu_ids": [
+    0
+  ],
+  "mujoco_gl": "glfw",
+  "m5_sha256_16": "ec85c34dfbec850a",
+  "envs": 8192,
+  "iters": 2000,
+  "ref": "RL_duck throughput; HD1910 plant m5"
+}

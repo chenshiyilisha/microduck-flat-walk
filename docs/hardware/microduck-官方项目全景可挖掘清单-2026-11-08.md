@@ -104,4 +104,6 @@
 
 > 硬件端到端验证仍未启动（硬件未到货）；P3（≥3 seed sweep）用户暂缓；P4 可选。以上均不改变该状态。
 >
-> ⚠️ **Pass17 新增待决策（资产/架构级）**：`git archive HEAD` 干净 checkout 实测证明 CI 的「真闸门」步骤引用的三个 onnx 与 `.upstream/` 都不在 VCS（详见 `docs/active/microduck-对比缺陷清单-2026-11-07.md` §4.7）。本轮已加机读探针 `assert_clean_checkout.py` 让边界可见，但**是否入库 2.27 MiB onnx + 精简 `.upstream` fixture 留待决策**。
+> ✅ **Pass18 已解决（2026-11-08，用户裁定「按最优的来」→ 入库并打通）**：证据资产已纳入 VCS（`git add -f` 3 个部署 onnx 2.27 MiB + 9 个只读契约源 450 KiB；补 `!out/runmeta_*.json` 后 add 34 个伴随 meta）。`assert_clean_checkout.py --strict` 升级为 CI 硬门禁，探针输入清单由 5 项补全为实测的 9 项，verdict 拆成 `ci_scope_gate_possible`（CI 四关）与 `ci_full_gate_possible`（五关含训练栈）；workflow 首次真跑 `pytest tests/` 与三策略真闸门。用 `sitecustomize` 模拟 lean CI 实测：36 passed / 26 skipped、三份 `PASS*`（contract 显式 SKIP，其余四关真 PASS）、`provenance --verify` rc=0。详见 `docs/active/microduck-对比缺陷清单-2026-11-07.md` §4.8。
+>
+> 唯一仍在 CI 之外的 `contract` 关（需 torch/mujoco/mjlab_microduck）保留**显式 SKIP**，本地 `.venv-mjlab` 五关全 PASS 为发货前权威验证；workflow 末尾打印该边界。
