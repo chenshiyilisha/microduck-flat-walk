@@ -42,6 +42,19 @@ def test_conductor_classify():
     assert pc._classify(3) == "FAIL"
 
 
+def test_conductor_verdict_surfaces_skips():
+    """A SKIP means 'could not be checked', not a pass. The conductor must not
+    print a plain PASS when a structural stage (e.g. contract, which needs the
+    training stack) was skipped -- an operator would otherwise read green CI as
+    'fully verified'. This guards the PASS* verdict branch."""
+    pc = _load("pre_deploy_check_test", HERE / "pre_deploy_check.py")
+    assert pc._verdict(False, []) == "PASS -- safe to load (all stages verified)"
+    assert pc._verdict(True, []) == "FAIL -- do NOT load this policy"
+    skipped = pc._verdict(False, ["contract", "inference"])
+    assert skipped.startswith("PASS* -- loadable IF the skipped stage(s)")
+    assert "contract" in skipped and "inference" in skipped
+
+
 def test_conductor_selftest_runs():
     """The four guards must self-validate with no real policy / no robot."""
     proc = subprocess.run(

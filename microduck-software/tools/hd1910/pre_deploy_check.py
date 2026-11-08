@@ -76,6 +76,19 @@ def _classify(rc: int) -> str:
     return "FAIL"
 
 
+def _verdict(any_fail: bool, skipped: list[str]) -> str:
+    """A SKIP is 'could not be checked', NOT a pass. Surface the skipped stage
+    names so an operator never reads 'PASS' as 'fully verified' when (e.g.) the
+    contract stage was skipped because the training stack is absent."""
+    if any_fail:
+        return "FAIL -- do NOT load this policy"
+    if skipped:
+        return (f"PASS* -- loadable IF the skipped stage(s) {skipped} pass "
+                f"locally; run pre_deploy_check.py with the full training env + "
+                f"onnxruntime before shipping")
+    return "PASS -- safe to load (all stages verified)"
+
+
 def _run(script: Path, *args: str) -> tuple[int, str, list[str]]:
     try:
         proc = subprocess.run(
@@ -179,20 +192,33 @@ def main() -> int:
     print(f"{'STAGE':<10} {'RESULT':<6} DETAIL")
     print("-" * 60)
     any_fail = False
+    skipped = []
     for r in results:
         if r.status == "FAIL":
             any_fail = True
+        if r.status == "SKIP":
+            skipped.append(r.name)
         detail = r.tail.replace("\n", " | ")
         print(f"{r.name:<10} {r.status:<6} {detail[:90]}")
     print("-" * 60)
-    verdict = "FAIL -- do NOT load this policy" if any_fail else "PASS -- safe to load (see SKIPs)"
+    if any_fail:
+        verdict = "FAIL -- do NOT load this policy"
+    elif skipped:
+        # A SKIP means "could not be checked" (heavy dep absent / needs a real
+        # policy), NOT a pass. The contract stage in particular needs the full
+        # training stack (mjlab_microduck) and is skipped in CI -- so an operator
+        # must not read "PASS" as "fully verified". Surface the skipped names.
+        verdict = _verdict(any_fail, skipped)
+    else:
+        verdict = "PASS -- safe to load (all stages verified)"
     print(f"VERDICT: {verdict}")
 
     if args.json:
         payload = {
             "onnx": str(args.onnx),
             "toml": str(args.toml) if args.toml else None,
-            "verdict": "FAIL" if any_fail else "PASS",
+            "verdict": "FAIL" if any_fail else ("PASS*" if skipped else "PASS"),
+            "skipped_stages": skipped,
             "stages": [
                 {"name": r.name, "status": r.status, "rc": r.rc, "tail": r.tail}
                 for r in results

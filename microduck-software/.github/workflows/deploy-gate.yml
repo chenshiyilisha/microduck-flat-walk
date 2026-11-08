@@ -51,6 +51,13 @@ jobs:
         run: python tools/hd1910/record_provenance.py --bundle out/hd1910_kp8_deploy_bundle.json --verify
 
       - name: Real deploy gate on committed artifacts
+        # NOTE: the "contract" stage (obs 61 / joint-order / home-pose / action
+        # mapping vs robotd's own source) is SKIPPED here because it needs the
+        # full training stack (mjlab_microduck + torch + mujoco), which is NOT in
+        # tools/hd1910/requirements.txt. The conductor prints a "PASS*" verdict
+        # naming the skipped stages, so a green CI run is NOT a full verification.
+        # Before shipping, run pre_deploy_check.py locally with the training env
+        # + onnxruntime installed so the contract stage actually executes.
         run: |
           set -e
           WALK="logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx"
