@@ -422,14 +422,19 @@ def test_record_provenance_walk_deploy_onnx():
     assert isinstance(code["git_commit"], str) and len(code["git_commit"]) >= 40
 
 
-def test_record_provenance_absent_meta_is_honest():
+def test_record_provenance_absent_meta_is_honest(tmp_path):
     """An onnx with NO companion meta must be reported as 'absent', never a
     fabricated success. The shipped deploy candidates (p8head_2999) carry only a
-    short name, so this is the honest path."""
+    short name, so this is the honest path.
+
+    Pass18: this used to skip whenever ``out/p8head_2999.onnx`` (a gitignored
+    local sample) was absent, i.e. on EVERY clean CI checkout. provenance_for_onnx
+    only reads the file stem and looks for companions under OUT, so a synthetic
+    bare path exercises exactly the same logic with no uncommitted asset.
+    """
     rp = _load("record_provenance_test", HERE / "record_provenance.py")
-    bare = ROOT / "out" / "p8head_2999.onnx"
-    if not bare.exists():
-        pytest.skip(f"bare onnx not present: {bare}")
+    bare = tmp_path / "p8head_2999.onnx"
+    bare.write_bytes(b"synthetic bare policy; provenance reads only the stem")
     pv = rp.provenance_for_onnx(bare)
     assert pv.companion_meta == "absent"
     assert pv.task is None and pv.cfg_sha256_16 is None

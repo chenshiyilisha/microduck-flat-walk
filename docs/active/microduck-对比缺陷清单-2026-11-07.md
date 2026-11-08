@@ -360,6 +360,10 @@ CI 架构级修复需要决策：**是否把 3 个已验证 onnx（合计 2,381,
 
 **循环自身抓到的 2 个错**：workflow step name 里 `strict: real` 的 `: ` 被 PyYAML 判 `mapping values are not allowed`（加引号修）；负对照 B 最初在 **Pass17 旧代码的干净副本**上做，那份探针清单本就没有 `policy.rs`，「删了不红」是验证设计错，不是守卫失效 ⇒ 换到新代码重做才变红。
 
+**提交后权威复验（`76b0c4a`，用 `git worktree` 造**带 `.git`** 的干净 checkout —— `git archive` 没有 `.git`，会让 `_tracked()` 假红；`actions/checkout@v4` 是有 `.git` 的）**：探针 `--strict` rc=0 且 `GITHUB_OUTPUT` 写出 `scope_gate=true` / `full_gate=false`；探针 / 断言 selftest 全 PASS；conductor selftest **PARTIAL rc=0**；`pytest tests/ -q -rs` **35 passed / 27 skipped**；`provenance --print` / `--verify` rc=0；三策略 `PASS*`（四关真 PASS）+ 断言 rc=0。**同一份干净 checkout** 换回完整栈解释器，第一策略五关全 `PASS` —— 差别只来自训练栈，不来自文件集。
+
+> **复验时「再挖掘」又抓到一条环境借口**：`test_record_provenance_absent_meta_is_honest` 因未入库的本地 `out/p8head_2999.onnx` 而在干净 checkout 上 skip。`provenance_for_onnx()` 实际只读 stem、伴随 meta 从全局 `OUT/` 查 ⇒ 改为 `tmp_path` 合成 bare onnx，同一逻辑在任何 checkout 都真跑，CI 少一个 skip。
+
 ### 4.8.5 剩余边界
 
 CI 现可真跑 4/5 关；`contract` 关与 `tests/test_hd1910_configs.py` 的 21 条 kinematics、IMU 链真执行仍**只在本地完整栈**发生，workflow 显式打印该边界。硬件端到端（到货后逐关节复核 + 7.4 V 齿隙重测）、P3（≥3 seed sweep，用户暂缓）、P4（VelStand/手柄，可选）状态不变。
