@@ -45,5 +45,22 @@
     "walk": "model_7999, mean_reward 98.63, episode_len 827, fell_over low, heading_tracking 1.93",
     "ground_pick": "success 0.969 (iqr 0.96-0.98), fall 0.031",
     "stand": "success 1.00 (iqr 1.00-1.00), fall 0.0"
+  },
+  "bundle_audit": {
+    "tool": "verify_policy_bundle.py (A/B/C/R/D/E groups, 22 negative-control self-tests)",
+    "weights_inlined": "PASS -- A8: 10 initializers, all embedded (single-file onnx; no split/external-data pitfall that publish would upload as a 3KB graph)",
+    "checks": {
+      "walk": "26 checks, 0 fail, 0 warn",
+      "ground_pick": "26 checks, 0 fail, 1 warn (B4 self-describe: command_names omits head/body_command; robotd ignores metadata, 0 runtime impact)",
+      "stand": "26 checks, 0 fail, 0 warn"
+    },
+    "robotd_consumes": "only check_width(61->14) + Observation::zeroed() warm-up + input name \"obs\" hardcoded; manifest.json and onnx metadata are NOT opened by this robotd generation"
+  },
+  "rehearsal": {
+    "tool": "rehearse_hd1910.py (offline BAM duty/command dry-run at p8 preset, kp_fw=8)",
+    "walk": true,
+    "ground_pick": true,
+    "stand": true,
+    "note": "all_gates_pass=True for all three; non-walking policies (ground_pick/stand) get --cmd-vx 0 so moves_forward gate becomes not_applicable instead of a spurious failure"
   }
 }
