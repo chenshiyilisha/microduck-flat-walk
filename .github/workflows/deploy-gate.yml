@@ -158,7 +158,12 @@ jobs:
           TARGETS_SH="${RUNNER_TEMP:-/tmp}/gate_targets.sh"
           python tools/hd1910/ci_gate_targets.py --bundle "$BUNDLE" --sh > "$TARGETS_SH"
           . "$TARGETS_SH"
-          test "$GATE_COUNT" -eq 3
+          # Pass24/R8: the expected gate count comes from the SAME single
+          # authority the emitter reads (tools/hd1910/deploy_stages.POLICY_KEYS),
+          # never a hard-coded 3. If a policy is added/removed there, this check
+          # fails loudly instead of silently gating the wrong set.
+          EXPECTED_GATES="$(python -c 'import sys; sys.path.insert(0,"tools/hd1910"); from deploy_stages import POLICY_KEYS; print(len(POLICY_KEYS))')"
+          test "$GATE_COUNT" -eq "$EXPECTED_GATES"
           for O in "$GATE_WALK" "$GATE_GROUND_PICK" "$GATE_STAND"; do
             echo "=== gate: $O ==="
             REPORT="out/ci_$(basename "$O" .onnx).json"

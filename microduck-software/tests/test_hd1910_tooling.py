@@ -23,6 +23,11 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HERE = ROOT / "tools" / "hd1910"
 
+# The deployed-policy set is a single authority (deploy_stages.POLICY_KEYS);
+# emitter and binder both import it so the count cannot rot in a second copy.
+sys.path.insert(0, str(HERE))
+from deploy_stages import POLICY_KEYS  # noqa: E402
+
 
 def _load(modname: str, path: pathlib.Path):
     """Import a tool module by path without polluting the package namespace."""
@@ -1183,7 +1188,7 @@ def test_ci_gate_targets_cli_emits_bundle_paths(tmp_path):
     assert f"GATE_STAND={expected['artifacts']['stand']['rel_path']}" in sh.stdout
     assert f"GATE_TOML={expected['artifacts']['robotd_toml']['rel_path']}" in sh.stdout
     assert f"GATE_EXPECT_KP={int(expected['plant']['position_kp'])}" in sh.stdout
-    assert "GATE_COUNT=3" in sh.stdout
+    assert f"GATE_COUNT={len(POLICY_KEYS)}" in sh.stdout
 
     js = subprocess.run([sys.executable, str(script), "--bundle", str(bundle),
                          "--root", str(ROOT), "--json"],
@@ -1251,9 +1256,57 @@ def test_ci_workflow_gate_is_bundle_driven_and_unhardcoded():
     no_emitter = text.replace("ci_gate_targets.py", "old_hardcoded_list.sh")
     assert any("NOT BUNDLE-DRIVEN" in p
                for p in acc.gate_target_problems(no_emitter))
+
     # Negative control 3: comments describing paths must NOT be flagged.
     assert acc.gate_target_problems(
         "# history: artifacts/flat_walk/*.onnx was force-added\n" + text) == []
+
+
+def test_deployed_policy_set_is_single_authority(tmp_path):
+    """Pass24/R8: the deployed-policy set must be ONE definition that both the
+    emitter and the binder import -- no second literal copy that can rot in
+    silence (the SAME failure mode R7 closed for the stage set). Two proofs:
+      (1) both consumers' POLICY_KEYS is the SAME object, and the name is
+          defined in exactly one source file;
+      (2) a bundle that drops a policy is rejected by BOTH the emitter (cannot
+          name the gate target) and the binder (deploy_checks keys != authority).
+    """
+    emitter = _load("ci_gate_targets_r8", HERE / "ci_gate_targets.py")
+    binder = _load("bundle_bindings_r8", HERE / "bundle_bindings.py")
+
+    # (1a) single object -- there is no second in-memory copy.
+    assert emitter.POLICY_KEYS is binder.POLICY_KEYS, (
+        f"emitter={emitter.POLICY_KEYS} binder={binder.POLICY_KEYS} -- must be identical")
+    assert len(emitter.POLICY_KEYS) >= 3
+
+    # (1b) the literal is defined in exactly ONE file under tools/hd1910.
+    defs = []
+    for p in (HERE).glob("*.py"):
+        for ln in p.read_text(encoding="utf-8").splitlines():
+            if ln.strip().startswith("POLICY_KEYS") and "=" in ln:
+                defs.append(p.name)
+    assert defs == ["deploy_stages.py"], (
+        f"POLICY_KEYS must be defined only in deploy_stages.py, found in {defs}")
+
+    real = ROOT / "out" / "hd1910_kp8_deploy_bundle.json"
+    base = json.loads(real.read_text(encoding="utf-8"))
+    rc0, msgs0 = binder.verify_bindings(base, ROOT, real)
+    assert rc0 == 0, msgs0
+
+    # (2a) binder rejects a bundle whose deploy_checks is missing a policy.
+    dropped = json.loads(json.dumps(base))
+    dropped["deploy_checks"].pop("stand")
+    rc1, msgs1 = binder.verify_bindings(dropped, ROOT, real)
+    assert rc1 == 1, msgs1
+    assert any("deploy_checks keys" in m for m in msgs1), msgs1
+
+    # (2b) emitter rejects a bundle missing the policy's artifact -> no gate emits.
+    bad = tmp_path / "b.json"
+    dropped_art = json.loads(json.dumps(base))
+    dropped_art["artifacts"].pop("stand")
+    bad.write_text(json.dumps(dropped_art), encoding="utf-8")
+    with pytest.raises(emitter.TargetsError):
+        emitter.load_targets(bad, ROOT)
 
 
 def test_clean_checkout_strict_detects_hardcoded_gate_targets(tmp_path):

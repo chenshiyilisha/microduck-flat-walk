@@ -42,6 +42,15 @@ from pathlib import Path
 
 DEFAULT_AUTHORITY = Path(__file__).resolve().with_name("pre_deploy_check.py")
 
+# Single authority for WHICH policies are deployed. Two consumers must agree on
+# the deployed-policy set, exactly like the stage set (Pass23/R7):
+#   * ci_gate_targets.py     -- emits the REAL gate targets CI sources
+#   * bundle_bindings.py     -- checks the bundle's deploy_checks evidence
+# A second literal copy in either tool would rot in silence: adding a fourth
+# policy to one but not the other leaves CI gating three while the evidence
+# claims four (or vice versa). Keep the set HERE and import it everywhere.
+POLICY_KEYS = ("walk", "ground_pick", "stand")
+
 
 def stage_authority(source: Path) -> tuple[list[str], str | None]:
     """Read FULL_STAGES out of the conductor SOURCE (ast; never import/execute).

@@ -87,10 +87,8 @@ from pathlib import Path
 _TOOLS_DIR = str(Path(__file__).resolve().parent)
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
-from deploy_stages import (authority_variant, derive_verdict,  # noqa: E402
-                           stage_authority as _full_stages)
-
-POLICY_KEYS = ("walk", "ground_pick", "stand")
+from deploy_stages import (POLICY_KEYS, authority_variant,  # noqa: E402
+                           derive_verdict, stage_authority as _full_stages)
 DEFAULT_BUNDLE = "out/hd1910_kp8_deploy_bundle.json"
 # Authority for the deploy plant: apply_to_live.py maps 8.0 -> "hd1910_kp8",
 # and the bundle filename itself encodes the plant id. Three independent

@@ -36,7 +36,14 @@ import shlex
 import sys
 from pathlib import Path
 
-POLICY_KEYS = ("walk", "ground_pick", "stand")
+# The deployed-policy set is the single authority in deploy_stages.POLICY_KEYS;
+# both this emitter and bundle_bindings.py import it (Pass24/R8). SHELL_NAMES
+# is emission-specific (GATE_* variable names) and stays local.
+_TOOLS_DIR = str(Path(__file__).resolve().parent)
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+from deploy_stages import POLICY_KEYS  # noqa: E402
+
 SHELL_NAMES = {"walk": "GATE_WALK", "ground_pick": "GATE_GROUND_PICK",
                 "stand": "GATE_STAND"}
 DEFAULT_BUNDLE = "out/hd1910_kp8_deploy_bundle.json"
@@ -214,7 +221,8 @@ def _selftest() -> int:
         good = load_targets(bundle(), root)
         sh = render_sh(good)
         variables = ("GATE_WALK=", "GATE_GROUND_PICK=", "GATE_STAND=",
-                     "GATE_TOML=", "GATE_EXPECT_KP=16", "GATE_COUNT=3")
+                     "GATE_TOML=", "GATE_EXPECT_KP=16",
+                     f"GATE_COUNT={len(POLICY_KEYS)}")
         complete = all(v in sh for v in variables) and "\n\n" not in sh
         ok &= complete
         print(f"  [{'ok' if complete else 'BAD'}] --sh emits all 6 GATE_* variables")
