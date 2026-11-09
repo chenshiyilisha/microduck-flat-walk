@@ -127,6 +127,12 @@ TORSO_EDGES = {"yaw2roll", "bearing_roll", "neck"}
 LINK_RADIUS = 0.022          # 肢体半径 (m)
 TORSO_RADIUS = 0.045         # 躯干半径 (m)
 
+# —— IMU 装后朝向自检（移植自 build-tutorial imu_orientation_check.py 思路）——
+# 机器人水平静止时，robotd 的 safety.gravity 应≈[0,0,-1]（直立）。
+# 若静止且偏离超容差 → 怀疑安装四元数（imu_mount_quat）配错（负对照：配错必被抓出）。
+MOUNT_CHECK_TILT_TOL_DEG = 20.0   # 水平静止下 gravity 偏离 -Z 的允许容差
+GYRO_STILL_RAD_S = 0.15           # 角速度低于此值视为“静止”，可下朝向结论
+
 
 # ───────────────────────────────────────────────────────────────────────────
 # 3. 纯 Python 四元数 + 旋转（不依赖 numpy）
@@ -214,6 +220,8 @@ class RobotStateView:
     head: tuple[float, float, float, float] | None = None  # RobotState.head: [f64;4] 头部四元数 (lib.rs:2659)
     odom_pos: tuple[float, float, float] | None = None   # RobotState.odom.position 躯干世界坐标 m (lib.rs:2731)
     odom_yaw: float | None = None                        # RobotState.odom.yaw 航向 rad (lib.rs:2733)
+    # —— 装后朝向自检（需在“水平静止”条件下解读；moving/fallen 时不下结论） ——
+    mount_check: str | None = None                       # 'ok'/'suspect_mount'/'moving'/'fallen'/'insufficient'
 
 
 def _gravity_from(obj: dict) -> tuple[float, float, float] | None:
@@ -280,6 +288,9 @@ def _odom_from(obj: dict) -> tuple[tuple[float, float, float] | None, float | No
 def parse_state(obj: dict) -> RobotStateView:
     safety = obj.get("safety") if isinstance(obj.get("safety"), dict) else {}
     odom_pos, odom_yaw = _odom_from(obj)
+    gravity = _gravity_from(obj)
+    gyro = _gyro_from(obj)
+    fallen = bool(safety["fallen"]) if isinstance(safety.get("fallen"), bool) else None
     return RobotStateView(
         t=float(obj.get("t", 0.0)),
         policy=str(obj.get("policy", "?")),
@@ -287,15 +298,16 @@ def parse_state(obj: dict) -> RobotStateView:
         targets=_as_floats(obj.get("targets"), N),
         velocities=list(obj.get("velocities") or []),
         currents_ma=list(obj.get("currents_ma") or []),
-        gravity=_gravity_from(obj),
-        fallen=bool(safety["fallen"]) if isinstance(safety.get("fallen"), bool) else None,
+        gravity=gravity,
+        fallen=fallen,
         limp=bool(safety.get("limp")) if isinstance(safety.get("limp"), bool) else None,
         imu_stale_blocks=_imu_health_from(obj)[0],
         imu_healthy=_imu_health_from(obj)[1],
-        gyro=_gyro_from(obj),
+        gyro=gyro,
         head=_head_from(obj),
         odom_pos=odom_pos,
         odom_yaw=odom_yaw,
+        mount_check=imu_mount_sanity(gravity, gyro, fallen),
     )
 
 
@@ -309,6 +321,40 @@ def gravity_tilt_deg(gravity: tuple[float, float, float] | None) -> float | None
     u = [x/n for x in gravity]
     cosang = max(-1.0, min(1.0, u[2] * -1.0))   # dot(g, [0,0,-1])
     return math.degrees(math.acos(cosang))
+
+
+def imu_mount_sanity(gravity: tuple[float, float, float] | None,
+                     gyro: tuple[float, float, float] | None,
+                     fallen: bool | None,
+                     tilt_tol_deg: float = MOUNT_CHECK_TILT_TOL_DEG,
+                     still_thresh: float = GYRO_STILL_RAD_S) -> str | None:
+    """装后朝向自检（负对照）。移植自 build-tutorial 的 imu_orientation_check.py：
+    该工具在“水平静止”姿态下录 BNO08x 样本，核对 projected_gravity 是否指向 -Z。
+
+    这里用 robotd 已经算好的体坐标 ``safety.gravity`` 做等价判断：
+
+    * gravity 缺失                          → ``insufficient``（数据不足，不当 0）
+    * 已倒下 fallen                          → ``fallen``（不是 mount 问题）
+    * 无陀螺 / |gyro| 超阈值（运动中）        → ``moving``（动力学倾斜会污染重力，不下结论）
+    * 静止且 tilt ≤ 容差                     → ``ok``
+    * 静止但 tilt > 容差                     → ``suspect_mount``（安装四元数很可能配错）
+
+    注意：本函数只负责“水平静止”这一前提下的判断；机器人被故意倾斜持握时也会
+    显示 suspect_mount，那不是 bug——由操作员结合现场解读。它的价值是抓“配错 mount
+    四元数”这类静默错误：配错时即使机器人水平静止，gravity 也会偏。
+    """
+    if gravity is None:
+        return "insufficient"
+    if fallen:
+        return "fallen"
+    if gyro is None:
+        return "moving"                       # 无陀螺，无法判断是否静止
+    if math.sqrt(sum(x*x for x in gyro)) > still_thresh:
+        return "moving"                       # 运动中，重力被动力学倾斜，不能据此判 mount
+    tilt = gravity_tilt_deg(gravity)
+    if tilt is None:
+        return "insufficient"
+    return "ok" if tilt <= tilt_tol_deg else "suspect_mount"
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -395,6 +441,9 @@ def _fmt_imu(st: RobotStateView) -> str:
         parts.append(f"odom=({p[0]:+.2f},{p[1]:+.2f},{p[2]:+.2f})m")
     if st.odom_yaw is not None:
         parts.append(f"yaw={math.degrees(st.odom_yaw):.0f}°")
+    if st.mount_check is not None:
+        tag = "⚠MOUNT?" if st.mount_check == "suspect_mount" else st.mount_check
+        parts.append(f"mount={tag}")
     return "  ".join(parts)
 
 

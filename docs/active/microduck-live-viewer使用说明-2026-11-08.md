@@ -61,7 +61,8 @@ python live_viewer.py --demo --renderer headless       # 只打印数值（含�
 - **headless**：逐帧打印每个关节的 `j`（实测角）、`tgt`（目标角）、`err`（跟踪误差），
   以及 `max_track_err`；并附 **`gravity` 体坐标重力向量 + 倾角 `tilt` + `fallen`/`limp` +
   `gyro` 原始陀螺（rad/s）+ `odom` 躯干世界坐标（m）+ 航向 `yaw` + IMU 过期块 `imu_stale` /
-  `imu_healthy`**。一眼看谁没跟上、机器人是否要倒、IMU 是否过期。
+  `imu_healthy` + `mount` 装后朝向自检**。一眼看谁没跟上、机器人是否要倒、IMU 是否过期、
+  安装四元数是否疑似配错。
 - **matplotlib/viser**：按真实连杆树画**圆柱连杆 mesh + 关节球 + 体坐标红色重力箭头 +
   青色陀螺箭头**（盆骨→髋→膝→踝→脚尖，颈/头/嘴同理）；躯干画粗、肢体画细。若某关节
   `targets` 与 `joints` 相差 >1e-3，会叠加一条绿色虚线表示目标姿态。viser 还提供浏览器内
@@ -75,6 +76,12 @@ python live_viewer.py --demo --renderer headless       # 只打印数值（含�
   / `robot.healthy` 合并进每帧（lib.rs:2429 HealthResult / 2544 ImuHealth）。该 RPC
   取不到/报错时，对应字段保持 `None`，HUD 标注 `imu_health=n/a(robot.health)`——这是
   **正常状态，不是 bug**。
+- **装后朝向自检 `mount=`**：移植自 `AI-FanGe/Microduck-build-tutorial` 的
+  `imu_orientation_check.py` 思路。机器人**水平静止**时，robotd 的 `safety.gravity` 应
+  ≈ `[0,0,-1]`（直立）；若静止且偏离超 20° 则显示 **`mount=⚠MOUNT?`**，提示
+  `imu_mount_quat`（部署档）很可能配错（负对照：配错必被抓出）。运动中（`|gyro|` 大）、
+  已倒下、无数据分别显示 `mount=moving` / `fallen` / `insufficient`，**不下结论**。
+  价值：抓「装错 IMU 朝向四元数」这类静默错误——真机上配错时即使水平静止，gravity 也会偏。
 
 ## 5. 数据契约（务必对齐）
 
