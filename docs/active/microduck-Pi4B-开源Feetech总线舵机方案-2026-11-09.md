@@ -74,13 +74,18 @@ Feetech/STS 总线是**半双工 TTL**（同一条线收发），必须有方向
 
 ---
 
-## 4. 落地建议（若真换 Pi 4B）
+## 4. 落地建议（🔴 2026-11-09 已被完整方案订正，勿照抄旧版）
 
-1. `config.txt` 加 `dtoverlay=disable-bt` → 用 `ttyAMA0`（PL011）。
-2. toml `port` 改 `/dev/ttyAMA0`（原 `ttyS2` 在 Pi 上不存在）。
-3. **接 Waveshare Bus Servo Driver Board**（或等价自动方向板）做硬件半双工 + 电平转换；robotd 不改方向代码。
-4. 其余（HLS 500k 分支、`position_kp`/`gain`、EEPROM 开机硬校验、IMU 朝向）与现状 Radxa 完全一致，无需重做。
-5. 机构（85×56mm/75g）仍要重做；价格/供电仍是缺点（见四板对比 §3.4）。
+> **完整可执行方案见 `microduck-Pi4B-完整部署方案-feetech_hls-2026-11-09.md`**（与泰山派烤板步骤同粒度）。
+> 本节旧版 5 条有**两处需要订正**：
+
+- 🔴 **订正 1（自相矛盾）**：旧第 1/2 条要切 PL011 用 `ttyAMA0`，第 3 条却要接 Waveshare 板——若该板走 **USB 模式 B**，根本用不到板载 UART；只有走 **UART 模式 A（跳线 A，RX-RX/TX-TX）** 时两者才是一套。两条路必须二选一并写清。
+- 🔴 **订正 2（USB 路径被预算否决）**：项目 `probe_bus_budget.py` 真机实测（`.workbuddy/memory/2026-11-06.md:245-250`）显示 500 kbps / 16 设备（15 关节 + IMU 200）每 tick **标称 10.28–11.01 ms、最坏 16.68–17.41 ms**，20 ms 周期只剩 **2.59–3.32 ms** 给 ONNX；USB CDC 的批延迟不可调（CH340/CP210x 无 `latency_timer`，FTDI 默认 16 ms ⇒ 62.5 Hz）。⇒ **整机主方案必须是板载 PL011 + 外部自动方向板，USB 只用于台架单舵机调试**（否则掉到 `update_gate` 45 Hz 以下 → updater 自动回滚，症状像发布系统故障）。
+- ✅ **订正后的推荐**：`dtoverlay=uart3`（Pi 4B 额外 PL011，GPIO4/5，`/dev/ttyAMA3`）——**不用关蓝牙**、避开 GPIO0/1 保留脚；比旧版 `disable-bt → ttyAMA0` 更优（官方 `overlays/README` 明列 UART2–5）。PL011 参考时钟 48 MHz ⇒ `48e6/(16×500000)=6.0` 整数分频，500 kbps 精确。
+- 🔴 **订正 3（内核补丁不可复用）**：泰山派 vendored 补丁改的是 `8250_dw.c`，Pi 4B 是 `amba-pl011.c`；PL011 硬件无 RS485、主线支持到 2021 才有、RPi 分支 2026-01 才修掉 `pl011_axi_probe` 的 hrtimer panic（PR `#7202`），且社区只验证到 460800 ⇒ **kernel DE 路径不做首选**。
+- 🔴 **订正 4（IMU 代次）**：本部署 toml 绑 `DuckBuddy-main` 代次，IMU 是**总线板 ID200**（随舵机总线走），**Pi 4B 不需要 I2C**；四板文档 §4 功能表「IMU I2C / Pi i2c-1 需开」是另一代次口径。
+
+保留有效结论：`servo="feetech_hls"` / 500k / ID 1–15 / `position_kp` / `gain` / EEPROM 硬校验 / 机构重做（85.6×56.5 mm / 75 g）与现状 Radxa 一致，无需重做。
 
 ---
 

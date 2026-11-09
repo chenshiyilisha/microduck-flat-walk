@@ -102,7 +102,8 @@ _一手来源：各板官方规格/brief；robotd 源码（`configd/src/identity
   - 四足用 Pi 4B 的开源项目一大堆（`aswin-pn/project_axl`、`UMN-VR/GoldyDogV7`、`mrhello291/SimpleQuad`、WAVEGO），但全是 **PCA9685 + PWM 舵机**，与我们的总线舵机协议不通用。
   - **Pi 4B + 飞特 STS 总线舵机有现成开源驱动**：`e5l/lekiwi-control-center`（README 明写 *"tested on Pi 4"* + Feetech STS3215）、`commanderfun/STS3215`（Waveshare 驱动板封装）、Joshua、`python-st3215`。→ 软件/驱动层可行性已被旁证。
   - **完整 Microduck/HD-1910 复刻线开源界无人用 Pi 4B**（全用 Radxa Zero 3W / Pi Zero 2W）。
-  - 🔴 **半双工方向三种实现路径，决定 robotd 怎么接**：① USB 适配器 + scservo_sdk 翻 RTS（LeKiwi 系，`config/robot.yaml:6` ttyACM0）；② 外部 Bus Servo Driver Board 硬件自动方向（Waveshare/LeLamp，零 RTS）；③ 板载 UART + kernel DE（我们泰山派方案）。**robotd 用户态零 RTS 翻转（已查源码）→ 不能用路径①的 Python SDK 栈，必须走路径②（接 Waveshare 类板，robotd 零改动）或路径③（kernel DE）**；串口无论如何须切 PL011（`disable-bt`）。
+  - 🔴 **半双工方向三种实现路径，决定 robotd 怎么接**：① USB 适配器 + scservo_sdk 翻 RTS（LeKiwi 系，`config/robot.yaml:6` ttyACM0）；② 外部 Bus Servo Driver Board 硬件自动方向（Waveshare/LeLamp，零 RTS）；③ 板载 UART + kernel DE（我们泰山派方案）。**robotd 用户态零 RTS 翻转（已查源码）→ 不能用路径①的 Python SDK 栈，必须走路径②（接 Waveshare 类板，robotd 零改动）或路径③（kernel DE）**；串口无论如何须切 PL011。
+  - 📌 **完整可执行方案（2026-11-09 后续研究）见 `microduck-Pi4B-完整部署方案-feetech_hls-2026-11-09.md`**，该文档对上面几条做了**三处订正**：① 串口改用 **`dtoverlay=uart3` → `/dev/ttyAMA3`**（Pi 4B 有 UART2–5 四个额外 PL011，官方文档明列；不必关蓝牙），48 MHz 参考时钟下 500 kbps = 6.0 整数分频精确可达；② **USB 路径被总线预算否决**——`probe_bus_budget.py` 实测 500k/16 设备最坏 16.68–17.41 ms / 20 ms，只剩 2.59–3.32 ms 给 ONNX，USB 批延迟会把 50 Hz 环顶到 45 Hz 门槛以下；③ 泰山派 `8250_dw.c` 补丁**不可复用**（Pi 是 `amba-pl011.c`），kernel DE 路径在 500 kbps 半双工上无现成验证。⇒ 主方案 = 板载 PL011 + Waveshare `Bus Servo Adapter (A)` 的 **UART 模式 A**（硬件自动方向），USB 仅台架调试。
 
 ---
 
@@ -119,6 +120,8 @@ _一手来源：各板官方规格/brief；robotd 源码（`configd/src/identity
 | 无线控制（robotctl+relay） | ✅ WiFi6 | ✅ WiFi6 | ⚠️ 2.4G n | ✅ WiFi5 |
 | 视频流编码（若推流） | ✅ | ✅ H264/265 硬件 | ✅（无 MPP，用软/其他） | ✅ H264 硬件 |
 | 系统盘 | ✅ eMMC | ✅ eMMC+SD | ✅ eMMC+SD | ⚠️ microSD（无 eMMC） |
+
+> 🔴 **IMU 行的代次口径订正（2026-11-09，见 `microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md`）**：上表按「BNO08x 直连 I2C」代次填写，**只适用于 `hd1910m/microduck`（Radxa / FT-SCS / `row[33]==4`）那条线**。我们 `out/robotd_hd1910_mode0.toml` 实际绑定的是 **`DuckBuddy-main` 代次**（OrangePi / HL-2915 / `feetech_hls` / 500k / EEPROM reg6=1、reg33=0 硬校验；该 toml 注释自述且**不含任何 BNO08x 键**），其 IMU 是**总线 `imu_to_dxl v2`（LSM6DSV16X，ID 200）**，与舵机共用一条 sync_read 总线 ⇒ **换板时不需要为 IMU 单独接/配置 I2C**。若改走 BNO08x 路径才需要 `/dev/i2c-1`（Pi，GPIO2/3）+ `gyro_fusion` 移植（见 `microduck-HD1910-BNO085-gyro_fusion移植执行清单-2026-11-09.md`）。凡谈 IMU / EEPROM 校验 / 增益口径，先问「哪一代 robotd + 哪条输入路径」。
 
 ---
 
