@@ -94,10 +94,72 @@ robotd/src/theremin.rs:33 use std::os::unix::net::UnixStream;
 
 **没有 `cfg(unix)` 门控**（`main.rs` 的 `#[cfg(target_os="linux")]` 在 43/951/1080/1117，不覆盖上述行）。这是上游既有事实，不是本次改动引入。
 
-后果：**robotd 整栈只能在 Linux 上跑**。`tokio::net::UnixListener` 文档标注 "Available on Unix and crate feature `net` only" ⇒ 就算给 unix socket 加 `cfg` 门控，Windows 版会失去控制面，`robotctl` 连不上，**等于做一个不可操控的空壳**——所以 Windows 侧止步于 `duck-control` 编译+测试（已达成），整栈验证的正确出口是 Linux：
+后果：**robotd 整栈只能在 Linux 上跑**。`tokio::net::UnixListener` 文档标注 "Available on Unix and crate feature `net` only" ⇒ 就算给 unix socket 加 `cfg` 门控，Windows 版会失去控制面，`robotctl` 连不上，**等于做一个不可操控的空壳**——所以 Windows 侧止步于 `duck-control`（编译、单元测试、以及**对真 `body_server.py` 的端到端**均已达成，见 §5.4），整栈验证的正确出口是 Linux：
 
 - **WSL 路线（当前唯一可行）**：`wsl.exe` 目前在沙箱程序黑名单里（用户已同意开 WSL，需在 WorkBuddy 安全中心 → 命令安全 → 程序黑名单中移除 `wsl.exe`，且 `wsl --install` 需管理员）；放开后整栈（robotd/robotctl/_unix socket/50Hz/health）可在 WSL2 原生跑，**零上游改动**。
 - 将来真上板也是 Linux（Radxa/Yocto），这条验证天然复用。
+
+### 5.4 Rust 客户端 ↔ 真 MuJoCo 服务器：**端到端 2/2 PASS，负对照真红**
+
+§5.1 的 10/10 是 **Python 手写帧**，§5.2 的 119/119 是 **mock `TcpListener`**。中间留着一个真空：`sim.rs` 的 `Deserialize` 从没解析过 Python `json.dumps` 产出的真帧（额外键、float 拼写、换行），也从没量过真一步 MuJoCo 的往返耗时。本节补上。
+
+- 新增 `duck-control/tests/sim_e2e.rs`（两个 `#[ignore]` 测试），编排 `microduck-software/tools/hd1910/sim_e2e_check.py`：起真 `body_server.py --headless` → 跑编译好的 harness → **杀掉服务器，用同一 harness 再跑一遍并要求它变红**。一个从不连服务器的测试会两轮全绿，因此绿结果不可能是空跑。
+- 门禁刻意**不把「编译失败」算作负对照的红**：必须失败在断言/连接上。
+
+本机实跑输出（2026-11-09）：
+
+```
+read: pos0=-0.002727 vel0=0.002116 cur0=0.225700 |g|=1.000000 |q|=1.000000
+      gravity=[-0.053284, 0.022474, -0.998326]
+slow: volts=7.4 temps[0]=32 count=15
+read RTT over 50 live ticks: p50=151.2us max=257.4us
+joint 2: uncommanded 300ms drift=-0.011355 | commanded +0.20 -> delta=+0.119049
+test result: ok. 2 passed; 0 failed
+--- server stopped ---
+test result: FAILED. 0 passed; 2 failed   (both: connection timed out)
+VERDICT: PASS
+```
+
+读数与结论：
+
+1. **真帧被全量吃下**：`trunk_z`/`trunk`/`sim_time` 等额外键、Python float、行分隔都没让 serde 掉连接；`|g|=|q|=1` 且 gravity 非 `[0,0,0]` 的全零假帧——这正是「输出落在看起来合理区间」的静默 bug 该挡的地方。
+2. **50 次 live `read` RTT p50 151.2 µs / max 257.4 µs**，比 20 ms tick 小两个数量级；`set_nodelay(true)` 生效，没有 ~40 ms 的 Nagle 尾巴。注意这是**单次请求往返**，不是整 tick 预算（不含策略推理、IPC）。
+3. **`write` 真推动关节**：+0.20 rad 目标、300 ms 后实动 +0.119 rad，同期无命令自漂只有 −0.011355（10.5×）。这个自漂与 §5.1 用 Python 独立测出的 −0.0113 对上了——两条独立测量互证。
+4. **负对照真红**：关掉服务器后两个测试同时 FAILED（`TcpStream::connect_timeout` 在 Windows loopback 无监听端口上表现为 *timed out* 而非 *refused*，属真实现象）。第一次实跑时 cargo 的 `.cargo-build-lock` 被拒访问，门禁如实报 `VERDICT: FAIL` 并指出「负对照没红」，**没有假绿**；随后把编译前置、脚本只托管服务器+测试二进制，问题解决。
+
+复现（编译一次，门禁可反复跑）：
+
+```bash
+export PATH="$HOME/.cargo/bin:$HOME/.wb_tmp/tools:$PATH"
+export CARGO_TARGET_DIR="C:/Users/hejih/.wb_tmp/ct_dc5" CARGO_INCREMENTAL=0
+export RUSTFLAGS="-C linker=rust-lld -C link-self-contained=yes"
+cd microduck-software/.upstream/DuckBuddy-main
+cargo +stable-x86_64-pc-windows-gnu test -p duck-control --test sim_e2e \
+    --target x86_64-pc-windows-gnu --no-run
+cd <repo root>
+CARGO_TARGET_DIR=<same> microduck-software/.venv-mjlab/Scripts/python.exe \
+    microduck-software/tools/hd1910/sim_e2e_check.py
+```
+
+⚠️ **边界没变**：这里验的是「缝」本身（协议帧 + 客户端语义）。50 Hz 循环、IPC/unix socket、`robotctl`、策略加载、health 门禁**一个都没验**，整栈仍 Linux-only，见 §5.3。
+
+### 5.5 🔴 改动持久化：`.upstream/` 被 gitignore
+
+`microduck-software/.gitignore:5` 忽略整个 `.upstream/` ⇒ `sim.rs`、六处接线、`sim_e2e.rs` **全都不入库**，换机器 / 重新解包就全丢。已补一份可重放移植包（本轮入库）：
+
+```
+microduck-software/tools/hd1910/sim_port/
+  sim.rs                 duck-control/src/sim.rs 的字节副本
+  sim_e2e.rs             duck-control/tests/sim_e2e.rs 的字节副本
+  apply_sim_port.py      6 处幂等接线：lib.rs(1) / 两个 Cargo.toml(2) / main.rs(3)
+```
+
+- `--check`：验 2 个源文件字节一致 + 6 处接线在位（现况 PASS）。
+- `--selftest` 是带负对照的往返：把六处插入**剥掉**造干净树 → `--check` 报 8 个问题（红）→ 重放 → 0 问题（绿）→ **重放出来的 4 个文件与现用树逐字节一致（0 差异）** → 二次 apply 0 文件改写（幂等）。
+- 这条比对抓出一个真 bug：Windows `Path.write_text` 把 `\n` 静默转成 CRLF，`read_text` 又静默转回来，**文本 diff 全绿而字节全变**；读写都已钉 `newline=""`。又一个「读数 vs 算术矛盾 ⇒ 错的是读数」的实例。
+- 故意不重放：`fake` 参数注释里提到 `--sim` 的文案（纯措辞，无功能影响）。
+
+`--check` 也是 clone 后的第一道自检，与 `apply_to_live.py --check` 同一习惯。
 
 ## 6. 怎么用（Linux）
 
@@ -115,7 +177,7 @@ robotd --sim 127.0.0.1:7801
 
 ## 8. 若继续，优先级
 
-1. **放开 WSL（用户已同意）**：安全中心移除 `wsl.exe` 黑名单 + 管理员装发行版；WSL2 里编 robotd（Linux 原生，unix socket 直接可用）+ `body_server.py` 同机跑。
+1. **放开 WSL（用户已同意，2026-11-09 19:23 复测仍被程序黑名单硬拦，且策略明确不可重试/绕行）**：安全中心移除 `wsl.exe` 黑名单 + 管理员装发行版；WSL2 里编 robotd（Linux 原生，unix socket 直接可用）+ `body_server.py` 同机跑。**这是整栈验证唯一的剩余阻塞项**。
 2. 起栈后先只验三件：**50 Hz 是否稳 / `robotctl health` 是否绿 / 策略 load 后日志里的 policy 名是否真的变了**。
 3. 再搬 `xgoduck_rl` 的 `roller_standup`/`sitstand` —— P3 缺这两个，而「跌倒后自己起来」是整机验收硬项。
-4. Windows 侧工具链配方（gnu + rust-lld 自包含 + zig dlltool shim）已归档在 §5.2，`duck-control` 后续改动仍可本机跑 `cargo test`。
+4. Windows 侧已到极限且全部达成：§5.2 工具链配方（gnu + rust-lld 自包含 + zig dlltool shim）、§5.4 真服务器端到端门禁、§5.5 可重放移植包。`duck-control` 后续改动本机跑 `cargo test`，再跑 `sim_e2e_check.py` 与 `apply_sim_port.py --check` 即可。
