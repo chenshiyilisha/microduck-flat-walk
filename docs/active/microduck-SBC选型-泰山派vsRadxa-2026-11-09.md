@@ -41,7 +41,7 @@ robotd 源码(`configd/src/identity.rs`、`duck-control/src/feetech.rs`)；部�
 关键证据：
 - 部署 toml 总线是**板载原生串口**而非 USB：`out/robotd_hd1910_mode0.toml:60` `port = "/dev/ttyS2"`；
   `feetech.rs:301` `serialport::new(port, BAUD_RATE)` 直接开；`BAUD_RATE = 500_000` 硬编码（toml 注释引 `feetech.rs:35`）。
-- 半双工方向控制走串口自身（RTS/RS485，在 `Sts3215Controller` 内）——软件层板子无关，**物理 RTS 引脚位置随设备树变**。
+- 半双工方向控制**不在 robotd 用户态**：`FeetechIo::open`（`feetech.rs:301`）只是 `serialport::new(port, BAUD_RATE).open()`，整个 DuckBuddy-main 仓 + `rustypot` 1.6.0 都没有 RTS/RS485/方向翻转代码（2026-11-09 拉源码核实）。方向 100% 由 **kernel/硬件层**负责（收发器 DE/RE 接 `485_ctrl_gpio`，见泰山派部署步骤草案 §9 R1）。⇒ 软件层板子无关，但**换板必须保证新板 kernel/硬件层把方向做对**（泰山派用立创镜像内核 DE gpio 补丁 + 载板 DE 接线），否则 robotd 静默读不到总线。
 - 社区泰山派移植：`hls_probe.py` 默认 UART `/dev/ttyS3`、IMU `i2c-2`（`microduck-泰山派HAT研究-2026-11-08.md` §3.6/§4）→ **印证换板后 `port` 与 I2C 总线号都要改**。
 
 > ⚠️ **隐患**：该 toml 注释写的是"A733's UART7"（Orange Pi 线），文件却给 HD-1910/Radxa 用。

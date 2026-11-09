@@ -91,7 +91,7 @@ _一手来源：各板官方规格/brief；robotd 源码（`configd/src/identity
   - **若采用 EasyDuck 整套（scs + 1MHz + 官方 ID 体系）**：与我们现有的 `feetech_hls` 训练 / EEPROM 工具链（`hls_probe`、`hardware_endtoend_check`、`pre_deploy_check`、标定文件 `zero_pos`/ID 1-15）**不兼容**——这些工具是按 HLS + 500k + 1-15 写的。等于换了一条全新的舵机协议线。
   - **若把我们的复刻线 robotd（`feetech_hls`/500k/1-15）烤到泰山派**：可复用 EasyDuck/立创镜像的**设备树（UART3 半双工）、系统镜像、部署/标定工具链、IMU 驱动（BNO08x 同系列）**，只需把 `port` 指到 `ttyS3`、对齐 `imu_mount_quat` 安装朝向——**软件迁移本质是"换板不换协议"**，比从零移植省事得多。
   - 两种路线下，**机构重做仍可能必要**：泰山派 70×45mm / 98.6g 比 Radxa 大重 ~80g；若直接采用 EasyDuck 整机（板+机壳+舵机+IMU+镜像），立创已解决机构；若只把泰山派塞进我们现有 Radxa 机壳，机构仍要重做。
-- 半双工方向走串口 RTS（`scs.rs` 内），物理 RTS 引脚随设备树变；板子无关，但需配 pinmux（立创镜像内核已含 UART3 半双工支持）。
+- 半双工方向：✅ **已查源码闭环（2026-11-09）**。对两条 robotd 线都拉源码核实：① 我们 `feetech_hls`：`FeetechIo::open`(`feetech.rs:301`)只 `serialport::new(...).open()`，整个 `DuckBuddy-main` 仓 + `rustypot` 1.6.0 **零 RTS/RS485/方向代码**；② `jlckfb/easyduck` 的 `ScsIo::open`(`runtime/duck-control/src/scs.rs:199`)同样只 `serialport::new(...).open()`，整个 easyduck runtime **零 TIOCSRS485/TIOCMSET/set_rts/rs485/de_gpio/half-duplex**（`scs.rs:477-486` 的 "direction" 是电机旋转符号位解码，非总线方向）。**两条线用户态都不翻方向脚，半双工方向 100% 在 kernel/硬件层**——也就是 vendored 的泰山派 `485_ctrl_gpio` DE 补丁（A1）提供的正是两者都依赖、却都没自己实现的方向控制，故两条线在同一块板上**不冲突**。无论哪条线，换板都必须保证新板 kernel/硬件层把方向做对（泰山派 = 立创镜像内核 DE gpio 补丁 + 载板 DE 接线）。
 
 ### 3.4 Pi 4B（候选替代）
 - SoC：Broadcom BCM2711，4×Cortex-A72 @1.5–1.8GHz（**单核比 A55 高两代，算力最强**）。
