@@ -38,6 +38,12 @@ ITERS="${ITERS:-2000}"
 SAVE="${SAVE:-100}"
 REL_HEADING="${REL_HEADING:-0.30}"
 PIN_ARATE="${PIN_ARATE:-}"
+# P3 seed sweep (server_pack/p3_sweep.sh) needs distinct seeds. Previously the
+# seed was left at the trainer default (42) with no CLI flag, so launching this
+# script 3x produced 3 identical runs -- a silent bug, not a sweep. Default 42
+# keeps every archived run name/behaviour byte-identical; only SEED != 42 tags
+# the run name so repeated launches cannot collide inside the same minute.
+SEED="${SEED:-42}"
 # --- heading reward recipe -------------------------------------------------
 # These were missing for a long time: the script drove only --rel-heading-envs,
 # so a run launched from here carried NO heading rewards at all and was not
@@ -55,7 +61,9 @@ case "$PLANT" in
 esac
 AR_TAG=""
 if [ -n "$PIN_ARATE" ]; then AR_TAG="_ar${PIN_ARATE}"; fi
-RUN="${1:-${PLANT}head_${REL_HEADING}${AR_TAG}_${ENVS}x${ITERS}_$(date +%m%d_%H%M)}"
+SEED_TAG=""
+if [ "$SEED" != "42" ]; then SEED_TAG="_s${SEED}"; fi
+RUN="${1:-${PLANT}head_${REL_HEADING}${AR_TAG}${SEED_TAG}_${ENVS}x${ITERS}_$(date +%m%d_%H%M)}"
 TASK=Mjlab-Velocity-Flat-MicroDuck
 
 export MUJOCO_GL=glfw
@@ -66,6 +74,7 @@ fi
 echo "== GPU / GL =="
 echo "plant=$PLANT ($PLANT_ID, expect detected=$DET_EXPECT kp_fw=$KP_EXPECT)"
 echo "rel_heading=$REL_HEADING"
+echo "seed=$SEED"
 echo "pin_action_rate=${PIN_ARATE:-<unchanged ramp>}"
 "$PY" -c "import torch; assert torch.cuda.is_available(); print('cuda', torch.cuda.get_device_name(0))"
 "$PY" tools/hd1910/apply_to_live.py --check
@@ -97,7 +106,7 @@ meta={
   'heading_stage_iters': '$HEADING_STAGE_ITERS',
   'pin_action_rate_weight': ('${PIN_ARATE}' or None),
   'expected_heading_x_forward_overlap': $REL_HEADING * 0.20,
-  'envs': $ENVS, 'iters': $ITERS,
+  'envs': $ENVS, 'iters': $ITERS, 'seed': $SEED,
   'ref': '$PLANT plant ($PLANT_ID) + heading closed loop (yaw gap fix)',
 }
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
@@ -136,6 +145,7 @@ if [ -n "$PIN_ARATE" ]; then AR_FLAG="--pin-action-rate $PIN_ARATE"; fi
   --env.sim.mujoco.ls-iterations 50 \
   --agent.max-iterations "$ITERS" \
   --agent.save-interval "$SAVE" \
+  --agent.seed "$SEED" \
   --gpu-ids '[0]' \
   --agent.logger tensorboard \
   --agent.experiment-name microduck_velocity_hd1910 \

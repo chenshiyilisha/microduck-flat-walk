@@ -14,32 +14,34 @@
   Do not install winget / Python / Git (fail if already missing).
 
 .PARAMETER SkipSmoke
-  Skip the post-install 64x5 GPU smoke (default: run smoke_heading.sh,
-  which also verifies the P3 plant + heading-closed-loop readback gate).
+  Skip the post-install 64x5 GPU smoke (default: run smoke_heading.sh with
+  PLANT derived from -Plant, verifying the live plant + heading readback gate).
 
 .PARAMETER SmokeTrain
   Use smoke_train.sh (m5/kp32 control) instead of smoke_heading.sh for the
-  post-install smoke. Default is smoke_heading.sh since the P3 retrain runs
+  post-install smoke. Default is smoke_heading.sh since the kp8 sweep runs
   with --rel-heading-envs and must exercise that path on first smoke.
 
 .PARAMETER Plant
-  Which plant to leave live. Default hd1910_kp5 (= P3 training target:
-  official m6 params + official STS3215 control law + kp_fw=5).
-  Use hd1910 to reproduce the archived m5/kp_fw=32 numbers instead.
+  Which plant to leave live. Default hd1910_kp8 (= kp_fw=8, the CURRENT
+  deployment line and the only plant that produces walking-grade checkpoints).
+  explore_ground_pick.sh hard-requires kp_fw=8.0; the old default
+  hd1910_kp5 (kp_fw=5) is the 2026-11-02 P3 retrain line and is kept only
+  for reproducing archived numbers. Use hd1910 for m5/kp_fw=32.
 
 .EXAMPLE
   cd D:\train\microduck-software
   powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1
 
 .EXAMPLE
-  # reproduce archived readings instead of the P3 target
+  # reproduce archived m5/kp32 readings instead of the kp8 default
   powershell -ExecutionPolicy Bypass -File tools\hd1910\server_pack\bootstrap.ps1 -Plant hd1910
 #>
 param(
   [switch]$SkipHostTools,
   [switch]$SkipSmoke,
   [switch]$SmokeTrain,
-  [string]$Plant = "hd1910_kp5"
+  [string]$Plant = "hd1910_kp8"
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,7 +62,7 @@ $BashCandidates = @(
 )
 
 function Require-Path($p, $hint) {
-  if (-not (Test-Path $p)) { throw "Missing $p — $hint" }
+  if (-not (Test-Path $p)) { throw "Missing $p - $hint" }
 }
 
 function Refresh-Path {
@@ -141,7 +143,7 @@ function Ensure-Winget {
     throw "winget missing and -SkipHostTools set"
   }
 
-  Write-Host "winget missing — trying to install App Installer..."
+  Write-Host "winget missing - trying to install App Installer..."
 
   # 1) Already present as Store package but not registered (fresh login / Server).
   try {
@@ -188,7 +190,7 @@ function Winget-Install($Id) {
   $winget = Find-Winget
   Write-Host "winget install $Id ..."
   & $winget install --id $Id -e --accept-package-agreements --accept-source-agreements --disable-interactivity
-  # 0 = ok, -1978335189 (0x8A15002B) = already installed — both fine
+  # 0 = ok, -1978335189 (0x8A15002B) = already installed - both fine
   if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
     throw "winget install $Id failed (exit $LASTEXITCODE). Run elevated PowerShell if UAC blocked it."
   }
@@ -224,7 +226,7 @@ function Ensure-Python312 {
     "${env:ProgramFiles}\Python312\python.exe"
   ) | Where-Object { Test-Path $_ } | Select-Object -First 1
   if ($direct) { return $direct }
-  throw "Python 3.12 installed but not on PATH — open a new PowerShell and re-run bootstrap.ps1"
+  throw "Python 3.12 installed but not on PATH - open a new PowerShell and re-run bootstrap.ps1"
 }
 
 function Ensure-GitBash {
@@ -237,7 +239,7 @@ function Ensure-GitBash {
   Refresh-Path
   $bash = Find-Bash
   if (-not $bash) {
-    throw "Git installed but bash.exe not found — open a new PowerShell and re-run, or check 'C:\Program Files\Git\bin\bash.exe'"
+    throw "Git installed but bash.exe not found - open a new PowerShell and re-run, or check 'C:\Program Files\Git\bin\bash.exe'"
   }
   return $bash
 }
@@ -248,10 +250,24 @@ Require-Path $RlDir "transfer microduck_rl-develop"
 Require-Path (Join-Path $Root "tools\hd1910\apply_to_live.py") "transfer tools\hd1910"
 Require-Path (Join-Path $Root "tools\bam_params\hd1910\m5.json") "transfer tools\bam_params"
 # The default plant's params file must be in the pack, else step 7 exits non-zero.
-Require-Path (Join-Path $Root "tools\bam_params\hd1910\official_m6_stslaw.json") "transfer tools\bam_params (P3 target params)"
+Require-Path (Join-Path $Root "tools\bam_params\hd1910\official_m6_stslaw.json") "transfer tools\bam_params (kp8/kp5 plant params)"
+# 2026-11-09: the old pack omitted these and the first train failed only AFTER
+# a 5 GB venv had been installed. Fail during preflight instead.
+foreach ($rel in @(
+    "tools\train_heading_variant.py",
+    "tools\eval_velocity_in_sim.py",
+    "tools\check_onnx_parity.py",
+    "tools\gate_p3_yaw.py",
+    "tools\plant_id.py",
+    "tools\hd1910\server_pack\p3_sweep.sh",
+    "tools\hd1910\server_pack\p3_select.py",
+    "tools\hd1910\server_pack\verify_pack.py")) {
+  Require-Path (Join-Path $Root $rel) "pack is incomplete - re-run make_transfer.ps1; see verify_pack.py"
+}
 
 & nvidia-smi | Out-Host
-if ($LASTEXITCODE -ne 0) { throw "nvidia-smi failed — install Game Ready / Studio driver first (bootstrap does not install GPU drivers)" }
+if ($LASTEXITCODE -ne 0) { throw "nvidia-smi failed - install Game Ready / Studio driver first (bootstrap does not install GPU drivers)" }
+Write-Host "CUDA 12.8 requires Windows driver >= 572.61 (CUDA 12.8 Update 1); check the CUDA Version row above."
 
 Write-Host "== 0b) host tools (Python 3.12 + Git) =="
 $PyLauncher = Ensure-Python312
@@ -292,7 +308,7 @@ Write-Host "== 6) Windows MUJOCO_GL=glfw patch =="
 Write-Host "== 7) plant '$Plant' =="
 & $Py tools\hd1910\apply_to_live.py --plant $Plant
 if ($LASTEXITCODE -ne 0) {
-  throw "plant '$Plant' did not pass its gate (exit $LASTEXITCODE). Available: hd1910_kp5 | hd1910 | hd1910_ftservo_m6 | xl330"
+  throw "plant '$Plant' did not pass its gate (exit $LASTEXITCODE). Available: hd1910_kp8 (default) | hd1910_kp5 | hd1910 | hd1910_ftservo_m6 | xl330"
 }
 & $Py tools\hd1910\apply_to_live.py --check | Out-Host
 
@@ -308,18 +324,31 @@ Write-Host ""
 Write-Host "Bootstrap OK."
 
 if ($SkipSmoke) {
-  Write-Host "SkipSmoke set — run manually:"
+  Write-Host "SkipSmoke set - run manually:"
   Write-Host "  `$env:MUJOCO_GL='glfw'"
-  Write-Host "  & `"$Bash`" tools/hd1910/smoke_heading.sh   (or smoke_train.sh for m5/kp32 control)"
+  Write-Host "  `$env:PLANT='p8'; & `"$Bash`" tools/hd1910/smoke_heading.sh   (PLANT=p3 only for -Plant hd1910_kp5)"
 } else {
   Write-Host "== 9) GPU smoke (64 envs x 5 iters) =="
   if ($env:CUDA_VISIBLE_DEVICES -eq "") {
     Remove-Item Env:CUDA_VISIBLE_DEVICES -ErrorAction SilentlyContinue
   }
   $env:MUJOCO_GL = "glfw"
-  $SmokeScript = "tools/hd1910/smoke_train.sh"
-  if (-not $SmokeTrain) { $SmokeScript = "tools/hd1910/smoke_heading.sh" }
-  Write-Host "smoke: $SmokeScript"
+  # smoke_heading.sh defaults to PLANT=p3 (kp_fw=5). With the new kp8 default
+  # that gate would go red even though the install is fine, so pass the plant
+  # explicitly. This is the same two-plant confusion as the XL330<->HD1910 case.
+  if ($SmokeTrain) {
+    $SmokeScript = "tools/hd1910/smoke_train.sh"
+    Remove-Item Env:PLANT -ErrorAction SilentlyContinue
+    if ($Plant -ne "hd1910") {
+      Write-Host "WARNING: -SmokeTrain checks the m5/kp32 plant gate but live plant is '$Plant'; expect a red gate. Use -Plant hd1910 for that control."
+    }
+  } else {
+    $SmokeScript = "tools/hd1910/smoke_heading.sh"
+    if ($Plant -like "*kp8*" -or $Plant -eq "p8") { $env:PLANT = "p8" }
+    elseif ($Plant -like "*kp5*" -or $Plant -eq "p3") { $env:PLANT = "p3" }
+    else { Remove-Item Env:PLANT -ErrorAction SilentlyContinue }
+  }
+  Write-Host "smoke: $SmokeScript (PLANT=$env:PLANT)"
   & $Bash $SmokeScript
   if ($LASTEXITCODE -ne 0) {
     throw "$SmokeScript failed (exit $LASTEXITCODE). Check out/train_*_smoke_*.log for device=cuda:0"
@@ -327,6 +356,10 @@ if ($SkipSmoke) {
   Write-Host "Smoke OK (device=cuda:0 gate passed)."
 }
 
-Write-Host "Next train (P3 + heading closed loop):"
-Write-Host "  REL_HEADING=0.30 ENVS=4096 ITERS=2000 & `"$Bash`" tools/hd1910/explore_heading.sh"
-Write-Host "4070 Ti (12GB): try ENVS=6144 after smoke; 8192 optional."
+Write-Host "Next train - P3 >=3-seed sweep (task #76), plant $Plant :"
+Write-Host "  & `"$Bash`" tools/hd1910/server_pack/p3_sweep.sh"
+Write-Host "  (TASKS/SEEDS/WALK_ENVS/WALK_ITERS/GP_*/SU_* overridable; DRY_RUN=1 prints commands)"
+Write-Host "Then pick a checkpoint (same-plant eval, median + sem, two-axis):"
+Write-Host "  & `"$Py`" tools/hd1910/server_pack/p3_select.py select --manifest out/p3_sweep_manifest.jsonl --out out/p3_sweep_summary.json"
+Write-Host "Single run instead: PLANT=p8 REL_HEADING=0.30 ENVS=4096 ITERS=2000 & `"$Bash`" tools/hd1910/explore_heading.sh"
+Write-Host "4070 Ti (12GB): 4096 is the sweet spot; try 6144 after smoke, 8192 optional."
