@@ -1,0 +1,55 @@
+{
+  "checkpoint": "logs\\rsl_rl\\microduck_velocity_hd1910\\2026-11-07_22-12-33_p8head_030_4096x3000_resume2999\\model_7999.pt",
+  "onnx": "logs\\rsl_rl\\microduck_velocity_hd1910\\2026-11-07_22-12-33_p8head_030_4096x3000_resume2999\\2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx",
+  "onnx_sha256_16": "e1b035c581dcc77e",
+  "opset": [
+    [
+      "ai.onnx",
+      18
+    ]
+  ],
+  "inputs": [
+    {
+      "name": "obs",
+      "shape": [
+        1,
+        61
+      ],
+      "type": "tensor(float)"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "actions",
+      "shape": [
+        1,
+        14
+      ],
+      "type": "tensor(float)"
+    }
+  ],
+  "obs_dim": 61,
+  "static_batch": 1,
+  "act_dim": 14,
+  "norm_eps": 0.01,
+  "samples": 8,
+  "parity": {
+    "max_abs": 1.927561920522791e-06,
+    "max_rel_to_ref_scale": 5.714435095262667e-07,
+    "n_bad": 0
+  },
+  "control_no_normalizer": {
+    "max_abs": 2.4576158533006676,
+    "max_rel_to_ref_scale": 1.3959010325802617,
+    "n_bad": 112
+  },
+  "tol": 0.0001,
+  "control_min_ratio": 20.0,
+  "gates": {
+    "single_output": true,
+    "input_shape_ok": true,
+    "parity_ok": true,
+    "control_detects_missing_normalizer": true
+  },
+  "passed": true
+}

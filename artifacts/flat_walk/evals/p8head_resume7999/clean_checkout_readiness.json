@@ -1,0 +1,97 @@
+{
+  "ci_scope_gate_possible": true,
+  "ci_full_gate_possible": true,
+  "scope_problems": [],
+  "problems": [],
+  "n_artifacts": 4,
+  "n_upstream_sources": 9,
+  "training_stack": true,
+  "reason": "all gate inputs present, tracked and byte-identical; training stack present",
+  "workflow": {
+    "repo_root": "C:\\Users\\hejih\\AppData\\Local\\Temp\\mduck-clean-gXY4Fl",
+    "repo_root_source": "git",
+    "root_workflow": ".github/workflows/deploy-gate.yml",
+    "root_workflow_exists": true,
+    "root_workflow_valid": true,
+    "orphan_workflows": [],
+    "gate_target_problems": []
+  },
+  "workflow_problems": [],
+  "bundle": "out\\hd1910_kp8_deploy_bundle.json",
+  "artifacts": [
+    {
+      "name": "walk",
+      "rel_path": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999/2026-11-07_22-12-33_p8head_030_4096x3000_resume2999.onnx",
+      "exists": true,
+      "tracked": true,
+      "bytes_match": true,
+      "sha_match": true,
+      "eol_only": false
+    },
+    {
+      "name": "ground_pick",
+      "rel_path": "logs/rsl_rl/microduck_groundpick_hd1910/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216/2026-11-06_22-17-10_hd1910_groundpick_4096x4000_1106_2216.onnx",
+      "exists": true,
+      "tracked": true,
+      "bytes_match": true,
+      "sha_match": true,
+      "eol_only": false
+    },
+    {
+      "name": "stand",
+      "rel_path": "logs/rsl_rl/microduck_standup_hd1910/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308/2026-11-08_03-08-50_p8_standup_4096x4000_1108_0308.onnx",
+      "exists": true,
+      "tracked": true,
+      "bytes_match": true,
+      "sha_match": true,
+      "eol_only": false
+    },
+    {
+      "name": "robotd_toml",
+      "rel_path": "out/robotd_hd1910_mode0.toml",
+      "exists": true,
+      "tracked": true,
+      "bytes_match": true,
+      "sha_match": true,
+      "eol_only": false
+    }
+  ],
+  "upstream_sources": [
+    {
+      "rel_path": ".upstream/hd1910m/radxa/installation.json",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/DuckBuddy-main/duck-control/src/obs.rs",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/DuckBuddy-main/duck-control/src/model.rs",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/DuckBuddy-main/duck-control/src/policy.rs",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/DuckBuddy-main/duck-control/src/imu.rs",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/DuckBuddy-main/duck-control/src/feetech.rs",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/DuckBuddy-main/duck-ipc-proto/src/lib.rs",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/DuckBuddy-main/robotd-params/src/lib.rs",
+      "exists": true
+    },
+    {
+      "rel_path": ".upstream/microduck_rl-develop/src/mjlab_microduck/publish/manifest.py",
+      "exists": true
+    }
+  ]
+}

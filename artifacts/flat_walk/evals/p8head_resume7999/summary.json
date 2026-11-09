@@ -1,0 +1,331 @@
+{
+  "generated": "2026-11-09",
+  "script": "tools/eval_velocity_in_sim.py",
+  "eval_rows": [
+    {
+      "file": "eval_2999_default.json",
+      "checkpoint": "model_2999.pt",
+      "plant": "default",
+      "plant_kp_fw": 8.0,
+      "seed": null,
+      "vx_median": 0.1730295568704605,
+      "error_vel_xy": 0.2601124048233032,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.9972599744796753,
+      "abs_dy_body_median": 0.4304487109184265,
+      "dx_body_mean": 1.185923457145691,
+      "failed_gates": [
+        "tracks_half_command",
+        "error_vel_xy_le_0.25"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": true,
+        "error_vel_xy_le_0.25": false,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_2999_kp8_archive_baseline.json",
+      "checkpoint": "model_2999.pt",
+      "plant": "hd1910_kp8",
+      "plant_kp_fw": 8.0,
+      "seed": null,
+      "vx_median": 0.1667536199092865,
+      "error_vel_xy": 0.264298677444458,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.9973062872886658,
+      "abs_dy_body_median": 0.34547263383865356,
+      "dx_body_mean": 1.1798315048217773,
+      "failed_gates": [
+        "tracks_half_command",
+        "error_vel_xy_le_0.25"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": true,
+        "error_vel_xy_le_0.25": false,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_2999_kp8_rerun.json",
+      "checkpoint": "model_2999.pt",
+      "plant": "hd1910_kp8",
+      "plant_kp_fw": 8.0,
+      "seed": null,
+      "vx_median": 0.16800445318222046,
+      "error_vel_xy": 0.26056718826293945,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.9973264336585999,
+      "abs_dy_body_median": 0.33853575587272644,
+      "dx_body_mean": 1.1931817531585693,
+      "failed_gates": [
+        "tracks_half_command",
+        "error_vel_xy_le_0.25"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": true,
+        "error_vel_xy_le_0.25": false,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_5999_kp8_negctl.json",
+      "checkpoint": "model_5999.pt",
+      "plant": "hd1910_kp8",
+      "plant_kp_fw": 8.0,
+      "seed": null,
+      "vx_median": 0.13575635850429535,
+      "error_vel_xy": 0.1436334252357483,
+      "terminated_frac": 0.796875,
+      "upright_mean": 0.9459065198898315,
+      "abs_dy_body_median": 0.37233486771583557,
+      "dx_body_mean": 0.12556856870651245,
+      "failed_gates": [
+        "sensor_zero_ok",
+        "tracks_half_command",
+        "translates_forward",
+        "not_sideways",
+        "no_fall",
+        "stays_upright"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": false,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": false,
+        "not_sideways": false,
+        "error_vel_xy_le_0.25": true,
+        "no_fall": false,
+        "stays_upright": false,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_7999_default.json",
+      "checkpoint": "model_7999.pt",
+      "plant": "default",
+      "plant_kp_fw": 8.0,
+      "seed": null,
+      "vx_median": 0.1917596012353897,
+      "error_vel_xy": 0.24081021547317505,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.9978218078613281,
+      "abs_dy_body_median": 0.6260420680046082,
+      "dx_body_mean": 1.182935357093811,
+      "failed_gates": [
+        "tracks_half_command",
+        "not_sideways"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": false,
+        "error_vel_xy_le_0.25": true,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_7999_kp5.json",
+      "checkpoint": "model_7999.pt",
+      "plant": "hd1910_kp5",
+      "plant_kp_fw": 5.0,
+      "seed": null,
+      "vx_median": 0.16610468924045563,
+      "error_vel_xy": 0.27570289373397827,
+      "terminated_frac": 0.15625,
+      "upright_mean": 0.9926875829696655,
+      "abs_dy_body_median": 0.34525302052497864,
+      "dx_body_mean": 0.9222708940505981,
+      "failed_gates": [
+        "tracks_half_command",
+        "error_vel_xy_le_0.25",
+        "no_fall"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": true,
+        "error_vel_xy_le_0.25": false,
+        "no_fall": false,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_7999_kp8_s1.json",
+      "checkpoint": "model_7999.pt",
+      "plant": "hd1910_kp8",
+      "plant_kp_fw": 8.0,
+      "seed": 1,
+      "vx_median": 0.1960090547800064,
+      "error_vel_xy": 0.23948504030704498,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.9973521828651428,
+      "abs_dy_body_median": 0.5901889801025391,
+      "dx_body_mean": 1.2367104291915894,
+      "failed_gates": [
+        "tracks_half_command"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": true,
+        "error_vel_xy_le_0.25": true,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_7999_kp8_s2.json",
+      "checkpoint": "model_7999.pt",
+      "plant": "hd1910_kp8",
+      "plant_kp_fw": 8.0,
+      "seed": 2,
+      "vx_median": 0.18779197335243225,
+      "error_vel_xy": 0.24177461862564087,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.9975534677505493,
+      "abs_dy_body_median": 0.6418325901031494,
+      "dx_body_mean": 1.1387734413146973,
+      "failed_gates": [
+        "tracks_half_command",
+        "not_sideways"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": false,
+        "error_vel_xy_le_0.25": true,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_7999_kp8_s3.json",
+      "checkpoint": "model_7999.pt",
+      "plant": "hd1910_kp8",
+      "plant_kp_fw": 8.0,
+      "seed": 3,
+      "vx_median": 0.18955150246620178,
+      "error_vel_xy": 0.24919982254505157,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.9976745247840881,
+      "abs_dy_body_median": 0.5743422508239746,
+      "dx_body_mean": 1.100334882736206,
+      "failed_gates": [
+        "tracks_half_command",
+        "not_sideways"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": false,
+        "error_vel_xy_le_0.25": true,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    },
+    {
+      "file": "eval_velocity_kp8_model7999.json",
+      "checkpoint": "model_7999.pt",
+      "plant": "hd1910_kp8",
+      "plant_kp_fw": 8.0,
+      "seed": null,
+      "vx_median": 0.19062842428684235,
+      "error_vel_xy": 0.24333502352237701,
+      "terminated_frac": 0.0,
+      "upright_mean": 0.997667670249939,
+      "abs_dy_body_median": 0.6302081346511841,
+      "dx_body_mean": 1.0938589572906494,
+      "failed_gates": [
+        "tracks_half_command",
+        "not_sideways"
+      ],
+      "gates": {
+        "command_frozen_ok": true,
+        "metric_window_ok": true,
+        "sensor_zero_ok": true,
+        "measurement_consistent": true,
+        "tracks_half_command": false,
+        "translates_forward": true,
+        "not_sideways": false,
+        "error_vel_xy_le_0.25": true,
+        "no_fall": true,
+        "stays_upright": true,
+        "feet_clear_8mm": true,
+        "steps_alternate": true
+      }
+    }
+  ],
+  "parity": {
+    "parity_bundlewalk_vs_2999.json": {
+      "parity_ok": false,
+      "passed": false
+    },
+    "parity_bundlewalk_vs_7999.json": {
+      "parity_ok": true,
+      "passed": true
+    }
+  },
+  "note": "rows re-derived from archived JSON; no hand-typed numbers"
+}
