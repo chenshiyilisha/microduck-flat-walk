@@ -1,0 +1,289 @@
+--- a/drivers/tty/serial/8250/8250_dw.c
++++ b/drivers/tty/serial/8250/8250_dw.c
+@@ -34,6 +34,9 @@
+ #include "8250_dwlib.c"
+ #else
+ #include "8250_dwlib.h"
++
++#include <linux/gpio.h>
++#include <linux/of_gpio.h>
+ #endif
+ 
+ /* Offsets for the DesignWare specific registers */
+@@ -573,6 +576,8 @@
+ 	int irq;
+ 	int err;
+ 	u32 val;
++	int gpio;
++	enum of_gpio_flags gpio_flags = 0;
+ 
+ 	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!regs)
+@@ -617,6 +622,50 @@
+ 	data->uart_16550_compatible = device_property_read_bool(dev,
+ 						"snps,uart-16550-compatible");
+ 
++	/*
++	 * Half-duplex transceiver direction (DE/RE) GPIO, from the board DT's
++	 * "485_ctrl_gpio" property. -1 when the board has none.
++	 *
++	 * Kept in struct uart_8250_port rather than in the UAPI struct
++	 * serial_rs485: TIOCSRS485 copies that struct in from userspace and
++	 * does not validate a gpio number, so a writable field there would let
++	 * any process make the kernel drive an arbitrary pin. It also gets
++	 * memset by uart_sanitize_serial_rs485() whenever SER_RS485_ENABLED is
++	 * absent, which would silently forget the pin.
++	 *
++	 * Polarity is taken from the DT gpio flags cell for the same reason:
++	 * port.rs485.flags is not durable here.
++	 */
++	up->de_gpio = -1;
++	up->de_active_low = false;
++	gpio = of_get_named_gpio_flags(p->dev->of_node, "485_ctrl_gpio", 0,
++				       &gpio_flags);
++	/*
++	 * Let the caller retry rather than coming up with direction control
++	 * silently disabled: gpio_is_valid() rejects -EPROBE_DEFER just like any
++	 * other error, so swallowing it here would leave de_gpio at -1 forever
++	 * with nothing in the log to say why the bus never turns around.
++	 */
++	if (gpio == -EPROBE_DEFER)
++		return gpio;
++	if (gpio_is_valid(gpio)) {
++		bool active_low = !!(gpio_flags & OF_GPIO_ACTIVE_LOW);
++
++		/* Come up in receive state: DE deasserted. */
++		err = devm_gpio_request_one(dev, gpio,
++					    active_low ? GPIOF_OUT_INIT_HIGH
++						       : GPIOF_OUT_INIT_LOW,
++					    "rs485-de");
++		if (err)
++			return dev_err_probe(dev, err,
++					     "cannot claim RS485 DE gpio %d\n",
++					     gpio);
++		up->de_gpio = gpio;
++		up->de_active_low = active_low;
++		dev_info(dev, "RS485 direction on gpio %d (active %s)\n",
++			 gpio, active_low ? "low" : "high");
++	}
++
+ 	err = device_property_read_u32(dev, "reg-shift", &val);
+ 	if (!err)
+ 		p->regshift = val;
+@@ -718,8 +767,17 @@
+ 	if (!data->skip_autocfg)
+ 		dw8250_setup_port(p);
+ 
+-	/* If we have a valid fifosize, try hooking up DMA */
+-	if (p->fifosize) {
++	/*
++	 * If we have a valid fifosize, try hooking up DMA.
++	 *
++	 * Skipped for ports with a half-duplex DE pin: TX DMA bypasses
++	 * serial8250_tx_chars() entirely (__start_tx() returns as soon as
++	 * tx_dma() accepts the transfer) and __dma_tx_complete() has no DE
++	 * handling, so any write of MAX_TX_BYTES or more would go out with the
++	 * transceiver still in receive state. At 1Mbps with short bus frames DMA
++	 * buys nothing here.
++	 */
++	if (p->fifosize && up->de_gpio < 0) {
+ 		data->data.dma.rxconf.src_maxburst = p->fifosize / 4;
+ 		data->data.dma.txconf.dst_maxburst = p->fifosize / 4;
+ 		up->dma = &data->data.dma;
+--- a/drivers/tty/serial/8250/8250_port.c
++++ b/drivers/tty/serial/8250/8250_port.c
+@@ -20,6 +20,7 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/sysrq.h>
+ #include <linux/delay.h>
++#include <linux/gpio.h>
+ #include <linux/platform_device.h>
+ #include <linux/tty.h>
+ #include <linux/ratelimit.h>
+@@ -1820,6 +1821,64 @@
+ }
+ EXPORT_SYMBOL_GPL(serial8250_rx_chars);
+ 
++/*
++ * Half-duplex direction (DE/RE) control for boards with a "485_ctrl_gpio".
++ *
++ * This deliberately does not go through em485. On this SoC enabling em485
++ * wedges TX after the first frame: __stop_tx() returns early at its !THRE
++ * check, so the stop_tx hrtimer is never armed, THRI stays set, and the next
++ * __start_tx() sees THRI already set and does nothing. Measured on this SoC
++ * (ttyS0/3/4/5, with and without a DE pin), so it is not caused by direction
++ * control — but it does mean direction control has to live here.
++ *
++ * Polarity comes from the DT gpio flags cell rather than port.rs485.flags,
++ * because uart_sanitize_serial_rs485() memsets that struct whenever
++ * SER_RS485_ENABLED is absent, which is exactly the case here.
++ */
++static void serial8250_de_assert(struct uart_8250_port *up)
++{
++	if (up->de_gpio < 0)
++		return;
++
++	gpio_set_value(up->de_gpio, up->de_active_low ? 0 : 1);
++}
++
++static void serial8250_de_release(struct uart_8250_port *up)
++{
++	unsigned int budget_us;
++
++	if (up->de_gpio < 0)
++		return;
++
++	/*
++	 * The bytes just handed to the FIFO are still shifting out; releasing
++	 * the transceiver now would truncate the frame. Busy-wait for TEMT.
++	 *
++	 * This runs from the TX interrupt with port->lock held, so the wait is
++	 * bounded by how long a full batch physically takes at the current baud
++	 * rate: frame_time is ns per character, and 48 characters at 1Mbps is
++	 * 480us (a 10-byte servo frame is ~100us). Slow baud rates with a DE pin
++	 * wait proportionally longer.
++	 */
++	budget_us = DIV_ROUND_UP(up->port.frame_time, NSEC_PER_USEC) *
++		    (up->tx_loadsz + 2);
++	/*
++	 * Converting per character first keeps this in 32-bit range even at
++	 * absurdly slow baud rates. Zero means frame_time has not been set up
++	 * yet (no set_termios so far), so fall back to the ceiling.
++	 */
++	if (!budget_us || budget_us > 50000)
++		budget_us = 50000;
++
++	while (budget_us--) {
++		if (serial_lsr_in(up) & UART_LSR_TEMT)
++			break;
++		udelay(1);
++	}
++
++	gpio_set_value(up->de_gpio, up->de_active_low ? 1 : 0);
++}
++
+ void serial8250_tx_chars(struct uart_8250_port *up)
+ {
+ 	struct uart_port *port = &up->port;
+@@ -1827,19 +1886,36 @@
+ 	int count;
+ 
+ 	if (port->x_char) {
++		/*
++		 * Not covered by DE handling: XON/XOFF on a half-duplex bus is
++		 * not a combination that occurs here.
++		 */
+ 		uart_xchar_out(port, UART_TX);
+ 		return;
+ 	}
+ 	if (uart_tx_stopped(port)) {
+ 		serial8250_stop_tx(port);
++		/*
++		 * Stopping TX only masks the interrupt, the FIFO still drains —
++		 * so wait it out and hand the bus back rather than leaving the
++		 * transceiver driving it until some later transmit.
++		 */
++		serial8250_de_release(up);
+ 		return;
+ 	}
+ 	if (uart_circ_empty(xmit)) {
++		/*
++		 * Reached with DE still asserted when the previous batch filled
++		 * the FIFO exactly, so the bus has to be handed back here too.
++		 */
+ 		__stop_tx(up);
++		serial8250_de_release(up);
+ 		return;
+ 	}
+ 
+ 	count = up->tx_loadsz;
++
++	serial8250_de_assert(up);
+ 	do {
+ 		serial_out(up, UART_TX, xmit->buf[xmit->tail]);
+ 		if (up->bugs & UART_BUG_TXRACE) {
+@@ -1875,8 +1951,16 @@
+ 	 * HW can go idle. So we get here once again with empty FIFO and disable
+ 	 * the interrupt and RPM in __stop_tx()
+ 	 */
+-	if (uart_circ_empty(xmit) && !(up->capabilities & UART_CAP_RPM))
+-		__stop_tx(up);
++	if (uart_circ_empty(xmit)) {
++		if (!(up->capabilities & UART_CAP_RPM))
++			__stop_tx(up);
++		/*
++		 * Everything is in the FIFO now and nothing more is queued, so
++		 * hand the bus back. If the buffer is *not* empty we keep DE
++		 * asserted and the next TX interrupt continues the transfer.
++		 */
++		serial8250_de_release(up);
++	}
+ }
+ EXPORT_SYMBOL_GPL(serial8250_tx_chars);
+ 
+@@ -3410,6 +3494,14 @@
+ 	port->has_sysrq = IS_ENABLED(CONFIG_SERIAL_8250_CONSOLE);
+ 
+ 	up->cur_iotype = 0xFF;
++
++	/*
++	 * serial8250_ports[] is static and therefore zeroed, and 0 is a valid
++	 * gpio number — without this every port that has no DE pin would drive
++	 * gpio0 on each transmit.
++	 */
++	up->de_gpio = -1;
++	up->de_active_low = false;
+ }
+ EXPORT_SYMBOL_GPL(serial8250_init_port);
+ 
+--- a/include/linux/serial_8250.h
++++ b/include/linux/serial_8250.h
+@@ -137,6 +137,23 @@
+ 	struct uart_8250_em485 *em485;
+ 	void			(*rs485_start_tx)(struct uart_8250_port *);
+ 	void			(*rs485_stop_tx)(struct uart_8250_port *);
++
++	/*
++	 * Half-duplex transceiver direction (DE/RE) pin, from the DT
++	 * "485_ctrl_gpio" property. -1 when the board has none.
++	 *
++	 * Driven around each FIFO batch in serial8250_tx_chars() rather than
++	 * from the em485 callbacks: on this SoC enabling em485 wedges TX after
++	 * the first frame (the hrtimer is never armed, THRI stays set and
++	 * tx_stopped stays false, so nothing restarts the transmitter). Keeping
++	 * direction control out of em485 sidesteps that entirely.
++	 *
++	 * Polarity comes from the DT gpio flags cell, not from
++	 * port.rs485.flags: uart_sanitize_serial_rs485() memsets that struct
++	 * whenever SER_RS485_ENABLED is absent, which is exactly the case here.
++	 */
++	int			de_gpio;
++	bool			de_active_low;
+ 
+ 	/* Serial port overrun backoff */
+ 	struct delayed_work overrun_backoff;
+--- a/arch/arm64/boot/dts/rockchip/tspi-rk3566-user-v10-linux.dts
++++ b/arch/arm64/boot/dts/rockchip/tspi-rk3566-user-v10-linux.dts
+@@ -130,6 +130,7 @@
+ 	status = "okay";
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&uart3m1_xfer>;
++	485_ctrl_gpio = <&gpio3 RK_PC4 GPIO_ACTIVE_HIGH>;
+ };
+ 
+ //User I2C2
+--- a/drivers/tty/serial/8250/8250_core.c
++++ b/drivers/tty/serial/8250/8250_core.c
+@@ -1019,6 +1019,12 @@
+ 		uart->port.rs485	= up->port.rs485;
+ 		uart->rs485_start_tx	= up->rs485_start_tx;
+ 		uart->rs485_stop_tx	= up->rs485_stop_tx;
++		/*
++		 * Only fields listed here reach the port that actually runs, so a
++		 * DE pin found in probe has to be copied across explicitly.
++		 */
++		uart->de_gpio		= up->de_gpio;
++		uart->de_active_low	= up->de_active_low;
+ 		uart->lsr_save_mask	= up->lsr_save_mask;
+ 		uart->dma		= up->dma;
+ #ifdef CONFIG_ARCH_ROCKCHIP

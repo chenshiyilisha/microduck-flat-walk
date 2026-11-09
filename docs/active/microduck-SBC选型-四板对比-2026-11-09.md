@@ -150,3 +150,41 @@ _（2026-11-09 拉取 `jlckfb/easyduck` 源码核实，推翻此前"泰山派需
   - 不能直接拿 `scs.rs` 替换我们的 `feetech.rs`（波特率、ID 体系、协议帧不同），但可以借鉴其寄存器操作与标定逻辑。
   - 泰山派迁移的"软件难度"被现成镜像/整机大幅拉低——真正的决策变量是**"换不换协议分支"**，而非"能不能跑起来"。
   - 若保持我们 HLS 工具链（推荐，因现有训练/EEPROM/标定全在这条线），只需把 `feetech_hls` robotd 烤到泰山派立创镜像上，改 `port=ttyS3` + 对齐 IMU 朝向即可。
+
+---
+
+## 8. 泰山派 / EasyDuck 项目「可借鉴清单」（2026-11-09 拉源码核实）
+
+_一手来源：`github.com/jlckfb/easyduck`（`runtime/duck-control/src/scs.rs`、`calibration/`、`config/board/robotd.toml`、`deploy/kernel/uart3-halfduplex-20261021.patch`、`models/`）。下列按「能借 / 借不了」分类；证据均为源码/文件级。_
+
+### 8.1 直接可借鉴（与舵机协议分支无关）
+
+**🔴 A1. 半双工 UART 内核补丁 —— 最值钱，可直接拿来用（已 vendored）**
+- 文件：`docs/active/microduck-taishanpi-uart3-halfduplex-20261021.patch`（源自 `jlckfb/easyduck`，仅作参考留存，未改内容）。
+- 改 `8250_dw.c` + `8250_port.c`，给 RK3566 DesignWare UART 加 **DE/RE 方向 GPIO**（设备树属性 `485_ctrl_gpio`，极性取自 GPIO flags cell），由内核在 TX 时自动翻转收发器方向。
+- **为何必须绕开标准 `em485`（TIOCSRS485）**：在这颗 SoC 上开 em485 会在**第一帧之后卡死 TX**——`__stop_tx()` 在 `!THRE` 检查处提前返回，stop_tx hrtimer 永不触发，THRI 一直置位，下一帧 `__start_tx()` 看到 THRI 已置就什么都不做（实测 ttyS0/3/4/5 都如此）。
+- 另外两件对高速半双工关键：**带 DE 引脚的口禁用 TX DMA**（`if (p->fifosize && up->de_gpio < 0)`——TX DMA 绕过 `serial8250_tx_chars()`，会让 ≥MAX_TX_BYTES 的帧在收发器仍处接收态时发出）；**DE 上电为接收态**（`GPIOF_OUT_INIT_HIGH/LOW` 视极性），符合半双工总线空闲约定。
+- **对我们 HLS 线的意义**：我们 `feetech_hls` @500k 在泰山派上要的正是这套"内核级 DE 翻转"。补丁本身与波特率无关（波特率只是 termios `B500000`/`B1000000`），**可直接复用**，省掉自踩 em485 卡死 + DMA 串扰的坑。代价：基于内核 6.1.141 **需重编译内核**（不是 dt-overlay 即插即用），但比从零写方向控制省一个数量级。
+
+**🟢 A2. 标定套件 —— 协议无关逻辑可借鉴架构（`calibration/`）**
+- 整套标定工具都操作一个 **`Bus` 抽象**（`calibration/hardware.py`：`read_raw`/`write_raw` + `fcntl.flock` 独占锁 + `B1000000` termios），**标定逻辑本身不依赖 SCS**——只要给个 `feetech_hls` 兼容的 `Bus` shim 就能跑我们的舵机。
+- `servo_setup.py`：舵机 ID 扫描（0–253）+ 选中 + 读反馈，**总线锁串行化**（`caller serializes every operation with the bus lock`）——正是我们 provisioning 要的范式。
+- `imu_settings.py`：IMU 自动探测（`probe_lsm` 查 0x0f==0x70、`probe_bno` 查 SHTP 身份包）+ **TOML 原子写**（备份 → `fsync` → `os.replace`）。`KEYS=('source','model','i2c_dev','i2c_addr','fusion')` 是 IMU 配置 schema。
+- 我们已有 build-tutorial 的 `bno08x_calibrate_ui.py`/`imu_orientation_check.py`，但 EasyDuck 这套"扫描 + 自动探测 + 原子写配置"的工程化更完整，**逻辑层可直接借鉴**。
+
+**🟢 A3. 多策略模型 / 行为范式（`models/`）**
+- 5 个 ONNX：`walk` / `getup` / `pick` / `posture` / `roulade`（外加 kick）。我们复刻线目前只有 walk + getup。**pick / posture / roulade 是现成的行为参考**，可借鉴其训练范式或策略组织（`robotd.toml` 里 `[policy]` 用 `mode=` 切换，每个行为一个 onnx）。
+
+**🟢 A4. `config/board/robotd.toml` 接线范式 + 调参数据（对照参考）**
+- 实际泰山派接线：`port="/dev/ttyS3"`；`[imu] model="lsm6dsv16x" i2c_dev="/dev/i2c-2" i2c_addr=107 fusion="sflp"`。
+- 可对照的调参数据：`policy.gain=6, gain_d=20`（策略级 PD，非舵机级）；`safety.fall_gravity_z=-0.819152`（≈35° 倾覆阈值，比我们 `-0.5`≈60° 更紧）；`low_battery_voltage=6.2`（2S 电池，与我们的 `[2]+8.4` 一致）。
+- `[imu]` **同时支持 LSM6DSV16X 与 BNO085 并自动探测**——与我们工作记忆里"BNO08x(HD-1910) vs LSM6DSV16X(ft1910 总线 IMU)"的 IMU 架构区分正好呼应，他们用一套代码两种都吃。
+
+### 8.2 借不了的（舵机协议分支，§3.3 / §7 已详述）
+- `duck-control/src/scs.rs` + 标准 SCS 协议 + **`BAUD=1_000_000`** + **官方关节 ID（20-24/30-34/10-14）**，`lib.rs` 仅 `pub mod scs;`（无 `feetech`）。与我们 `feetech_hls` + 500k + **ID 1-15** 两条分支不互通。**他们的 robotd 舵机驱动不能直接用**，只能借鉴 A 类（内核 / 标定 / 配置 / 模型），不能抄 servo 通信层。
+
+### 8.3 借鉴时的注意点
+- 半双工补丁要**重编译内核**（基于 6.1.141），不是 overlay 即插即用——但比从零写方向控制省一个数量级。
+- 标定套件要写 **HLS 版 `Bus` shim** 才能跑我们的舵机。
+- 机构（70×45 / 98.6 g）只有"直接采用 EasyDuck 整机"时才不用管；塞我们自己 Radxa 机壳仍要重做（见 §3.3 / §5.4）。
+- **决策变量**：要不要保持我们 HLS 工具链（推荐）vs 切 SCS 分支。保持 HLS 时，§8.1 A1 补丁 + A4 配置 + A2 标定逻辑 是三条最实在的借鉴；切 SCS 则等于换一条全新舵机线（与现有 `hls_probe`/EEPROM 校验/标定全不兼容）。
