@@ -197,3 +197,13 @@ pub enum TrunkImuKind { Bus, Bno08x, Lsm6dsv16x }
 - `microduck-software/out/robotd_hd1910_mode0.toml:15-31,59-98,105-111`（绑 DuckBuddy-main 代次、`deny_unknown_fields`、`imu_median=false`、无 BNO08x 键）
 - `docs/active/microduck-HD1910软件方案.md:68,96-101,788`（kissqy IMU 桥一手来源 + 寄存器契约 + IMU 规格）
 - `docs/active/microduck-upstream-对照-2026-11-08.md:73,118,161`（代次区分）
+
+---
+
+## 执行篇（2026-11-09 后续）
+
+本篇是「有没有风险 / 值不值得借」的**研究结论**；具体怎么落地见
+**`docs/active/microduck-HD1910-BNO085-gyro_fusion移植执行清单-2026-11-09.md`**：
+Phase 0 最小观测（`report_stats()` 加跳变计数，零新增 IPC）→ Phase 1 搬 `gyro_fusion.rs`（默认 `chip`，行为不变）→ Phase 2 上板 A/B；含接入点行号、配置键落点（**JSON 而非 `robotd.toml`**）、5 条「删一个就两侧都红」的负对照。
+该清单同时订正了本篇口头提到的一个名字：kissqy 的原始报告日志模块是
+`firmware/robotd/src/trunk_imu_raw_log.rs`（不是 `bno08x_raw_log`），开关 `[trunk_imu] bno08x_raw_log`。
