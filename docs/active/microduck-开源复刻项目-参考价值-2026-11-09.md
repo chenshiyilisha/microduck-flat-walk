@@ -102,8 +102,8 @@
 | **A4 接线范式** | xgoduck 单线总线 + IMU 板；fanhao `docs/不打HAT.md`、总线 IMU 与舵机共线 | 单线半双工总线 + ID200 总线 IMU 是社区主流范式，可采纳 |
 
 ### 建议新增类别（优先级从高到低）
-- **C2 IMU 融合/朝向**（xgoduck `ImuFilter` + fanhao BNO085 教训）——**最高优先**，两独立来源都指向"自做互补滤波、别信内置融合"。我们 `imu_mount_quat` 装后自检已部分覆盖，但融合策略要明确走"陀螺自积分+缓校"。
-- **C1 总线 IMU 从机 ID200**（chenkui/fanhao 固件）——决定 IMU 走"总线从机"还是"直连 SBC"，需立项决策（我们现状是 BNO08x 直连 SBC I2C，与 xgoduck 不同路）。
+- **C2 IMU 融合/朝向**（xgoduck `ImuFilter` + fanhao BNO085 教训）——**最高优先**，两独立来源都指向"自做互补滤波、别信内置融合"。我们 `imu_mount_quat` 装后自检已部分覆盖，但融合策略要明确走"陀螺自积分+缓校"。**2026-11-09 已拉 `fanhao375/Microduck-kissqy` 源码把 C2 具体化并发现真实风险**：见 `microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md` —— `gyro_fusion.rs`(6°倾斜门/0.66s/0.5s/5°·s⁻¹) 是现成算法；🔴 我们 `hd1910m/.../bno08x.rs:87-95` 对 BNO085 `0x08` **直接采信无跳变门控**，`reference_native` 只是陀螺 EMA，故该路径会原样吃进 20–60° 乱跳。
+- **C1 总线 IMU 从机 ID200**（chenkui/fanhao 固件）——⚠️ **2026-11-09 精确化**：必须绑定 robotd 代次。`out/robotd_hd1910_mode0.toml` 绑的 `DuckBuddy-main` 代次 **已经在用这块板**（`imu_to_dxl v2` LSM6DSV16X，`IMU_DXL_ID=200`，`SflpDecoder`）；`hd1910m` 代次另有一条 BNO08x I2C 输入路径。⇒ C1 对部署代次是"已用/维修参考"，不是待立项的选择题。详见上述 kissqy 文档 §2.2。
 - **C3 恢复状态机**（xgoduck `recovery.py`）——FALL_DEG=55°/0.15s 阈值与我们的 60°/200ms debounce 接近，可直接抄改。
 - **C6 半双工 Sync-Read 时序**（chenkui `protocol.c`）——性能与可靠性关键，建议 robotd 端也走 Sync Read/Write 广播。
 - **C5 标定套件骨架**（fanhao `servo_tool.py` + xgoduck `standing_imu.py`）——直接做我们 500k/ID1-15 标定工具。
@@ -115,7 +115,7 @@
 
 ## 5. 顺带发现、值得下一轮看的仓
 
-- **`fanhao375/Microduck-kissqy`**（上游 `kissqy/Microduck-kissqy`）：**真正跑 HD-1910 的 Rust `robotd` 运行时**——含 gyro 融合开关、总线 IMU 自动识别、标定、Studio 中控；上一节所有"上机"日志都来自它。**比三个目标仓更接近"可运行系统"，是下一轮拉源码的首选**（尤其 `robotd-design.md` §2.6 总线 IMU 接线、IMU 融合实现）——注意它仍是 SCS 协议/1Mbps/官方 ID 体系，与我们的 `feetech_hls` 配置不同，不能直接接我们的舵机。
+- **`fanhao375/Microduck-kissqy`**（上游 `kissqy/Microduck-kissqy`）：**真正跑 HD-1910 的 Rust `robotd` 运行时**——含 gyro 融合开关、总线 IMU 自动识别、标定、Studio 中控；上一节所有"上机"日志都来自它。**✅ 2026-11-09 已拉源码研究完成**（`IMU-MODULE.md` / `hardware/IMU-TIMELINE.md` / `trunk_imu.rs` / `gyro_fusion.rs` / `bno08x.rs`），成果独立落盘 `microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md`——含三路线架构、C2 完整算法与真机实测、代次/输入路径分层、以及"我们 BNO08x 路径无跳变门控"的真实风险。注意它仍是 SCS 协议/1Mbps/官方 ID 体系，与我们的 `feetech_hls` 配置不同，不能直接接我们的舵机。
 - **`ScrapMeta/microduck-diy`**：DXL2 协议的总线 IMU 从机固件（ID200、124/12 SFLP 块），是 C1 的"另一协议变体"参考。
 - **`pollen-robotics/microduck_rl`**（已知）：官方 MuJoCo + PPO + Sim2Real 训练全链路、ONNX 导出——我们重训策略的上游。
 
@@ -124,7 +124,7 @@
 ## 6. 结论与我们的行动指针
 
 1. **协议同根**：fanhao/xgoduck/chenkui 都是飞特 SCS（STS3215 级），寄存器与我们 `feetech_hls` 对齐；差异仅 波特率(1M↔500k)、ID(10-34↔1-15)、增益语义缩放——**均"改配置+验证"级，无协议冲突**。
-2. **IMU 融合务必自做互补滤波**（两独立来源验证）——我们现状 BNO08x 直连 SBC，融合策略要明确"陀螺自积分 + 加速度缓校"，不要信内置融合。
-3. **总线 IMU 从机 ID200 是社区主流**，但需我们 own 一份 MCU 固件（chenkui/fanhao 固件可作移植起点）；当前我们先走"直连 SBC"路线即可。
+2. **IMU 融合务必自做互补滤波**（两独立来源验证）——⚠️ **按代次分开**：`DuckBuddy-main` 部署代次是 LSM6DSV16X 总线板（板上 SFLP，host 不融合）；`hd1910m` 的 BNO08x I2C 输入路径才需要"陀螺自积分 + 缓校"，且该路径**当前无跳变门控**（见下文第 5 条）。
+3. **总线 IMU 从机 ID200 是社区主流** —— 订正：我们**部署代次已在用这块板**（`imu_to_dxl v2`，`IMU_DXL_ID=200`），chenkui/fanhao 固件与 EasyEDA 工程是它的维修/重制一手参考，不是待立项的二选一。此前"当前先走直连 SBC 路线"的说法是把 `hd1910m` 输入路径误当部署线，已按 `out/robotd_hd1910_mode0.toml:69-77,105-111` 与 `DuckBuddy-main/feetech.rs:319` 纠正。
 4. **标定/恢复/观测契约**可直接借鉴（C3/C5/C4/C6）；**权重/几何不可移植**（需重训/重测）。
-5. **下一轮首选研究目标**：`fanhao375/Microduck-kissqy`（真·Rust robotd + HD-1910 上机经验），看它如何处理总线 IMU 接线与 IMU 融合——可能比我们当前 robotd 实现更贴近 HD-1910 实机。
+5. ✅ **`fanhao375/Microduck-kissqy` 研究已完成**（2026-11-09 拉源码）：三路线架构 + `gyro_fusion.rs` 完整算法与真机实测 + `HostImuGate` 门控 + 舵机调参机制，落盘 `microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md`。🔴 **最该带走的不是"参考"，是一条待上板验证的真实风险**：BNO085 `0x08` 走路跳 20–60°（fanhao 真机 1.9–23% 走路帧），我们 `hd1910m/.../bno08x.rs:87-95` 对 0x08 只归一化直接采信、`reference_native` 仅陀螺 EMA ⇒ 该路径会原样吃进乱跳。上板第一检查项 = 录 100Hz 原始 0x08 报告统计 >5° 单 tick 跳变。
