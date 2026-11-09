@@ -68,6 +68,25 @@ _一手来源：各板官方规格/brief；robotd 源码（`configd/src/identity
 - 优势：**robotd 原厂就为它写好了**（`feetech_hls`/500k 默认配置就是这条线的，reg6/reg33 开机硬校验属于它），无线 WiFi 6+BT5.4 与 Radxa 同级，价格亲民（Zero 4 起 $26.5 / 4GB $52）。
 - 对我们复刻线的定位：**它是"robotd 跨 SoC 可行"的原厂证据，不是"直接可用的替代"**。它属于另一条独立产品线（DuckBuddy 官方 HL-2915 机器人，物理机壳/舵机布线与我们 HD-1910 复刻线不同）。若把我们的复刻线迁到 Orange Pi A733，机构/布线/设备树一样要重做——除非直接采用 DuckBuddy 官方线整套方案（那是另一条路线，不在本选型范围）。
 
+#### 3.2.1 「用香橙派就必须 500k 吗」——根因与边界（2026-11-09 查源码补）
+
+**短答：不是板子决定的，是「跑哪条舵机协议线」决定的；但 A733 原厂这条线确实只能是 500k，而且是被 UART 时钟逼出来的。**
+
+| 证据 | 内容 |
+|---|---|
+| `DuckBuddy-main/duck-control/src/feetech.rs:34-35` | 注释明写 `Exactly representable on the A733's UART7 (24 MHz / 16 / 3). 1 Mbit/s is not.`，紧接 `pub const BAUD_RATE: u32 = 500_000`；`:301` `serialport::new(port, BAUD_RATE)` ⇒ **编译期常量**，不是配置项 |
+| `DuckBuddy-main/tools/servo/set_baud.py:4` | 「Orange Pi A733 的 UART7 只能准确输出 500k（**1M 实际是 750k**），所以舵机总线统一用 500k」；`:41` `--to` 默认 `500000`，`:9` `--to 1000000` 是「改回 1M」。⚠️ 750k 是**上游脚本文字记录，非本项目台架实测**；算术自洽：24 MHz/16 = 1.5 MHz 基准，1M 需 1.5 分频取整数 → 2 → 750k，而 500k = 1.5M/3 精确 |
+| `out/robotd_hd1910_mode0.toml:15-18` | **没有 `baud` 键**；`[bus]` 带 `deny_unknown_fields`，写 `baud = 500000` 不会改速率，反而让整份配置加载失败、robotd 起不来 |
+| `feetech.rs:379-391` | 开机 EEPROM **checked, not corrected**：`reg6` 必须 == `BAUD_REGISTER_VALUE = 1`（500k），不符直接 `servo N is not configured for this robot`、总线不打开。出厂 0（1M）⇒ 部署必须逐颗改 |
+| `firmware/imu-feetech/src/main.rs:345-347`、`proto.rs:246` | 总线 IMU 从机固件 `proto_baud() = 500_000`（`6 => 1 // 500 kbit/s`）⇒ 整条总线（15 舵机 + IMU ID200）统一 500k，不只是舵机 |
+
+🔴 **板子 ≠ 波特率，三条源码级反证**：
+1. `duck-control/src/servo_bus.rs:3,17-43`：同一个二进制里 `BusConfig` **运行时二选一**——`Dynamixel` → `bus.rs:102` 用 `model.rs:166 BAUD_RATE = 1_000_000`（alpha 代 XL330，`model.rs:177 baud_rate=3` = 1 Mbps）；`Feetech` → `feetech.rs` 500k。文件头注释：「The original alpha runs Dynamixel XL330s; this build runs Feetech HL-2915s」。⇒ 同一块板、同一个二进制，换 backend 就是 1M。
+2. `.upstream/hd1910m/microduck/duck-control/src/feetech.rs:592`：`serialport::new(path, 1_000_000)` —— HD-1910 机器人（Radxa，FT-SCS 原生）整条线是 **1M**，且**不做** reg6/reg33/reg9/reg11 那四个 EEPROM 硬校验（改验固件元数据快照 `row[33]==4`）。
+3. 泰山派 / EasyDuck `scs.rs` 也是 `BAUD = 1_000_000`（§3.3）。反过来，**我们现状主机 Radxa Zero3W 跑的正是 DuckBuddy/HLS 线，同样要 500k**（`port="/dev/ttyS2"`）⇒ 500k 与香橙派没有绑定关系。
+
+**对 R3 / 上一轮「不切」决定的影响**：换香橙派确实能绕开 R3，但**不是因为不用 500k**，而是板载 UART7 直接产生 500k、不再经过 CH343/USB CDC ⇒「CH343 在 500k 静默」这个特定风险在板载 UART 上不存在。代价是**上板时仍必须逐颗把 `reg6` 写成 1**（Pi4B 完整方案 §7 部署步骤）。台架「不切」不冲突：台架保持 1M 是给当前调试工具用，上板写 reg6=1 是另一阶段。⚠️ 分频精确性要按各板 UART 时钟单独算，别跨板照抄（Pi 4B 是 48 MHz/16/6）。
+
 ### 3.3 泰山派 RK3566（候选替代，**已有现成开源整机方案**）
 - **现成方案（已核实真实性）**：
   - **立创官方 Microduck 泰山派案例镜像**（`wiki.lckfb.com/.../project-case/microduck/image.html`）：定制 Debian 12，内核 6.1.141 **"包含 UART3 半双工控制支持"**，预装 ONNX Runtime 1.28、整套 robotd；舵机 `/dev/ttyS3`，IMU `/dev/i2c-2` @0x6B。
