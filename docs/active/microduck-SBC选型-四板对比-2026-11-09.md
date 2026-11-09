@@ -98,6 +98,11 @@ _一手来源：各板官方规格/brief；robotd 源码（`configd/src/identity
 - 🔴 **串口是死穴**：默认 GPIO14/15 是 **mini UART (`ttyS0`)**——波特率随 GPU 时钟浮动（实测偏差 3.2% 超 RS232 容限）、**无硬件 RTS**，500k/1MHz 半双工舵机总线绝不能用。必须用 **PL011 (`ttyAMA0`)**：改 `config.txt` `dtoverlay=disable-bt` 把 PL011 从蓝牙让给 GPIO（独立 180MHz 时钟、500k 精准、完整 RTS/CTS）。且 toml `port="/dev/ttyS2"` 在 Pi 上**不存在**，要改成 `ttyAMA0`。
 - 机构最大最重（85×56mm / 75g），机壳几乎完全重做，重心问题最严重；价格明显贵（裸板 ~¥300–400，套件 ¥1500+）；供电挑电源。
 - 优势：无线 WiFi 5 双频 + BT 5.0（比泰山派强）、H.264 硬件编码（替代 MPP）、USB3.0×2。
+- 📌 **开源 Feetech 总线舵机方案现状（2026-11-09 查证，详见 `microduck-Pi4B-开源Feetech总线舵机方案-2026-11-09.md`）**：
+  - 四足用 Pi 4B 的开源项目一大堆（`aswin-pn/project_axl`、`UMN-VR/GoldyDogV7`、`mrhello291/SimpleQuad`、WAVEGO），但全是 **PCA9685 + PWM 舵机**，与我们的总线舵机协议不通用。
+  - **Pi 4B + 飞特 STS 总线舵机有现成开源驱动**：`e5l/lekiwi-control-center`（README 明写 *"tested on Pi 4"* + Feetech STS3215）、`commanderfun/STS3215`（Waveshare 驱动板封装）、Joshua、`python-st3215`。→ 软件/驱动层可行性已被旁证。
+  - **完整 Microduck/HD-1910 复刻线开源界无人用 Pi 4B**（全用 Radxa Zero 3W / Pi Zero 2W）。
+  - 🔴 **半双工方向三种实现路径，决定 robotd 怎么接**：① USB 适配器 + scservo_sdk 翻 RTS（LeKiwi 系，`config/robot.yaml:6` ttyACM0）；② 外部 Bus Servo Driver Board 硬件自动方向（Waveshare/LeLamp，零 RTS）；③ 板载 UART + kernel DE（我们泰山派方案）。**robotd 用户态零 RTS 翻转（已查源码）→ 不能用路径①的 Python SDK 栈，必须走路径②（接 Waveshare 类板，robotd 零改动）或路径③（kernel DE）**；串口无论如何须切 PL011（`disable-bt`）。
 
 ---
 
@@ -135,6 +140,8 @@ _一手来源：各板官方规格/brief；robotd 源码（`configd/src/identity
 - **`github.com/jlckfb/easyduck`（立创官方 `jlckfb` 组织）+ 立创官方案例镜像**：**现成开源整机 / 官方镜像**，`runtime/` 组件逐一对应我们 robotd 栈，是"泰山派上能跑我们这套栈"的**权威现成方案**（但舵机协议走 SCS 1MHz 分支，见 §3.3 + §7）。
 - 本文件：四板横向选型判断（功能覆盖 + 集成风险 + 迁移成本 + 现成方案），角度互补。
 - `MEMORY.md` SBC 选型段：保持"别买板"现状结论；本文件补充"若要买——Orange Pi A733 是原厂已验证基准（但属另一条线），泰山派有现成 EasyDuck 整机/镜像但舵机协议是 SCS 分支（非我们 HLS），Pi 4B 功能够但机构/价格最差；§5 七步不可省（含协议分支选择）"。
+- `microduck-Pi4B-开源Feetech总线舵机方案-2026-11-09.md`：Pi 4B 上 Feetech 总线舵机开源现状（LeKiwi/Joshua/commanderfun 等）+ 半双工方向三种路径（USB 适配器 SDK 翻 RTS / 外部总线驱动板硬件 DE / 板载 UART + kernel DE）+ 对 robotd 含义（用户态零 RTS 翻转，不能照搬 Python SDK 翻 RTS 栈，须接硬件 DE 板或 kernel DE）。
+- `microduck-开源复刻项目-参考价值-2026-11-09.md`：全社区 Microduck/HD-1910 复刻（fanhao375 / LuwuDynamics xgoduck / chenkui164）参考价值调查，新增类别 C1-C8（IMU 融合 / 总线 IMU 从机 / 恢复状态机 / Sync-Read 时序 / 标定骨架 / 观测契约 / 几何惯量 / 协议手册）+ 对 A1-A4 的回填；含"下一轮首选 `fanhao375/Microduck-kissqy`（真·Rust robotd + HD-1910 上机经验）"建议。
 
 ---
 
@@ -188,3 +195,8 @@ _一手来源：`github.com/jlckfb/easyduck`（`runtime/duck-control/src/scs.rs`
 - 标定套件要写 **HLS 版 `Bus` shim** 才能跑我们的舵机。
 - 机构（70×45 / 98.6 g）只有"直接采用 EasyDuck 整机"时才不用管；塞我们自己 Radxa 机壳仍要重做（见 §3.3 / §5.4）。
 - **决策变量**：要不要保持我们 HLS 工具链（推荐）vs 切 SCS 分支。保持 HLS 时，§8.1 A1 补丁 + A4 配置 + A2 标定逻辑 是三条最实在的借鉴；切 SCS 则等于换一条全新舵机线（与现有 `hls_probe`/EEPROM 校验/标定全不兼容）。
+
+### 8.4 全社区复刻参考价值扩展（C1-C8，超出泰山派 / EasyDuck 范围）
+- 调查文档：`microduck-开源复刻项目-参考价值-2026-11-09.md`（覆盖 `fanhao375/microduck-replica`、`LuwuDynamics/xgoduck_*`、`chenkui164/microduck-replica` 及周边）。
+- 核心新增可借鉴点（对照 A1-A4）：**C2 IMU 融合务必自做互补滤波（xgoduck `ImuFilter` + fanhao BNO085 乱跳教训，两独立来源验证）**、**C1 总线 IMU 从机 ID200 是社区主流（chenkui/fanhao 固件可作移植起点）**、**C3 恢复状态机（`FALL_DEG=55°`/`0.15s`，与我们的 60°/200ms 接近）**、**C6 半双工 Sync-Read/Write 广播（协议性能关键）**、**C5 标定骨架（fanhao `servo_tool.py` + xgoduck `standing_imu.py`）**、**C4 观测契约（obs61/act14 布局与我们一致）**、**C7 几何/质量/惯量（数据清单，需 HD-1910 实测）**、**C8 飞特 SCS 协议手册 + STS 内存表（寄存器对齐一手依据）**。
+- 关键判定：**fanhao/xgoduck/chenkui 与我们的 `feetech_hls` 同协议家族（Feetech STS3215 级 SCS），寄存器/编码器对齐，差异仅 波特率(1M↔500k)、ID(10-34↔1-15)、增益语义缩放**——均"改配置+验证"级，无协议冲突。但**权重/几何不可移植**（需重训/重测）。
