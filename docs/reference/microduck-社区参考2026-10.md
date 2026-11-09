@@ -461,6 +461,8 @@ return torch.exp(-lin_vel_error / std**2)
 | 大腿长 | 42 mm | **42.2 mm** | — |
 | 小腿长 | 49 mm | **49.4 mm** | — |
 
+> ⚠️ **2026-11-09 订正**：本表「真机记录 744 g」措辞不准 —— 744 g 的一手出处是官方 `robot_walk.xml` 的 **MJCF 仿真质量**（`replica/software/studio/web/model/model.json` 的 notes 明写，逐 body 加总 744.36 g），不是称重值。「差 6.8 g，正好是 ToF + 摄像头 + 螺丝」**无一手佐证且自相矛盾**（fanhao 清单里 `jaw_soft` 已含摄像头），该解释作废。逐刚体对照与两条独立复算见 `docs/active/microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md` Part B。
+
 关节限位也逐项一致（髋 yaw 左 −25/+30°、右 −30/+25° 镜像；hip_roll ±22°；hip_pitch / knee /
 ankle 各 ±90°；neck_pitch −90/+60°；head_pitch ±90°；head_yaw ±170°；head_roll ±25°）。
 

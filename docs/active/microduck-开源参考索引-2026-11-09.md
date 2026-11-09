@@ -33,7 +33,7 @@ _⚠️ 许可提醒：`fanhao375/microduck-replica`、`kissqy/Microduck-kissqy`
 - `https://github.com/fanhao375/microduck-replica`（1624★，HTML，**无 LICENSE**，2026-11-09 仍活跃）
 - 唯一「HD-1910 + Radxa Zero 3W + 同款 mjlab 策略线」上机记录：站立 / 行走 / **前滚翻起身**。
 - 关键资产（`docs/` 60+ 篇）：
-  - `HD-1910训练前数据清单.md` — 几何/质量/惯量/关节轴；**自标「全是 XL330 仿真值，换飞特四处不同」**：单只 18→21 g、34×20×23 mm、堵转 0.6→1.47 N·m@7.4V、320:1/回差≤0.5°。整机 **737.1 g**（我们记 744 g，差 7 g，**待核口径**——作者自己也标了电池是否含在 trunk_base 待核）。
+  - `HD-1910训练前数据清单.md` — 几何/质量/惯量/关节轴；**自标「全是 XL330 仿真值，换飞特四处不同」**：单只 18→21 g、34×20×23 mm、堵转 0.6→1.47 N·m@7.4V、320:1/回差≤0.5°。整机 **737.1 g**（我们记 744 g —— **2026-11-09 已判**：两者是两份不同 XL330 MJCF 的仿真质量，逐刚体加总分别得 737.1 / 744.36 g，差额是几十克级质量重分配抵消后的净 7.26 g，非「几个小零件」；电池是否含入 `trunk_base` 仍无实称。详见 `docs/active/microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md` Part B）。
   - `HD1910-20261015-IMU乱跳根因与陀螺融合上机.md` — **gyro_fusion 结论的原始出处**（我们此前只引二手）。
   - `执行器选型.md`(26KB)、`踩坑记录.md`(85KB)、`调试记录.md`(45KB)、`官方更新跟踪.md`(375KB)、`HD-1910-M6参数来源.md`。
   - **Microduck Studio 网页中控**（配网/标定/遥控）——我们只有 CLI。
@@ -153,8 +153,8 @@ _⚠️ 许可提醒：`fanhao375/microduck-replica`、`kissqy/Microduck-kissqy`
 
 ## 行动建议（按性价比）
 
-1. **抄 xgoduck_rl 的 `roller_standup` + `sitstand`**——P3 缺这两个，「跌倒后自己起来」是整机验收硬项，fanhao375 正是靠它证明的。
-2. **`backlash.py` 对照我们齿隙设定（≤0.5°）**，看是否同一量级。
+1. ~~抄 xgoduck_rl 的 `roller_standup` + `sitstand`~~ → **已撤销（2026-11-09 核对）**：这些任务本地训练包早已注册；`roller_standup` 是带轮版、HD-1910 不适用；`sitstand` 是坐↔站；跌倒起身 `standup` 本就在 P3。详见 `docs/active/microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md` Part A。
+2. **`backlash.py` 对照我们齿隙设定（≤0.5°）**，看是否同一量级 —— 仍有效。
 3. **microduck_yocto 作为上板 OS 候选**（microduck-zero3 机种就是我们的板）；updater RAUC 回滚链值得在真机上跑一次。
 4. **读 fanhao375 `踩坑记录.md`/`调试记录.md` 目录**挑未踩坑，避免重复。
-5. 核 **737.1 g vs 744 g** 口径（BAM `trunk_base` 是否含电池）。
+5. ~~核 737.1 g vs 744 g 口径~~ → **已闭环**：两份不同 XL330 MJCF 的仿真质量（744.36 / 737.1 g），「差 6.8 g = ToF+摄像头+螺丝」解释作废；电池是否含入 `trunk_base` 仍无实称。详见同一文档 Part B。
