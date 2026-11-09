@@ -264,7 +264,7 @@ WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正�
 1. ✅ **已完成（本轮）**：查清 UART/PL011/方向层/ORT/供电/IMU 代次/部署链的所有「下一步资料线索」，没有留「去找 X」当结论。
 2. 🟡 **台架零成本先验：已实跑，但 500k 仍不可判**（2026-11-09 两轮结果见 §12.1）：
    - `microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`：在 `115200 / 250000 / 400000 / 500000 / 1M` 五个波特率下逐个打开 URT-2、发 HLS ping、统计应答率与 RTT 分布。用**舵机是否回帧**证明「芯片真发了」，不信 `Serial.baudrate` 回显；再用 ghost ID 排除自发自收回声。⚠️ `400000` 坏值锚点**只有在舵机也切到该速率时才有区分力**（reg6=0 时与 500k 同判 RATE_MISMATCH）。
-   - `python probe_ch343_baud.py --port COM3 --id 10 --out out/ch343_baud.json` 已跑：1M PASS（RTT p50 0.2532 ms）、500k `INCONCLUSIVE_RATE_MISMATCH`。**要消 R3，先按 §12.1 把 reg6 切成 1 并断电重上电，再跑同一条命令**；目标 500000 在 `rate_match=true` 下判 PASS 才算数（位宽 2 µs 仍需示波器）。当前 RTT 是 **@1 Mbps** 的数，别当 500k 的 USB 批延迟。
+   - `python probe_ch343_baud.py --port COM3 --id 10 --out out/ch343_baud.json` 已跑：1M PASS（RTT p50 0.2532 ms）、500k `INCONCLUSIVE_RATE_MISMATCH`。**要消 R3，先按 §12.1 把 reg6 切成 1 并断电重上电，再跑同一条命令**；目标 500000 在 `rate_match=true` 下判 PASS 才算数（位宽 2 µs 仍需示波器）。当前 RTT 是 **@1 Mbps** 的数，别当 500k 的 USB 批延迟。⚠️ 切 reg6 有**自指风险**（若 500k 通道不通，现有 URT-2 就切不回来），完整可逆性判决见 §12.1。
    - 第三项「自动方向板能否原样透传 HLS 500k 帧」**台架做不了**（手上没有 Adapter (A)，需买板），保留在真机阶段。
 3. 真决定换板后：买 Pi 4B + Adapter (A)，按 §3 配 `uart3`、按 §4 接方向层、按 §2.3 做供电树。
 4. 交叉编译 robotd（§6）、装 ORT 1.28.0、拷策略 onnx 并改写绝对路径（§7）。
@@ -313,6 +313,26 @@ WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正�
 3. `python hd1910_ident.py telem --port COM3 --baud 500000 --id 10 --seconds 1` 确认新速率有应答、回读 reg6=1。
 4. 重跑 `probe_ch343_baud.py --port COM3 --id 10 --out out/ch343_baud.json`：此时 `servo_configured_baud=500000`、`rate_match=true` ⇒ **500000 判 PASS 才真正消掉 R3 的可用性一半**；若仍零应答，那才是 CH343 静默的证据。
 5. ⚠️ 切完后**所有台架工具默认 `--baud 1000000` 都要改成 `500000`**（`probe_ids.py` / `hd1910_readonly.py` / `probe_bus_budget.py` 等）；R11 里「台架历史数据都在 1 Mbps」依旧成立（指历史）。回滚用 `--baud-index 0`，同样需断电。
+
+#### 可逆性判决（用户问「切了能切回来吗」，2026-11-09 查证）
+
+**结论：参数层面能，操作层面有条件——而这个条件恰好就是 R3 要验的未知量。**
+
+| 依据 | 内容 |
+|---|---|
+| 飞特官方内存表（`doc.feetech.cn` / AIFITLAB FT-SCS Wiki） | `reg6`(0x06) 波特率 = **读写**、取值 0–7、初始 0（1M）；`1=500000` 是标准档位（SCS15 手册该档误差 0.000%）⇒ **不是一次性熔断**，可反复写回 0 |
+| 精确回滚（首选） | `hd1910_ident.py baud --port COM3 --baud 500000 --baud-index 0 --id 10` —— `--baud` 必须用**新**速率；同样要断电回读。只动 reg6 一个字节，不碰标定 |
+| 协议级后路 | FT-SCS：`0x09` Parameter Backup（ID10 帧 `FF FF 0A 02 09 EA`）、`0x06` Parameter Restore（`FF FF 0A 02 06 ED`，**均需先解锁 reg55**）、`0x08` Reboot（`FF FF 0A 02 08 EB`，约 800 ms，重启前需关扭矩）。⚠️ `0x06` 的资料说法不一（juxi：除 ID 外回默认；Wiki：恢复 `0x09` 备份的快照），且会抹掉其它参数 ⇒ **别当首选**，精确写 reg6=0 更稳。本项目脚本目前未封装这三条指令 |
+| 本地备份 | `eeprom_backup_id10.json`（2026-11-02，addr 0–55 全 dump，含 reg6=0 / reg33=4）；切之前建议重导一份最新的 |
+| 网页工具 | `Juxi-Technology/FT-ServoController-web` 的 xdat 备份/回写覆盖 addr 0–48，可作第二适配器上的恢复手段 |
+
+🔴 **别信「自动回滚」**：该工具 guide 写「验证失败会自动切回原速率并提示」，但 `js/app.js:836-846` 的 `changeBaud()` 只把**工具侧串口** `reopen(oldBaud)` 再 `ping(id)`，**没有任何把舵机 reg6 写回的动作**；`:844` 自己写着「严重：波特率修改失败且旧波特率也丢失」。⇒ 那是「试试旧速率还能不能连」，不是事务回滚。
+
+🔴 **自指风险**：切过去以后能不能通信，就是 R3 要验的东西。实验成功（500k 能 ping）⇒ 随时可写回 0；实验失败（CH343 在 500k 静默）⇒ 舵机只在 500k 听、1M 不再听，而这块 URT-2 在 500k 又发不出帧 ⇒ **用现有硬件切不回来**，必须换一块能在 500k 真发帧的 USB-TTL / 飞特调试板，在那个通道上写回 reg6=0 或发 `0x06`。**舵机本身没坏**，只是暂时连不上。
+
+⚠️ **资料矛盾，以本项目实测为准**：juxi `changeBaud()` 解锁→写 reg6→上锁只等 50/200 ms，随后立即 `reopen(baud)`，**不要求断电**；本项目 `hd1910_ident.py::_eeprom_write` 用 0.25/0.50/0.50 s 窗口且 `cmd_set_baud` 明写必须断电。后者是 2026-11-04 在这颗 ID10 上两次断电复现过的（短窗口会「回读 PASS、掉电回旧值」）⇒ 别照抄网页工具时序。这也意味着写入**可能**不立即生效、存在「断电前用 1M 写回 0」的撤销窗口，但应**按立即失联来准备**，不要赌这个窗口。
+
+**保险动作（若决定切）**：① 重导一份 EEPROM 全 dump，可选在 1M 下发 `0x09` 把快照存进舵机内部；② 预先写好回滚命令，断电后第一件事就是 `probe_ids.py --baud 500000 --ids 10` 验通道，通了才继续；③ 不通就别反复断电折腾，直接换第二块适配器。**不想冒这个风险就完全可以不切**——R3 留到有示波器/逻辑分析仪或上板时再验，台架现状不受影响。
 
 **🔑 静态查证的新事实**（第一轮已回填 §4.2.1 / §5 / §11）：URT-2 = CH343P；WCH 官方 50 bps–6 Mbps + **`TNOW` 硬件半双工方向脚**；Linux 上 CH343 有 `cdc_acm` / `ch341` / WCH VCP 三条驱动路径；社区实测报 `400000` 静默不发、`drain()` 提前 40–130 ms 且 RS485 方向切换会截断尾字节。
 
