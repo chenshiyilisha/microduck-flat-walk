@@ -48,6 +48,9 @@ python live_viewer.py --demo --renderer headless       # 只打印数值（含�
 > 走 mediad 的 WebRTC relay 连真机（需要 operator PC 上 `robotctl` 在 PATH + 网络可达）；后者是
 > 真机流的**本地仿真**（同 JSON 形状），用于没机器人时验证解析 + 重力/IMU + mesh 渲染。
 > 真机实跑请用 A/A'，本沙箱无机器人，已用 `--source mock-relay` 验证全链路。
+> 首跑前建议先走 §8 的 `capture_live.py` + `verify_capture.py` 对真实字节做静态对照。
+> `mock-relay` 的 matplotlib 渲染此前有一个 targets 偏差绿线的拆包 bug（2026-11-09 修复），
+> 现 `--source mock-relay --renderer matplotlib` 可正常跑。
 
 - `--host`：`--source robotctl` 时指定 ssh 远端主机。
 - `--interval-ms`：matplotlib/viser 的刷新间隔（默认 100）。
@@ -126,3 +129,41 @@ MJCF 独立解析出的 rest pivot 逐项吻合（误差 < 1e-4 m）。
   会被查看器跳过）。
 - 想要更准的几何：换用带 `mouth` hinge 的完整 `robot_walk.xml`（非 alpha）后，把对应
   `pos`/`quat`/`joint` 回填 `live_viewer.py` 的 `BONES` 即可，FK 无需改动。
+
+## 8. 真机首跑：抓取 + 字节级对照（强烈建议先做）
+
+查看器的解析路径此前从没对**真实 robotctl 字节**验证过（本开发环境无 `robotctl` 二进制 /
+无机器人主机 / 无 WebRTC relay 访问）。直接 `--source robotctl` 可能“防御性解析不崩，但
+静默显示 n/a”。所以首跑前，先用下面两个工具把真实字节抓下来、**静态对照**，确认
+HD-1910 robotd 的 `monitor` 流到底暴露了哪些字段、`health` RPC 形状对不对。
+
+```bash
+# 1) 抓真机：monitor 流落盘 ndjson + health 落盘 JSON（operator PC，robotctl 在 PATH 或经 ssh）
+python capture_live.py --source robotctl --seconds 8 \
+    --out monitor.ndjson --health-out health.json
+python capture_live.py --source robotctl --host robot-host --seconds 8 \
+    --out monitor.ndjson --health-out health.json      # 无需本机装 robotctl
+
+# 2) 对照：用查看器真实 parse_state 逐帧解析，报字段覆盖率 + 合理性 + health 形状
+python verify_capture.py --monitor monitor.ndjson --health health.json
+cat monitor.ndjson | python verify_capture.py --monitor -      # 也支持 stdin
+```
+
+`verify_capture.py` 会明确给出类似结论（决定首跑前是否补齐）：
+
+```
+✓ monitor 流暴露 safety.gravity → 查看器重力/倾角显示可用
+⚠ gyro 未上报 → 查看器陀螺箭头显示 n/a（不崩，仅缺该箭头）
+✓ health RPC 形状正确（report.robot.imu.consecutive_stale_blocks 可解析）
+```
+
+**本地无硬件也能验证工具本身**（合成帧，不连真机）：
+
+```bash
+python capture_live.py --source mock --out monitor.ndjson --health-out health.json
+python verify_capture.py --monitor monitor.ndjson --health health.json
+```
+
+> 两个工具仅依赖 Python 标准库 + 同目录 `live_viewer`（`capture_live.py` mock 模式、
+> `verify_capture.py` 才会 import `live_viewer`）；真机模式不 import 任何第三方包。
+

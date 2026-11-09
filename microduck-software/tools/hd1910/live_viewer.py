@@ -446,7 +446,7 @@ class MatplotlibViewer:
         # 目标姿态细线叠加（若有偏差）
         if any(abs(st.targets[i]-st.joints[i]) > 1e-3 for i in range(N)):
             pt = forward_kinematics(st.targets)
-            xt, yt, zt, _ = _draw_edges(pt)
+            xt, yt, zt = _draw_edges(pt)
             self.ax.plot(xt, yt, zt, "--", color="green", lw=1, alpha=0.5)
         # 体坐标重力箭头（红），锚在 trunk 原点
         g = st.gravity
@@ -687,21 +687,15 @@ def run_robotctl(viewer, host: str | None = None) -> None:
         th.join(timeout=2)
 
 
-def run_mock_relay(viewer, seconds: float = 6.0) -> None:
-    """本地无机器人时，合成一套“真机流”帧（与 robotctl monitor --json 同 JSON 形状），
-    用于端到端验证解析 + 重力/IMU 健康 + gyro/head/odom + mesh 渲染。
+def iter_mock_frames(seconds: float = 6.0, dt: float = 0.1):
+    """生成合成“真机流”帧（与 ``robotctl monitor --json`` 同 JSON 形状，**不含 health**）。
 
-    注意：这是 **真机流的仿真**，不是真机。真机用 --source robotctl（见 run_robotctl）。
-    关键点：monitor 流 **不带 health**（health 是独立 robot.health RPC），所以这里也不在
-    monitor 帧里放 health；IMU 健康改为模拟“health 轮询结果”直接合并进帧，走与
-    run_robotctl 完全相同的 _apply_health 合并路径。
-    合成内容：关节缓慢摆动（类行走）+ 倾斜重力 + 原始陀螺 + 头部四元数 + 里程
-    + 周期性 IMU 过期块。
+    纯生成器，yield 每个 monitor 帧的 dict。供 ``run_mock_relay``（实时渲染）与
+    ``capture_live.py``（落盘）共用，确保合成数据只有一份真相。
+    关键点：monitor 流 **不带 health**（health 是独立 robot.health RPC），所以这里也不放。
+    合成内容：关节缓慢摆动（类行走）+ 倾斜重力 + 原始陀螺 + 头部四元数 + 里程。
     """
-    print("MOCK relay（仿真真机流，非真机）：合成关节摆动 + 倾斜重力 + gyro/head/odom + IMU 过期块",
-          file=sys.stderr)
     t = 0.0
-    dt = 0.1
     while t < seconds:
         w = 0.18 * math.sin(t * 1.3)
         angles = list(REST_POSITION)
@@ -712,7 +706,6 @@ def run_mock_relay(viewer, seconds: float = 6.0) -> None:
         ay, ax = 0.25*math.sin(t*0.7), 0.12*math.cos(t*0.5)
         g = (math.sin(ax), math.sin(ay)*math.cos(ax), -math.cos(ay)*math.cos(ax))
         fallen = bool(abs(ay) > 0.9)
-        stale = int((t // 1.5) % 4)        # 周期性出现 0..3 个过期块
         # 原始陀螺（体坐标，rad/s）：随摆动产生绕 X 的角速度
         gyro = (0.18*1.3*math.cos(t*1.3), 0.0, 0.0)
         # 头部四元数（绕 Z 缓慢偏航，wxyz）
@@ -721,19 +714,42 @@ def run_mock_relay(viewer, seconds: float = 6.0) -> None:
         # 里程：躯干沿 X 缓慢前进 + 航向
         odom = {"position": [0.05*t, 0.0, 0.0], "yaw": 0.1*math.sin(t*0.3)}
         # monitor 帧：只含 RobotState 真实字段（无 health）
-        obj = {
+        yield {
             "t": round(t, 2), "policy": "walk",
             "joints": angles, "targets": list(REST_POSITION),
             "safety": {"gravity": list(g), "fallen": fallen, "limp": False},
             "gyro": list(gyro), "head": list(head), "odom": odom,
         }
+        t += dt
+
+
+def mock_health_report(stale: int = 2, healthy: bool = True) -> dict:
+    """合成一条 ``robotctl health --json`` 报告（真实形状：report.robot.imu...）。"""
+    return {"robot": {"healthy": healthy,
+                      "imu": {"ready": True, "stale_blocks": stale,
+                              "consecutive_stale_blocks": stale}},
+            "software": {}, "camera": {}}
+
+
+def run_mock_relay(viewer, seconds: float = 6.0) -> None:
+    """本地无机器人时，合成一套“真机流”帧（与 robotctl monitor --json 同 JSON 形状），
+    用于端到端验证解析 + 重力/IMU 健康 + gyro/head/odom + mesh 渲染。
+
+    注意：这是 **真机流的仿真**，不是真机。真机用 --source robotctl（见 run_robotctl）。
+    关键点：monitor 流 **不带 health**（health 是独立 robot.health RPC），所以这里也不在
+    monitor 帧里放 health；IMU 健康改为模拟“health 轮询结果”直接合并进帧，走与
+    run_robotctl 完全相同的 _apply_health 合并路径。周期性出现 0..3 个过期块。
+    """
+    print("MOCK relay（仿真真机流，非真机）：合成关节摆动 + 倾斜重力 + gyro/head/odom + IMU 过期块",
+          file=sys.stderr)
+    for obj in iter_mock_frames(seconds, 0.1):
         st = parse_state(obj)
         # 模拟 health 轮询结果（真实路径由 run_robotctl 后台线程写入，这里直接给）
+        stale = int((obj["t"] // 1.5) % 4)        # 周期性出现 0..3 个过期块
         st.imu_stale_blocks = stale
         st.imu_healthy = True
         viewer.frame(st)
-        t += dt
-        time.sleep(dt * 0.05)   # 加速演示，不必等满 6s 实时
+        time.sleep(0.1 * 0.05)   # 加速演示，不必等满 6s 实时
 
 
 def run_demo(viewer) -> None:
