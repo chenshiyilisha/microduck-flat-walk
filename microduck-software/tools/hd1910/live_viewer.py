@@ -12,9 +12,13 @@ docs/active/microduck-三个开源硬件项目研究-2026-11-08.md）：
   * ``RobotState.safety.gravity`` 是 **体坐标系（trunk frame）重力单位向量**，直立 ≈ ``[0,0,-1]``
     （lib.rs:4008，``#[serde(default)]``，fallen 判定同源）。这是两条线（HD-1910 / ft1910）
     共用的接口面，`live_viewer` 直接复用，零改 robotd。
-  * IMU 健康：``robot.health`` RPC 返回 ``imu.consecutive_stale_blocks``（过期块计数）。
-    monitor 流不一定带 ``health``，查看器防御性解析 ``state.health.imu.consecutive_stale_blocks``，
-    缺失时标注 "n/a (use robot.health)"。
+  * IMU 健康：``robot.health`` 是 **独立 RPC**（与 monitor 不同一条流），``robotctl health --json``
+    返回 ``robot.imu.consecutive_stale_blocks``（过期块计数，lib.rs:2544 ImuHealth）。
+    monitor 流（RobotState）**不含 health**，所以 --source robotctl 会另起后台线程周期性跑
+    ``robotctl health --json`` 并把结果合并进每帧；缺失/失败时标注 "n/a (robot.health)"。
+  * 真流里还有这些字段，查看器一并显示：``RobotState.gyro``（原始陀螺，体坐标 rad/s，
+    lib.rs:2674）、``RobotState.head``（头部四元数，lib.rs:2659）、``RobotState.odom``
+    （躯干世界坐标 + 航向，lib.rs:2729）。重力（红）/ 陀螺（青）箭头均锚在 trunk 原点。
   * JOINT_NAMES（左腿优先，15 个）：
         left_hip_yaw(0) left_hip_roll(1) left_hip_pitch(2) left_knee(3) left_ankle(4)
         neck_pitch(5) head_pitch(6) head_yaw(7) head_roll(8) mouth(9)
@@ -50,8 +54,9 @@ docs/active/microduck-三个开源硬件项目研究-2026-11-08.md）：
 设计要点
 --------
   * 零重依赖也能跑：FK 用纯 Python 四元数，headless 只打印。matplotlib/viser 可选（lazy import）。
-  * matplotlib 用 Poly3DCollection 画连杆圆柱 + 关节球 + 体坐标重力箭头（本体现）；
-    viser 用 add_mesh 圆柱 + 关节点 + 重力线（浏览器可旋转缩放）。
+  * matplotlib 用 Poly3DCollection 画连杆圆柱 + 关节球 + 体坐标重力箭头（红）/陀螺箭头（青）（本体现）；
+    viser 用 add_mesh 圆柱 + 关节点 + 重力线 + 陀螺线（浏览器可旋转缩放）。HUD 同时显示
+    gravity/tilt/gyro/odom/IMU 健康等标量。
   * 关节 ID 体系严格用我们的「1–15 物理 ID + 左腿优先名序」，不混入官方 10–14/20–24/30–34。
 """
 
@@ -64,6 +69,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -203,6 +209,11 @@ class RobotStateView:
     limp: bool | None = None
     imu_stale_blocks: int | None = None                 # robot.health.imu.consecutive_stale_blocks
     imu_healthy: bool | None = None
+    # —— 真流里额外可用、monitor 不一定带的字段（缺失 = None） ——
+    gyro: tuple[float, float, float] | None = None       # RobotState.gyro: Option<[f64;3]> 原始陀螺, 体坐标 rad/s (lib.rs:2674)
+    head: tuple[float, float, float, float] | None = None  # RobotState.head: [f64;4] 头部四元数 (lib.rs:2659)
+    odom_pos: tuple[float, float, float] | None = None   # RobotState.odom.position 躯干世界坐标 m (lib.rs:2731)
+    odom_yaw: float | None = None                        # RobotState.odom.yaw 航向 rad (lib.rs:2733)
 
 
 def _gravity_from(obj: dict) -> tuple[float, float, float] | None:
@@ -215,18 +226,60 @@ def _gravity_from(obj: dict) -> tuple[float, float, float] | None:
 
 
 def _imu_health_from(obj: dict) -> tuple[int | None, bool | None]:
-    health = obj.get("health")
-    if not isinstance(health, dict):
+    """从 health 报告解析 IMU 健康。兼容两种形状：
+
+    * 真机 ``robotctl health --json`` 输出（HealthReport）：``obj["robot"]["imu"]["consecutive_stale_blocks"]``
+      + ``obj["robot"]["healthy"]``（lib.rs:2429 HealthResult / 2544 ImuHealth）。
+    * 旧式/demo 把 health 直接放在 monitor 帧顶层 ``obj["health"]["imu"]``（仅 demo/mock 兼容）。
+    """
+    robot = obj.get("robot")
+    if isinstance(robot, dict):                      # 真机 health 报告形状
+        imu = robot.get("imu") or {}
+        stale = imu.get("consecutive_stale_blocks")
+        healthy = robot.get("healthy")
+        return (int(stale) if isinstance(stale, (int, float)) else None,
+                bool(healthy) if isinstance(healthy, bool) else None)
+    health = obj.get("health")                        # 旧式/demo 顶层 health
+    if isinstance(health, dict):
+        imu = health.get("imu") or {}
+        stale = imu.get("consecutive_stale_blocks")
+        healthy = health.get("healthy")
+        return (int(stale) if isinstance(stale, (int, float)) else None,
+                bool(healthy) if isinstance(healthy, bool) else None)
+    return None, None
+
+
+def _gyro_from(obj: dict) -> tuple[float, float, float] | None:
+    """RobotState.gyro: Option<[f64;3]>（lib.rs:2674），原始陀螺，体坐标 rad/s。"""
+    g = obj.get("gyro")
+    if isinstance(g, (list, tuple)) and len(g) == 3:
+        return (float(g[0]), float(g[1]), float(g[2]))
+    return None
+
+
+def _head_from(obj: dict) -> tuple[float, float, float, float] | None:
+    """RobotState.head: [f64;4]（lib.rs:2659），头部四元数（顺序见真机）。"""
+    h = obj.get("head")
+    if isinstance(h, (list, tuple)) and len(h) == 4:
+        return (float(h[0]), float(h[1]), float(h[2]), float(h[3]))
+    return None
+
+
+def _odom_from(obj: dict) -> tuple[tuple[float, float, float] | None, float | None]:
+    """RobotState.odom: {position:[f64;3], yaw:f64}（lib.rs:2729/2731/2733）。"""
+    o = obj.get("odom")
+    if not isinstance(o, dict):
         return None, None
-    imu = health.get("imu") or {}
-    stale = imu.get("consecutive_stale_blocks")
-    healthy = health.get("healthy")
-    return (int(stale) if isinstance(stale, (int, float)) else None,
-            bool(healthy) if isinstance(healthy, bool) else None)
+    p = o.get("position")
+    pos = (float(p[0]), float(p[1]), float(p[2])) if isinstance(p, (list, tuple)) and len(p) == 3 else None
+    yaw = o.get("yaw")
+    yaw = float(yaw) if isinstance(yaw, (int, float)) else None
+    return pos, yaw
 
 
 def parse_state(obj: dict) -> RobotStateView:
     safety = obj.get("safety") if isinstance(obj.get("safety"), dict) else {}
+    odom_pos, odom_yaw = _odom_from(obj)
     return RobotStateView(
         t=float(obj.get("t", 0.0)),
         policy=str(obj.get("policy", "?")),
@@ -239,6 +292,10 @@ def parse_state(obj: dict) -> RobotStateView:
         limp=bool(safety.get("limp")) if isinstance(safety.get("limp"), bool) else None,
         imu_stale_blocks=_imu_health_from(obj)[0],
         imu_healthy=_imu_health_from(obj)[1],
+        gyro=_gyro_from(obj),
+        head=_head_from(obj),
+        odom_pos=odom_pos,
+        odom_yaw=odom_yaw,
     )
 
 
@@ -331,6 +388,13 @@ def _fmt_imu(st: RobotStateView) -> str:
         parts.append(f"imu_healthy={st.imu_healthy}")
     else:
         parts.append("imu_health=n/a(robot.health)")
+    if st.gyro is not None:
+        parts.append(f"gyro=({st.gyro[0]:+.1f},{st.gyro[1]:+.1f},{st.gyro[2]:+.1f})rad/s")
+    if st.odom_pos is not None:
+        p = st.odom_pos
+        parts.append(f"odom=({p[0]:+.2f},{p[1]:+.2f},{p[2]:+.2f})m")
+    if st.odom_yaw is not None:
+        parts.append(f"yaw={math.degrees(st.odom_yaw):.0f}°")
     return "  ".join(parts)
 
 
@@ -391,6 +455,14 @@ class MatplotlibViewer:
             L = 0.18
             self.ax.quiver(0, 0, 0, g[0]/n*L, g[1]/n*L, g[2]/n*L,
                            color="red", lw=2.5, arrow_length_ratio=0.18)
+        # 原始陀螺箭头（青），体坐标角速度方向（限幅，避免大角速度撑爆画面）
+        gy = st.gyro
+        if gy is not None:
+            gm = math.sqrt(sum(x*x for x in gy)) or 1e-9
+            Lg = min(0.14, 0.03 * gm)
+            if Lg > 1e-4:
+                self.ax.quiver(0, 0, 0, gy[0]/gm*Lg, gy[1]/gm*Lg, gy[2]/gm*Lg,
+                               color="cyan", lw=1.8, arrow_length_ratio=0.2)
         self.ax.set_xlabel("X (forward)"); self.ax.set_ylabel("Y (left)")
         self.ax.set_zlabel("Z (up)")
         self.text.set_text(f"policy={st.policy} t={st.t:.2f}s\n{_fmt_imu(st)}")
@@ -410,6 +482,7 @@ class ViserViewer:
         self.mesh_handles: dict[str, object] = {}
         self.joint_handles: dict[str, object] = {}
         self.grav_handle = None
+        self.gyro_handle = None
 
     def _ensure(self, name, parent, p):
         jh = self.joint_handles.get(name)
@@ -460,6 +533,21 @@ class ViserViewer:
                         "gravity", start=(0.0, 0.0, 0.0), end=end, color=(1.0, 0.1, 0.1), width=4)
                 else:
                     self.grav_handle.end = end
+            except Exception:
+                pass
+        # 原始陀螺线（青），体坐标角速度方向（限幅）
+        gy = st.gyro
+        if gy is not None:
+            try:
+                gm = math.sqrt(sum(x*x for x in gy)) or 1e-9
+                Lg = min(0.14, 0.03 * gm)
+                if Lg > 1e-4:
+                    end = (gy[0]/gm*Lg, gy[1]/gm*Lg, gy[2]/gm*Lg)
+                    if self.gyro_handle is None:
+                        self.gyro_handle = self.sv.scene.add_line(
+                            "gyro", start=(0.0, 0.0, 0.0), end=end, color=(0.1, 0.9, 0.9), width=3)
+                    else:
+                        self.gyro_handle.end = end
             except Exception:
                 pass
         # HUD
@@ -517,23 +605,65 @@ def run_stdin(viewer) -> None:
         viewer.frame(parse_state(obj))
 
 
+def _apply_health(st: "RobotStateView", store: dict) -> None:
+    """把 health 轮询结果合并进当前帧（robot.health 是独立 RPC，不在 monitor 流里）。"""
+    if store.get("stale") is not None or store.get("healthy") is not None:
+        st.imu_stale_blocks = store.get("stale")
+        st.imu_healthy = store.get("healthy")
+
+
+def _health_collector(cmd: list[str], store: dict, stop: "threading.Event",
+                      period: float = 1.5) -> None:
+    """后台线程：周期性跑 `robotctl health --json`（或 ssh 变体），解析后写入 store。
+
+    monitor 流（RobotState）不含 health，IMU 健康必须经这条独立 RPC 取到
+    （lib.rs:2429 HealthResult / 2544 ImuHealth）。解析失败/超时则保留上一帧值。
+    """
+    while not stop.is_set():
+        try:
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, timeout=5)
+            if proc.returncode == 0:
+                try:
+                    rep = json.loads(proc.stdout)
+                    stale, healthy = _imu_health_from(rep)
+                    store["stale"] = stale
+                    store["healthy"] = healthy
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        stop.wait(period)
+
+
 def run_robotctl(viewer, host: str | None = None) -> None:
     """经 robotctl 走 WebRTC relay 拉真机流（robotctl monitor --json）。
 
     生产路径：operator PC 上 ``robotctl`` 通过 mediad 的 WebRTC relay 连到机器人，
-    吐降采样 10 Hz 的 RobotState。本函数把它作为子进程拉起、逐行喂给查看器。
+    吐降采样 10 Hz 的 RobotState（含 safety.gravity / gyro / head / odom，lib.rs:2651）。
+    IMU 健康（robot.health）是 **独立 RPC**，monitor 流不带它，所以另起后台线程周期性
+    跑 ``robotctl health --json`` 并把 ``robot.imu.consecutive_stale_blocks`` /
+    ``robot.healthy`` 合并进每帧（lib.rs:2429/2544）。
     --host 指定时走 ``ssh <host> 'robotctl monitor --json'``（需在 ~/.ssh 配置好）。
     """
     if host:
-        cmd = ["ssh", host, "robotctl monitor --json"]
+        monitor_cmd = ["ssh", host, "robotctl monitor --json"]
+        health_cmd = ["ssh", host, "robotctl health --json"]
     else:
         rc = shutil.which("robotctl")
         if rc is None:
-            sys.exit("robotctl 不在 PATH：请先用 `pip install`/官方方式装好 robotctl，"
+            sys.exit("robotctl 不在 PATH：请先装好 robotctl，"
                      "或改用 `ssh <host> 'robotctl monitor --json' | python live_viewer.py --source stdin`")
-        cmd = ["robotctl", "monitor", "--json"]
-    print(f"启动真机流：{' '.join(cmd)}  (Ctrl-C 退出)", file=sys.stderr)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        monitor_cmd = ["robotctl", "monitor", "--json"]
+        health_cmd = ["robotctl", "health", "--json"]
+    print(f"启动真机流：{' '.join(monitor_cmd)}  (Ctrl-C 退出)", file=sys.stderr)
+    print(f"后台轮询健康：{' '.join(health_cmd)}  (1.5s)", file=sys.stderr)
+    health_store: dict = {"stale": None, "healthy": None}
+    stop = threading.Event()
+    th = threading.Thread(target=_health_collector, args=(health_cmd, health_store, stop),
+                         daemon=True)
+    th.start()
+    proc = subprocess.Popen(monitor_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -546,21 +676,30 @@ def run_robotctl(viewer, host: str | None = None) -> None:
                 continue
             if "joints" not in obj:
                 continue
-            viewer.frame(parse_state(obj))
+            st = parse_state(obj)
+            _apply_health(st, health_store)
+            viewer.frame(st)
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
         proc.terminate()
+        th.join(timeout=2)
 
 
 def run_mock_relay(viewer, seconds: float = 6.0) -> None:
     """本地无机器人时，合成一套“真机流”帧（与 robotctl monitor --json 同 JSON 形状），
-    用于端到端验证解析 + 重力/IMU 健康 + mesh 渲染。
+    用于端到端验证解析 + 重力/IMU 健康 + gyro/head/odom + mesh 渲染。
 
     注意：这是 **真机流的仿真**，不是真机。真机用 --source robotctl（见 run_robotctl）。
-    合成内容：关节缓慢摆动（类行走）+ 重力随姿态倾斜 + IMU 周期性出现过期块。
+    关键点：monitor 流 **不带 health**（health 是独立 robot.health RPC），所以这里也不在
+    monitor 帧里放 health；IMU 健康改为模拟“health 轮询结果”直接合并进帧，走与
+    run_robotctl 完全相同的 _apply_health 合并路径。
+    合成内容：关节缓慢摆动（类行走）+ 倾斜重力 + 原始陀螺 + 头部四元数 + 里程
+    + 周期性 IMU 过期块。
     """
-    print("MOCK relay（仿真真机流，非真机）：合成关节摆动 + 倾斜重力 + IMU 过期块", file=sys.stderr)
+    print("MOCK relay（仿真真机流，非真机）：合成关节摆动 + 倾斜重力 + gyro/head/odom + IMU 过期块",
+          file=sys.stderr)
     t = 0.0
     dt = 0.1
     while t < seconds:
@@ -574,13 +713,25 @@ def run_mock_relay(viewer, seconds: float = 6.0) -> None:
         g = (math.sin(ax), math.sin(ay)*math.cos(ax), -math.cos(ay)*math.cos(ax))
         fallen = bool(abs(ay) > 0.9)
         stale = int((t // 1.5) % 4)        # 周期性出现 0..3 个过期块
+        # 原始陀螺（体坐标，rad/s）：随摆动产生绕 X 的角速度
+        gyro = (0.18*1.3*math.cos(t*1.3), 0.0, 0.0)
+        # 头部四元数（绕 Z 缓慢偏航，wxyz）
+        hy = 0.3*math.sin(t*0.4)
+        head = (math.cos(hy/2), 0.0, 0.0, math.sin(hy/2))
+        # 里程：躯干沿 X 缓慢前进 + 航向
+        odom = {"position": [0.05*t, 0.0, 0.0], "yaw": 0.1*math.sin(t*0.3)}
+        # monitor 帧：只含 RobotState 真实字段（无 health）
         obj = {
             "t": round(t, 2), "policy": "walk",
             "joints": angles, "targets": list(REST_POSITION),
             "safety": {"gravity": list(g), "fallen": fallen, "limp": False},
-            "health": {"healthy": True, "imu": {"consecutive_stale_blocks": stale}},
+            "gyro": list(gyro), "head": list(head), "odom": odom,
         }
-        viewer.frame(parse_state(obj))
+        st = parse_state(obj)
+        # 模拟 health 轮询结果（真实路径由 run_robotctl 后台线程写入，这里直接给）
+        st.imu_stale_blocks = stale
+        st.imu_healthy = True
+        viewer.frame(st)
         t += dt
         time.sleep(dt * 0.05)   # 加速演示，不必等满 6s 实时
 

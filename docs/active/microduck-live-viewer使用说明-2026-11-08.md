@@ -6,10 +6,13 @@
 ## 1. 它做什么
 
 把真机实时上报的关节姿态画成一只可旋转的 3D 鸭子骨架，用于**不上真机也能肉眼核对
-`robotd` 有没有在动、各关节角度/目标是否对、跟踪误差多大**，并叠加**体坐标重力箭头 +
-倾角 + IMU 健康**（两条线共用 `robot.state.safety.gravity` 接口面，零改 robotd）。
-姿态数据来自真机的 `robotctl monitor --json`（服务端默认降采样 10 Hz），其
-`RobotState.joints` / `targets` 是裸角度数组，索引按 `JOINT_NAMES`（见 §5）。
+`robotd` 有没有在动、各关节角度/目标是否对、跟踪误差多大**，并叠加**体坐标重力箭头（红）+
+原始陀螺箭头（青）+ 倾角 + 里程 + IMU 健康**。其中重力/陀螺/头姿/里程来自 `robotctl monitor
+--json` 的 `RobotState`（lib.rs:2651 的 `safety.gravity` / `gyro` / `head` / `odom`，两条线
+共用接口面，零改 robotd）；**IMU 健康来自独立的 `robot.health` RPC**（monitor 流不带它，
+查看器后台轮询 `robotctl health --json` 合并，见 §4）。姿态数据来自真机的
+`robotctl monitor --json`（服务端默认降采样 10 Hz），其 `RobotState.joints` / `targets` 是
+裸角度数组，索引按 `JOINT_NAMES`（见 §5）。
 
 ## 2. 依赖
 
@@ -54,14 +57,21 @@ python live_viewer.py --demo --renderer headless       # 只打印数值（含�
 
 - **headless**：逐帧打印每个关节的 `j`（实测角）、`tgt`（目标角）、`err`（跟踪误差），
   以及 `max_track_err`；并附 **`gravity` 体坐标重力向量 + 倾角 `tilt` + `fallen`/`limp` +
-  IMU 过期块 `imu_stale` / `imu_healthy`**。一眼看谁没跟上、机器人是否要倒、IMU 是否过期。
-- **matplotlib/viser**：按真实连杆树画**圆柱连杆 mesh + 关节球 + 体坐标红色重力箭头**
-  （盆骨→髋→膝→踝→脚尖，颈/头/嘴同理）；躯干画粗、肢体画细。若某关节 `targets` 与
-  `joints` 相差 >1e-3，会叠加一条绿色虚线表示目标姿态。viser 还提供浏览器内旋转/缩放。
+  `gyro` 原始陀螺（rad/s）+ `odom` 躯干世界坐标（m）+ 航向 `yaw` + IMU 过期块 `imu_stale` /
+  `imu_healthy`**。一眼看谁没跟上、机器人是否要倒、IMU 是否过期。
+- **matplotlib/viser**：按真实连杆树画**圆柱连杆 mesh + 关节球 + 体坐标红色重力箭头 +
+  青色陀螺箭头**（盆骨→髋→膝→踝→脚尖，颈/头/嘴同理）；躯干画粗、肢体画细。若某关节
+  `targets` 与 `joints` 相差 >1e-3，会叠加一条绿色虚线表示目标姿态。viser 还提供浏览器内
+  旋转/缩放。
 - `velocities` / `currents_ma` 若真机上报则随帧携带，目前仅 headless 打印原始数组；
   空数组表示「该帧未上报」，查看器**绝不将其当作 0**。`safety.gravity` 缺失时标注
-  `gravity=n/a`，`health` 不在 monitor 流里时标注 `imu_health=n/a(robot.health)`（需用
-  `robot.health` RPC 单独查）。
+  `gravity=n/a`。
+- **IMU 健康来自独立 RPC**：monitor 流（`RobotState`）**不带 health**，所以 `--source
+  robotctl` 会另起一个**后台线程**，每 1.5 s 跑一次 `robotctl health --json`（或 `--host`
+  时的 `ssh <host> 'robotctl health --json'`），把 `robot.imu.consecutive_stale_blocks`
+  / `robot.healthy` 合并进每帧（lib.rs:2429 HealthResult / 2544 ImuHealth）。该 RPC
+  取不到/报错时，对应字段保持 `None`，HUD 标注 `imu_health=n/a(robot.health)`——这是
+  **正常状态，不是 bug**。
 
 ## 5. 数据契约（务必对齐）
 
@@ -100,6 +110,12 @@ MJCF 独立解析出的 rest pivot 逐项吻合（误差 < 1e-4 m）。
   （无 mesh 皮肤）。要更真实的外观需另接 `robot_walk.xml` 的 mesh 资产。
 - **重力箭头在体坐标系**：红色箭头锚在躯干原点、沿 `safety.gravity` 方向（直立 ≈ 指向 -Z），
   与 FK 同一 trunk 坐标系，直接看机器人相对“下”的偏移。
+- **IMU 健康是独立 RPC，不是 monitor 字段**：`robotctl monitor --json` 的 `RobotState`
+  （lib.rs:2651）只有 `safety.gravity` / `gyro` / `head` / `odom`，**没有 `health`**。
+  `imu_stale` / `imu_healthy` 必须经 `robotctl health --json`（HealthReport →
+  `robot.imu.consecutive_stale_blocks`，lib.rs:2544）单独取。该协议形态已对照
+  **DuckBuddy-main**（即我们的 HD-1910 robotd 代码基）逐字段核对，`monitor` 与 `health` 两条
+  IPC 共用此源码，接入方式成立；两条线协议不同导致的字段错位风险已排除。
 - **脚尖/嘴尖**是 MJCF 的 site，位置随父体世界变换移动，已纳入 FK。
 
 ## 7. 典型排错
