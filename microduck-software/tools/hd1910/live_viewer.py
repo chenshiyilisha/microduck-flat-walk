@@ -34,6 +34,18 @@ docs/active/microduck-三个开源硬件项目研究-2026-11-08.md）：
   * FK 严格按 MuJoCo 帧组合（纯 Python 四元数），零角度下各关节原点与 MJCF rest pivot 逐项吻合。
   * mouth 在 alpha MJCF 无 hinge，作 head_roll 下固定偏移节点（诚实标注）。
 
+真实视觉外形（STL mesh，P3）
+---------------------------
+  * alpha 运动学 MJCF 只有 pos/quat/joint，**不含视觉几何**。真实外形在训练版 MJCF
+    ``.upstream/hd1910m/microduck_rl/src/mjlab_microduck/robot/microduck/robot_walk.xml``
+    （含 ``<geom type="mesh">`` + ``assets/*.stl`` 40 个 binary STL，单位米）。
+  * 该训练 MJCF 的体树与 BONES 只在 3 个体名不同（upper_leg_left↔left_upper_leg、
+    upper_leg_right↔right_upper_leg、jaw_soft↔bottom_head_shell），共享 body 的
+    pos/quat/joint 完全一致 ⇒ FK(body) 世界帧可直接套用，零缩放摆真实 STL。
+  * 每个 geom 的世界顶点 = FK(body).R·(geom局部.R·stl顶点 + geom局部.pos) + FK(body).t。
+    默认 --mesh-source auto 自动定位该 vendored MJCF；找不到则退化回占位圆柱（--mesh-mode
+    可强制 mesh/cylinder）。--mesh-stride 降采样三角面数（matplotlib 默认 2 以保流畅）。
+
 用法
 ----
   # 1) 真机流：经 robotctl 走 WebRTC relay（最贴近生产的路径；需 robotctl 在 PATH + 网络）
@@ -51,12 +63,17 @@ docs/active/microduck-三个开源硬件项目研究-2026-11-08.md）：
 
   # 5) 渲染后端：auto(默认, viser→matplotlib→headless) / matplotlib / viser / headless
 
+  # 6) 真实 STL 外形（P3）：默认 auto 自动找 vendored 训练 MJCF；找不到→占位圆柱
+  python live_viewer.py --source mock-relay --renderer matplotlib --mesh-mode mesh
+  python live_viewer.py --source robotctl --mesh-source /path/to/robot_walk.xml
+  #    --mesh-mode auto|mesh|cylinder   --mesh-stride 2(降采样三角面)
+
 设计要点
 --------
   * 零重依赖也能跑：FK 用纯 Python 四元数，headless 只打印。matplotlib/viser 可选（lazy import）。
-  * matplotlib 用 Poly3DCollection 画连杆圆柱 + 关节球 + 体坐标重力箭头（红）/陀螺箭头（青）（本体现）；
-    viser 用 add_mesh 圆柱 + 关节点 + 重力线 + 陀螺线（浏览器可旋转缩放）。HUD 同时显示
-    gravity/tilt/gyro/odom/IMU 健康等标量。
+  * matplotlib 用 Poly3DCollection 画真实 STL 零件（无源时退化为连杆圆柱）+ 关节球 + 体坐标
+    重力箭头（红）/陀螺箭头（青）（本体现）；viser 用 add_mesh 真实零件（无源时退化圆柱）+ 关节点
+    + 重力线 + 陀螺线（浏览器可旋转缩放）。HUD 同时显示 gravity/tilt/gyro/odom/IMU 健康等标量。
   * 关节 ID 体系严格用我们的「1–15 物理 ID + 左腿优先名序」，不混入官方 10–14/20–24/30–34。
 """
 
@@ -67,6 +84,7 @@ import json
 import math
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -171,8 +189,12 @@ def _mat_vec(M: list[list[float]], p: tuple[float, float, float]) -> tuple[float
             M[2][0]*p[0] + M[2][1]*p[1] + M[2][2]*p[2])
 
 
-def forward_kinematics(angles: list[float]) -> dict[str, tuple[float, float, float]]:
-    """angles: 长度 15，下标对应 JOINT_NAMES。返回每个 BONE 原点的世界坐标（相对 trunk_base）。"""
+def forward_frames(angles: list[float]) -> dict[str, tuple[list, tuple]]:
+    """angles: 长度 15，下标对应 JOINT_NAMES。返回每个 BONE 的 (R, t) 世界帧（绝对，
+    未减 trunk_base 原点）。R 为 3x3 旋转（body 坐标系 → 世界，list[list[float]]），
+    t 为 body 原点的世界平移 (tuple)。纯 Python 四元数，零依赖；与 MuJoCo 帧组合严格一致
+    （零角度下各 body 原点与 MJCF rest pivot 逐项吻合）。P3 的 mesh 渲染复用本函数拿每体的
+    世界 R/t，再叠加 geom 局部 pos/quat 把 STL 顶点摆到世界。"""
     assert len(angles) == N, f"需要 {N} 个关节角，收到 {len(angles)}"
     ang = {JOINT_NAMES[i]: angles[i] for i in range(N)}
     frames: dict[str, tuple[list, tuple]] = {}
@@ -187,8 +209,219 @@ def forward_kinematics(angles: list[float]) -> dict[str, tuple[float, float, flo
             rp = _mat_vec(Rq, b["pos"])           # 关节先转，再平移（MuJoCo：parent·R(q)·T(pos)·R(quat)）
             t = [PT[i] + sum(PR[i][k]*rp[k] for k in range(3)) for i in range(3)]
         frames[b["name"]] = (R, tuple(t))
+    return frames
+
+
+def forward_kinematics(angles: list[float]) -> dict[str, tuple[float, float, float]]:
+    """angles: 长度 15，下标对应 JOINT_NAMES。返回每个 BONE 原点的世界坐标（相对 trunk_base）。
+    等价于 forward_frames 后减去 trunk_base 原点，供连杆圆柱 / 关节球等纯位置渲染使用。"""
+    frames = forward_frames(angles)
     origin = frames["trunk_base"][1]
     return {name: (f[1][0]-origin[0], f[1][1]-origin[1], f[1][2]-origin[2]) for name, f in frames.items()}
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# 3b. 真实 MJCF 几何（STL mesh，P3）
+# ───────────────────────────────────────────────────────────────────────────
+# 真实视觉几何不在 alpha 运动学 MJCF（只有 pos/quat/joint，无 geom/mesh），而在训练版
+# MJCF（hd1910m/microduck_rl/.../microduck/robot_walk.xml）：每个 <body> 内若干
+# ``<geom type="mesh" pos=.. quat=.. mesh=.. material=../>``，局部 pos/quat 相对“该 body
+# 坐标系”。运动学树与 alpha 烘焙出的 BONES 完全一致（仅 3 个体名不同，见 MESH_BODY_MAP），
+# 所以 FK 拿到的 body 世界帧可直接套用。STL 为 binary（80B 头 + uint32 面数 + 每面 50B：
+# 3f 法向 + 9f 三顶点 + 2B 属性字节），单位已实测为米（trunk_base≈0.057×0.036×0.003 m，
+# foot_left≈0.040×0.054×0.017 m），与 MJCF 帧一致，零缩放接入。
+#
+# 几何世界变换（每个 geom）：
+#     world_vertex = FK(body).R · (geom_local.R · stl_vertex + geom_local.pos) + FK(body).t
+# 其中 geom_local 相对 body 坐标系；FK(body) 来自 forward_frames。查看器整体以 trunk_base
+# 为原点显示（forward_kinematics 已减原点），故 mesh 世界点也减去 trunk_base 原点以对齐。
+#
+# MJCF 体名 ↔ BONES 体名（仅 3 处不同；其余同名）。BONES 多出的 left_foot/right_foot/mouth
+# 在 MJCF 里是 <site>，无 mesh，自然不会被映射。
+MESH_BODY_MAP: dict[str, str] = {
+    "upper_leg_left": "left_upper_leg",
+    "upper_leg_right": "right_upper_leg",
+    "jaw_soft": "bottom_head_shell",
+}
+
+
+def _parse_vec3(s: str | None) -> tuple[float, float, float]:
+    p = (s or "0 0 0").split()
+    if len(p) >= 3:
+        return (float(p[0]), float(p[1]), float(p[2]))
+    return (0.0, 0.0, 0.0)
+
+
+def _parse_quat(s: str | None) -> tuple[float, float, float, float]:
+    """MJCF quat 属性格式为 'w x y z'（与 BONES quat 元组约定一致）。"""
+    p = (s or "1 0 0 0").split()
+    if len(p) >= 4:
+        return (float(p[0]), float(p[1]), float(p[2]), float(p[3]))
+    return (1.0, 0.0, 0.0, 0.0)
+
+
+def load_stl_binary(path: str) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
+    """解析 binary STL。返回 (vertices, faces)：vertices 按三角形平铺（每面 3 个），
+    faces 为 (i, i+1, i+2)。纯 Python（struct），零依赖。"""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if len(data) < 84:
+        raise ValueError(f"STL 太短：{path} ({len(data)} 字节)")
+    ntri = struct.unpack("<I", data[80:84])[0]
+    expected = 84 + ntri * 50
+    if len(data) != expected:
+        sys.stderr.write(f"[mesh] 警告：{path} 大小 {len(data)} 与预期 {expected} 不符，按 50B/面尽力解析\n")
+    verts: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int]] = []
+    for i in range(ntri):
+        o = 84 + i * 50
+        if o + 48 > len(data):
+            break
+        tri = struct.unpack("<9f", data[o + 12:o + 48])   # 跳过 3f 法向
+        base = len(verts)
+        verts.append((tri[0], tri[1], tri[2]))
+        verts.append((tri[3], tri[4], tri[5]))
+        verts.append((tri[6], tri[7], tri[8]))
+        faces.append((base, base + 1, base + 2))
+    return verts, faces
+
+
+@dataclass
+class MeshGeom:
+    """单个 visual geom：归属 BONES 体、相对 body 的局部 pos/quat、mesh 名、材质颜色。"""
+    body: str
+    pos: tuple[float, float, float]
+    quat: tuple[float, float, float, float]
+    mesh: str
+    rgba: tuple[float, float, float, float]
+
+
+@dataclass
+class MeshModel:
+    """训练 MJCF 解析结果：geom 列表 + STL 资产目录。提供按 FK 帧变换到世界的接口。"""
+    geoms: list[MeshGeom]
+    asset_dir: str
+    _stl_cache: dict = field(default_factory=dict)        # mesh 名 -> (verts, faces)
+    _local_cache: dict = field(default_factory=dict)      # (gi, stride) -> (local_verts, faces)
+
+    def _load_stl(self, mesh_name: str) -> tuple[list, list]:
+        if mesh_name in self._stl_cache:
+            return self._stl_cache[mesh_name]
+        path = os.path.join(self.asset_dir, mesh_name + ".stl")
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+        v, f = load_stl_binary(path)
+        self._stl_cache[mesh_name] = (v, f)
+        return v, f
+
+    def local_geom(self, gi: int, stride: int = 1) -> tuple[list, list]:
+        """把 geom 的 STL 顶点经局部 geom_R·v + geom_pos 变换到 body 坐标系（缓存）。"""
+        key = (gi, stride)
+        if key in self._local_cache:
+            return self._local_cache[key]
+        g = self.geoms[gi]
+        sv, sf = self._load_stl(g.mesh)
+        Rg = _quat_to_mat(*g.quat)
+        lv: list[tuple[float, float, float]] = []
+        faces: list[tuple[int, int, int]] = []
+        for i in range(0, len(sf), stride):
+            f = sf[i]
+            for idx in f:
+                v = sv[idx]
+                lv.append((Rg[0][0]*v[0]+Rg[0][1]*v[1]+Rg[0][2]*v[2]+g.pos[0],
+                           Rg[1][0]*v[0]+Rg[1][1]*v[1]+Rg[1][2]*v[2]+g.pos[1],
+                           Rg[2][0]*v[0]+Rg[2][1]*v[1]+Rg[2][2]*v[2]+g.pos[2]))
+            faces.append((len(lv)-3, len(lv)-2, len(lv)-1))
+        self._local_cache[key] = (lv, faces)
+        return lv, faces
+
+    def world_geom(self, frames: dict, gi: int, stride: int = 1):
+        """返回 (world_verts, faces, rgba)：把 body 坐标系下的局部顶点经 FK(body) 摆到世界。"""
+        lv, faces = self.local_geom(gi, stride)
+        g = self.geoms[gi]
+        R, T = frames[g.body]
+        wv = _world_points(R, T, lv)
+        return wv, faces, g.rgba
+
+    def triangle_count(self, stride: int = 1) -> int:
+        total = 0
+        for gi in range(len(self.geoms)):
+            total += len(self.local_geom(gi, stride)[1])
+        return total
+
+
+def _world_points(R: list, T: tuple, local: list | "object"):
+    """world = R·local + T。local 为 list[(x,y,z)] 或 np.ndarray(N,3)。优先 numpy 加速，
+    回退纯 Python（无 numpy 时）。返回类型与输入一致（numpy 进 numpy 出，否则 list）。"""
+    try:
+        import numpy as np
+        L = np.asarray(local, dtype=np.float64)
+        Rm = np.asarray(R, dtype=np.float64)
+        Tm = np.asarray(T, dtype=np.float64)
+        return (L @ Rm.T) + Tm
+    except Exception:
+        out = []
+        for (x, y, z) in local:
+            out.append((R[0][0]*x+R[0][1]*y+R[0][2]*z+T[0],
+                        R[1][0]*x+R[1][1]*y+R[1][2]*z+T[1],
+                        R[2][0]*x+R[2][1]*y+R[2][2]*z+T[2]))
+        return out
+
+
+def _subtract_origin(points, origin):
+    """把世界点（或 list）平移回以 trunk_base 为原点的显示坐标系，与 forward_kinematics 一致。"""
+    ox, oy, oz = origin
+    if hasattr(points, "tolist"):   # numpy
+        import numpy as np
+        return points - np.array([ox, oy, oz], dtype=points.dtype)
+    return [(x-ox, y-oy, z-oz) for (x, y, z) in points]
+
+
+def parse_mjcf_meshes(path: str) -> MeshModel:
+    """解析训练版 MJCF，提取 body→geom(mesh) 列表 + asset 材质颜色。
+
+    只取 ``<geom type="mesh">``（视觉几何）；忽略 collision/self_collision 同类 geom
+    （它们复用同一 mesh，纯渲染不需要重复画）。body 名经 MESH_BODY_MAP 映射到 BONES 体名。
+    """
+    import xml.etree.ElementTree as ET  # noqa: PLC0415
+    root = ET.parse(path).getroot()
+    compiler = root.find("compiler")
+    meshdir = (compiler.get("meshdir") if compiler is not None else None) or "assets"
+    asset_dir = os.path.join(os.path.dirname(os.path.abspath(path)), meshdir)
+    materials: dict[str, tuple[float, float, float, float]] = {}
+    asset = root.find("asset")
+    if asset is not None:
+        for m in asset.findall("material"):
+            name = m.get("name")
+            rgba_s = m.get("rgba")
+            if name and rgba_s:
+                try:
+                    materials[name] = tuple(float(x) for x in rgba_s.split())
+                except Exception:
+                    pass
+    geoms: list[MeshGeom] = []
+
+    def walk(body):
+        bname = body.get("name")
+        for g in body.findall("geom"):
+            if g.get("type") != "mesh":
+                continue
+            mname = g.get("mesh")
+            if not mname:
+                continue
+            mat = g.get("material")
+            rgba = materials.get(mat, (0.7, 0.7, 0.7, 1.0))
+            bones_name = MESH_BODY_MAP.get(bname, bname)
+            geoms.append(MeshGeom(bones_name, _parse_vec3(g.get("pos")),
+                                  _parse_quat(g.get("quat")), mname, rgba))
+        for child in body.findall("body"):
+            walk(child)
+
+    wb = root.find("worldbody")
+    if wb is not None:
+        for top in wb.findall("body"):
+            walk(top)
+    return MeshModel(geoms, asset_dir)
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -464,8 +697,8 @@ class HeadlessViewer:
 
 
 class MatplotlibViewer:
-    """matplotlib 3D 本体现：连杆圆柱 + 关节球 + 体坐标重力箭头 + HUD。"""
-    def __init__(self, interval_ms: int = 100):
+    """matplotlib 3D 本体现：真实 STL 零件（无源时退化为连杆圆柱）+ 关节球 + 体坐标重力箭头 + HUD。"""
+    def __init__(self, interval_ms: int = 100, mesh_model=None, mesh_stride: int = 4):
         import matplotlib.pyplot as plt  # noqa: PLC0415
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection  # noqa: F401, PLC0415
         self.plt = plt
@@ -476,6 +709,33 @@ class MatplotlibViewer:
         self.text = self.ax.text2D(0.02, 0.96, "", transform=self.ax.transAxes, fontsize=9)
         self.interval = interval_ms
         self._agg = self.plt.get_backend().lower() == "agg"
+        self.mesh_model = mesh_model
+        # matplotlib 3D 非 GPU 加速：三角形过多会掉帧。按预算自动提高 stride，
+        # 保证 matplotlib 端总三角面 ≤ ~120k（用户 --mesh-stride 更低也不会更细，
+        # viser 端不受影响，仍可用 --mesh-stride 1 拿全分辨率）。
+        if mesh_model is not None:
+            budget = 120000
+            total1 = mesh_model.triangle_count(1)
+            auto = max(1, (total1 + budget - 1) // budget)
+            self.mesh_stride = max(mesh_stride, auto)
+        else:
+            self.mesh_stride = mesh_stride
+
+    def _add_mesh_collection(self, wv, faces, rgba):
+        # 向量化：numpy 时直接用 wv[faces] 得到 (n,3,3)，避免 Python 层逐面建列表。
+        try:
+            import numpy as np
+            wv_np = np.asarray(wv, dtype=np.float64)
+            faces_np = np.asarray(faces, dtype=np.int64)
+            tris = wv_np[faces_np]          # (n_tri, 3, 3)
+            poly = self.Poly3DCollection(tris, facecolors=rgba,
+                                         edgecolors=(rgba[0], rgba[1], rgba[2], 0.25),
+                                         linewidths=0.15)
+        except Exception:
+            poly = self.Poly3DCollection(
+                [[wv[a], wv[b], wv[c]] for a, b, c in faces],
+                facecolors=rgba, edgecolors=(rgba[0], rgba[1], rgba[2], 0.25), linewidths=0.15)
+        self.ax.add_collection3d(poly)
 
     def frame(self, st: RobotStateView) -> None:
         import numpy as np  # noqa: PLC0415
@@ -483,12 +743,24 @@ class MatplotlibViewer:
         self.ax.cla()
         self.ax.set_box_aspect((1, 1, 1.4))
         self.ax.set_xlim(-0.2, 0.2); self.ax.set_ylim(-0.2, 0.2); self.ax.set_zlim(-0.15, 0.25)
-        # 连杆圆柱（本体现）
-        for verts, faces, _ in link_meshes(pos):
-            poly = self.Poly3DCollection(
-                [[verts[a] for a in f] for f in faces],
-                facecolors=(0.30, 0.55, 0.85, 0.85), edgecolors=(0.1, 0.2, 0.4, 0.4), linewidths=0.3)
-            self.ax.add_collection3d(poly)
+        if self.mesh_model is not None:
+            # 真实 STL 外形：用 FK 世界帧把每个 geom 摆到世界，再减 trunk_base 原点对齐显示
+            frames = forward_frames(st.joints)
+            origin = frames["trunk_base"][1]
+            total = 0
+            for gi in range(len(self.mesh_model.geoms)):
+                wv, faces, rgba = self.mesh_model.world_geom(frames, gi, self.mesh_stride)
+                wv = _subtract_origin(wv, origin)
+                self._add_mesh_collection(wv, faces, rgba)
+                total += len(faces)
+            self._mesh_total = total
+        else:
+            # 占位圆柱（本体现）
+            for verts, faces, _ in link_meshes(pos):
+                poly = self.Poly3DCollection(
+                    [[verts[a] for a in f] for f in faces],
+                    facecolors=(0.30, 0.55, 0.85, 0.85), edgecolors=(0.1, 0.2, 0.4, 0.4), linewidths=0.3)
+                self.ax.add_collection3d(poly)
         # 关节球
         xs = [pos[n][0] for n in pos]; ys = [pos[n][1] for n in pos]; zs = [pos[n][2] for n in pos]
         self.ax.scatter(xs, ys, zs, c="orange", s=22, depthshade=True)
@@ -514,7 +786,12 @@ class MatplotlibViewer:
                                color="cyan", lw=1.8, arrow_length_ratio=0.2)
         self.ax.set_xlabel("X (forward)"); self.ax.set_ylabel("Y (left)")
         self.ax.set_zlabel("Z (up)")
-        self.text.set_text(f"policy={st.policy} t={st.t:.2f}s\n{_fmt_imu(st)}")
+        mesh_tag = ""
+        if self.mesh_model is not None:
+            mesh_tag = f"  [mesh {getattr(self, '_mesh_total', 0)} tris]"
+        else:
+            mesh_tag = "  [cylinder]"
+        self.text.set_text(f"policy={st.policy} t={st.t:.2f}s{mesh_tag}\n{_fmt_imu(st)}")
         if not self._agg:
             self.plt.pause(self.interval/1000.0)
 
@@ -524,14 +801,16 @@ class MatplotlibViewer:
 
 
 class ViserViewer:
-    """浏览器 3D（viser，若已装）：圆柱网格 + 关节点 + 重力线 + 可旋转缩放。"""
-    def __init__(self, port: int = 8012):
+    """浏览器 3D（viser，若已装）：真实 STL 零件（无源时退化为圆柱）+ 关节点 + 重力线 + 可旋转缩放。"""
+    def __init__(self, port: int = 8012, mesh_model=None, mesh_stride: int = 1):
         import viser  # noqa: PLC0415
         self.sv = viser.ViserServer(port=port)
         self.mesh_handles: dict[str, object] = {}
         self.joint_handles: dict[str, object] = {}
         self.grav_handle = None
         self.gyro_handle = None
+        self.mesh_model = mesh_model
+        self.mesh_stride = mesh_stride
 
     def _ensure(self, name, parent, p):
         jh = self.joint_handles.get(name)
@@ -550,26 +829,50 @@ class ViserViewer:
     def frame(self, st: RobotStateView) -> None:
         import numpy as np  # noqa: PLC0415
         pos = forward_kinematics(st.joints)
-        for child, parent in EDGES:
-            if child not in pos or parent not in pos:
-                continue
-            r = TORSO_RADIUS if child in TORSO_EDGES else LINK_RADIUS
-            verts, faces = cylinder_between(pos[parent], pos[child], r)
-            verts_np = np.array(verts, dtype=np.float32)
-            faces_np = np.array(faces, dtype=np.int32)
-            h = self.mesh_handles.get(child)
-            try:
-                if h is None:
-                    h = self.sv.scene.add_mesh(child, vertices=verts_np, faces=faces_np,
-                                              color=(0.30, 0.55, 0.85))
-                    self.mesh_handles[child] = h
-                else:
-                    h.vertices = verts_np
-                    h.faces = faces_np
-            except Exception:
-                pass  # viser API 差异时静默跳过网格，不影响关节点
-            self._ensure(child, parent, pos[child])
-            self._ensure(parent, None, pos[parent])
+        if self.mesh_model is not None:
+            # 真实 STL 外形：FK 世界帧摆每个 geom，减 trunk_base 原点对齐显示
+            frames = forward_frames(st.joints)
+            origin = frames["trunk_base"][1]
+            for gi in range(len(self.mesh_model.geoms)):
+                wv, faces, rgba = self.mesh_model.world_geom(frames, gi, self.mesh_stride)
+                wv = _subtract_origin(wv, origin)
+                verts_np = np.array(wv, dtype=np.float32)
+                faces_np = np.array(faces, dtype=np.int32)
+                key = f"mesh_{gi}"
+                h = self.mesh_handles.get(key)
+                try:
+                    if h is None:
+                        h = self.sv.scene.add_mesh(key, vertices=verts_np, faces=faces_np,
+                                                  color=rgba[:3])
+                        self.mesh_handles[key] = h
+                    else:
+                        h.vertices = verts_np
+                        h.faces = faces_np
+                except Exception:
+                    pass  # viser API 差异时静默跳过网格，不影响关节点
+        else:
+            # 占位圆柱（无 mesh 源）
+            for child, parent in EDGES:
+                if child not in pos or parent not in pos:
+                    continue
+                r = TORSO_RADIUS if child in TORSO_EDGES else LINK_RADIUS
+                verts, faces = cylinder_between(pos[parent], pos[child], r)
+                verts_np = np.array(verts, dtype=np.float32)
+                faces_np = np.array(faces, dtype=np.int32)
+                h = self.mesh_handles.get(child)
+                try:
+                    if h is None:
+                        h = self.sv.scene.add_mesh(child, vertices=verts_np, faces=faces_np,
+                                                  color=(0.30, 0.55, 0.85))
+                        self.mesh_handles[child] = h
+                    else:
+                        h.vertices = verts_np
+                        h.faces = faces_np
+                except Exception:
+                    pass  # viser API 差异时静默跳过网格，不影响关节点
+        # 关节点（始终画，帮助看关节）
+        for name in pos:
+            self._ensure(name, None, pos[name])
         # 重力线（红），trunk 原点 → 重力方向
         g = st.gravity
         if g is not None:
@@ -618,20 +921,20 @@ def _draw_edges(positions: dict[str, tuple[float, float, float]]):
     return xs, ys, zs
 
 
-def make_viewer(kind: str, interval_ms: int) -> "object":
+def make_viewer(kind: str, interval_ms: int, mesh_model=None, mesh_stride: int = 4) -> "object":
     if kind == "headless":
         return HeadlessViewer()
     if kind == "matplotlib":
-        return MatplotlibViewer(interval_ms)
+        return MatplotlibViewer(interval_ms, mesh_model=mesh_model, mesh_stride=mesh_stride)
     if kind == "viser":
-        return ViserViewer()
+        return ViserViewer(mesh_model=mesh_model, mesh_stride=mesh_stride)
     # auto
     try:
-        return ViserViewer()
+        return ViserViewer(mesh_model=mesh_model, mesh_stride=mesh_stride)
     except Exception:
         pass
     try:
-        return MatplotlibViewer(interval_ms)
+        return MatplotlibViewer(interval_ms, mesh_model=mesh_model, mesh_stride=mesh_stride)
     except Exception:
         return HeadlessViewer()
 
@@ -817,6 +1120,46 @@ def run_demo(viewer) -> None:
 # ───────────────────────────────────────────────────────────────────────────
 # 8. 入口
 # ───────────────────────────────────────────────────────────────────────────
+def _default_mjcf_path() -> str | None:
+    """自动定位 vendored 训练版 MJCF（含真实 mesh）。找不到返回 None（退化圆柱）。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    cand = os.path.join(here, "..", "..", ".upstream", "hd1910m", "microduck_rl",
+                        "src", "mjlab_microduck", "robot", "microduck", "robot_walk.xml")
+    if os.path.exists(cand):
+        return os.path.abspath(cand)
+    import glob as _glob
+    matches = _glob.glob(os.path.join(here, "..", "..", ".upstream", "hd1910m", "**",
+                                      "robot", "microduck", "robot_walk.xml"), recursive=True)
+    return os.path.abspath(matches[0]) if matches else None
+
+
+def _load_mesh_model(a) -> object:
+    """按 --mesh-source / --mesh-mode 解析并返回 MeshModel；不适用时返回 None（退化圆柱）。"""
+    if a.mesh_mode == "cylinder":
+        return None
+    src = a.mesh_source
+    if src in ("auto", None):
+        mjcf = _default_mjcf_path()
+    else:
+        mjcf = src
+    if not mjcf or not os.path.exists(mjcf):
+        if src not in ("auto", None):
+            print(f"[mesh] 指定 MJCF 不存在：{mjcf}，退化圆柱", file=sys.stderr)
+        else:
+            print("[mesh] 未找到 vendored 训练 MJCF，退化圆柱（占位）", file=sys.stderr)
+        return None
+    try:
+        model = parse_mjcf_meshes(mjcf)
+        print(f"已加载真实 MJCF mesh：{mjcf}\n"
+              f"  geom 数={len(model.geoms)} 全分辨率三角面≈{model.triangle_count(1)} "
+              f"（stride={a.mesh_stride} → ≈{model.triangle_count(a.mesh_stride)}）",
+              file=sys.stderr)
+        return model
+    except Exception as e:  # 解析/读 STL 失败：诚实退化，不静默假装成功
+        print(f"[mesh] 解析失败，退化圆柱：{e}", file=sys.stderr)
+        return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="MicroDuck HD-1910 真机 3D 姿态查看器")
     ap.add_argument("--source", choices=["stdin", "demo", "robotctl", "mock-relay"], default="demo",
@@ -827,11 +1170,20 @@ def main() -> int:
     ap.add_argument("--renderer", default="auto",
                     choices=["auto", "matplotlib", "viser", "headless"])
     ap.add_argument("--interval-ms", type=int, default=100)
+    ap.add_argument("--mesh-source", default="auto",
+                    help="训练版 MJCF 路径（含真实 STL）；auto=自动找 vendored；none=禁用 mesh")
+    ap.add_argument("--mesh-mode", default="auto", choices=["auto", "mesh", "cylinder"],
+                    help="auto=有源用 mesh 否则圆柱; mesh=强制 mesh(无源则警告); cylinder=强制圆柱")
+    ap.add_argument("--mesh-stride", type=int, default=4,
+                    help="STL 三角面降采样步长(每 N 个面取 1)；越大越省算力(matplotlib 默认 4)")
     a = ap.parse_args()
     if a.demo:
         a.source = "demo"
+    if a.mesh_source == "none":
+        a.mesh_mode = "cylinder"
 
-    viewer = make_viewer(a.renderer, a.interval_ms)
+    mesh_model = _load_mesh_model(a)
+    viewer = make_viewer(a.renderer, a.interval_ms, mesh_model=mesh_model, mesh_stride=a.mesh_stride)
     try:
         if a.source == "stdin":
             print("从 stdin 读取 robotctl monitor --json 帧… (Ctrl-C 退出)", file=sys.stderr)
