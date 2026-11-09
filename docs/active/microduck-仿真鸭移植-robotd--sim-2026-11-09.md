@@ -156,7 +156,8 @@ microduck-software/tools/hd1910/sim_port/
 
 - `--check`：验 2 个源文件字节一致 + 6 处接线在位（现况 PASS）。
 - `--selftest` 是带负对照的往返：把六处插入**剥掉**造干净树 → `--check` 报 8 个问题（红）→ 重放 → 0 问题（绿）→ **重放出来的 4 个文件与现用树逐字节一致（0 差异）** → 二次 apply 0 文件改写（幂等）。
-- 这条比对抓出一个真 bug：Windows `Path.write_text` 把 `\n` 静默转成 CRLF，`read_text` 又静默转回来，**文本 diff 全绿而字节全变**；读写都已钉 `newline=""`。又一个「读数 vs 算术矛盾 ⇒ 错的是读数」的实例。
+- 这条比对抓出一个真 bug：Windows `Path.write_text` 把 `\n` 静默转成 CRLF，`read_text` 又静默转回来，**文本 diff 全绿而字节全变**；读写都已钉 `newline=""`。又一个「文本看着对 ≠ 字节对」的实例。
+- 再补一层跨机器防护：`core.autocrlf=true` 会在 clone 时把本目录转成 CRLF，而 tarball 解出的 `.upstream` 是 LF ⇒ 锚点与字节比对会全线崩。已加 `.gitattributes` 强制 `eol=lf`，并让 `read_text` 规范化 CRLF、源比对按内容哈希。**CRLF 负对照**：整棵临时树转 CRLF → `--check` 0 problems；把 `sim.rs` 改坏一个字节 → 恰好 1 条 `MISMATCH`（证明不是恒绿）。
 - 故意不重放：`fake` 参数注释里提到 `--sim` 的文案（纯措辞，无功能影响）。
 
 `--check` 也是 clone 后的第一道自检，与 `apply_to_live.py --check` 同一习惯。

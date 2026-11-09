@@ -134,14 +134,20 @@ def digest(path: Path) -> str:
 def read_text(path: Path) -> str:
     # `newline=""` matters here: Path.write_text on Windows silently turns every \n into
     # \r\n, and read_text silently turns it back — so a text-level diff looks clean while the
-    # replayed tree differs from the live one byte for byte. Upstream is LF-only.
+    # replayed tree differs from the live one byte for byte. Upstream is LF-only; normalize
+    # any CRLF a Windows editor or checkout introduced so anchors still match.
     with path.open("r", encoding="utf-8", newline="") as f:
-        return f.read()
+        return f.read().replace("\r\n", "\n")
 
 
 def write_text(path: Path, text: str) -> None:
     with path.open("w", encoding="utf-8", newline="") as f:
         f.write(text)
+
+
+def content_digest(path: Path) -> str:
+    """Compare sources by content, so a CRLF checkout of this directory still matches LF upstream."""
+    return hashlib.sha256(read_text(path).encode("utf-8")).hexdigest()
 
 
 def inspect(root: Path) -> list[str]:
@@ -150,7 +156,7 @@ def inspect(root: Path) -> list[str]:
         dst = root / rel
         if not dst.exists():
             problems.append(f"MISSING {rel}")
-        elif digest(dst) != digest(HERE / src):
+        elif content_digest(dst) != content_digest(HERE / src):
             problems.append(f"MISMATCH {rel} (differs from the port in VCS)")
     for path in sorted({e.path for e in EDITS}):
         target = root / path
@@ -169,7 +175,7 @@ def apply(root: Path) -> tuple[int, list[str]]:
     problems: list[str] = []
     for src, rel in COPIES:
         dst = root / rel
-        if not dst.exists() or digest(dst) != digest(HERE / src):
+        if not dst.exists() or content_digest(dst) != content_digest(HERE / src):
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(HERE / src, dst)
             changed += 1

@@ -1,0 +1,5 @@
+# These sources are compared against .upstream/DuckBuddy-main, which is unpacked from a
+# GitHub tarball and is LF-only. core.autocrlf=true on Windows would otherwise check this
+# directory out as CRLF: every anchor in apply_sim_port.py and every byte-for-byte source
+# comparison would then diverge for a reason that has nothing to do with the port.
+* text eol=lf
