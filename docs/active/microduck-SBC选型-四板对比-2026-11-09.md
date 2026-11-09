@@ -81,11 +81,27 @@ _一手来源：各板官方规格/brief；robotd 源码（`configd/src/identity
 | `firmware/imu-feetech/src/main.rs:345-347`、`proto.rs:246` | 总线 IMU 从机固件 `proto_baud() = 500_000`（`6 => 1 // 500 kbit/s`）⇒ 整条总线（15 舵机 + IMU ID200）统一 500k，不只是舵机 |
 
 🔴 **板子 ≠ 波特率，三条源码级反证**：
-1. `duck-control/src/servo_bus.rs:3,17-43`：同一个二进制里 `BusConfig` **运行时二选一**——`Dynamixel` → `bus.rs:102` 用 `model.rs:166 BAUD_RATE = 1_000_000`（alpha 代 XL330，`model.rs:177 baud_rate=3` = 1 Mbps）；`Feetech` → `feetech.rs` 500k。文件头注释：「The original alpha runs Dynamixel XL330s; this build runs Feetech HL-2915s」。⇒ 同一块板、同一个二进制，换 backend 就是 1M。
+1. `duck-control/src/servo_bus.rs:3,17-43`：同一个二进制里 `BusConfig` **运行时二选一**——`Dynamixel` → `bus.rs:102` 用 `model.rs:166 BAUD_RATE = 1_000_000`（alpha 代 XL330，`model.rs:177 baud_rate=3` = 1 Mbps）；`Feetech` → `feetech.rs` 500k。文件头注释：「The original alpha runs Dynamixel XL330s; this build runs Feetech HL-2915s」。⇒ **只证明软件层存在 1M backend / 波特率由 backend 决定**。🔴 **别顺推成「A733 上飞特跑 1M 没问题」**：`docs/design/robotd-design.md:10` 明写「**Only the alpha variant, only the Radxa**, only the v2 `imu_to_dxl` board」——那套 1M 是 **Radxa + XL330** 的硬件组合，不是 A733 + 飞特。详见 §3.2.2。
 2. `.upstream/hd1910m/microduck/duck-control/src/feetech.rs:592`：`serialport::new(path, 1_000_000)` —— HD-1910 机器人（Radxa，FT-SCS 原生）整条线是 **1M**，且**不做** reg6/reg33/reg9/reg11 那四个 EEPROM 硬校验（改验固件元数据快照 `row[33]==4`）。
 3. 泰山派 / EasyDuck `scs.rs` 也是 `BAUD = 1_000_000`（§3.3）。反过来，**我们现状主机 Radxa Zero3W 跑的正是 DuckBuddy/HLS 线，同样要 500k**（`port="/dev/ttyS2"`）⇒ 500k 与香橙派没有绑定关系。
 
 **对 R3 / 上一轮「不切」决定的影响**：换香橙派确实能绕开 R3，但**不是因为不用 500k**，而是板载 UART7 直接产生 500k、不再经过 CH343/USB CDC ⇒「CH343 在 500k 静默」这个特定风险在板载 UART 上不存在。代价是**上板时仍必须逐颗把 `reg6` 写成 1**（Pi4B 完整方案 §7 部署步骤）。台架「不切」不冲突：台架保持 1M 是给当前调试工具用，上板写 reg6=1 是另一阶段。⚠️ 分频精确性要按各板 UART 时钟单独算，别跨板照抄（Pi 4B 是 48 MHz/16/6）。
+
+#### 3.2.2 追问：「香橙派 + 飞特舵机 1M 是没问题的？」（2026-11-09 订正）
+
+**判决：不是「没问题」。要拆成三层——舵机侧没问题，板载 UART 侧和原厂软件栈侧都有硬障碍。**
+
+| 层 | 能不能 1M | 依据 |
+|---|---|---|
+| 飞特舵机本身 | ✅ **能**：出厂 `reg6=0` 就是 1M；上游 `tools/servo/set_baud.py:9` 专门有 `--to 1000000 # 改回 1M`；我们台架 ID10 @1M 实测 20/20 PASS（Pi4B 完整方案 §12.1） | reg6 档位 0..7 = 1M/500k/250k/… |
+| **A733 板载 UART7** | 🔴 **默认时钟下不行**：设 1M 实际约 **750 kbps** —— `docs/hardware/INTERFACE-CN.md:97`、`set_baud.py:4`、`feetech.rs:34-35`（24 MHz/16/3）三处一手一致 | 全志官方《Linux UART 开发指南》：UART 分频比是 **16 的整数倍**、默认 24 MHz 时钟源、`24 MHz/16 = 1.5 MHz` ⇒ 1M 需 1.5 分频只能取 2 = 750k。2026-10 主线 A733 `8250_dw` 补丁（LKML, Radxa Cubie A7Z）标注 **`no DLF probe`**（无小数分频器）与该限制一致 |
+| **原厂 robotd 软件栈** | 🔴 **不行**：500k 编译期常量 + toml 无 `baud` 键 + 开机 `reg6==1` 硬校验（checked-not-corrected）+ 总线 IMU 从机固件 `proto_baud()=500_000` | 见 §3.2.1 证据表。飞特保持 `reg6=0` 直接上板会报 `servo N is not configured for this robot`、总线不打开 |
+
+⚠️ **证据等级**：全志 SDK UART 指南是**全志通用文档（H133 路径，A733 同族）**，主线补丁是 **mainline 移植（Radxa Cubie A7Z）**，都不是 Orange Pi 厂商 BSP 内核、更不是本项目实测；且两者口径有出入——SDK 说「APB2 可从 24 MHz(HOSC) 切到 PLL_PERIPH 以提高 UART 时钟」，主线补丁却写 A733 `no clk_set_rate() ... the baud clock is a fixed bus gate`。⇒ **「切时钟源让 A733 出精确 1M」只是外部资料给出的可能路径，未查实、未上板验证**，不能写成结论。
+
+**若真要在 A733 上跑 1M 飞特，要改一整套（不是配置开关）**：① 时钟树/设备树或驱动改 UART 时钟源（并兼顾 APB2 同时是 TWI 时钟源），或绕开板载 UART 改用 USB 适配器（CH343 @1M 台架实测通，但那又回到被 N2 总线预算否决的 USB 路径）；② 改 `feetech.rs:35` 常量并**重编译 robotd**；③ 改/去掉 `check_registers()` 的 `reg6==1` 期望；④ 改 `firmware/imu-feetech` 的 `proto_baud()` 并**重烧总线 IMU 从机固件**；⑤ 逐颗把飞特 EEPROM 配成 `reg6=0`；⑥ 重算 15 舵机 + IMU 在 1M 下的总线预算与半双工方向。等于放弃原厂线整套方案、自建一条 1M 变体。
+
+🔴 **与「不切 reg6」的关系**：台架保持 `reg6=0`/1M 是**当前调试口径**，上板时逐颗写 `reg6=1` 是部署阶段本来就要做的步骤（Pi4B 完整方案 §7）。**不能拿「台架没切」当「上板可以不切」的依据**——原厂 robotd 开机硬校验会直接拒绝启动。
 
 ### 3.3 泰山派 RK3566（候选替代，**已有现成开源整机方案**）
 - **现成方案（已核实真实性）**：
