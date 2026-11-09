@@ -83,7 +83,7 @@ test result: ok. 119 passed; 0 failed; 0 ignored   （含 sim::tests 全部用�
 
 负对照说明这不是假绿：此前的 `cargo check` 两轮**真实失败过**（`link.exe` 不存在、`dlltool` 缺失、沙箱删除被拒），每修一处才前进——失败模式可复现，绿是修出来的不是绕出来的。
 
-### 5.3 🔴 平台死结仍在：`robotd` 在 Windows 上编不过
+### 5.3 平台边界：`robotd` 在 Windows 上编不过（WSL2 已绕开，见 §9）
 
 ```
 robotd/src/main.rs:48     use tokio::net::{UnixListener, UnixStream};
@@ -94,9 +94,9 @@ robotd/src/theremin.rs:33 use std::os::unix::net::UnixStream;
 
 **没有 `cfg(unix)` 门控**（`main.rs` 的 `#[cfg(target_os="linux")]` 在 43/951/1080/1117，不覆盖上述行）。这是上游既有事实，不是本次改动引入。
 
-后果：**robotd 整栈只能在 Linux 上跑**。`tokio::net::UnixListener` 文档标注 "Available on Unix and crate feature `net` only" ⇒ 就算给 unix socket 加 `cfg` 门控，Windows 版会失去控制面，`robotctl` 连不上，**等于做一个不可操控的空壳**——所以 Windows 侧止步于 `duck-control`（编译、单元测试、以及**对真 `body_server.py` 的端到端**均已达成，见 §5.4），整栈验证的正确出口是 Linux：
+后果：**`robotd` 整栈只能在 Linux 上跑**（`tokio::net::UnixListener` 文档标注 "Available on Unix and crate feature `net` only"）。给 unix socket 加 `cfg` 门控硬编到 Windows 没有意义：门控掉的正是控制面，`robotctl` 连不上，等于一个不可操控的空壳。所以 Windows 侧止步于 `duck-control`（编译、单元测试、对真 `body_server.py` 的端到端，见 §5.4），整栈走 Linux。
 
-- **WSL 路线（当前唯一可行）**：`wsl.exe` 目前在沙箱程序黑名单里（用户已同意开 WSL，需在 WorkBuddy 安全中心 → 命令安全 → 程序黑名单中移除 `wsl.exe`，且 `wsl --install` 需管理员）；放开后整栈（robotd/robotctl/_unix socket/50Hz/health）可在 WSL2 原生跑，**零上游改动**。
+- ✅ **WSL2 路线已打通（2026-11-09 晚间）**：用户把 `wsl.exe` 从程序黑名单改为「询问」并以管理员运行，管理员 `wsl --install --no-distribution` + 重启后，用离线 rootfs `wsl --import` 装好 Ubuntu 24.04.5，编出 `robotd`/`robotctl`，整栈（50 Hz / IPC / 策略 / health / odom）**全部真跑通，零上游改动** —— 见 §9。
 - 将来真上板也是 Linux（Radxa/Yocto），这条验证天然复用。
 
 ### 5.4 Rust 客户端 ↔ 真 MuJoCo 服务器：**端到端 2/2 PASS，负对照真红**
@@ -141,7 +141,7 @@ CARGO_TARGET_DIR=<same> microduck-software/.venv-mjlab/Scripts/python.exe \
     microduck-software/tools/hd1910/sim_e2e_check.py
 ```
 
-⚠️ **边界没变**：这里验的是「缝」本身（协议帧 + 客户端语义）。50 Hz 循环、IPC/unix socket、`robotctl`、策略加载、health 门禁**一个都没验**，整栈仍 Linux-only，见 §5.3。
+⚠️ **当时（本日早些时候）的边界**：这里验的只是「缝」本身（协议帧 + 客户端语义），50 Hz 循环、IPC/unix socket、`robotctl`、策略加载、health 门禁当时一个都没验。**这一层已在 §9 补齐**（WSL2 整栈真跑通），本节的门禁仍是独立可复跑的一层。
 
 ### 5.5 🔴 改动持久化：`.upstream/` 被 gitignore
 
@@ -164,10 +164,14 @@ microduck-software/tools/hd1910/sim_port/
 
 ## 6. 怎么用（Linux）
 
+同一台 Linux 机器、两个进程都在本机时：
+
 ```bash
 .venv-mjlab/Scripts/python.exe -m mjlab_microduck.sim.body_server --headless --port 7801
 robotd --sim 127.0.0.1:7801
 ```
+
+**本机实际用的是 WSL2 跨主机形态**（Windows 跑 body_server、WSL2 跑 robotd），地址要换成网关、body_server 要监听 `0.0.0.0`；且必须先 `robot.enable` 与 `torque on`，否则策略不驱动、关节不动。完整命令、参数与门禁见 §9。
 
 `--sim` 与 `--fake` 互斥：`--fake` 是「空无组成的机器人」，`--sim` 是「在 MuJoCo 里的机器人」。
 
@@ -176,9 +180,72 @@ robotd --sim 127.0.0.1:7801
 ❌ 总线时序（500k 位宽、帧间隔、`READ_TIMEOUT=30ms`）；❌ 蓝牙/相机/NPU/ToF 真实链路（`tof` op 存在但没接）；❌ 舵机固件 reg50/51 环路、齿隙、堵转。
 ⇒ **不能消 R3**。R3 仍只能靠台架、示波器或真上板。
 
-## 8. 若继续，优先级
+## 8. 若继续，优先级（2026-11-09 晚间更新：1/2 已完成）
 
-1. **放开 WSL（用户已同意，2026-11-09 19:23 复测仍被程序黑名单硬拦，且策略明确不可重试/绕行）**：安全中心移除 `wsl.exe` 黑名单 + 管理员装发行版；WSL2 里编 robotd（Linux 原生，unix socket 直接可用）+ `body_server.py` 同机跑。**这是整栈验证唯一的剩余阻塞项**。
-2. 起栈后先只验三件：**50 Hz 是否稳 / `robotctl health` 是否绿 / 策略 load 后日志里的 policy 名是否真的变了**。
-3. 再搬 `xgoduck_rl` 的 `roller_standup`/`sitstand` —— P3 缺这两个，而「跌倒后自己起来」是整机验收硬项。
-4. Windows 侧已到极限且全部达成：§5.2 工具链配方（gnu + rust-lld 自包含 + zig dlltool shim）、§5.4 真服务器端到端门禁、§5.5 可重放移植包。`duck-control` 后续改动本机跑 `cargo test`，再跑 `sim_e2e_check.py` 与 `apply_sim_port.py --check` 即可。
+1. ~~放开 WSL、WSL2 里编整栈~~ ✅ **已完成**，见 §9。
+2. ~~验 50 Hz / `robotctl health` / policy 名~~ ✅ **已完成**，见 §9；并额外抓出 torque 缺口。
+3. ~~搬 `xgoduck_rl` 的 `roller_standup`/`sitstand`~~ **已撤销**：2026-11-09 核对发现 LIVE 训练包早已注册这两个任务，且 `roller_standup` 是带轮版专用。详见 `microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md`。
+4. 剩下的真缺口：① 把 `torque on` 补进 `--sim` 的 bringup（见 §9.4，目前由门禁脚本外部发）；② `updaterd`/`configd` 未起，`health` 里这两块永远 unavailable；③ 真机总线时序 / R3 仍不在本链验证范围内（§7）。
+5. Windows 侧已到极限且全部达成：§5.2 工具链配方（gnu + rust-lld 自包含 + zig dlltool shim）、§5.4 真服务器端到端门禁、§5.5 可重放移植包。
+
+---
+
+## 9. 整栈验证在 WSL2 真跑通（2026-11-09 晚间）
+
+**结论先行**：`robotd --sim` + 真 `body_server.py` + `robotctl` IPC + ONNX 策略推理 + 50 Hz 循环，**全部真跑通**，零上游改动。此前 §5.3/§5.4 的「整栈未验」到此关闭。
+
+### 9.1 环境与三个网络坑
+
+| 项 | 做法 / 实测 |
+|---|---|
+| WSL2 | 管理员 `wsl --install --no-distribution` → 重启 → `wsl --import MicroDuckUbuntu E:\WSL\MicroDuck <pkg> --version 2` |
+| 发行版包 | `ubuntu-24.04.5-wsl-amd64.wsl`（388,975,696 B，清华镜像），**gzip tar**；sha256 `bb415d82…6039e` 与官方 `DistributionInfo.json` 逐位一致 |
+| 为什么用 `--import` | `wsl --list --online` 拉 `raw.githubusercontent.com` 超时（0x80072ee2），`aka.ms/wsl-ubuntu-2404` 已失效跳必应；非交互下 `--install --no-launch` 静默失败，OOBE 要真 TTY。`--import` 跳过 OOBE、默认 root |
+| rustup | 官方源卡 22 分钟只下 80 MB；设 `RUSTUP_DIST_SERVER=https://rsproxy.cn` / `RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup` 后几秒装完。**被中断的半个 toolchain 要先 `rustup toolchain uninstall` + 清残留目录**，否则报 "missing manifest" |
+| cargo | 官方 crates.io index 卡 14 分钟；`~/.cargo/config.toml` 配 `rsproxy-sparse` 后 **1m52s 编完 robotd**。`robotd`/`robotctl` 只需 `build-essential + pkg-config + libssl-dev`，`serialport` 已 `default-features=false`（无 libudev），gstreamer 在 `mediad`、libudev 在 `padd`，都不在 robotd 链上 |
+| 网络 | WSL2 NAT：网关 `172.26.32.1` 就是 Windows 主机。实测 `0.0.0.0:7801` **REACHABLE**，防火墙未拦、无需加规则 |
+| ONNX Runtime | GitHub release `onnxruntime-linux-x64-1.23.2.tgz`（≥ 1.23.x 硬下限）→ `libonnxruntime.so*` 进 `/usr/local/lib` + `ldconfig`；9 个 alpha 策略复制到 `RELEASE_DIR=/opt/robot/daemon/current/policies`，**不用写 toml**（避开 `deny_unknown_fields`） |
+
+⚠️ 通道坑：Bash 里 `wsl.exe` 需 `export MSYS2_ARG_CONV_EXCL='*'` 才不被 MSYS 路径转换改坏；复杂 Linux 命令**必须落盘成 .sh/.py 再执行**（PowerShell/Bash 传参都会吃掉 `$var` 和引号）；`run_in_background:true` 的任务里 `wsl.exe` 会被沙箱拦，长驻 daemon 要用前台启动、超时自动转后台。
+
+### 9.2 起栈
+
+```bash
+# Windows 侧（后台）
+.venv-mjlab/Scripts/python.exe -m mjlab_microduck.sim.body_server \
+    --headless --host 0.0.0.0 --port 7801
+# WSL2 侧（前台启动，超时自动转后台）
+robotd --sim 172.26.32.1:7801 --socket /run/robotd.sock
+```
+
+### 9.3 三件待验事的实测数字
+
+| 待验 | 结果 |
+|---|---|
+| **50 Hz 稳不稳** | `robotctl health`: `50.0 of 50.0 Hz · 3840 ticks · 0 missed` → 64 s 后 `49.9 Hz · 7023 ticks · 0 missed`。带 ONNX 推理时 `hz 49.988–50.039 / missed=[0]`，`busy≈0.8ms / read≈0.5ms / write≈0.2ms`（远低于 20 ms 预算） |
+| **`health` 绿不绿** | `robot healthy`；`bus ok`、`imu ready`、`battery 7.40 V (50%)`、`motors 32 °C`。⚠️ `updaterd`/`configd` unavailable 是这两个 OS 服务没起，与仿真链无关 |
+| **策略名是否真变** | 启动日志 `policy loaded mode="walk" walk=.../alpha_walking.onnx …`；`robot.setMode roller` → 2 s 后 `policy loaded mode="roller" walk=.../roller.onnx stand=None ground_pick=.../roller_crouch.onnx`。**`setMode` 是异步的**（先回站姿再重载），`accepted=True` ≠ 立即生效，中途再发同名命令会报 "already in that mode" |
+
+### 9.4 🔴 新发现的缺口：`--sim` 下扭矩没被打开
+
+带策略启动后遥测一度全部 `policy: "held"`、`step_ms=0`、关节/odom 全不动。两个门槛：
+
+1. **`robot.enable {on:true,toggle:false}`**：上游刻意的安全不变量「*nothing here runs because a process started*」，`Bringup::Limp` 下只发 `robot.move` 不会让策略接管。enable 后回到 `enabled — driving`，`policy` 变 `stand`/`walk`、`step_ms` 变 0.14–0.50 ms。
+2. **必须显式给 `body_server` 发 `torque on`（+ `gain`）**：enable 之后 `targets` 跨度已达 **2.90 rad**（策略在算、目标在写），但 `joints` 跨度 **全 0**、`odom` 只有 1 个值。`set_torque(true)` 在 `sim.rs` 里是实现了的，但 `--sim` 的 bringup 路径没走到它（与 `set_limp` 走 trait 默认返回 Err 同属一块边界）。
+
+**负对照**（改坏必须变红，反过来这里「补上必须变绿」）：外部发 `{"op":"torque","on":true}` + `{"op":"gain","kp":8}` 之前，15 个关节跨度全 `0.00000`；之后 **0.13–1.40 rad**、`odom` 27 个不同位置、首末关节角明显不同 ⇒ `TORQUE_WAS_MISSING`。
+
+补齐后完整 drive（`vx=0.3`，5 s @20 Hz）：`policy stand 27 / walk 45`，`step_ms 0.1418–0.5018`，`hz 49.988–50.039`，`missed=0`，`joint_span 0.1–0.61 rad`，`odom x` 前进 **0.586 m**，`odom_distinct=72`，`limited_by` 48 帧为空 ⇒ **VERDICT: PASS**。
+
+### 9.5 可复跑门禁
+
+`microduck-software/tools/hd1910/sim_stack_check.py`（在 WSL2 内运行）把上述三步（`torque/gain` → `robot.enable` → 周期 `robot.move` + `robotctl monitor --json` 采样）合成一条门禁，断言 `step_ms>0`、`missed=={0}`、`hz∈(49,51)`、`joint_span>1e-3`、`dx>0.01`、出现 `walk` 标签。`--no-torque` 是负对照模式（期望身体不动）。
+
+```bash
+python3 /mnt/e/.../microduck-software/tools/hd1910/sim_stack_check.py --sim-host 172.26.32.1
+# 实跑：frames=32 policy={'walk': 29, 'stand': 3} step_ms max=0.1798
+#       hz=[49.968,50.016] missed=[0] joint_span=0.59500 rad odom_dx=0.2446 m
+#       VERDICT: PASS
+```
+
+⚠️ 仍然**验不了** §7 列的那些（总线时序、蓝牙/相机/NPU/ToF、EEPROM/齿隙/堵转），**不能消 R3**。仿真鸭验证的是「循环 / 策略 / 安全 / IPC / odom 全是真的」，不是硬件。
