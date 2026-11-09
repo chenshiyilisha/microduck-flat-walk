@@ -109,9 +109,17 @@ uart5: GPIO12-15 ← 与默认 gpio-fan 冲突，且 ctsrts 会占 GPIO14/15
 
 | 路径 | 机制 | Pi 4B 判定 |
 |---|---|---|
-| **A. SDK 翻 RTS** | LeKiwi `config/robot.yaml:6` ttyACM0 + `scservo_sdk` `PortHandler`(`feetech.py:128`) 用户态翻 RTS 接 DE | ❌ **不可用**：robotd 不用 SDK、也不翻 RTS；接纯 USB 适配器会静默读不到总线，症状像「舵机坏了」 |
+| **A. SDK 翻 RTS** | LeKiwi `config/robot.yaml:6` ttyACM0 + `scservo_sdk` `PortHandler`(`feetech.py:128`) 用户态翻 RTS 接 DE | ❌ **对这一类适配器不可用**：robotd 不用 SDK、也不翻 RTS；接**没有硬件方向脚**的 USB 适配器会静默读不到总线，症状像「舵机坏了」。⚠️ 判据不能一概套到所有 USB 适配器，见 §4.2.1 |
 | **B. 外部板硬件自动方向** | `commanderfun/STS3215/servo.py:5,24`（Waveshare 板封装，零 RTS 代码）；kevsrobots 博客「handles the half-duplex conversion for you」 | ✅ **★ 主方案**：接 Adapter (A) 的 UART 口（跳线 A），方向由板上电路完成，**robotd 零改动** |
 | **C. kernel DE / RS485** | 泰山派 = `8250_dw.c` + `485_ctrl_gpio`（GPIO3_C4） | ⚠️ **不推荐**，见下 |
+
+### 4.2.1 🔑 2026-11-09 精确化：CH343 自带 `TNOW` 硬件方向脚
+
+WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正在发送状态 TNOW 支持 RS485 切换**」，同页还写「通讯波特率 50 bps–6 Mbps」「支持免安装的操作系统内置 CDC 类驱动程序」。⇒ **USB 适配器不必然需要 SDK 翻 RTS**：只要板子把 CH343 的 `TNOW` 接到收发器 DE/RE，方向就在**芯片硬件层**，robotd 零改动照样能收发。我们台架的 URT-2 正是 CH343P（PnP `USB\VID_1A86&PID_55D3`，`chenkui164/调试记录.md` 与 `fanhao375/tools/飞特/README.md` 均确认），能在 1 Mbps 下 ping 通单舵机就是这条路径的证据。
+
+- ⇒ 路径 A 的正确判据是「**这个适配器有没有把方向做在硬件里**」，不是「是不是 USB」。LeKiwi 那类靠 SDK 翻 RTS 的仍不可用；CH343 + TNOW 引出的板子可用。
+- ⚠️ 这**不推翻 N2**：USB 被否决的理由是 §5 的总线预算 / 批延迟，与方向无关。此处只是把「USB 一律静默读不到总线」这句过度声明收窄。
+- 🔴 `TNOW` 是否真被 Adapter (A) 引出并接到 DE，仍属 R4（官方只给原理图 PDF，未核实）。**别把「芯片支持」当成「这块板已接好」**。
 
 ### 4.3 为什么路径 C 在 Pi 4B 上要单独判定（本次新建证据）
 - ✅ **补丁不可复用**：泰山派 vendored patch 的三个 hunk 是 `8250_dw.c` / `8250_port.c` / `serial_8250.h`；Pi 4B PL011 走 `drivers/tty/serial/amba-pl011.c`。**驱动不同，patch 直接不适用**。
@@ -130,9 +138,14 @@ uart5: GPIO12-15 ← 与默认 gpio-fan 冲突，且 ctsrts 会占 GPIO14/15
 这一节是**本方案相对「Pi 4B 开源现状研究」新增的决定性结论**，也订正了那份文档 §4 的落地建议。
 
 - ✅ 每 tick 帧长 **413 B**（`deploy_import_checklist.md` / 记忆 2026-11-04:554-563）：`sync_read` 发 24 收 336（16 设备 = 15 关节 + IMU 200）+ `sync_write` 发 53。
-- ✅ **`probe_bus_budget.py` 台架真机实测**（`.workbuddy/memory/2026-11-06.md:245-250`，N=5 重复 + selftest 25/25）：500 kbps / 16 设备 **标称档 10.28–11.01 ms**（中位 10.81），**最坏档 16.68–17.41 ms** ⇒ 20 ms 周期里**只剩 2.59–3.32 ms 给 ONNX 推理**。日志明写「⚠️ USB 批延迟每次不同 ⇒ 单次读数不能写定值」。
+- ✅ **`probe_bus_budget.py` 台架实测 + 比值外推**（`.workbuddy/memory/2026-11-06.md:245-250`，N=5 重复 + selftest 25/25）：实测条件是 **COM3 / ID10 / 1 Mbps / 单舵机**，量到每字节 10.58–11.60 µs、固定开销 76–99 µs/包；**500 kbps / 16 设备的标称档 10.28–11.01 ms（中位 10.81）、最坏档 16.68–17.41 ms 是按无量纲比值外推出来的，不是 500 kbps 直测**。日志明写「跨波特率只能搬比值，不能搬绝对时间」与「⚠️ USB 批延迟每次不同 ⇒ 单次读数不能写定值」。⇒ 20 ms 周期里**只剩 2.59–3.32 ms 给 ONNX 推理**（外推值）。
+  - 🔴 **2026-11-09 订正**：本条初版写成「500 kbps / 16 设备台架真机实测」，混淆了「1M 单设备实测」与「比值外推」。数字不变，**证据等级从实测降为外推**，判决 N2 仍成立但不可当成 Pi 4B 实测。另注：**整个台架参数体系都在 1 Mbps 下测**（`2026-11-04.md:558` 「台架实测 ID10/CH343/1 Mbps」），而部署目标是 500 kbps——台架不能当作 500k 的已验证平台；这只影响「用 URT-2 验 500k」的可行性，**不影响部署线本身**（部署走板载 UART）。
 - ✅ 45 Hz 门槛（`update_gate.min_achieved_hz`）只管「活着」；一次读超时 30 ms > 20 ms 周期且 Skip 不补。B23 指出低于门槛 ⇒ unhealthy ⇒ **updater 自动回滚 release，症状像发布系统故障**。
-- 🟡 USB 转串口的已知延迟：FTDI `latency_timer` 默认 **16 ms ⇒ 62.5 Hz 上限**（`cat /sys/bus/usb-serial/devices/ttyUSB0/latency_timer` 可改 1，但重启/重插会回退）；`orca_core` 文档明写 **CH340/CP210x 没有这个可调项**。CH343 是 CDC/ACM（`/dev/ttyACM0`，Linux 5.x+ 内置驱动免装），规格 **50 bps–6 Mbps**（500 k 在范围内），但**CDC 端点轮询 + 批延迟不可调、也未经本项目实测**。
+- 🟡 USB 转串口的已知延迟：FTDI `latency_timer` 默认 **16 ms ⇒ 62.5 Hz 上限**（`cat /sys/bus/usb-serial/devices/ttyUSB0/latency_timer` 可改 1，但重启/重插会回退）；`orca_core` 文档明写 **CH340/CP210x 没有这个可调项**。CH343 是 CDC/ACM（`/dev/ttyACM0`，Linux 5.x+ 内置驱动免装），规格 **50 bps–6 Mbps**，但**CDC 端点轮询 + 批延迟不可调、也未经本项目实测**。
+- 🔴 **2026-11-09 新增两条独立证据（社区实测，非官方）**，来自 `bun-serial` README 的 CH343 / Linux `cdc_acm` / Radxa ZERO 3W 实测记录：
+  1. **「驱动接受 ≠ 芯片真发」**：CH343 在 `400000` / `1152000` / `1843200` 波特下**驱动接受、随后一个字节都不发**（写超时）；`250000` / `256000` / 常规值到 3M 才工作，原话 *"Try an unusual rate on your adapter before relying on it"*。**500000 不在其已验证集合里** ⇒ R3 从「精度待示波器」升级为「**可用性本身待验**」。规格表写 50 bps–6 Mbps 只是范围，不能当可用性证明。
+  2. **`drain()` 提前 40–130 ms 报告完成**（芯片仍握着最后若干字节），且 *"A baud rate change or an RS-485 turnaround straight after drain() can cut them off"* ⇒ 直接打在半双工方向切换上；对 20 ms/tick 的 50 Hz 环是比 FTDI 16 ms 更严重的量级。
+- 🟡 **Linux 驱动路径分叉**（同一颗 CH343 会有不同节点与不同行为）：CDC-ACM → `/dev/ttyACM*`；内核 `ch341` 模块（5.14+ 扩展覆盖 CH343）→ `/dev/ttyUSB*`；WCH 厂商 VCP 驱动 `ch343.ko` → `/dev/ttyCH343USB*`。⇒ 上板先 `dmesg` / `ls -l /dev/tty*` 确认绑的是哪条，非标准波特率行为不能跨驱动外推。
 
 ⇒ 🔴 **判决**：总线预算最坏档已吃掉 20 ms 周期的 83–87%，USB 额外几毫秒几乎必然把 50 Hz 环顶到 45 Hz 以下。所以 **Pi 4B 主方案 = 板载 PL011（U2）+ 外部自动方向板（路径 B）**；USB（U3 / Adapter A 跳线 B）**只用于台架单舵机调试、不用于整机**。
 - ✅ **负对照（能删就红）**：整机 15 颗 + IMU 跑起来后，把 `port` 从 `/dev/ttyAMA3` 改回 `/dev/ttyACM0` 重测，应观测到 loop <45 Hz / missed ticks / 读超时；若两者一样稳，说明 N2 的判据在本硬件上不成立，需要重新测预算而不是照抄结论。
@@ -232,29 +245,53 @@ uart5: GPIO12-15 ← 与默认 gpio-fan 冲突，且 ctsrts 会占 GPIO14/15
 |---|---|---|
 | R1 | 泰山派 `8250_dw.c` 补丁能否复用 | ✅ **不能**（驱动不同），§4.3 已查源码 + 官方资料 |
 | R2 | `amba-pl011` RS485 在 **500 kbps 半双工 + 16 设备**下是否稳 | ⚠️ **未查到现成方案**：主线有支持、RPi 分支 2026-01 才修 panic，社区验证只到 460800；且 PL011 无 FIFO empty 中断 ⇒ 不走此路径 |
-| R3 | CH343 CDC / `serialport::new(port, 500_000)` 能否精确产生 500 kbps | ⚠️ **未实测**：规格表 50 bps–6 Mbps（wiki 正文模板仍写「up to 115200bps」，属旧文案残留，以规格表为准）。**台架可零成本验**（§13） |
+| R3 | CH343 CDC / `serialport::new(port, 500_000)` 能否产生可用的 500 kbps | 🟡 **部分查实、未实测**：官方规格 50 bps–6 Mbps + `TNOW` 硬件方向脚（§4.2.1）；但社区实测报 `400000` 等波特「驱动接受却静默不发」，**500000 不在已验证集合** ⇒ 风险从「精度」升级为「可用性」。**位宽 2 µs 仍需示波器**；台架探针已备好（§12.1），URT-2 当前未插故未实跑 |
 | R4 | Adapter (A) 的方向控制芯片型号 / 是否真为自动方向 | ⚠️ **未从原理图核实**：官方只写 "integrated control circuit"；社区（kevsrobots）说 handles half-duplex conversion。**接线前读官方 Sch.pdf** |
 | R5 | Pi GPIO UART 3.3 V ↔ 舵机 5 V 电平 | ⚠️ **未查**：Adapter (A) UART 口电平官方未明示；自搭必须加转换 |
-| R6 | USB 批延迟对 50 Hz 环的实际吃掉量 | ⚠️ **上板实测**（§10 #7 已设计负对照）；判决 N2 是基于预算的**推论 + 已知 USB 延迟量级**，不是 Pi 4B 实测 |
+| R6 | USB 批延迟对 50 Hz 环的实际吃掉量 | ⚠️ **上板实测**（§10 #7 已设计负对照）；判决 N2 是基于预算的**推论 + 已知 USB 延迟量级**，不是 Pi 4B 实测。2026-11-09 新增社区证据：CH343 `drain()` 提前 40–130 ms 且 drain 后做 RS485 方向切换会截断尾字节（§5），但**仍非本项目实测** |
 | R7 | GPIO4/5 的 40-pin 物理脚号、`ctsrts` 具体 RTS 脚 | ⚠️ **未查**：GPIO 编号已查实，物理脚位查官方 pinout；**不照抄别板排针** |
 | R8 | ORT 1.28.0 aarch64 与本 robotd 的 dlopen ABI | ⚠️ **版本元数据已查实，上板 dlopen 未验** |
 | R9 | 机构 / 重心 / 价格 | ✅ 已知：85.6×56.5 mm / 75 g + Adapter 42×33 mm + 散热 ⇒ 机壳几乎全重做，重心重评（H12：HOME 是模型站姿不是编码器零位） |
 | R10 | 完整 Microduck/HD-1910 复刻线无人用 Pi 4B | ✅ 已查：`fanhao375` / `chenkui164` / `AI-FanGe` 全用 Radxa Zero 3W 或 Pi Zero 2W ⇒ **没有整机镜像可抄** |
+| R11 | 台架口径与部署口径不同 | ✅ **已查实、非风险但易写错**：所有台架实测都在 **1 Mbps**（URT-2 / CH343 / ID10 单舵机），部署是 **500 kbps / 16 设备**；`2026-11-06` 的 10.28–17.41 ms 是**比值外推**（§5 已订正措辞）。⇒ 不能把台架数写成「500k 实测」，也不能拿台架当 500k 的验证平台 |
 
-**明确「这是推的」清单**：N3 的 6.0 整数分频（基于查实的 48 MHz 时钟做算术）、N2 的 USB 否决（基于本项目实测预算 + 社区 USB 延迟量级外推）、U2 选 uart3（基于 overlays README 引脚冲突表做的取舍）、供电树拓扑（基于官方「5 V via USB-C 或 GPIO header 均 ≥3 A」+ 项目 2S 约束的组合）。四者均未在本项目 Pi 4B 上实测。
+**明确「这是推的」清单**：N3 的 6.0 整数分频（基于查实的 48 MHz 时钟做算术）、N2 的 USB 否决（基于本项目 1M 实测 + 比值外推的预算，叠加社区 USB 延迟/静默波特/drain 量级）、U2 选 uart3（基于 overlays README 引脚冲突表做的取舍）、供电树拓扑（基于官方「5 V via USB-C 或 GPIO header 均 ≥3 A」+ 项目 2S 约束的组合）。四者均未在本项目 Pi 4B 上实测；其中 N2 的两条新增证据是**社区实测而非本项目实测**，来源等级已标。
 
 ---
 
 ## 12. 执行顺序（先做零成本的，不买板）
 
 1. ✅ **已完成（本轮）**：查清 UART/PL011/方向层/ORT/供电/IMU 代次/部署链的所有「下一步资料线索」，没有留「去找 X」当结论。
-2. 🟢 **台架上零成本先验（现在就能做，用现有 URT-2 + 单舵机 + CH343）**：
-   - `stty` / 示波器验 **500000 波特在 CDC 路径是否精确**（消 R3）；
-   - `probe_bus_budget.py` 加一组「CDC vs 板载式」对照读数，量化 USB 批延迟（给 R6 一个本项目的数，而不是外部量级）；
-   - 若手上有自动方向板，验它能否**原样透传 HLS 500k 帧**（单舵机 ping + 回读 reg6）。
+2. 🟡 **台架零成本先验：探针已备好，实机读数待 URT-2 上电**（2026-11-09 结果见 §12.1）：
+   - 新增 `microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`：在 `115200 / 250000 / 400000 / 500000 / 1M` 五个波特率下逐个打开 URT-2、发 HLS ping、统计应答率与 RTT 分布。用**舵机是否回帧**证明「芯片真发了」，而不是信 `Serial.baudrate` 回显；`400000` 是社区报告的已知坏值，留在集合里当负对照锚点。
+   - 插上 URT-2 + 给舵机供电后：`python probe_ch343_baud.py --port COM3 --id 10 --out out/ch343_baud.json`。**目标 500000 判 PASS 才能消 R3 的可用性一半**（位宽 2 µs 仍需示波器）；`latency.spread_ms` 给 R6 一个本项目的数。
+   - 第三项「自动方向板能否原样透传 HLS 500k 帧」**台架做不了**（手上没有 Adapter (A)，需买板），保留在真机阶段。
 3. 真决定换板后：买 Pi 4B + Adapter (A)，按 §3 配 `uart3`、按 §4 接方向层、按 §2.3 做供电树。
 4. 交叉编译 robotd（§6）、装 ORT 1.28.0、拷策略 onnx 并改写绝对路径（§7）。
 5. 逐颗写 EEPROM（§7 时序 + 断电回读），跑 §10 自检清单；**过了 #4 方向波形与 #7 50 Hz 才接整机舵机负载**。
+
+### 12.1 台架先验结果（2026-11-09，如实标注未实跑的部分）
+
+**🔴 硬件实测没跑成，且理由当场验证过**（不是「环境装不上」的托辞）：
+
+| 检查 | 读数 |
+|---|---|
+| `pyserial` 活动串口枚举 | `count = 0` |
+| WMI `Win32_SerialPort` | 空 |
+| PnP Ports 类 | `USB-Enhanced-SERIAL CH343 (COM3)`，`VID_1A86&PID_55D3`，但 **`Status = Unknown`**（未连接的残留条目） |
+| 实际打开 `COM3/COM4/COM1` @500000 | 三者全 `SerialException: PermissionError(13, 拒绝访问)` |
+
+⇒ URT-2 **当前没有插在这台 PC 上**，`probe_ch343_baud.py` 的实机模式如实 `rc=2` + `SKIP: COM3 不在活动串口列表里`。**不要把这轮写成「500k 已验证」。**
+
+**✅ 纯软件层真跑过的**（系统 Python 3.13 + pyserial 3.5，无需项目 venv）：
+- `python probe_ch343_baud.py --selftest` → **20/20 PASS**，rc=0。帧构造 `is` 断言复用 `probe_bus_budget.frame`/`rx_frame_len`（单一权威源）、ID10 ping 逐字节向量、分位数统计、以及 N1–N5 五组负对照。
+- `python probe_ch343_baud.py --port COM3` → `rc=2`，明确打印 SKIP 原因（CLI 入口真的跑过，不是只测内部函数）。
+- **负对照能删红**：把 `classify()` 改成「只看驱动回显就判 PASS」，自检立刻掉到 **14/20**（N1/N1b/N2b/N3/N3b 全红）。这正是防 `400000` 那类「驱动接受但静默不发」被全绿漏检的闸门。
+- `pyserial loop://` 接受 500000 且回显 500000 —— ⚠️ **弱证据**：pyserial 回显的是它自己缓存的设置值，不是从芯片量回来的时钟，不能当可用性证明。
+
+**🔑 静态查证的新事实**（已回填 §4.2.1 / §5 / §11）：URT-2 = CH343P；WCH 官方 50 bps–6 Mbps + **`TNOW` 硬件半双工方向脚**；Linux 上 CH343 有 `cdc_acm` / `ch341` / WCH VCP 三条驱动路径（节点分别 `ttyACM*` / `ttyUSB*` / `ttyCH343USB*`）；社区实测报 `400000` 静默不发、`drain()` 提前 40–130 ms 且 RS485 方向切换会截断尾字节。
+
+**边界**：这轮**没有**测波特率精度（需示波器）、**没有**量化 USB 批延迟（需硬件）、**没有**验证自动方向板透传（需买板）；也没有改动任何现存脚本或 robotd 代码，只纯新增一支探针。台架 1 Mbps 历史数据与部署 500 kbps 口径不同，见 R11。
 
 ---
 
@@ -266,6 +303,7 @@ uart5: GPIO12-15 ← 与默认 gpio-fan 冲突，且 ctsrts 会占 GPIO14/15
 - `microduck-开源复刻项目-参考价值-2026-11-09.md`、`microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md`、`microduck-HD1910-BNO085-gyro_fusion移植执行清单-2026-11-09.md`：IMU 代次绑定与 BNO08x 路径风险（§8）。
 - `microduck-HD1910-策略导出部署链-2026-11-09.md`：P1–P13（§9）。
 - `microduck-software/tools/hd1910/deploy_import_checklist.md`：B10–B23 / H3–H13 实机关卡（EEPROM 时序、HOME、电池、joint_ids、IMU 上电姿态）。
+- `microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`：**本方案 §12.1 的台架探针**（纯新增，2026-11-09）；`--selftest` 20/20 全绿、负对照能删红。帧构造 import 自同目录 `probe_bus_budget.py`（`is` 断言），不另造帧语义。
 
 ### 证据清单（本轮实际查过的外部来源）
 
@@ -278,6 +316,10 @@ uart5: GPIO12-15 ← 与默认 gpio-fan 冲突，且 ctsrts 会占 GPIO14/15
 | `waveshare.com/wiki/Bus_Servo_Driver_HAT_(A)` | 9~25 V、板载 5 V buck 给 Pi、ESP32 透传（**交叉接线 + 共地**）、`/dev/serial0` 示例、65×57 mm |
 | LKML 2020-01-07 `amba-pl011` RS485 patch（Ivan Sistik）+ 2020-01-16 回复（Lukas Wunner）+ 2021-06-18 `[PATCH v2]`（Lino Sanfilippo） | PL011 无硬件 RS485、无 TX FIFO empty 中断、主线实现路径 |
 | `raspberrypi.org/forums/viewtopic.php?p=2360006`（2026-01-20，6by9 / PR `raspberrypi/linux#7202`） | RPi 分支 `pl011_axi_probe` 漏 hrtimer 初始化 → panic；6.18.6-v8+ 修后 CM4 UART3@115200 / UART4@460800 验证 |
+| **WCH 官方** `wch.cn/products/CH343.html` + 立创/LCSC C2846043 规格（2026-11-09 补） | 50 bps–6 Mbps、CDC 类免驱、`TNOW` 半双工方向脚、115200 以下自动识别 ⇒ §4.2.1 |
+| `WCHSoftGroup/ch343ser_linux` README + `techeia.com` CH343 Linux 说明 | CDC-ACM / `ch341`(5.14+) / WCH VCP `ch343.ko` 三条驱动路径与节点命名 ⇒ §5 驱动分叉 |
+| **`bun-serial` README**（社区实测，非官方；Radxa ZERO 3W / Linux `cdc_acm`） | CH343 在 400000/1152000/1843200 **驱动接受但静默不发**；`drain()` 提前 40–130 ms、其后 RS485 方向切换截断尾字节 ⇒ §5 两条新证据 / R3 / R6。⚠️ 第三方库实测，本项目未复验 |
+| 飞特官方 `feetech.cn/530962` + `chenkui164/调试记录.md` + `fanhao375/tools/飞特/README.md` | URT-2 = CH343P（`VID_1A86:PID_55D3`），FD 软件默认 1 Mbps；台架历史实测口径 ⇒ §12.1 / R11 |
 | Waveshare CH343 规格页 / `orca_core` Windows 文档 / FTDI latency 资料 | CH343 50 bps–6 Mbps、CDC `/dev/ttyACM0` 免驱、CH340/CP210x 无 latency_timer、FTDI 16 ms→62.5 Hz |
 | Raspberry Pi 官方 4B 规格页 + product brief / `raspberrypi.dk` | 5 V ≥3 A（USB-C 或 GPIO header）、15 W 建议、75 g、aarch64 |
 | ORT release tarball 命名 + birdnet-go 安装 wiki + outspoken.cloud | `onnxruntime-linux-aarch64-<ver>.tgz` 覆盖 Pi 4/5 64-bit、aarch64 pip 可用 |

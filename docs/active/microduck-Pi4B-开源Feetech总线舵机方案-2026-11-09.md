@@ -47,6 +47,7 @@ Feetech/STS 总线是**半双工 TTL**（同一条线收发），必须有方向
 - 机制：scservo_sdk 的 `PortHandler` 在发送时**翻 RTS 脚接 DE**（dynamixel/feetech SDK 标准做法）。
   ⚠️ 注意 `feetech.py:49/52/55` 的 "direction bit" 注释是**协议帧方向位**（0x2e 最高位 / 0x2c bit11 / 0x2a 最高位，表示正反转），**不是硬件 RTS**，两者不同概念。
 - 落点：**方向在 SDK（用户态）层**，靠 USB 适配器 RTS 脚。
+- 🔑 **2026-11-09 精确化（别把「USB」当判据）**：WCH 官方 `wch.cn/products/CH343.html` 明写 CH343「**支持半双工，提供正在发送状态 TNOW 支持 RS485 切换**」。只要适配器把 `TNOW` 接到收发器 DE/RE，方向就在**芯片硬件层**，robotd 零改动也能收发——我们台架的 URT-2 正是 CH343P（`VID_1A86:PID_55D3`），1 Mbps 下 ping 通单舵机就是证据。⇒ 正确判据是「**这块适配器有没有把方向做进硬件**」，不是「是不是 USB」；**路径 A 的「不可用」只适用于靠 SDK 翻 RTS 那一类**。这不推翻 USB 被总线预算否决的理由（见完整方案 §5），二者是不同维度。
 
 ### 路径 B：外部 Bus Servo Driver Board 硬件自动方向（Waveshare / LeLamp 系）
 - 证据：`commanderfun/STS3215` `servo.py:5` 明确 *"Waveshare Serial Bus Servo Driver Board. Wraps the low-level scservo_sdk"*；
@@ -100,3 +101,11 @@ Feetech/STS 总线是**半双工 TTL**（同一条线收发），必须有方向
 | `sinayanaik/python-st3215` | `st3215/__init__.py`（pyserial 封装） | 通用 STS 驱动 |
 | kevsrobots 博客 | `www.kevsrobots.com/blog/bus-servos.html`（Waveshare 板 "handles half-duplex conversion"） | 路径 B 佐证 |
 | 复刻线（无人用 Pi 4B） | `fanhao375/microduck-replica`、`chenkui164/microduck-replica`、`AI-FanGe/Microduck-build-tutorial` | Radxa Zero 3W / Pi Zero 2W |
+| WCH 官方 `wch.cn/products/CH343.html`（2026-11-09 补） | CH343 规格 | 50 bps–6 Mbps、CDC 免驱、`TNOW` 硬件半双工方向脚 ⇒ 路径 A 精确化 |
+
+---
+
+## 6. 后续（2026-11-09）
+
+- **`docs/active/microduck-Pi4B-完整部署方案-feetech_hls-2026-11-09.md`**：把本文件的开源现状提升为 13 节可执行方案；其 §4.2.1 / §5 / §11 / §12.1 是**本文件三路径分类与落点判据的最新口径**（CH343 `TNOW` 例外、400000 静默不发、`drain()` 提前 40–130 ms、台架 1M vs 部署 500k 口径）。以完整方案为准。
+- **`microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`**：台架探针，`--selftest` 20/20 全绿且负对照可删红；URT-2 当前未插，实机读数待上电（见完整方案 §12.1）。
