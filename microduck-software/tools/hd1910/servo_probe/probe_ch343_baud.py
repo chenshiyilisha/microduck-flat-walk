@@ -13,8 +13,26 @@ CH343）记录过：芯片**接受** 400000 / 1152000 / 1843200 波特却**一�
 250000 / 256000 / 常规值到 3M 才工作。500000 不在其已验证集合里。
 
 ⇒ 唯一能证明「芯片真发了」的证据是**舵机回了帧**。所以本探针把「驱动接受」
-与「物理有应答」拆成两个字段，零应答一律判 SILENT 而不是 PASS；400000 作为
-已知坏值锚点留在候选集合里当负对照。
+与「物理有应答」拆成两个字段，零应答一律不判 PASS；400000 作为已知坏值锚点
+留在候选集合里（⚠️ 它只有在舵机速率也切到该值时才有区分力，见下面混淆段）。
+
+🔴 2026-11-09 插上 URT-2 实跑后订正：零应答有两种互斥解释
+------------------------------------------------------------
+台架这颗舵机 **reg6=0（1 Mbps）**，而部署目标是 500 kbps。舵机根本听不懂
+500k 的帧 ⇒ 零应答可能只是**速率不匹配**，不是 CH343 静默。原版把两者都写成
+SILENT（「芯片可能根本没发」），会把一份「不可判」的数据留成「CH343 不行」的
+证据。现在先读 reg6 建立基线，零应答且 baud != reg6 对应速率一律标
+`RATE_MISMATCH` / `confounded=true`，顶层判 `INCONCLUSIVE_RATE_MISMATCH`。
+**只有 baud 与舵机配置一致时的零应答，才可能是 CH343 的证据。**
+⇒ 要真正消 R3，必须先把 reg6 改成 1（见 `hd1910_ident.py baud`，需断电重上电）。
+
+🔴 判据有效性的前提：半双工不能自发自收
+------------------------------------------
+ping 请求帧和响应帧都是 6 字节。若 URT-2 把 TX 回环到 RX，`in_waiting >= 6`
+读回来的会是**自己发的帧**，探针会假 PASS。所以用总线上不存在的 ID 253
+做 ghost 负对照：ghost 有回字节 ⇒ `self_echo=true` ⇒ 整份判决作废。
+（2026-11-09 实测：1 Mbps 下 ghost 零字节，真响应 `ffff0a0200f3`
+≠ 发送帧 `ffff0a0201f2`，判据干净。）
 
 能力边界（不要当成测了波特率精度）
 ----------------------------------
@@ -37,7 +55,7 @@ import time
 
 HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
-from probe_bus_budget import frame, rx_frame_len  # noqa: E402  单一权威帧构造
+from probe_bus_budget import BAUD_OF_REG6, frame, rx_frame_len  # noqa: E402  单一权威帧构造 + reg6 映射
 
 try:
     import serial
@@ -48,9 +66,15 @@ except ImportError:  # --selftest 路径不碰硬件
 
 TARGET_BAUD = 500_000
 # bun-serial README 报告的「驱动接受但静默不发」值之一，用作负对照锚点。
+# ⚠️ 它的区分力有前提：只有舵机 reg6 也切到这个速率时，零应答才可能是
+#    「芯片静默」。在 reg6=0(1M) 的台架上，400000 和 500000 一样判
+#    RATE_MISMATCH —— 实机负对照此时由 selftest 的 N1/N6/N7 承担，别看错。
 KNOWN_SILENT_BAUD = 400_000
 DEFAULT_BAUDS = (115_200, 250_000, KNOWN_SILENT_BAUD, TARGET_BAUD, 1_000_000)
 INST_PING = 1
+INST_READ = 2
+REG_BAUD = 6                 # EEPROM 波特率索引（0=1M, 1=500k, ...）
+GHOST_ID = 253               # 总线上不存在的 ID，自发自收回声负对照
 PING_RX_LEN = rx_frame_len(0)  # FF FF ID LEN ERR CHK = 6
 PASS_RATIO = 0.90             # 至少 90% 的 ping 有应答才算可用
 
@@ -93,6 +117,51 @@ def classify(*, open_ok: bool, driver_echo: int | None, baud: int,
     }
 
 
+def annotate(result: dict, servo_baud: int | None,
+             self_echo: bool | None) -> dict:
+    """把「零应答」拆成两种互斥解释：舵机速率不匹配 vs CH343 可能静默。
+
+    🔴 负对照：若删掉 rate-match 判据，selftest 的 N6 会立刻变红。
+    `classify` 的签名保持不变，好让既有回归里的「改坏 classify」仍能跑。
+    """
+    out = dict(result)
+    # .get 而非下标：回归里会把 classify 换成「只看回显」的坏实现，
+    # 那条路径必须让 selftest 变红，而不是抛 KeyError 中断。
+    rate_match = None if servo_baud is None else (result.get("baud") == servo_baud)
+    confounded = bool(result.get("replies", 0) == 0
+                      and servo_baud is not None and rate_match is False)
+    out["servo_configured_baud"] = servo_baud
+    out["rate_match"] = rate_match
+    out["confounded"] = confounded
+    if confounded:
+        out["status"] = "RATE_MISMATCH"
+        out["why"] = (f"舵机 reg6 配在 {servo_baud} bps，此波特率下本就不该应答；"
+                      "零应答不能归因于 CH343 静默（先改 reg6 再测）")
+    out["self_echo_checked"] = self_echo is not None
+    return out
+
+
+def target_verdict(results: list[dict], servo_baud: int | None,
+                   self_echo: bool | None) -> str:
+    """顶层判决：只有「速率一致」时的应答/静默才是 CH343 的证据。"""
+    # .get：回归里会把 classify/annotate 换成坏实现，那条路径要让自检变红，
+    # 而不是抛 KeyError 中断（否则「负对照能删红」这条就不成立）。
+    t = next((r for r in results if r.get("baud") == TARGET_BAUD), None)
+    if t is None:
+        return "NOT_MEASURED"
+    if self_echo is True:
+        return "INVALID_SELF_ECHO"
+    if t.get("confounded"):
+        return "INCONCLUSIVE_RATE_MISMATCH"
+    if t.get("rate_match") is False:
+        return "INVALID_UNEXPECTED_REPLY"
+    if t["status"] == "PASS":
+        return "PASS"
+    if servo_baud is None:
+        return "NO_BASELINE"
+    return "CH343_SILENT_OR_HARDWARE"
+
+
 def latency_stats(xs: list[float]) -> dict:
     """R6 要的分布：p50 / p95 / max，单位毫秒。空列表不造数字。"""
     if not xs:
@@ -110,6 +179,46 @@ def latency_stats(xs: list[float]) -> dict:
 
 
 # ---------------------------------------------------------------- 实机测量
+
+
+def _read_bytes(ser, payload: bytes, n_expect: int, timeout: float) -> bytes:
+    """发一帧、收裸字节，不判内容。用于 reg6 读取与 ghost 回声检查。"""
+    ser.reset_input_buffer()
+    ser.write(payload)
+    ser.flush()
+    t0 = time.perf_counter()
+    buf = b""
+    while time.perf_counter() - t0 < timeout:
+        n = ser.in_waiting
+        if n:
+            buf += ser.read(n)
+        if len(buf) >= n_expect:
+            break
+    return buf
+
+
+def check_self_echo(ser, timeout: float) -> dict:
+    """ping 一个总线上不存在的 ID；一旦有回字节，说明发出去的帧被回环，
+    「in_waiting >= 6 == 舵机应答」这条判据就不成立。"""
+    payload = frame(GHOST_ID, INST_PING)
+    buf = _read_bytes(ser, payload, PING_RX_LEN, timeout)
+    return {"ghost_id": GHOST_ID, "tx": payload.hex(), "rx": buf.hex(),
+            "self_echo": bool(buf)}
+
+
+def read_reg6(ser, pid: int, timeout: float) -> dict:
+    """在**舵机能应答**的波特率下读 EEPROM reg6，建立速率基线。
+
+    响应：FF FF ID 03 ERR DATA CHK（7 字节）。读不到就返回 None，
+    绝不拿默认值冒充基线。
+    """
+    payload = frame(pid, INST_READ, bytes([REG_BAUD, 1]))
+    buf = _read_bytes(ser, payload, rx_frame_len(1), timeout)
+    for i in range(max(0, len(buf) - rx_frame_len(1) + 1)):
+        if buf[i:i + 3] == b"\xff\xff" + bytes([pid]) and buf[i + 3] == 3:
+            return {"reg6": int(buf[i + 5]), "err": int(buf[i + 4]),
+                    "raw_rx": buf[i:i + rx_frame_len(1)].hex()}
+    return {"reg6": None, "err": None, "raw_rx": buf.hex()}
 
 
 def _one_ping(ser, pid: int, timeout: float) -> float | None:
@@ -145,36 +254,78 @@ def probe_baud(ser, baud: int, pid: int, repeats: int, timeout: float) -> dict:
     return out
 
 
+def _find_baseline(port: str, bauds: list[int], pid: int,
+                   timeout: float) -> dict:
+    """找一个舵机**真能应答**的波特率，在那里读 reg6 并测 ghost 回声。
+
+    找不到就不能建立基线：servo_baud=None，顶层判 NO_BASELINE，
+    绝不拿「猜一个」冒充证据。
+    """
+    for baud in bauds:
+        try:
+            ser = serial.Serial(port=port, baudrate=baud, timeout=timeout)
+        except Exception:
+            continue
+        try:
+            if _one_ping(ser, pid, timeout) is None:
+                continue
+            return {"baseline_baud": baud,
+                    "self_echo": check_self_echo(ser, timeout),
+                    "reg6_read": read_reg6(ser, pid, timeout)}
+        finally:
+            ser.close()
+    return {"baseline_baud": None, "self_echo": None,
+            "reg6_read": {"reg6": None, "err": None, "raw_rx": ""}}
+
+
 def run_hardware(port: str, bauds: list[int], pid: int,
                  repeats: int, timeout: float) -> dict:
-    """逐波特率打开 → ping → 关。任何一个打不开都记录 OPEN_FAIL 而不是中断整轮。"""
+    """阶段 0 建基线（reg6 + 回声）→ 阶段 1 逐波特率 ping → 阶段 2 标注混淆。"""
     if serial is None:
         raise RuntimeError("pyserial 不可用；先装 pyserial 或用 --selftest")
-    results = []
+
+    base = _find_baseline(port, bauds, pid, timeout)
+    reg6 = base["reg6_read"]["reg6"]
+    servo_baud = BAUD_OF_REG6.get(reg6) if reg6 is not None else None
+    self_echo = base["self_echo"]["self_echo"] if base["self_echo"] else None
+
+    raw = []
     for baud in bauds:
         try:
             ser = serial.Serial(port=port, baudrate=baud, timeout=timeout)
         except Exception as exc:
-            results.append(classify(open_ok=False, driver_echo=None, baud=baud,
-                                    replies=0, repeats=repeats))
-            results[-1]["error"] = f"{type(exc).__name__}: {exc}"
+            raw.append(classify(open_ok=False, driver_echo=None, baud=baud,
+                                replies=0, repeats=repeats))
+            raw[-1]["error"] = f"{type(exc).__name__}: {exc}"
             continue
         try:
-            results.append(probe_baud(ser, baud, pid, repeats, timeout))
+            raw.append(probe_baud(ser, baud, pid, repeats, timeout))
         finally:
             ser.close()
+
+    results = [annotate(r, servo_baud, self_echo) for r in raw]
     return {
         "port": port,
         "servo_id": pid,
         "repeats": repeats,
         "timeout_s": timeout,
+        # ---- 阶段 0：判据的两个前提 ----
+        "baseline_baud": base["baseline_baud"],
+        "servo_reg6": reg6,
+        "servo_configured_baud": servo_baud,
+        "reg6_read": base["reg6_read"],
+        "self_echo": base["self_echo"],
+        # ---- 阶段 1+2 ----
         "results": results,
         "target_baud": TARGET_BAUD,
         "target_status": next((r["status"] for r in results
                                if r["baud"] == TARGET_BAUD), "NOT_MEASURED"),
+        "target_verdict": target_verdict(results, servo_baud, self_echo),
         # 🔴 纯软件测不出位宽精度，别让这份 JSON 被当成「500k 精确」的证据
         "baud_accuracy": "needs_scope",
-        "note": "PASS 只证明芯片真在发且舵机稳定应答；波特率位宽精度需示波器",
+        "note": ("RATE_MISMATCH 是舵机 reg6 速率不符造成的不可判，不是 CH343 静默；"
+                 "PASS 仅在 rate_match=true 且 self_echo=false 时成立；"
+                 "波特率位宽精度仍需示波器"),
     }
 
 
@@ -235,6 +386,29 @@ def selftest() -> int:
     check("N5 spread = 4.0 ms", st["spread_ms"], 4.0)
     check("N5 负对照 全零 p50 不为 3.0", latency_stats([0.0] * 5)["p50_ms"] != 3.0, True)
     check("N5b 空列表不造数字", latency_stats([])["p50_ms"], None)
+
+    # 🔴 N6：速率混淆判决。删掉「rate_match」这层判据，下面几条会一起变红。
+    # 这是 2026-11-09 实跑踩出来的：台架 reg6=0(1M)，500k 零应答不可归咎 CH343。
+    zero = classify(open_ok=True, driver_echo=500_000, baud=500_000,
+                    replies=0, repeats=20)
+    conf = annotate(zero, 1_000_000, False)
+    check("N6 速率不符的零应答 -> RATE_MISMATCH", conf["status"], "RATE_MISMATCH")
+    check("N6b confounded=True", conf["confounded"], True)
+    check("N6c 顶层判「不可判」而非 CH343 静默",
+          target_verdict([conf], 1_000_000, False), "INCONCLUSIVE_RATE_MISMATCH")
+    same = annotate(zero, 500_000, False)
+    check("N6d 同速率零应答才可归咎 CH343",
+          target_verdict([same], 500_000, False), "CH343_SILENT_OR_HARDWARE")
+    check("N6e 同速率零应答保持 SILENT", same["status"], "SILENT")
+    # N7：半双工自发自收回声 => 整份判决作废
+    check("N7 自收回声 -> INVALID_SELF_ECHO",
+          target_verdict([conf], 1_000_000, True), "INVALID_SELF_ECHO")
+    # N8：reg6 映射必须来自单一权威，不另抄一份
+    check("N8 reg6 映射与 probe_bus_budget 同源 (is)",
+          BAUD_OF_REG6 is pbb.BAUD_OF_REG6, True)
+    check("N8b reg6=0 -> 1M（台架出厂）", BAUD_OF_REG6.get(0), 1_000_000)
+    check("N8c reg6=1 -> 500k（robotd 部署）", BAUD_OF_REG6.get(1), 500_000)
+    check("N8d ghost ID 不与装机 ID 冲突", GHOST_ID > 34, True)
 
     bad = [c for c in checks if not c[1]]
     for name, ok, got, want in checks:

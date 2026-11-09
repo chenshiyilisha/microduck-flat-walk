@@ -245,15 +245,15 @@ WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正�
 |---|---|---|
 | R1 | 泰山派 `8250_dw.c` 补丁能否复用 | ✅ **不能**（驱动不同），§4.3 已查源码 + 官方资料 |
 | R2 | `amba-pl011` RS485 在 **500 kbps 半双工 + 16 设备**下是否稳 | ⚠️ **未查到现成方案**：主线有支持、RPi 分支 2026-01 才修 panic，社区验证只到 460800；且 PL011 无 FIFO empty 中断 ⇒ 不走此路径 |
-| R3 | CH343 CDC / `serialport::new(port, 500_000)` 能否产生可用的 500 kbps | 🟡 **部分查实、未实测**：官方规格 50 bps–6 Mbps + `TNOW` 硬件方向脚（§4.2.1）；但社区实测报 `400000` 等波特「驱动接受却静默不发」，**500000 不在已验证集合** ⇒ 风险从「精度」升级为「可用性」。**位宽 2 µs 仍需示波器**；台架探针已备好（§12.1），URT-2 当前未插故未实跑 |
+| R3 | CH343 CDC / `serialport::new(port, 500_000)` 能否产生可用的 500 kbps | 🟡 **已实跑，但仍不可判**：官方规格 50 bps–6 Mbps + `TNOW`（§4.2.1）；社区报 `400000` 等波特静默不发。2026-11-09 插上 URT-2 实跑（§12.1 第二轮）：CH343 在 1 Mbps 通道 20/20 应答、无自发自收回声；但**台架舵机 reg6=0 只认 1M** ⇒ 500k 零应答判 `INCONCLUSIVE_RATE_MISMATCH`，**不是** CH343 静默的证据。消项须先切 reg6=1 并断电重上电再测；位宽 2 µs 仍需示波器 |
 | R4 | Adapter (A) 的方向控制芯片型号 / 是否真为自动方向 | ⚠️ **未从原理图核实**：官方只写 "integrated control circuit"；社区（kevsrobots）说 handles half-duplex conversion。**接线前读官方 Sch.pdf** |
 | R5 | Pi GPIO UART 3.3 V ↔ 舵机 5 V 电平 | ⚠️ **未查**：Adapter (A) UART 口电平官方未明示；自搭必须加转换 |
-| R6 | USB 批延迟对 50 Hz 环的实际吃掉量 | ⚠️ **上板实测**（§10 #7 已设计负对照）；判决 N2 是基于预算的**推论 + 已知 USB 延迟量级**，不是 Pi 4B 实测。2026-11-09 新增社区证据：CH343 `drain()` 提前 40–130 ms 且 drain 后做 RS485 方向切换会截断尾字节（§5），但**仍非本项目实测** |
+| R6 | USB 批延迟对 50 Hz 环的实际吃掉量 | ⚠️ **上板实测**（§10 #7 已设计负对照）；判决 N2 是基于预算的**推论 + 已知 USB 延迟量级**，不是 Pi 4B 实测。2026-11-09 新增社区证据：CH343 `drain()` 提前 40–130 ms 且 drain 后做 RS485 方向切换会截断尾字节（§5），但**仍非本项目实测**。2026-11-09 台架补到一个数：CH343 @**1 Mbps** 单 ping RTT p50 **0.2532 ms** / max 0.3574 ms（§12.1）；口径是 1M、单设备、ping，不是 500k/16 设备的 50 Hz 环，**不能**当 R6 的结论 |
 | R7 | GPIO4/5 的 40-pin 物理脚号、`ctsrts` 具体 RTS 脚 | ⚠️ **未查**：GPIO 编号已查实，物理脚位查官方 pinout；**不照抄别板排针** |
 | R8 | ORT 1.28.0 aarch64 与本 robotd 的 dlopen ABI | ⚠️ **版本元数据已查实，上板 dlopen 未验** |
 | R9 | 机构 / 重心 / 价格 | ✅ 已知：85.6×56.5 mm / 75 g + Adapter 42×33 mm + 散热 ⇒ 机壳几乎全重做，重心重评（H12：HOME 是模型站姿不是编码器零位） |
 | R10 | 完整 Microduck/HD-1910 复刻线无人用 Pi 4B | ✅ 已查：`fanhao375` / `chenkui164` / `AI-FanGe` 全用 Radxa Zero 3W 或 Pi Zero 2W ⇒ **没有整机镜像可抄** |
-| R11 | 台架口径与部署口径不同 | ✅ **已查实、非风险但易写错**：所有台架实测都在 **1 Mbps**（URT-2 / CH343 / ID10 单舵机），部署是 **500 kbps / 16 设备**；`2026-11-06` 的 10.28–17.41 ms 是**比值外推**（§5 已订正措辞）。⇒ 不能把台架数写成「500k 实测」，也不能拿台架当 500k 的验证平台 |
+| R11 | 台架口径与部署口径不同 | ✅ **已查实、非风险但易写错**：所有台架实测都在 **1 Mbps**（URT-2 / CH343 / ID10 单舵机），部署是 **500 kbps / 16 设备**；`2026-11-06` 的 10.28–17.41 ms 是**比值外推**（§5 已订正措辞）。⇒ 不能把台架数写成「500k 实测」，也不能拿台架当 500k 的验证平台。**2026-11-09 实证**：reg6 实读 = 0，把这条从「口径提醒」升级成「实测混淆」——500k 零应答就是速率不匹配，见 §12.1 第二轮 |
 
 **明确「这是推的」清单**：N3 的 6.0 整数分频（基于查实的 48 MHz 时钟做算术）、N2 的 USB 否决（基于本项目 1M 实测 + 比值外推的预算，叠加社区 USB 延迟/静默波特/drain 量级）、U2 选 uart3（基于 overlays README 引脚冲突表做的取舍）、供电树拓扑（基于官方「5 V via USB-C 或 GPIO header 均 ≥3 A」+ 项目 2S 约束的组合）。四者均未在本项目 Pi 4B 上实测；其中 N2 的两条新增证据是**社区实测而非本项目实测**，来源等级已标。
 
@@ -262,17 +262,17 @@ WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正�
 ## 12. 执行顺序（先做零成本的，不买板）
 
 1. ✅ **已完成（本轮）**：查清 UART/PL011/方向层/ORT/供电/IMU 代次/部署链的所有「下一步资料线索」，没有留「去找 X」当结论。
-2. 🟡 **台架零成本先验：探针已备好，实机读数待 URT-2 上电**（2026-11-09 结果见 §12.1）：
-   - 新增 `microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`：在 `115200 / 250000 / 400000 / 500000 / 1M` 五个波特率下逐个打开 URT-2、发 HLS ping、统计应答率与 RTT 分布。用**舵机是否回帧**证明「芯片真发了」，而不是信 `Serial.baudrate` 回显；`400000` 是社区报告的已知坏值，留在集合里当负对照锚点。
-   - 插上 URT-2 + 给舵机供电后：`python probe_ch343_baud.py --port COM3 --id 10 --out out/ch343_baud.json`。**目标 500000 判 PASS 才能消 R3 的可用性一半**（位宽 2 µs 仍需示波器）；`latency.spread_ms` 给 R6 一个本项目的数。
+2. 🟡 **台架零成本先验：已实跑，但 500k 仍不可判**（2026-11-09 两轮结果见 §12.1）：
+   - `microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`：在 `115200 / 250000 / 400000 / 500000 / 1M` 五个波特率下逐个打开 URT-2、发 HLS ping、统计应答率与 RTT 分布。用**舵机是否回帧**证明「芯片真发了」，不信 `Serial.baudrate` 回显；再用 ghost ID 排除自发自收回声。⚠️ `400000` 坏值锚点**只有在舵机也切到该速率时才有区分力**（reg6=0 时与 500k 同判 RATE_MISMATCH）。
+   - `python probe_ch343_baud.py --port COM3 --id 10 --out out/ch343_baud.json` 已跑：1M PASS（RTT p50 0.2532 ms）、500k `INCONCLUSIVE_RATE_MISMATCH`。**要消 R3，先按 §12.1 把 reg6 切成 1 并断电重上电，再跑同一条命令**；目标 500000 在 `rate_match=true` 下判 PASS 才算数（位宽 2 µs 仍需示波器）。当前 RTT 是 **@1 Mbps** 的数，别当 500k 的 USB 批延迟。
    - 第三项「自动方向板能否原样透传 HLS 500k 帧」**台架做不了**（手上没有 Adapter (A)，需买板），保留在真机阶段。
 3. 真决定换板后：买 Pi 4B + Adapter (A)，按 §3 配 `uart3`、按 §4 接方向层、按 §2.3 做供电树。
 4. 交叉编译 robotd（§6）、装 ORT 1.28.0、拷策略 onnx 并改写绝对路径（§7）。
 5. 逐颗写 EEPROM（§7 时序 + 断电回读），跑 §10 自检清单；**过了 #4 方向波形与 #7 50 Hz 才接整机舵机负载**。
 
-### 12.1 台架先验结果（2026-11-09，如实标注未实跑的部分）
+### 12.1 台架先验结果（2026-11-09 两轮：先未插 → 后插上实跑）
 
-**🔴 硬件实测没跑成，且理由当场验证过**（不是「环境装不上」的托辞）：
+#### 第一轮（URT-2 未插，如实 SKIP）
 
 | 检查 | 读数 |
 |---|---|
@@ -281,17 +281,42 @@ WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正�
 | PnP Ports 类 | `USB-Enhanced-SERIAL CH343 (COM3)`，`VID_1A86&PID_55D3`，但 **`Status = Unknown`**（未连接的残留条目） |
 | 实际打开 `COM3/COM4/COM1` @500000 | 三者全 `SerialException: PermissionError(13, 拒绝访问)` |
 
-⇒ URT-2 **当前没有插在这台 PC 上**，`probe_ch343_baud.py` 的实机模式如实 `rc=2` + `SKIP: COM3 不在活动串口列表里`。**不要把这轮写成「500k 已验证」。**
+⇒ 当时 URT-2 没插，`--port COM3` 如实 `rc=2` + `SKIP`。纯软件侧：`--selftest` 20/20 PASS、CLI 入口真跑、把 `classify()` 改成「只看回显就 PASS」自检掉到 **14/20**、`pyserial loop://` 回显 500000 只是**弱证据**（缓存值不是芯片时钟）。
 
-**✅ 纯软件层真跑过的**（系统 Python 3.13 + pyserial 3.5，无需项目 venv）：
-- `python probe_ch343_baud.py --selftest` → **20/20 PASS**，rc=0。帧构造 `is` 断言复用 `probe_bus_budget.frame`/`rx_frame_len`（单一权威源）、ID10 ping 逐字节向量、分位数统计、以及 N1–N5 五组负对照。
-- `python probe_ch343_baud.py --port COM3` → `rc=2`，明确打印 SKIP 原因（CLI 入口真的跑过，不是只测内部函数）。
-- **负对照能删红**：把 `classify()` 改成「只看驱动回显就判 PASS」，自检立刻掉到 **14/20**（N1/N1b/N2b/N3/N3b 全红）。这正是防 `400000` 那类「驱动接受但静默不发」被全绿漏检的闸门。
-- `pyserial loop://` 接受 500000 且回显 500000 —— ⚠️ **弱证据**：pyserial 回显的是它自己缓存的设置值，不是从芯片量回来的时钟，不能当可用性证明。
+#### 第二轮（插上 URT-2 + 舵机 4.6 V 供电，实跑）
 
-**🔑 静态查证的新事实**（已回填 §4.2.1 / §5 / §11）：URT-2 = CH343P；WCH 官方 50 bps–6 Mbps + **`TNOW` 硬件半双工方向脚**；Linux 上 CH343 有 `cdc_acm` / `ch341` / WCH VCP 三条驱动路径（节点分别 `ttyACM*` / `ttyUSB*` / `ttyCH343USB*`）；社区实测报 `400000` 静默不发、`drain()` 提前 40–130 ms 且 RS485 方向切换会截断尾字节。
+**硬件确认**：`USB-Enhanced-SERIAL CH343 (COM3)`，`VID_1A86&PID_55D3`，**`Status = OK`**（不再是 Unknown）；`SerialPort.GetPortNames() = [COM3]`。`probe_ids.py --baud 1000000 --ids 1-20` → `found IDs: [10]`（pos=1750 / 153.8°，V=4.6，T=23 °C）；同扫描 @500000 → `found IDs: []`。
 
-**边界**：这轮**没有**测波特率精度（需示波器）、**没有**量化 USB 批延迟（需硬件）、**没有**验证自动方向板透传（需买板）；也没有改动任何现存脚本或 robotd 代码，只纯新增一支探针。台架 1 Mbps 历史数据与部署 500 kbps 口径不同，见 R11。
+**🔴 关键判决：这轮验不了 500 kbps，不是探针没跑，是舵机根本不听 500k。**
+
+| 项 | 实读 |
+|---|---|
+| `reg6` 回读（1M 下发 `ffff0a04020601e8`） | `ffff0a0300 00f2` → LEN=3, ERR=0, **DATA=0** ⇒ **reg6=0 = 1 Mbps**（出厂值，台架历史一直如此） |
+| 半双工自发自收回声（ghost ID 253） | `tx fffffd0201ff` → `rx ""` ⇒ **`self_echo=false`**；1M 真响应 `ffff0a0200f3` ≠ 发送帧 `ffff0a0201f2` ⇒ 「收到 6 字节 == 舵机应答」判据干净 |
+| 基线 | `baseline_baud=1_000_000`，`servo_configured_baud=1_000_000` |
+| 1 Mbps | **PASS** 20/20，RTT p50 **0.2532 ms** / max 0.3574 ms（给 R6 一个本项目的数，**@1 Mbps**） |
+| 115200 / 250000 / 400000 / **500000** | 全部 `replies=0/20`，`driver_echo` 各自正确，但一律 **`RATE_MISMATCH`（confounded=true）** |
+| `target_verdict` | **`INCONCLUSIVE_RATE_MISMATCH`**；`baud_accuracy = needs_scope` |
+
+**为什么必须订正**：原版把零应答一律写 `SILENT`（「芯片可能根本没发」）。在 reg6=0 的台架上，500k 零应答有**两种互斥解释**——① 舵机只认 1M、听不懂 500k 帧（已证实存在）；② CH343 在 500k 静默不发。软件层没有第三方观测者，**无法区分**，写成 ② 就是把「不可判」留成「CH343 不行」的假证据。同理 `400000` 这个已知坏值锚点在 reg6=0 时也失去区分力（与 500k 同判 RATE_MISMATCH），实机负对照改由 selftest 承担。
+
+**代码订正（同一轮完成）**：`probe_ch343_baud.py` 新增阶段 0（在舵机能应答的波特率上读 reg6 + 用 ghost ID 测回声）、`annotate()` 把零应答拆成 `RATE_MISMATCH` / 真 `SILENT`、`target_verdict()` 只在 `rate_match=true && self_echo=false` 时才认 PASS；reg6 映射 import 自 `probe_bus_budget.BAUD_OF_REG6`（`is` 断言，单一权威）。`--selftest` **30/30**（新增 N6 速率混淆 / N7 回声作废 / N8 单一权威），pytest **5/5**，两条负对照都能删红：改坏 `classify` → 自检变红；删掉 `annotate` 的混淆判据 → 自检变红。
+
+**⇒ R3 状态：仍未消**。官方规格与社区静默波特仍只是间接资料；台架现在证明的是「1M 通道通 + 判据干净」，**没有**证明 CH343 在 500k 真发帧。位宽 2 µs 依旧需要示波器。
+
+#### 消 R3 的唯一零成本路径（需一次人工断电）
+
+台架这颗 `reg6=0` 是**出厂值**，而 robotd 部署硬校验要求 `reg6=1`（500k，§7）⇒ 切成 1 是**朝部署方向对齐**，不是破坏台架：
+
+1. `python hd1910_ident.py baud --port COM3 --baud 1000000 --id 10`（默认 `--baud-index 1`，走 `_eeprom_write` 已验证时序：解锁 55=0 等 0.25 s → 写等 0.50 s → 上锁 55=1 等 0.50 s）。
+2. **人工拔掉舵机电源、等 2 s 再上电**（EEPROM 生效 + 避开 RAM shadow；`cmd_set_baud` 自己也这么要求）。
+3. `python hd1910_ident.py telem --port COM3 --baud 500000 --id 10 --seconds 1` 确认新速率有应答、回读 reg6=1。
+4. 重跑 `probe_ch343_baud.py --port COM3 --id 10 --out out/ch343_baud.json`：此时 `servo_configured_baud=500000`、`rate_match=true` ⇒ **500000 判 PASS 才真正消掉 R3 的可用性一半**；若仍零应答，那才是 CH343 静默的证据。
+5. ⚠️ 切完后**所有台架工具默认 `--baud 1000000` 都要改成 `500000`**（`probe_ids.py` / `hd1910_readonly.py` / `probe_bus_budget.py` 等）；R11 里「台架历史数据都在 1 Mbps」依旧成立（指历史）。回滚用 `--baud-index 0`，同样需断电。
+
+**🔑 静态查证的新事实**（第一轮已回填 §4.2.1 / §5 / §11）：URT-2 = CH343P；WCH 官方 50 bps–6 Mbps + **`TNOW` 硬件半双工方向脚**；Linux 上 CH343 有 `cdc_acm` / `ch341` / WCH VCP 三条驱动路径；社区实测报 `400000` 静默不发、`drain()` 提前 40–130 ms 且 RS485 方向切换会截断尾字节。
+
+**边界**：没有示波器 ⇒ 未测位宽精度；R6 的 0.2532 ms 是 **@1 Mbps** 的 RTT，不是 500k 的 USB 批延迟；没有 Adapter (A) ⇒ 自动方向板透传台架做不了；**reg6 切换本轮未执行**（需人工断电，留给用户拍板）。第一轮「未实跑」的结论到此作废，但保留在上方作为证据链。
 
 ---
 
@@ -303,7 +328,7 @@ WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正�
 - `microduck-开源复刻项目-参考价值-2026-11-09.md`、`microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md`、`microduck-HD1910-BNO085-gyro_fusion移植执行清单-2026-11-09.md`：IMU 代次绑定与 BNO08x 路径风险（§8）。
 - `microduck-HD1910-策略导出部署链-2026-11-09.md`：P1–P13（§9）。
 - `microduck-software/tools/hd1910/deploy_import_checklist.md`：B10–B23 / H3–H13 实机关卡（EEPROM 时序、HOME、电池、joint_ids、IMU 上电姿态）。
-- `microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`：**本方案 §12.1 的台架探针**（纯新增，2026-11-09）；`--selftest` 20/20 全绿、负对照能删红。帧构造 import 自同目录 `probe_bus_budget.py`（`is` 断言），不另造帧语义。
+- `microduck-software/tools/hd1910/servo_probe/probe_ch343_baud.py`：**本方案 §12.1 的台架探针**（2026-11-09 新增，同日按实跑结果订正）；`--selftest` **30/30** 全绿、pytest 5/5、两条负对照能删红。帧构造与 reg6 映射都 import 自同目录 `probe_bus_budget.py`（`is` 断言），不另造帧语义/波特率表。
 
 ### 证据清单（本轮实际查过的外部来源）
 
