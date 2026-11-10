@@ -33,6 +33,7 @@ SBC UART (J4 Pin8/10, GPIO14/15)
              └─ U8 pad6=net36, pad7=net37  →  J3 / J11  (Dynamixel 输出, 4-pin: BATT/GND/DATA+/DATA-)
 ```
 - **J3 与 J11 并联**：`pad1=GND, pad2=+BATT, pad3=net36, pad4=net37`。这是 HAT 的 Dynamixel 连接器（TTL+485 双模，README 已声明）。
+> 🔴 **订正（2026-11-10，SSOT 订正㉑ / 决策文档 §7.6⑥ kicad 双版 pad net 全表实测）——本节 §1.3 的座名归属记错、保留原文作史料**：本节把 `U8 pad6/7 → J3/J11` 记为『Dynamixel 输出 / TTL+485 双模』，**错在把 J3/J11 当成 TTL 舵机口**。双版 kicad 全表实测定案：**`J13/J14`（3P，JST EH 2.5mm）= TTL 半双工**（pin1=GND/pin2=+BATT/pin3→`TH1`100R→`D4`5V1→`R33`→`U7`SN74LVC1G126/`U6`SN74LVC1G125→`IO_14/IO_15`，`Dynamixel_dir` 自动切收发；带 100R 串阻+5.1V 齐纳保护）；**`J3/J11`（4P，JST EH 2.5mm）= RS-485 差分**（pin3/pin4→`U8`=`SIT3088E`/`GM3088ENA` pad6/7 A/B，`Dynamixel_dir` 自动 DE/RE）。⇒ **飞特 HD-1910（TTL 半双工、1M）应接 `J13/J14`，不是 `J3/J11`**；`J4 Pin8/10=GPIO14/15=UART2_M0=/dev/ttyS2`、`DE 板内自动、SBC 不出 DE GPIO` 两条结论不变。⚠️ 上板前以实物扫 ID 为准（kicad+卖家 UI 双指 J13/J14）；误接 J3/J11 = 舵机无应答。本节 U7/U8 的 pad net 原始记录仍是一手、只是『J3/J11=TTL 舵机口』的归属推断错误，勿再据此接线。
 - U7/U8 还接收 **net 45 (Dynamixel_dir = DE 方向)**。
 
 ### 1.4 DE 方向信号——HAT 内部自动，不依赖 SBC

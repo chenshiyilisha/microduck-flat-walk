@@ -24,7 +24,7 @@
 | 项 | 核实内容 | 来源 |
 |---|---|---|
 | 本体形态 | 25cm / ~780g **双足（biped）**鸭，15 自由度（腿/颈/头），2 个 IMU | 官网 + 多份媒体一致 |
-| 电池 | **可拆卸 NP-F550 相机电池，2 串 / 标称 7.2V / 满电 8.4V / 2600mAh / ~1 小时续航** | 多份一手规格页 + 官方 |
+| 电池 | **可拆卸 NP-F550 相机电池，2 串 / 标称 7.2V / 满电 8.4V / ~1 小时续航**；容量随品牌/电芯而异：官方整机口径曾标 2600mAh，🔴 **本项目采购的唯卓仕 NP-F550 小布丁实物为 2200mAh / 16.28Wh（2026-11-10 一手订正，见 SSOT）** | 多份一手规格页 + 官方；唯卓仕官方/京东规格页 |
 | 充电方式 | **换电**：电池抠下外接充；官方 **Charger Pack $39 = 双槽充电器 + 2 块备用电池** | 官网商店 + 媒体（TechMoon/Applescoop/Eesel/42号电波） |
 | 出厂策略 | **7 个**训练好的行为：walk / sit&stand / kick / grab / roller-skate / get-back-up（+ stand） | 官网 + manifest.json |
 | 官方策略清单（HF） | 仅：`alpha_walking / velstand / alpha_stand / roller / alpha_sitstand / alpha_ground_pick / roller_crouch / roulade / ball_kick_left / ball_kick_right` | `pollen-robotics/microduck-policies` `manifest.json`（obs=61 / act=14 / xl330 / 50Hz） |

@@ -61,7 +61,7 @@ _2026-11-06。用户指令「两个版本都推进」。本文把两条主控路
 ### 3.3 当前进度与下一步
 
 - ✅ 机械零改动确认 + 40-pin 兼容确认 + 1 Mbps 可行确认 + EEPROM 免写确认 + **HAT 舵机总线 UART 引脚已核**（见下）。
-- ✅ **HAT 舵机总线 UART 已闭环**：kissqy `elec_RPI_Robot_HAT` PCB 解析确认 —— 舵机 TTL 接 J4 Pin 8/10（RPi GPIO14/15 = UART），经 U7/U8 电平转换去 J3/J11（Dynamixel 输出）；**DE 方向(net45) 仅连 HAT 板内 Q1/U6/U7/U8，不连 J4** ⇒ SBC 无需提供 DE GPIO。Radxa Pin 8/10 = UART2_M0（官方 brief 确认）= `/dev/ttyS2`，与主仓 robotd 配置零差异，**插上即用**。详见 `microduck-kissqy HAT引脚分析-Radxa闭环-2026-11-06.md`。
+- ✅ **HAT 舵机总线 UART 已闭环**：kissqy `elec_RPI_Robot_HAT` PCB 解析确认 —— 舵机 TTL 接 J4 Pin 8/10（RPi GPIO14/15 = UART），经 TH1(100R)+D4(5V1)+R33→U7(`SN74LVC1G126`)/U6(`SN74LVC1G125`) 三态缓冲去 **J13/J14（3P 2.5mm，TTL 半双工，飞特 HD-1910 接这里）**；🔴 `J3/J11`（4P 2.5mm）经 `U8`=`SIT3088E`/`GM3088ENA` 是 **RS-485 差分口、空置**，旧记『U7/U8 去 J3/J11=Dynamixel 输出』已由 kicad pad net 订正（SSOT 订正㉑/决策文档 §7.6⑥）；**DE 方向(net45) 仅连 HAT 板内 Q1/U6/U7/U8，不连 J4** ⇒ SBC 无需提供 DE GPIO。Radxa Pin 8/10 = UART2_M0（官方 brief 确认）= `/dev/ttyS2`，与主仓 robotd 配置零差异，**插上即用**。详见 `microduck-kissqy HAT引脚分析-Radxa闭环-2026-11-06.md`。
 - ⏳ 下一步：① 备料：Radxa ZERO 3W 2GB + kissqy HAT + fanhao375 飞特版打印件；② 上电后 `dmesg|grep tty` 确认节点、`i2cdetect -y 3` 确认 IMU 在 I2C3、`sts_bench.py` 扫 ID×1Mbps 复验（非阻塞）。
 
 ## 4. 决策建议

@@ -1,5 +1,8 @@
 # 2026-10-27 裁决与场景纪要
 
+> 🔒 **本文是 10-27 历史快照，采购口径已被覆盖**：唯一权威表 = `../hardware/microduck-最优方案-价格硬件软件-2026-11-06.md` 顶部「采购域唯一权威判决表(SSOT)」。§1.3「台供阶段0单颗验货用」、§1.4「+限流电源+万用表」均为 10-27 旧话；**11-03 二次改判电源阶段0不买、万用表 reg62 可省**。以 SSOT 为准。
+>
+
 把当日讨论钉成可查记录。施工细节仍以各专项文档为准；本页只记**结论与出处**。
 
 相关：[软件方案](microduck-HD1910软件方案.md) · [阶段 C](microduck-HD1910阶段C软件清单.md) · [采购 §7](../hardware/microduck-采购清单.md) · [upstream 摘录核对](microduck-upstream摘录核对.md) · [XGO 对照](../reference/microduck-XGO-Duck对照.md) · [microduck-software/tools/hd1910](../../microduck-software/tools/hd1910/README.md)
