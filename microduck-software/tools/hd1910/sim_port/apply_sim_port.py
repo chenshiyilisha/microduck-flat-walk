@@ -58,7 +58,7 @@ SIM_LOOP_BLOCK = """            // A simulated body, and nothing above the trait
             if let Some(addr) = sim {
                 tracing::warn!(%addr, "--sim: the body is in MuJoCo");
                 runtime.block_on(control_loop(
-                    duck_control::sim::RemoteIo::at(addr),
+                    duck_control::sim::RemoteIo::at_powered(addr),
                     state,
                     intents,
                     params,
@@ -150,6 +150,17 @@ def content_digest(path: Path) -> str:
     return hashlib.sha256(read_text(path).encode("utf-8")).hexdigest()
 
 
+# The one line in robotd that opts the --sim body into power-on torque. Checked by content,
+# not just by the --sim marker: reverting at_powered -> at leaves every marker and the
+# sim.rs hashes intact (the library still *has* at_powered), so --check alone stays green
+# while the daemon silently regresses to a body pinned by restore() until robot.enable.
+# Derived from SIM_LOOP_BLOCK so the VCS copy and the assertion cannot drift apart.
+POWERED_WIRING = "duck_control::sim::RemoteIo::at_powered(addr),"
+REGRESSED_WIRING = "duck_control::sim::RemoteIo::at(addr),"
+
+WIRING_TARGET = "robotd/src/main.rs"
+
+
 def inspect(root: Path) -> list[str]:
     problems: list[str] = []
     for src, rel in COPIES:
@@ -167,6 +178,20 @@ def inspect(root: Path) -> list[str]:
         for edit in (e for e in EDITS if e.path == path):
             if edit.marker not in text:
                 problems.append(f"NOT APPLIED {path}: {edit.marker!r}")
+
+    # Wiring regression: the --sim branch must construct a POWERED client. A plain `at`
+    # client sends no torque on the handshake; with body_server's restore() semantics the
+    # policy would compute against a body pinned in place until robot.enable's own torque
+    # happens to cover it up — invisible to both the marker check and the library tests.
+    wiring = root / WIRING_TARGET
+    if wiring.exists():
+        wtext = read_text(wiring)
+        if POWERED_WIRING not in wtext:
+            problems.append(f"WIRING {WIRING_TARGET}: --sim must use at_powered, not at "
+                            f"(missing {POWERED_WIRING!r})")
+        if REGRESSED_WIRING in wtext:
+            problems.append(f"WIRING {WIRING_TARGET}: --sim regressed to a plain at client "
+                            f"({REGRESSED_WIRING!r})")
     return problems
 
 

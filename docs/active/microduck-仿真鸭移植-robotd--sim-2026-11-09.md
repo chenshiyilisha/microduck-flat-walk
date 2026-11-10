@@ -237,15 +237,82 @@ robotd --sim 172.26.32.1:7801 --socket /run/robotd.sock
 
 补齐后完整 drive（`vx=0.3`，5 s @20 Hz）：`policy stand 27 / walk 45`，`step_ms 0.1418–0.5018`，`hz 49.988–50.039`，`missed=0`，`joint_span 0.1–0.61 rad`，`odom x` 前进 **0.586 m**，`odom_distinct=72`，`limited_by` 48 帧为空 ⇒ **VERDICT: PASS**。
 
-### 9.5 可复跑门禁
+### 9.5 可复跑门禁（2026-11-10 重写，见 §9.6）
 
-`microduck-software/tools/hd1910/sim_stack_check.py`（在 WSL2 内运行）把上述三步（`torque/gain` → `robot.enable` → 周期 `robot.move` + `robotctl monitor --json` 采样）合成一条门禁，断言 `step_ms>0`、`missed=={0}`、`hz∈(49,51)`、`joint_span>1e-3`、`dx>0.01`、出现 `walk` 标签。`--no-torque` 是负对照模式（期望身体不动）。
+> ⚠️ 此节描述的**旧版**门禁（脚本手发 `torque/gain`、断言 `dx>0.01`）已于 2026-11-10 作废：
+> 它自己补扭矩，会把 `at_powered` 的功劳据为己有（换回裸 `at` 也 PASS），且 `dx` 符号随采样窗口
+> 抖动（同一二进制 8 s 窗口实跑 `dx=+0.94`，10 s 窗口 `dx=-0.74`）。现行门禁见 §9.6，判据改为
+> 「位移**跨度** + 关节跨 + walk + 观测鸭冻结 + torque 声明日志」，脚本**不碰** torque/gain。
 
 ```bash
-python3 /mnt/e/.../microduck-software/tools/hd1910/sim_stack_check.py --sim-host 172.26.32.1
-# 实跑：frames=32 policy={'walk': 29, 'stand': 3} step_ms max=0.1798
-#       hz=[49.968,50.016] missed=[0] joint_span=0.59500 rad odom_dx=0.2446 m
-#       VERDICT: PASS
+# 双鸭服务器（duck0 给 robotd，duck1 当无-torque 观测者）
+.venv-mjlab/Scripts/python.exe -m mjlab_microduck.sim.body_server \
+    --headless --host 0.0.0.0 --port 7801 --ducks 2
+# WSL 内：gate 只发 hello + robot.*，从不发 torque/gain
+python3 /mnt/e/.../tools/hd1910/sim_stack_check.py --sim-host 172.26.32.1 \
+    --observer-port 7802 --seconds 8
+# 独立负对照：那只没人认领、没有 torque 的鸭必须全程冻结
+python3 /mnt/e/.../tools/hd1910/sim_stack_check.py --sim-host 172.26.32.1 \
+    --observer-port 7802 --no-torque --seconds 5
 ```
 
 ⚠️ 仍然**验不了** §7 列的那些（总线时序、蓝牙/相机/NPU/ToF、EEPROM/齿隙/堵转），**不能消 R3**。仿真鸭验证的是「循环 / 策略 / 安全 / IPC / odom 全是真的」，不是硬件。
+
+### 9.6 `--sim` 上电扭矩：`at_powered` 修复与门禁三层判据（2026-11-10）
+
+**修复**：`robotd --sim` 分支从 `RemoteIo::at(addr)` 改为 `RemoteIo::at_powered(addr)`（`main.rs:1055`）。
+`at_powered` 在首次 TCP 握手后发一帧 `torque on`（并把最后已知扭矩状态记住、断线重连后重施），
+对齐真机「上电即有扭矩」；裸 `at` 是纯协议客户端、一帧 torque 都不发。动机的精确表述在
+`sim.rs:173-196` 的文档串里：`setMode` 在 `enable` 之前到达、把 bringup 推到 `Ready` 时，
+`body_server` 的 `World.step` 会每步 `restore()` 钉住 `released=false` 的身体 —— 策略在算、
+目标在写、关节/odom 全不动，且无任何报错。**这不是疏忽，是仿真协议与真机语义的差**。
+
+**`body_server.py` 语义（一手源码，判据的物理基础）**：
+- `World.step`：`if not body.released: body.restore()` —— 未被认领的鸭每步被摁回 `held` 姿态；
+- `released` 是**每只鸭**的状态（多鸭共享一个 `World` 物理、但各自独立释放），唯一能清它的帧是
+  `Body.set_torque(on=True)`（`:371-372`）；`--limp` 默认 `released=false`；
+- 推论：同一 MuJoCo 世界里让 duck0 被 `robotd` 驱动、duck1 只回 `hello/read` 不发 torque，
+  **一静一动**即可证明「是 torque 帧释放了身体」，而非物理漂移/时钟/策略。
+
+**🔴 诚实订正：整栈「能不能走路」层，`at` 与 `at_powered` 不可区分。**
+负对照实测把 `main.rs` 改回裸 `at`（重编 3.79 s）后，正常门禁**仍 PASS**：
+duck0 `joint_span=0.61 rad / odom_span=0.98 m / walk 73/76`。原因在 `main.rs:2485-2501`：
+控制循环里 `Bringup::Limp → Homing/Ready` 在 `robot.enable`（`enabled=true`）时**兜底发
+`set_torque(true)`**，把握手帧的缺失掩盖了。所以门禁**不能**靠「走没走路」来分辨两者 ——
+那样一定是恒绿的假象。真正的判据落在下面两层，均已实测改坏必红：
+
+| 层 | 正常 `at_powered` | 改坏裸 `at` | 载体 |
+|---|---|---|---|
+| **静态接线** `--check` | RC=0 | **RC=1**，2 条 WIRING 报错 | `apply_sim_port.py`（已入库）|
+| **整栈运行** harness | PASS + `simulated body torque state declared on=true` 日志行 | **FAIL**（MISSING 该行）| `gate_run.sh`（临时 harness）/ 日志行 |
+| 库行为单测 | `at_powered` 发 hello→torque→read 三帧；裸 `at` 零 torque 帧 | （库能力仍在，**故单测守不住接线**）| `sim::tests` 4 个新测试，123 passed |
+
+**🔴 门禁缺口修复（本轮找到并补上）**：`apply_sim_port.py --check` 旧版只查 6 个 marker +
+`sim.rs`/`sim_e2e.rs` 两份内容哈希，**检查不到 `main.rs` 里 `at_powered` 这一个词**（marker
+`--sim: the body is in MuJoCo` 仍在、`sim.rs` 哈希仍对）。改回裸 `at` 时 `--check` 照样 PASS
+= 假绿。现已在 `inspect()` 增加接线断言：从 `SIM_LOOP_BLOCK` 派生 `POWERED_WIRING` 常量，
+校验 `--sim` 分支必须含 `RemoteIo::at_powered(addr),` 且不含裸 `RemoteIo::at(addr),`。
+`--selftest` 往返负对照仍 PASS（strip 掉 `SIM_LOOP_BLOCK` → 断言自然红 → 重放恢复绿）。
+
+**门禁判据重构（为什么不用 `dx>0`）**：`+vx`（体坐标）命令在本栈稳态 walking 下积分到世界系
+**-x**（kp=200 与 kp=8 两种增益实测 10 s 分别 `dx=-0.73 / -0.68`），且短窗口跨「站起暂态」时
+符号会翻（8 s 窗口同二进制 `dx=+0.94`）。`odometry` 用 IMU quat 的 yaw 把 FK 步幅投到世界系
+（`odometry/src/lib.rs:104-191`），`at_powered` 根本不碰 quat 约定或速度符号 —— 这是既有现象。
+故判据用 **per-axis 位移跨度 `odom_span>0.05 m`**（问「动没动」，不问「往哪动」），净 `dx`
+保留打印但不参与判定；「改坏必红」由静态接线断言 + 握手 torque 日志行保证，不靠位移符号。
+
+**实测闭环（2026-11-10，Windows `body_server --ducks 2` + WSL `robotd --sim`）**：
+- 正常：torque 行 `FOUND on=true`；duck0 `frames=76 policy={walk:72,stand:4} step_ms max 0.3443
+  hz=[49.962,50.006] missed=[0] joint_span=0.59817 rad odom_span=1.0052 m`，duck1 观测鸭
+  `frames=183 joint_span=0 trunk_disp=0` ⇒ **PASS (RC=0)**；
+- 改坏裸 `at`：`MISSING torque` + harness 追加 FAIL ⇒ **FAIL (RC=1)**；
+- 独立负对照（无 torque 鸭）：`frames=99 joint_span=0 trunk_disp=0` ⇒ **PASS (RC=0)**；
+- `duck-control` 单测 **123 passed**；`apply_sim_port.py --check` 绿 / `--selftest` PASS /
+  改坏树 `--check` 红。
+
+**环境备忘（踩坑，均为已复现的现成坑）**：`robotd` 不能用后台任务常驻 —— `wsl.exe` 在非交互/
+后台上下文报 `Permission denied (126)`（同类见 microsoft/WSL#10190），改由 WSL 内**前台 harness**
+（`gate_run.sh`）一次性托管 robotd 全生命周期（起→等 socket→跑门禁→kill）。`wsl.exe ... bash -lc` 里
+单引号包裹的 `$VAR` 会被 Git Bash 层提前展开成空 → harness/路径一律写死、不用 shell 变量；
+`/mnt/c/...` 路径参数要带 `MSYS2_ARG_CONV_EXCL='*'` 否则被 MSYS 改写成 `D:/Program Files/.../mnt/c/...`。
+Windows 侧依赖在 `microduck-software/.venv-mjlab/`（mujoco 3.7.0），不是 `.venv`。

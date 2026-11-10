@@ -145,6 +145,11 @@ pub struct RemoteIo {
     link: Option<Link>,
     /// Reported once rather than every tick a disconnected loop runs.
     complained: bool,
+    /// Whether to assert the torque state on every fresh connection. See [`Self::at_powered`].
+    powered: bool,
+    /// The last torque state this client asked for, re-applied after a simulator restart.
+    /// `None` until someone says otherwise, in which case a powered client assumes `on`.
+    torque: Option<bool>,
 }
 
 struct Link {
@@ -160,6 +165,33 @@ impl RemoteIo {
             addr: addr.into(),
             link: None,
             complained: false,
+            powered: false,
+            torque: None,
+        }
+    }
+
+    /// The same client, but for a daemon running a **real** robot against this simulator.
+    ///
+    /// Real servos have torque from the moment the board is powered; `robotd` never sends
+    /// `torque on` at startup and only does so when a human enables a limp robot, because a
+    /// process starting must not change what the joints are doing. `body_server.py` differs:
+    /// it holds an unclaimed duck still (`World.step` calls `restore()` every physics step)
+    /// until something sends `torque on`, which clears its `released` flag. Without this,
+    /// a mode switch arriving before `robot.enable` moves `bringup` straight to `Ready` and
+    /// the policy computes against a body that is pinned in place — inference runs, joints
+    /// never move, and nothing reports an error.
+    ///
+    /// So a powered client declares torque on the first handshake, matching the hardware the
+    /// rest of the daemon was written for. It also remembers the last state it was asked for
+    /// and re-applies it after a reconnect: a daemon that issued `relax` must not have torque
+    /// silently restored just because MuJoCo restarted.
+    ///
+    /// `set_torque(on)` also resets the simulator's `ctrl` to its current `qpos`, so releasing
+    /// a duck that booted in the `SIT` keyframe cannot yank it towards the standing pose.
+    pub fn at_powered(addr: impl Into<String>) -> Self {
+        Self {
+            powered: true,
+            ..Self::at(addr)
         }
     }
 
@@ -214,6 +246,19 @@ impl RemoteIo {
                      the two is out of date, and they are in different repositories",
                     hello.protocol
                 )));
+            }
+
+            if self.powered {
+                // Not a policy decision, and not an `enable`: the real bus has torque from
+                // power-on, and everything above this trait is written for that. The simulator
+                // needs to be told once per connection, because a MuJoCo restart builds a fresh
+                // `Body` whose `released` flag is false again. `torque` remembers a `relax` that
+                // happened before the restart; without it, reconnecting would power a robot a
+                // human just told to go limp.
+                let on = self.torque.unwrap_or(true);
+                let ack: Ack = exchange(&mut link, &Request::Torque { on })?;
+                acked(ack, "the power-on torque state")?;
+                tracing::info!(on, "simulated body torque state declared");
             }
 
             tracing::info!(addr = %self.addr, protocol = PROTOCOL, "simulated body");
@@ -317,7 +362,11 @@ impl RobotIo for RemoteIo {
 
     fn set_torque(&mut self, on: bool) -> Result<()> {
         let ack: Ack = self.call(&Request::Torque { on })?;
-        acked(ack, if on { "torque on" } else { "torque off" })
+        acked(ack, if on { "torque on" } else { "torque off" })?;
+        // Only a successful write becomes the state to re-apply after a reconnect. A refused
+        // `relax` must leave the robot powered, not have the next simulator restart finish it.
+        self.torque = Some(on);
+        Ok(())
     }
 
     fn slow_sensors(&mut self) -> Result<SlowSensors> {
@@ -509,5 +558,77 @@ mod tests {
 
         let heard = sim.join().expect("the simulator thread");
         assert_eq!(heard.iter().filter(|l| l.contains("hello")).count(), 2);
+    }
+
+    /// Why this exists: `robotd` never sends `torque on` at startup (a process starting must
+    /// not change what the joints are doing), but `body_server.py` pins an unclaimed duck in
+    /// place until it sees that frame. A `setMode` before `enable` moves `bringup` to `Ready`
+    /// without ever powering the joints, so the policy computes against a frozen body.
+    #[test]
+    fn a_powered_client_declares_torque_on_right_after_the_handshake() {
+        let (addr, sim) = simulator(vec![vec![HELLO, OK, SENSORS]]);
+        let mut io = RemoteIo::at_powered(addr);
+        io.read().expect("a sensor frame from a released body");
+
+        let heard = sim.join().expect("the simulator thread");
+        assert_eq!(heard.len(), 3, "{heard:?}");
+        assert!(heard[0].contains(r#""op":"hello""#), "{heard:?}");
+        assert!(heard[1].contains(r#""op":"torque""#), "{heard:?}");
+        assert!(heard[1].contains(r#""on":true"#), "{heard:?}");
+        assert!(heard[2].contains(r#""op":"read""#), "{heard:?}");
+    }
+
+    /// Negative control for the switch: the plain client used by the protocol tests and by
+    /// `sim_e2e.rs` must stay a pure protocol client. If this ever sees a torque frame,
+    /// `at_powered` is not what is doing the work and the test above proves nothing.
+    #[test]
+    fn an_unpowered_client_sends_no_torque_frame_at_all() {
+        let (addr, sim) = simulator(vec![vec![HELLO, SENSORS]]);
+        let mut io = RemoteIo::at(addr);
+        io.read().expect("a sensor frame");
+
+        let heard = sim.join().expect("the simulator thread");
+        assert_eq!(heard.len(), 2, "{heard:?}");
+        assert!(
+            !heard.iter().any(|l| l.contains("torque")),
+            "a plain client changed the torque state: {heard:?}"
+        );
+    }
+
+    /// A `relax` must survive a MuJoCo restart. Re-applying `on` blindly would silently power
+    /// a robot a human just told to go limp — the exact safety invariant `robotd` documents.
+    #[test]
+    fn a_relax_is_reapplied_after_the_simulator_restarts() {
+        // Connection 1: hello, boot torque, the relax, then the simulator hangs up on a read.
+        // Connection 2: hello, the *remembered* torque state, then the sensor frame.
+        let (addr, sim) = simulator(vec![
+            vec![HELLO, OK, OK],
+            vec![HELLO, OK, SENSORS],
+        ]);
+        let mut io = RemoteIo::at_powered(addr);
+
+        io.set_torque(false).expect("relax acknowledged");
+        io.read().expect_err("the simulator hung up");
+        io.read().expect("reconnected on the next call");
+
+        let heard = sim.join().expect("the simulator thread");
+        let torques: Vec<&String> = heard.iter().filter(|l| l.contains("torque")).collect();
+        assert_eq!(torques.len(), 3, "{heard:?}");
+        assert!(torques[0].contains(r#""on":true"#), "{torques:?}");
+        assert!(torques[1].contains(r#""on":false"#), "{torques:?}");
+        assert!(
+            torques[2].contains(r#""on":false"#),
+            "the restart silently restored torque: {torques:?}"
+        );
+    }
+
+    /// A simulator that refuses the declaration is a failed connection, not a robot that is
+    /// quietly believed to be released.
+    #[test]
+    fn a_refused_power_on_torque_is_an_error() {
+        let (addr, _sim) = simulator(vec![vec![HELLO, r#"{"error":"torque unavailable"}"#]]);
+        let mut io = RemoteIo::at_powered(addr);
+        let error = io.read().expect_err("a refused declaration is fatal to the connection");
+        assert!(error.to_string().contains("torque unavailable"), "{error}");
     }
 }
