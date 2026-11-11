@@ -36,7 +36,9 @@
 
 ### 1.3 负对照
 
-向临时根注入 `INCONCLUSIVE_GHOST_MARKER` ⇒ `scan_doc_marks()` 检到、`validate()` 判红；去掉该根 ⇒ 恢复绿；白名单不得含 `.workbuddy/memory` / `.upstream`；`--check --ship-gate` 仍 rc=1（`6 UNVERIFIED + 1 CLOSED`）。B5 主文档 §8 与 `deploy_chain_contract.json#scope.known_gaps` 的过时陈述已按「保留史料 + 盖订正指针」处理。
+向临时根注入「带 `INCONCLUSIVE_` 前缀的 GHOST 样本」（刻意不写出完整合法标记名）⇒ `scan_doc_marks()` 检到、`validate()` 判红；去掉该根 ⇒ 恢复绿；白名单不得含 `.workbuddy/memory` / `.upstream`；`--check --ship-gate` 仍 rc=1（`6 UNVERIFIED + 1 CLOSED`）。B5 主文档 §8 与 `deploy_chain_contract.json#scope.known_gaps` 的过时陈述已按「保留史料 + 盖订正指针」处理。
+
+> 🔴 **2026-11-11 CI 失败复盘（Pass113）**：本段最初把负对照样本的完整合法标记名写进了规范文档，`6db969e` 推送后 CI run `42966441140` 在 step 12「Meta guards」的 `check_closure.py --selftest` 判红（docs=8 / contract=7），job 17 秒失败。**护栏是对的，错的是文档**：`scan_doc_marks()` 按设计把 `docs/**/*.md` 里任何 `INCONCLUSIVE_*` 都当作待登记悬案。⇒ 规范文档描述负对照时只写前缀、不写完整标记；**任何文档改动后必须重跑 `run_all_gates.py --check` 与 pytest 再提交**，不能只在写文档前跑一次。
 
 ## 2. P0-2：轮滑策略契约（离线结构，不宣布能跑）
 
