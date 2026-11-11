@@ -141,7 +141,7 @@ _主线仍按上一轮建议推进 B5：路① 中控链几乎零工具覆盖，
 - `live_hardware_accessed=false`；本轮**不证明** R17 V167 中控在本项目整机跑通、不证明 `p8head_2999` 能被 V167 加载、不证明人人 ¥80 IMU 上机认板、**不消 `INCONCLUSIVE_RATE_MISMATCH`（R3）**、`INCONCLUSIVE_LIVE_IDENTIFY` 与 `INCONCLUSIVE_DIMENSION` 仍 `UNVERIFIED`。
 - kissqy R1 镜像 sha / V167 中控 ZIP sha / control.43 `BUILD.json` **未本地实算**（B2 已如实标 `UPSTREAM_PUBLISHED` / `UNOBTAINABLE` / `UNPINNED`）。
 - 官网一键烧录软件的 ZIP sha 与历史版本校验文件**未下载实算**，只作机制借鉴，不进 B2 四元组。
-- `line_labels.json` 仍有 **20 个 `--selftest` 工具为 `REPORT_ONLY`**（B4 待办，未逐一定线）。
+- ~~`line_labels.json` 仍有 **20 个 `--selftest` 工具为 `REPORT_ONLY`**（B4 待办，未逐一定线）~~ → 📌 **2026-11-11 B4 订正**：已逐条登记、coverage gap 实算为 0；当前状态由 `check_contract_status.py` 从 `line_labels.json` + `tools/` 派生，不再写死计数。详见 `microduck-轮滑策略契约与C1C3B3护栏落地-2026-11-11.md` §7/§8。（历史条目，保留作史料）
 - A1/A2/A3 + B2/B8/B1 + B5 **尚未接入** `.github/workflows/deploy-gate.yml`（B3 待办）；该 workflow 自述 **POST-PUSH ADVISORY、非 merge gate**，不能把绿勾当 merge 门禁。（**历史条目，保留作史料**）
   - 📌 **2026-11-11 B3 订正**：已接入。lean CI（Python 3.12 + `requirements.txt`，无 torch/mjlab/mujoco）只跑 `ci_meta_targets.py` 从 `line_labels.json` 派生的 stdlib-only meta guards 逐条 `--selftest`，外加 `run_all_gates.py --selftest`（只跑注入 fixture 的编排器自检）；**`run_all_gates.py --check` 不接 CI**，它发现的 40+ 工具里有十个在 CLI 期 import 重依赖，接进去只会得到一片诚实的假红。重依赖全量真跑仍留本地 `.venv-mjlab`。边界不变：**POST-PUSH ADVISORY、非 merge gate**，绿勾不等于签收、`UNVERIFIED != PASS`。详见 `microduck-轮滑策略契约与C1C3B3护栏落地-2026-11-11.md`。
 - 金属结构件「共 7 个」按 BOM 备注推断（颈部×2 + 躯干底座×1 + 上腿加固板×2 + 轴承滚轮×2），**非卖家确认**，到货逐件核对。

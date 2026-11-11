@@ -72,7 +72,8 @@
   },
   "non_line_labels": {
     "BENCH": "台架通用（单舵机 + URT-2），两线都可跑，但不作整机签收依据",
-    "META_GUARD": "本轮新增的护栏工具，不属于任何硬件线"
+    "META_GUARD": "本轮新增的护栏工具，不属于任何硬件线；且必须是 stdlib-only（lean CI 名单由 ci_meta_targets.py 按本标签派生）",
+    "TRAINING": "训练 / 仿真 / 策略产物评测工具（含 ONNX 数值闸门），不属于任何硬件线；允许重依赖，故刻意不标 META_GUARD 以免被派生成 lean CI 门禁；可自检但不得作整机签收依据"
   },
   "tools": [
     {
@@ -230,9 +231,143 @@
       "line": "META_GUARD",
       "risk_tokens": [],
       "evidence": "B3 新增：从本文件派生 lean CI 可跑的 stdlib-only 护栏名单（AST 依赖探测 + 负对照），排除 run_all_gates.py --check，不属任何硬件线"
+    },
+    {
+      "path": "tools/gate_p3_yaw.py",
+      "line": "TRAINING",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：P3 偏航评测闸门，判据来自 eval JSON 与 hd1910_kp8 / kp_fw 训练 plant 指纹；不读 robotd 部署档，不作整机签收"
+    },
+    {
+      "path": "tools/hd1910/assert_ci_verdict.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：断言 conductor --json 是真跑结果而非 silent skip；stdlib-only（本地模块 deploy_stages），系统解释器 --selftest rc=0，随 B3 派生名单进 lean CI"
+    },
+    {
+      "path": "tools/hd1910/bundle_bindings.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：部署 bundle 内部绑定校验（Pass21 / R5），plant id 与 kp_fw 从 plant_spec.py 单一权威派生；stdlib-only，系统解释器 --selftest rc=0"
+    },
+    {
+      "path": "tools/hd1910/check_backlash_task.py",
+      "line": "TRAINING",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：backlash 训练任务契约（hd1910 plant + 2° 游隙），依赖 mjlab/torch 属重依赖；源码 XL330 只出现在 argparse help 的上游默认值，不是 B 代部署档判据"
+    },
+    {
+      "path": "tools/hd1910/check_control_arm.py",
+      "line": "TRAINING",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：reward-free 控制臂训练产物校验，依赖 PyYAML，不读任何硬件线部署档"
+    },
+    {
+      "path": "tools/hd1910/check_imu_bridge.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：imu_to_dxl v2（ID 200）在 USB-TTL 台架上的验收脚本；--baud 默认 1_000_000 是共享速率、非线别判据；依赖 pyserial，不作整机签收"
+    },
+    {
+      "path": "tools/hd1910/diff_run_recipes.py",
+      "line": "TRAINING",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：两次训练 run 的 recipe 逐叶对比，依赖 PyYAML，属训练线"
+    },
+    {
+      "path": "tools/hd1910/policy_numeric_gate.py",
+      "line": "TRAINING",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：ONNX 动作幅值数值闸门（借 esp-duck 结构、换成 rad 量），依赖 numpy/onnxruntime；源码 20:34 是 obs 的 joint_vel 切片，不是官方关节 ID 20-34，按裸子串反噬准则不得据此判线"
+    },
+    {
+      "path": "tools/hd1910/server_pack/verify_pack.py",
+      "line": "TRAINING",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：训练迁移包打包前校验，纯 stdlib 但属训练打包线，刻意不进 lean CI 护栏名单"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/imu_jitter_bench.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：H6 IMU 落脚乱跳台架实测；DuckBuddy 2S 版只是描述 IMU 板来源，全文无 reg6 / 500k 部署常量，不作 B 代判据；依赖 numpy/scipy/pyserial"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/probe_bandwidth.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：mode 0 与 mode 4 正弦跟踪带宽台架 A/B，无 reg6 / 500k 线别判据"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/probe_ch343_baud.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["TARGET_BAUD = 500_000", "robotd 部署"],
+      "evidence": "B4 补登记：R3 台架探针明写『台架 reg6=0(1M)、部署目标 500 kbps』，reg6→速率映射来自 probe_bus_budget.py（B 代 500k 部署档）；与 probe_bus_budget / hd1910_ident 同线，不得给 L1 签收"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/probe_mode_ab.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：mode 0 vs 4 阶跃响应台架 A/B，依赖本地 hd1910_ident / hd1910_readonly，两线都可跑、不作签收"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/probe_speed_scale.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：速度寄存器单位标定；XL330 0.229 rpm/count 是被比较的官方标度、不是 B 代部署档常量，按裸子串不匹配准则不判 L2_BGEN"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/probe_sync_read.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：fast_sync_read 台架判定，--baud 默认 1000000 是共享速率而非线别判据，不作整机签收"
+    },
+    {
+      "path": "tools/hd1910/sts_bench.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：Stage-0 台架 G0 闸门；kp_fw 目标虽取 hd1910_kp8 部署档，但只判台架寄存器读数，两线都可跑、不作签收"
+    },
+    {
+      "path": "tools/hd1910/summarize_heading_ab.py",
+      "line": "TRAINING",
+      "risk_tokens": [],
+      "evidence": "B4 补登记：heading A/B 在配对 checkpoint 上的选点判决，plant_fingerprint hd1910_kp8 属训练 plant"
+    },
+    {
+      "path": "tools/hd1910/verify_imu_chain.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["DuckBuddy-main"],
+      "evidence": "B4 补登记：obs 前六维链路证明的权威源是 .upstream/DuckBuddy-main（B 代 robotd）；与 sim_port/apply_sim_port.py、sim_e2e_check.py 同线，不得给 L1 签收；依赖 mjlab/numpy/scipy"
+    },
+    {
+      "path": "tools/hd1910/verify_policy_contract.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["DuckBuddy-main"],
+      "evidence": "B4 补登记：策略契约两个独立来源之一为 .upstream/DuckBuddy-main（B 代 robotd policy.rs）；依赖 numpy/onnxruntime/tomli，不得给 L1 签收"
+    },
+    {
+      "path": "tools/hd1910/verify_policy_inference.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["B-gen robotd", "check_width"],
+      "evidence": "B4 补登记：源码自述输入名 obs 由 B 代 robotd 硬编码、并引用 policy.rs 的 check_width(inputs[-1]==61)；与 verify_policy_bundle.py 同线；依赖 numpy/onnxruntime，CI 已有独立 step 跑其 --selftest，故不重复列入 META_GUARD 派生名单"
+    },
+    {
+      "path": "tools/hd1910/check_contract_status.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "P2 新增：从 line_labels.json + tools/ + deploy-gate.yml 实算派生契约状态（coverage gap / CI 护栏名单 / meta step），拒绝任何写死的状态快照；stdlib-only，带删标签/删 step/写回旧数字的负对照，不属任何硬件线"
+    },
+    {
+      "path": "tools/hd1910/board_capture.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B7 新增：上机当天只读采集骨架，采集项全从 board_acceptance_contract.json#checks 派生、五项必闭合从 deploy_chain_contract.json#still_owed 派生；从不执行命令/碰串口、live_hardware_accessed=false、绝不判 PASS；负对照含拔 IMU 与伪造 PASS；stdlib-only"
     }
   ],
   "known_gaps": [
+    "B4 已逐条定线；当前未登记数由 check_contract_status.py 从本文件 + tools/ 实算派生，不在本文件写死计数。policy.unlabelled 仍为 REPORT_ONLY：以后新增 --selftest 工具只报告、不自动判红，需靠 CI/本地门禁复核",
+    "BENCH / META_GUARD / TRAINING 属于非硬件线，assert_for_line 跨线自检返回 *_OK_NOT_SIGNOFF 而不抛 LineMismatch；调用方必须读返回值前缀，本契约不替调用方做签收决策",
     "未登记工具以 REPORT_ONLY 输出覆盖差集，不假装全覆盖（借 mdlab CI 显式列 Windows 已知 gap）",
     "risk_tokens 是正向断言，只防标签腐化；不从源码反推线别（docstring 里出现 DuckBuddy 作为负对照说明不得误判）",
     "本契约不验证硬件、不消 INCONCLUSIVE_RATE_MISMATCH、不作实机签收"

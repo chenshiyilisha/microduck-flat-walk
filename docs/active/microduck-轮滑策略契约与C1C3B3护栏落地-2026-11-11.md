@@ -109,18 +109,20 @@
 - `live_hardware_accessed=false`。本轮**不证明**轮滑版能走、不证明 R17 V167 中控可加载/切换 roller 策略、不证明 4 个 kissqy ONNX 文件已到手或 sha256 已实算（`Microduck-Robotd-FT6-R17.tar.gz` 未下载）、不证明 `action_scale` 真值、不消 `INCONCLUSIVE_RATE_MISMATCH`（R3），5 个原有 `INCONCLUSIVE_*` 仍 `UNVERIFIED`。
 - 离线门禁全绿**不替代上板验收**（官方 policy-manifest / kissqy / fanhao / luwu 四源共识）。
 - `check_closure.py` 仍是**显式白名单**扫描，不是全仓 rglob；新交付目录必须先登记进 `SCAN_ROOTS`，否则仍可能绕过。
-- `line_labels.json` 仍有 **20 个 `--selftest` 工具为 `REPORT_ONLY`**（B4 待办，名单以 `--check --json` 的 `coverage_gap.unlabelled` 为单一权威）。
-- `deploy_chain_contract.json#scope.known_gaps` 中「20 个 REPORT_ONLY」等数字仍是文字快照；本轮只订正了「尚未接入 CI」那条并把 `lean_ci_dependencies` 改成派生，其余留 P2。
+- ~~`line_labels.json` 仍有 **20 个 `--selftest` 工具为 `REPORT_ONLY`**（B4 待办）~~ → **B4 已闭合（Pass113）**：新增 `TRAINING` 非硬件线标签并逐条登记，coverage gap 由 `line_contract.unlabelled_tools()` 实算为 0；`policy.unlabelled` 仍保留 `REPORT_ONLY` 语义（新工具只报告、不自动判红）。
+- ~~`deploy_chain_contract.json#scope.known_gaps` 中「20 个 REPORT_ONLY」等数字仍是文字快照，其余留 P2~~ → **P2 已闭合（Pass113）**：新增 `check_contract_status.py`，从 `line_labels.json` + `tools/` + `deploy-gate.yml` 实算派生；两处 `known_gaps` 改为引用派生报告并禁止写死计数快照，负对照覆盖「删标签 / 删 CI step / 写回旧数字」。
 - 打印包 `10-` §4 的 roller 表述已加订正指针（目录级证据），但装配/打印件数口径不变。
 
 ## 8. 下一批（本轮未做）
 
-| 项 | 内容 |
-|---|---|
-| B7 | 上机当天采集脚本骨架：15 关节 `identify` / `control.43` 回读 / 手柄 mapping / `p8head_2999` 加载 + 5GHz Wi-Fi；带负对照（拔 IMU 必红） |
-| B4 | 补 20 个 `REPORT_ONLY` 线别标签，令覆盖差集归零 |
-| B6 | 实测 12 个文件含 `L8CX`，其中 `docs/active/microduck-阶段3-自动跟随.md` 与 `docs/archive/microduck-研究报告.md` 完全未盖 L5CX / 作废指针 |
-| P2 | 把 4 份契约里的 `known_gaps` 硬编码快照全部改成从 `line_labels.json` / workflow / 契约实算派生 |
+> 🔴 **2026-11-11 Pass113 订正**：下表 B4 / B6 / P2 已在后续一轮落地，B7 同期进行；本表保留为当时待办史料。落地证据：`tests/test_line_labels_coverage.py`、`tests/test_tof_pointers.py`、`tools/hd1910/check_contract_status.py`。
+
+| 项 | 内容 | 状态（Pass113） |
+|---|---|---|
+| B7 | 上机当天采集脚本骨架：15 关节 `identify` / `control.43` 回读 / 手柄 mapping / `p8head_2999` 加载 + 5GHz Wi-Fi；带负对照（拔 IMU 必红） | 进行中 |
+| B4 | 补 20 个 `REPORT_ONLY` 线别标签，令覆盖差集归零 | ✅ 已完成（实算 gap = 0，新增 `TRAINING` 非硬件线） |
+| B6 | 实测 12 个文件含 `L8CX`，其中 2 份完全未盖改判指针 | ✅ 已完成（12/12 有指针 + 防回归测试） |
+| P2 | 把契约里的 `known_gaps` 硬编码快照改成实算派生 | ✅ 已完成（派生工具 + 写快照即判红） |
 
 **不做**：全套自写镜像/固件（上轮已判「借机制不自写全套」）；训练线 #76 多 seed sweep（用户 11-08「p3暂缓」、约 30 GPU 小时）；把 `UNVERIFIED` 改绿；把 CI 绿勾当 merge gate（GitHub 官方语义：required checks 只对 PR 生效、被 skip 的 job 报 Success）。
 

@@ -146,6 +146,16 @@ def labelled(data: dict, rel: str) -> dict | None:
     return None
 
 
+def non_signoff_lines(data: dict) -> set[str]:
+    """Labels that may self-test but may never sign off the shipped robot.
+
+    Owned by line_labels.json#non_line_labels (B4: TRAINING was added there).
+    Keeping this set derived (instead of a second hardcoded tuple) means a new
+    non-hardware-line label cannot silently escape the refusal rule.
+    """
+    return set((data.get("non_line_labels") or {}).keys())
+
+
 def assert_for_line(data: dict, rel: str, line: str, enforce: bool = True) -> str:
     """Refuse cross-line use. Returns a verdict string; raises on mismatch.
 
@@ -164,7 +174,7 @@ def assert_for_line(data: dict, rel: str, line: str, enforce: bool = True) -> st
         return "WOULD_ALLOW:" + msg
 
     own = t.get("line", "")
-    mismatch = (line == cur and own in refused) or (line != own and own not in ("BENCH", "META_GUARD"))
+    mismatch = (line == cur and own in refused) or (line != own and own not in non_signoff_lines(data))
     if mismatch:
         msg = ("LINE MISMATCH: %s is labelled %s, asked to serve %s. "
                "evidence=%s risk_tokens=%s" % (rel, own, line, t.get("evidence", ""), t.get("risk_tokens") or []))
@@ -175,6 +185,8 @@ def assert_for_line(data: dict, rel: str, line: str, enforce: bool = True) -> st
         return "BENCH_OK_NOT_SIGNOFF:%s" % rel
     if own == "META_GUARD":
         return "META_GUARD_OK:%s" % rel
+    if own == "TRAINING":
+        return "TRAINING_OK_NOT_SIGNOFF:%s" % rel
     return "LINE_OK:%s on %s" % (rel, own)
 
 
@@ -256,7 +268,34 @@ def selftest() -> int:
     bad["policy"]["current_line"] = "NOT_A_LINE"
     ck("负对照：current_line 写错必红", any("current_line" in x for x in validate(bad, with_sources=False)))
 
-    # 3) scope: the guard itself is not hardware evidence
+    # 3) B4: the coverage gap is closed, and TRAINING may never sign off L1
+    gap = unlabelled_tools(data, SOFTWARE / "tools")
+    ck("B4：所有 --selftest 工具都已登记（coverage gap = 0）", not gap,
+       ", ".join(gap[:4]))
+    ck("B4：TRAINING 非硬件线标签已定义",
+       "TRAINING" in (data.get("non_line_labels") or {}))
+    train = next((t["path"] for t in data["tools"] if t.get("line") == "TRAINING"), "")
+    ck("B4：存在 TRAINING 工具", bool(train))
+    # Non-hardware lines (BENCH / META_GUARD / TRAINING) are allowed to
+    # self-test, but the verdict must never look like LINE_OK. This is the
+    # pre-existing contract: callers must read the returned prefix.
+    v = assert_for_line(data, train, "L1_RADXA_MIRROR")
+    ck("B4：TRAINING 工具查 L1 只返回 NOT_SIGNOFF（绝不 LINE_OK）",
+       v.startswith("TRAINING_OK_NOT_SIGNOFF") and not v.startswith("LINE_OK"), v)
+    ck("B4：TRAINING 工具自线自检明确 NOT_SIGNOFF",
+       assert_for_line(data, train, "TRAINING").startswith("TRAINING_OK_NOT_SIGNOFF"))
+    relabel = copy.deepcopy(data)
+    for t in relabel["tools"]:
+        if t["path"] == train:
+            t["line"] = "L1_RADXA_MIRROR"
+    ck("负对照：把 TRAINING 工具误标成 L1 就会变成 LINE_OK（证明上条不是空断言）",
+       assert_for_line(relabel, train, "L1_RADXA_MIRROR").startswith("LINE_OK"))
+    bad = copy.deepcopy(data)
+    bad["non_line_labels"].pop("TRAINING", None)
+    ck("负对照：删掉 TRAINING 定义必红",
+       any("unknown line label" in x for x in validate(bad, with_sources=False)))
+
+    # 4) scope: the guard itself is not hardware evidence
     ck("契约声明不作实机签收", any("不作实机签收" in x for x in data.get("known_gaps") or []))
 
     for name, ok, note in checks:

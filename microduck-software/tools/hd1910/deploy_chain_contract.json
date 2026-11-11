@@ -366,8 +366,8 @@
     "known_gaps": [
       "L1 四项上机必闭合（15 关节 identify / p8head_2999 加载 / control.43 / 手柄 mapping）+ 5GHz Wi-Fi 全部未做",
       "kissqy R1 镜像 sha、V167 中控 ZIP sha、control.43 BUILD.json 均未本地实算（B2 已如实标 UPSTREAM_PUBLISHED / UNOBTAINABLE / UNPINNED）",
-      "line_labels.json 仍有 20 个 --selftest 工具为 REPORT_ONLY，未逐一定线",
-      "B3 已把 stdlib-only meta guards 接入 .github/workflows/deploy-gate.yml（名单由 ci_meta_targets.py 从 line_labels.json 派生，计数不写进本契约）；run_all_gates.py --check 因依赖 torch/mjlab/mujoco 仍只留本地 .venv-mjlab 真跑；该 workflow 自述 POST-PUSH ADVISORY 非 merge gate，绿勾不等于签收",
+      "未登记 --selftest 工具数与 lean CI 接入状态不写死：由 check_contract_status.py 从 line_labels.json + tools/ + .github/workflows/deploy-gate.yml 实算派生（--check --json 的 derived 段为唯一权威）；B4 已逐条定线，该数字随工具增删变化，任何写进本契约的计数快照都会被判红",
+      "CI 护栏名单与数量由 check_contract_status.py 从 workflow 与 ci_meta_targets.py 实算派生，本契约不写状态快照；run_all_gates.py --check 因依赖 torch/mjlab/mujoco 仍只留本地 .venv-mjlab 真跑；workflow 自述 POST-PUSH ADVISORY 非 merge gate，绿勾不等于签收（这是边界声明，不是被测状态）",
       "官网一键烧录软件的 ZIP sha 与历史版本校验文件未下载实算；只作机制借鉴，不进 B2 四元组"
     ]
   }

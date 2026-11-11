@@ -36,8 +36,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONTRACT = HERE / "deploy_chain_contract.json"
 DEFAULT_LABELS = HERE / "line_labels.json"
-KNOWN_LINES = {"L1_RADXA_MIRROR", "L2_BGEN", "L3_SELFWRITTEN_SCS",
-               "BENCH", "META_GUARD"}
+def known_lines(labels: dict) -> set[str]:
+    """Valid chain lines come from ONE owner: line_labels.json.
+
+    B4 added the TRAINING non-hardware-line label. A second hardcoded tuple
+    here would have drifted the moment the label set changed, so derive it.
+    """
+    return (set((labels.get("lines") or {}).keys())
+            | set((labels.get("non_line_labels") or {}).keys()))
 
 
 class LineMismatch(RuntimeError):
@@ -113,10 +119,11 @@ def validate(data: dict, labels: dict) -> list[str]:
         if not s.get("entry_points") or not s.get("model_management"):
             p.append("signoff chain must state entry_points and model_management")
 
+    allow = known_lines(labels)
     for c in chains:
         if not c.get("evidence"):
             p.append("chain %s has no evidence" % c.get("id"))
-        if c.get("line") not in KNOWN_LINES:
+        if c.get("line") not in allow:
             p.append("chain %s has an unknown line %r" % (c.get("id"), c.get("line")))
         if c.get("status") != "CURRENT_SIGNOFF" and c.get("line") in refused:
             if not c.get("refusal_reason"):
@@ -268,6 +275,12 @@ def selftest(data: dict, labels: dict) -> int:
     bad_labels["policy"]["current_line"] = "L2_BGEN"
     ck("负对照：line_labels 的 current_line 被改坏必红",
        bool(validate(data, bad_labels)))
+    ck("B4：合法线集合从 line_labels 派生（含 TRAINING）",
+       "TRAINING" in known_lines(labels) and "L1_RADXA_MIRROR" in known_lines(labels))
+    drop = copy.deepcopy(labels)
+    drop["lines"].pop("L2_BGEN", None)
+    ck("负对照：从标签里删掉 L2_BGEN，引用它的链必红（不再有第二份硬编码清单）",
+       any("unknown line" in x for x in validate(data, drop)))
 
     # CLI 真跑（项目里踩过「只测内部函数不测 CLI」的坑）
     script = str(Path(__file__).resolve())

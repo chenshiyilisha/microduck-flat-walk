@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -96,7 +97,14 @@ def test_cli_selftest_and_check_really_run():
     selftest = subprocess.run([sys.executable, str(HERE / "line_contract.py"), "--selftest"],
                               cwd=str(ROOT), capture_output=True, text=True)
     assert selftest.returncode == 0, selftest.stdout + selftest.stderr
-    assert "16/16 passed" in selftest.stdout
+    # Do not hardcode the count: B4 adds new self-checks, so the number grows.
+    # Assert the *shape* (a N/N summary, ran >= 1, no failed) instead of a
+    # stale snapshot. Search the whole stdout: the summary is not the last
+    # line (a "scope:" footer follows it).
+    sums = re.findall(r"(\d+)/(\d+) passed", selftest.stdout)
+    assert sums and all(a == b for a, b in sums) and int(sums[-1][0]) >= 1, (
+        "selftest must report an all-passed N/N summary: %r" % selftest.stdout[-200:])
+    assert "FAIL" not in selftest.stdout.upper(), selftest.stdout[-200:]
 
     check = subprocess.run([sys.executable, str(HERE / "line_contract.py"), "--check", "--json"],
                            cwd=str(ROOT), capture_output=True, text=True)
