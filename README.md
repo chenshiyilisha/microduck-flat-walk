@@ -110,7 +110,7 @@ StandUp（可选）：`microduck-software/tools/hd1910/smoke_standup.sh` → `ex
 
 ## 4. 明确不做
 
-1. 不用陆吾 `1910_m6.json`（`actuator: sts3215`）训练  
+1. 不用陆吾 `1910_m6.json` 训练〔📌 2026-11-11 订正：旧理由写「`actuator: sts3215` 是误标」**属误判**——`sts3215` 是 BAM 注册表里 Feetech 唯一合法键；该文件真正问题是 `max_velocity=100` 覆盖了官方 ≈5.22 rad/s 内部限速。结论「不作训练主植物」仍成立（用台架 m5 / 目标飞特官方 m6），**只订正理由**。现行权威口径见 `microduck-software/tools/hd1910/plant_spec.py:89-93` 与 `docs/active/microduck-HD1910软件方案.md` 顶部进度表；深挖见 `docs/active/microduck-陆吾XGO-Duck成熟产品深挖-2026-11-11.md` §5〕  
 2. 不把 XL330 `walk_std004_*` 部署到 HD1910  
 3. 不自写飞特 robotd  
 4. 正式训练不走 `microduck-software/repo`（mjbatch 脚手架）

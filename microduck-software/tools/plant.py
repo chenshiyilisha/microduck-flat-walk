@@ -51,8 +51,13 @@ FLOOR_FRICTION = (1.0, 0.005, 0.0001)  # the value the upstream scene carries
 #
 # Source: JoyandAI/microduck_rl -> hd1910_calibration/params/ (bench identification on a real
 # HD1910-C001: torque/current sweep for kt with r^2 = 0.99, pendulum swing for armature and
-# damping, command-step for the delay). Do NOT use the Luwu 1910_m6.json numbers: that file is
-# an STS3215 rename (`"actuator":"sts3215"`, max_velocity 100), not an HD1910.
+# damping, command-step for the delay). Do NOT use the Luwu 1910_m6.json numbers.
+# 📌 2026-11-11 订正：上面这句的旧措辞曾写「that file is an STS3215 rename, not an HD1910」，
+#    其中「actuator=sts3215 是误标」属 2026-10-29 已纠正的**误判**：BAM bam/actuators.py
+#    注册表里 Feetech 唯一合法键就是 "sts3215"（"hd1910" 是本仓自己注册的）。该文件真正的
+#    问题是 max_velocity=100 覆盖了官方 ≈5.22 rad/s 内部限速。现行权威口径见
+#    tools/hd1910/plant_spec.py:89-93；「不用陆吾 m6 作训练主植物」的结论不变。
+#    (数值/训练行为一律未改；仅订正这句过时注释。)
 XML_ARM = 0.001800  # armature in the MJCF this repo ships
 XML_FRIC = 0.004800  # joint frictionloss in the same MJCF, one symmetric scalar
 HD1910 = dict(
