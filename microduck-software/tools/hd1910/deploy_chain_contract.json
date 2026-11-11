@@ -1,0 +1,374 @@
+{
+  "contract": "deploy_chain_contract",
+  "schema": 1,
+  "date": "2026-11-11",
+  "title": "路① 中控链 / B 代 publish 链 / 官方 daemon 链 的线别单一主人",
+  "authority": {
+    "statement": "整机软件线部署链 = R17→V167 中控，非 uv run publish，非 robotctl policy load",
+    "source": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 行22 订正⑬（2026-11-10 用户拍板，覆盖 ⑫ 的软件线待拍板）",
+    "single_source_of_line": "line_labels.json#policy.current_line",
+    "single_source_of_refusal": "line_labels.json#policy.refuse_for_signoff",
+    "note": "本契约不复制 current_line / refuse_for_signoff 常量；校验器运行时从 line_labels.json 读取并断言一致。借 microai-lab/microduck-studio AGENTS.md:3-12,38-43「不复制兄弟仓职责、不是第二份真相」。"
+  },
+  "rule": "离线结构校验 ≠ 上板验收；CURRENT_SIGNOFF 链的四项上机必闭合未完成 ⇒ ship_verdict 恒 NOT_SHIPPABLE。SUPERSEDED 不等于删除史料，只等于不得作为下单/部署依据。",
+  "chains": [
+    {
+      "id": "L1_CONSOLE_R17_V167",
+      "line": "L1_RADXA_MIRROR",
+      "status": "CURRENT_SIGNOFF",
+      "authority": "CURRENT",
+      "name": "路① kissqy R17 V167 中控（电脑端 ZIP + SSH）",
+      "entry_points": [
+        "下载 Microduck-Console-R17-V167.zip，完整解压后运行 start.cmd（Windows）/ bash start.command（macOS、Linux）",
+        "本机浏览器打开 http://127.0.0.1:8090",
+        "填写 用户名@机器人IP 与 SSH 登录信息连接机器人",
+        "按 HOME → 保持 → 行走 使用"
+      ],
+      "model_management": "中控自带模型管理；control.43 随 V167 中控提供，镜像 R1 仍预装 control.40，可在中控「系统维护」安装随包固件。程序、模型和原有控制实现按交付包同步。",
+      "forbidden_commands_for_this_chain": [
+        "uv run publish --onnx ... --repo ... --kind perpetual --slot walk",
+        "sudo robotctl policy load walk <repo>"
+      ],
+      "paired_versions": [
+        {"item": "系统镜像", "value": "kissqy R1 / microduck-zero3w-0.15.1-R1.img.xz", "evidence_kind": "UPSTREAM_PUBLISHED"},
+        {"item": "机器人固件", "value": "官方 0.15.1 · control.43 · API40", "evidence_kind": "UPSTREAM_PUBLISHED"},
+        {"item": "机器人中控", "value": "R17 V167（1.0.167）", "evidence_kind": "UPSTREAM_PUBLISHED"},
+        {"item": "训练中控", "value": "R1.5.27（8092 端口，另一套，非机器人中控）", "evidence_kind": "UPSTREAM_PUBLISHED"}
+      ],
+      "hardware_contract": {
+        "board": "Radxa Zero 3W 1GB / 无 eMMC + 已有 64GB TF",
+        "baud": "1M（编译期常量，非板子属性）",
+        "reg6": "出厂 0 免写 15 颗",
+        "joint_ids": "官方 20-24 / 30-34 / 10-14 + 总线 IMU200",
+        "imu": "FT6 身份字节 06 00 00 00 F2，免刷免反转（kissqy 侧）；fanhao 叠 I²C + gyro_fusion",
+        "pd": "P5 / D0 / 转矩 1000，弃 kp_fw=8 单写者"
+      },
+      "still_owed": [
+        "kissqy R1 HD-1910 镜像固化 15 关节实际 ID 表 identify 实测",
+        "p8head_2999 在 R17V167 下能否加载（不保证，备选=镜像配套现成模型）",
+        "control.43 升级",
+        "PS5 手柄 mapping 上板实测",
+        "5GHz Wi-Fi"
+      ],
+      "board_acceptance_required": true,
+      "ship_ready": false,
+      "evidence": [
+        {"kind": "SSOT", "ref": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md:22,24"},
+        {"kind": "UPSTREAM_README", "ref": "microduck-software/.upstream/kissqy/README.md:5,9,17-19,22,28-30,42"},
+        {"kind": "UPSTREAM_DOC", "ref": "microduck-software/.upstream/replica/docs/软件来源与我们的改动.md:12-18,33-38"},
+        {"kind": "LOCAL_CHECKLIST", "ref": "microduck-software/tools/hd1910/deploy_import_checklist.md:A1-A4,B2"}
+      ]
+    },
+    {
+      "id": "L2_PUBLISH_ROBOTCTL",
+      "line": "L2_BGEN",
+      "status": "NOT_FOR_L1_SIGNOFF",
+      "authority": "BENCH_AND_SIM_ONLY",
+      "name": "B 代 export → uv run publish → HF Hub → robotctl policy load",
+      "entry_points": [
+        "uv run scripts/export.py <TASK> --wandb-run-path ... --checkpoint <N>",
+        "uv run publish --onnx policy.onnx --repo <user>/microduck-<name> --kind perpetual --slot walk",
+        "sudo robotctl policy load walk <repo>（B 代 DuckBuddy-main 的 robotctl）"
+      ],
+      "target": "B 代 robotd（DuckBuddy-main）/ 台架、仿真、model_7999 与 hd1910_kp8 plant 资产；SSOT ⑬ 明写路② 不再是整机部署线",
+      "refusal_reason": "SSOT ⑬ 定案路① 部署链为 R17→V167 中控（非 uv run publish）；部署链文档 §0 与 §1.3 自述对象即 B 代 robotd。用本链给路① 出签收即线别错配。",
+      "known_traps": [
+        "normalizer 必须经 checkpoint 路径烤进 ONNX；raw onnx 的 publish smoke 能过但机器人吃原始观测",
+        "manifest.py:237 用 load_external_data=False ⇒ EXTERNAL 权重 onnx 会上传 3KB 空权重图",
+        "manifest.py:28 robot.servos 硬编码 xl330，daemon 忽略该字段但元数据是错的",
+        "历史 deploy61 归一化分母差 1157× ⇒ 5.7° 头命令变 −35.7 rad，已弃用",
+        "rehearse_deploy.py 写死 XL330 / kp_fw=200，不能用于 HD-1910"
+      ],
+      "board_acceptance_required": false,
+      "ship_ready": false,
+      "evidence": [
+        {"kind": "LOCAL_DOC", "ref": "docs/active/microduck-HD1910-策略导出部署链-2026-11-09.md:8-20,49-51,57-61,82-85"},
+        {"kind": "SSOT", "ref": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md:22"}
+      ]
+    },
+    {
+      "id": "L3_OFFICIAL_DAEMON",
+      "line": "L3_SELFWRITTEN_SCS",
+      "status": "FUTURE_COMMERCIAL_ONLY",
+      "authority": "FUTURE",
+      "name": "官方 Apache-2.0 Rust workspace + ft1910 SCS 后端（商用/二次分发才切）",
+      "entry_points": [
+        "pollen-robotics/microduck（robotd/updaterd/mediad/tofd/configd，0.19.0）",
+        "ft1910 [bus] scs=true + scs_config（1M / imu_id=200 / 15 个实测 zero_ticks + direction）",
+        "microai-lab/microduck-studio dev-stack.sh（官方线开发控制台，非路① 中控）"
+      ],
+      "refusal_reason": "仅个人使用许可已闭合，路① 完整镜像直接刷零障碍；自写分支当前项目不涉及，仅留作未来升级备选。",
+      "known_unproven": [
+        "ft1910 时序数仍是固件 3.46 的",
+        "zeros 借用、direction 11 关节继承",
+        "尚未驱动策略",
+        "microai-lab/microduck-studio 是官方 XL330 / duck-ipc-proto 线，其 robotctl monitor/health 与路① 无关"
+      ],
+      "board_acceptance_required": true,
+      "ship_ready": false,
+      "evidence": [
+        {"kind": "SSOT", "ref": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md:23"},
+        {"kind": "UPSTREAM_DESIGN", "ref": "microduck-software/.upstream/ft1910/docs/design/scs-bus.md:130-168"},
+        {"kind": "UPSTREAM_AGENTS", "ref": "microai-lab/microduck-studio AGENTS.md:3-12,38-43"}
+      ]
+    }
+  ],
+  "ambiguous_tokens": [
+    {
+      "token": "robotctl",
+      "senses": [
+        {"chain": "L2_PUBLISH_ROBOTCTL", "meaning": "sudo robotctl policy load walk <repo>，B 代 DuckBuddy-main 的策略安装命令"},
+        {"chain": "L3_OFFICIAL_DAEMON", "meaning": "robotctl monitor / robotctl health，官方 daemon 的终端监视与健康检查；microai-lab Studio 通过 Compose 调用"},
+        {"chain": "L1_CONSOLE_R17_V167", "meaning": "不使用；kissqy 中控是电脑端 ZIP + 浏览器 8090 + SSH，没有 robotctl 命令"}
+      ],
+      "rule": "看到 robotctl 先问属于哪条链，不得凭命令名推断线别"
+    },
+    {
+      "token": "8090",
+      "senses": [
+        {"chain": "L1_CONSOLE_R17_V167", "meaning": "kissqy R17 V167 机器人中控页面 http://127.0.0.1:8090"},
+        {"chain": "L3_OFFICIAL_DAEMON", "meaning": "microai-lab/microduck-studio 浏览器工作区 http://127.0.0.1:8090"}
+      ],
+      "rule": "同一台开发机同时开两套必端口冲突；必须显式二选一，改端口需一手证据，不得默认可共存"
+    },
+    {
+      "token": "studio",
+      "senses": [
+        {"chain": "L1_CONSOLE_R17_V167", "meaning": "kissqy「训练中控 R1.5.27」= Microduck-Training-Studio ZIP，8092 端口；不是机器人中控"},
+        {"chain": "L3_OFFICIAL_DAEMON", "meaning": "microai-lab/microduck-studio（MIT，另一作者）本地开发控制台，官方 XL330 线"},
+        {"chain": "EXTERNAL_XGODUCK", "meaning": "xgorobot.com/duck.html 的 images/duck/studio.webp 只是产品主图文件名；陆吾无 studio 命名仓库"}
+      ],
+      "rule": "studio 是四个不同东西；引用必须带作者 + 端口 + 线别"
+    },
+    {
+      "token": "publish",
+      "senses": [
+        {"chain": "L2_PUBLISH_ROBOTCTL", "meaning": "uv run publish 上传到 HF Hub，B 代链"},
+        {"chain": "L1_CONSOLE_R17_V167", "meaning": "kissqy/fanhao 明写中控改动不放进本仓库、不发布，只自己写引导页调其接口"}
+      ],
+      "rule": "源码公开/可发布 ≠ 实机验收范围扩大"
+    },
+    {
+      "token": "9527",
+      "senses": [
+        {"chain": "EXTERNAL_XGODUCK", "meaning": "陆吾 xgoduck_runtime_arduino 设备端网页控制台 http://设备IP:9527/"},
+        {"chain": "L1_CONSOLE_R17_V167", "meaning": "不使用；路① 中控在电脑端 8090，机器人端服务由镜像预装"}
+      ],
+      "rule": "设备端网页与电脑端中控不是同一种部署形态"
+    }
+  ],
+  "port_conflicts": [
+    {
+      "port": 8090,
+      "claimants": ["L1_CONSOLE_R17_V167", "L3_OFFICIAL_DAEMON"],
+      "handling": "显式二选一；无一手证据不得宣称可共存或已改端口"
+    }
+  ],
+  "superseded_statements": [
+    {
+      "id": "S1",
+      "source": "microduck-software/tools/hd1910/deploy_import_checklist.md B1",
+      "claim": "两代 schema 不通用，HD-1910 只能用 B 代",
+      "verdict": "SUPERSEDED_BY_SSOT_13",
+      "superseded_by": "SSOT 订正⑬（2026-11-10 拍板）：路① 整机跑 kissqy R1 一键完整镜像，官方 ID 20-34 + IMU200，1M / reg6 免写",
+      "why_it_matters": "照抄会让路① 按 B 代 500k / ID1-15 / reg6 逐颗写去配置，整机起不来",
+      "evidence": ["docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md:22"]
+    },
+    {
+      "id": "S2",
+      "source": "microduck-software/tools/hd1910/deploy_import_checklist.md B13",
+      "claim": "主控已定为 Orange Pi Zero 3W（A733），BAUD_RATE 保持 500_000，15 颗必须逐颗把 reg6 从 0 改成 1",
+      "verdict": "SUPERSEDED_BY_SSOT_13",
+      "superseded_by": "SSOT 订正⑬：Radxa Zero3W 1GB / 无 eMMC、1M、reg6 出厂 0 免写；B 代 A733/500k 只作台架资产线",
+      "why_it_matters": "这是 11-06 的旧拍板，与 11-10 最终判决直接矛盾；台架 R3 未消也不能外推成整机线",
+      "evidence": ["docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md:22"]
+    },
+    {
+      "id": "S3",
+      "source": "docs/active/microduck-HD1910-策略导出部署链-2026-11-09.md §1.3",
+      "claim": "sudo robotctl policy load walk <repo> 是机器人加载步骤",
+      "verdict": "LINE_SCOPED_NOT_L1",
+      "superseded_by": "该文档 §0/§1.3 自述对象为 B 代 robotd；SSOT ⑬ 定案路① 走 R17→V167 中控",
+      "why_it_matters": "文档本身对 B 代是对的，但脱离文档抬头单独引用就会变成路① 错配",
+      "evidence": ["docs/active/microduck-HD1910-策略导出部署链-2026-11-09.md:2,49-51"]
+    },
+    {
+      "id": "S4",
+      "source": "microduck-software/tools/hd1910/deploy_import_checklist.md B7 / 四源对照 §5",
+      "claim": "policy.gain = 200 是 B 代硬错配",
+      "verdict": "CORRECTED_NOT_A_DISCRIMINATOR",
+      "superseded_by": "gain=200 是 XL330 参考值 / KP_REFERENCE=200，为共享非判据；gain=8 才会写 reg50=1 使机器人瘫软",
+      "why_it_matters": "误当线别判据会拒绝本来合法的配置；已在 line_labels.json#shared_not_discriminators 登记",
+      "evidence": ["microduck-software/tools/hd1910/line_labels.json#shared_not_discriminators"]
+    }
+  ],
+  "borrowed_invariants": [
+    {
+      "id": "B1",
+      "name": "不复制兄弟仓职责 / 不是第二份真相",
+      "source": "microai-lab/microduck-studio AGENTS.md:3-12,38-43；docs/ROADMAP.md:29-30",
+      "quote": "This repository owns observability, safe orchestration ... Studio 不成为第三套控制或训练实现。它只编排两个上游项目提供的稳定接口",
+      "adopted_as": "本契约不复制 current_line / refuse_for_signoff，运行时从 line_labels.json 读取并断言一致",
+      "cross_check": "fanhao replica/docs/软件来源与我们的改动.md:38「中控的改动不放进本仓库；以后做傻瓜式页面，自己写引导页去调他的程序和接口，不改他的中控」"
+    },
+    {
+      "id": "B2",
+      "name": "HTTP 绝不接受任意 shell 命令",
+      "source": "microai-lab/microduck-studio AGENTS.md:44-47；jobs.py:10,40-52,63-68",
+      "quote": "Every executable and argument shape must be an allowlisted command assembled as an argv list and run with shell=False",
+      "adopted_as": "check_deploy_chain.py 全程 stdlib 只读，无 subprocess；禁止把部署命令拼成可执行字符串",
+      "cross_check": "本仓 B8 reproducible_card.py 绝不执行 dd/写卡"
+    },
+    {
+      "id": "B3",
+      "name": "持久单连接 + 通知/请求分离",
+      "source": "microai-lab/microduck-studio AGENTS.md:53-59；protocol.py:75-78",
+      "quote": "Keep one persistent Unix-socket connection for a control session ... opening one socket per HTTP request silently cancels movement",
+      "adopted_as": "B1 上板验收契约里「服务状态」判据不得只看单次 HTTP 200，须看持续状态流",
+      "cross_check": "与本项目「写入成功 ≠ 生效」同型静默 bug 家族"
+    },
+    {
+      "id": "B4",
+      "name": "拒绝必须到 UI，字节写出去不算成功",
+      "source": "microai-lab/microduck-studio AGENTS.md:58-59；protocol.py:21-26",
+      "quote": "Discrete actions are requests with an id and their refusal must reach the UI. Never show success merely because bytes were written",
+      "adopted_as": "A2 闭合契约的 UNVERIFIED != PASS；B1 --record 只写 COLLECTED 永不判 PASS",
+      "cross_check": "本项目 EEPROM 时序「回读 PASS ≠ 持久 PASS」，两次断电才验"
+    },
+    {
+      "id": "B5",
+      "name": "deadman 是最后安全层，隐藏/断连/超时必停",
+      "source": "microai-lab/microduck-studio AGENTS.md:56-57；verify_contract.py:103-126,234-248；xgorobot.com/duck.html 控制模式与停止段",
+      "quote": "Pointer/touch release, page hide, navigation, backend shutdown, and errors must send robot.stop. Keep robotd's deadman as the final safety layer",
+      "adopted_as": "B1 上板验收「停止/急停」判据需覆盖页面离开、转入后台、控制数据超时三类",
+      "cross_check": "官网原文「页面离开、转入后台或控制数据超时后，系统会停止位置控制」「可通过按钮或空格键关闭扭矩」"
+    },
+    {
+      "id": "B6",
+      "name": "启动契约探针：钉 ref/revision/scene + 策略清单 + 传感器帧 + 运动/停止/断连三段",
+      "source": "microai-lab/microduck-studio docker/microduck/verify_contract.py:153-249；scripts/dev-stack.sh:460-462",
+      "quote": "contract probe passed: runtime source, policies, scene, head camera, robot/ToF/head-IMU subscriptions, movement ... m, stop, disconnect",
+      "adopted_as": "B2 版本配对契约的 --verify-sources 实算；B1 的 23 条判据带 authority；本契约的 ship_verdict 不因结构全绿升格",
+      "cross_check": "判据用位移跨度而非「请求已发」，与本项目仿真鸭上电扭矩判据同型"
+    },
+    {
+      "id": "B7",
+      "name": "策略集 pin 不复用 alpha / 离线 seed 成功 ≠ 就绪 / manifest 拒路径穿越",
+      "source": "microai-lab/microduck-studio tests/test_runtime_policies.py:32-82",
+      "quote": "test_offline_seed_success_is_not_mistaken_for_a_ready_policy_set；test_manifest_rejects_unsafe_policy_paths",
+      "adopted_as": "B2 image_pairing_contract.json 的 UPSTREAM_PUBLISHED / UNOBTAINABLE / UNPINNED 一律不算 LOCAL_COMPUTED",
+      "cross_check": "kissqy README:42「本次源码公开不扩大原有模型的实机验收范围」"
+    },
+    {
+      "id": "B8",
+      "name": "任务记录 argv/cwd/时间戳/exit_code/日志，默认禁训练，graceful terminate",
+      "source": "microai-lab/microduck-studio AGENTS.md:63-72；jobs.py:13-28,54-85,110-115",
+      "quote": "Studio records the exact argv, cwd, timestamps, exit code, and log path for every job ... never kill unrelated Python or GPU processes by pattern",
+      "adopted_as": "A3 run_all_gates.py 报告带 interpreter / known_gaps / 契约 sha256 / live_hardware_accessed=false",
+      "cross_check": "luwu xgoduck_rl commit message 写 215 tests / 5-iter smoke / 61-14 metadata checks"
+    },
+    {
+      "id": "B9",
+      "name": "显式 ROADMAP 列已知缺口 + 功能边界写进购前须知",
+      "source": "microai-lab/microduck-studio docs/ROADMAP.md:23-30；xgorobot.com/duck.html 购前须知",
+      "quote": "v0.4 — hardware-assisted validation ... 仿真/实机观测差异报告；「前向避障不等同于自主导航」「坐站、踢球和翻滚尚未接入当前运行端」",
+      "adopted_as": "本契约 scope.known_gaps 显式列出；仿真任务 ≠ 实机可用，与本项目「仿真鸭不能消 R3」同型",
+      "cross_check": "官网「影片为实机原型演示，功能以 GitHub 开源项目提供的内容为准」"
+    },
+    {
+      "id": "B10",
+      "name": "绿色完成提示 ≠ 成功，必须下游实跑与日志证据",
+      "source": "xgorobot.com/duck-developer-guide/index.html §1.5 截图日志说明；04-start-app.html §4.5-4.6",
+      "quote": "画面同时出现了 Docker 镜像拉取超时信息，因此不能仅凭绿色完成提示认定所有镜像都已下载成功。第二步会实际运行 LED 示例，确认应用能启动；「终端显示 started successfully 之后，仍需等 Python 日志中的初始化过程完成」",
+      "adopted_as": "B1 上板验收每条判据需登记可观测证据，--record 只写 COLLECTED；A3 统一门禁真跑 CLI 而非只测内部函数；本契约 ship_verdict 不因结构全绿升格",
+      "cross_check": "初始化完成三项硬证据：WebUI: the application interface is available here / Network URL: http://设备IP:9527 / App: App started，且随后无新异常退出"
+    },
+    {
+      "id": "B11",
+      "name": "示例值不是权威值；前置条件逐项完成且失败不得跳过",
+      "source": "xgorobot.com/duck-developer-guide/04-start-app.html §4.2-4.4；index.html §1.5",
+      "quote": "先用 Tab 补全目录名，避免照抄错误的文件夹名称；必须把 xgoduck_runtime 替换为实际目录名称；截图中的版本号仅对应这次演示，以你实际看到的更新列表为准；不要跳过失败的命令继续启动；prepare-bridge.py 与 router-2m.sh 是两项配置，需要分别完成",
+      "adopted_as": "B2 四元组区分 UPSTREAM_PUBLISHED / UNOBTAINABLE / UNPINNED / LOCAL_COMPUTED；B8 做卡契约列前置条件与禁用 flag；本契约 external_references 明标 evidence_kind 与 not_proof_of",
+      "cross_check": "官网明写 App Lab 是「非官方 · 群友优化版」Windows EXE 804.1 MB，页面未见 sha256 ⇒ 边界声明可借、无校验分发不可借"
+    }
+  ],
+  "external_references": [
+    {
+      "id": "XGODUCK_DEV_GUIDE",
+      "source": "https://www.xgorobot.com/duck-developer-guide/index.html 及 02-led-ip / 03-import-app / 04-start-app / 05-servo-setup / 06-assembly / 07-calibration-control（2026-11-11 一手抓取）",
+      "findings": [
+        "7 步图文手册：Wi-Fi → LED/IP → 导入 App → 终端配置与启动 → 舵机设置与编号 → 组装 → 标定与行走控制；每步写「本步完成」与失败处理",
+        "Arduino App Lab 官方版走 docs.arduino.cc/software/app-lab/；群友优化版明确标「非官方」Windows EXE 804.1 MB，页面未见 sha256",
+        "04 步命令链：cd ~/ArduinoApps/<实际目录>（Tab 补全，禁止照抄截图）、python3 tools/prepare-bridge.py（RouterBridge/RPClite 库补丁）、sudo bash tools/router-2m.sh（Router 串口 2 Mbps 并重启服务）、arduino-app-cli app start \"$PWD\"（PWD 必须大写）",
+        "「started successfully」之后仍要看 Python 日志三项：WebUI 地址 / Network URL:9527 / App: App started，并确认无新异常退出",
+        "库缓存被 App Lab 更新或替换后必须重跑 prepare-bridge.py；出现 Resolve sketch.yaml libraries first 时回到 App Lab 补依赖，不要跳过失败命令",
+        "05 步每次只接一个舵机（重复 ID 会出错），Scan all IDs / Reset Mid / Set KpKd / Change ID；07 步 Calibration 全部卸载后逐关节 Set center & hold，再 Default pose 检查站姿，最后放地面 Walk/get up"
+      ],
+      "evidence_kind": "VENDOR_GUIDE",
+      "not_proof_of": ["Arduino App Lab 可移植到 Radxa/kissqy 线", "本项目镜像烧录流程", "任何 sha256 完整性结论"]
+    },
+    {
+      "id": "XGODUCK_OFFICIAL_PAGE",
+      "source": "https://www.xgorobot.com/duck.html（2026-11-11 一手抓取，HTML 60550 字节）",
+      "findings": [
+        "「studio.webp」只是产品主图文件名，不是软件名；LuwuDynamics 组织 25 个公开仓无 studio 命名仓（GitHub API orgs/LuwuDynamics/repos + 组织页双来源）",
+        "一键烧录软件（电脑端 ZIP）5 平台：win32-x64 / darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64，并给「查看历史版本与校验文件」入口 ⇒ 版本配对 + 可复现做卡的第三方互证（对应 B2/B8）",
+        "Arduino App Lab 明确标「非官方 · 群友优化版」Windows EXE ⇒ 边界诚实",
+        "设备端网页控制台 http://设备IP:9527/；Servo setup 每次只接一个舵机（重复 ID 会出错）、Scan all IDs / Reset Mid / Set KpKd / Change ID；Calibration 全部卸载后逐关节 Set center & hold；Default pose 检查站姿；放地面才 Walk/get up",
+        "整机套件 ToF = 8×8 VL53L5X，与本项目收口的 VL53L5CX V2 同族（本项目因 20mm 孔距脸壳选 15.8×10mm V2 模块）",
+        "整机套件电池 8.4V >3500mAh >3C 18650 组；与本项目 NP-F550 2200mAh 双电不是同一体系，不可套载流结论",
+        "主控 Arduino UNO Q 2GB、Linux 50Hz 策略 + STM32 100Hz 总线；与本项目 Radxa Zero3W 1GB 不同线"
+      ],
+      "evidence_kind": "VENDOR_PAGE",
+      "not_proof_of": ["本项目硬件选型的实测结论", "路① 中控链可用性", "R3 波特率悬案"]
+    },
+    {
+      "id": "MICROAI_LAB_STUDIO",
+      "source": "https://github.com/microai-lab/microduck-studio（MIT / 54 stars / main / 42 文件 / 2026-10-25 最后推送；codeload 整仓实读）",
+      "findings": [
+        "作者是 microai-lab，不是 LuwuDynamics；与陆吾无关",
+        "FastAPI + Docker Compose + MuJoCo，连接官方 pollen-robotics/microduck 与 microduck_rl；42 文件 / 7 个 pytest + 1 个前端 node:test",
+        "官方 XL330 / duck-ipc-proto 线；整套依赖 v8 官方策略与官方 robotd，不适用于路① HD-1910 + ID200 + kissqy 中控",
+        "README.md:329-332 明写「Studio has no authentication. Keep it on 127.0.0.1 or a trusted LAN. Robot safety and motor control remain the responsibility of robotd」",
+        "ROADMAP v0.4 才规划急停/限速/控制租约/审计与仿真-实机观测差异报告 ⇒ 当前不提供"
+      ],
+      "evidence_kind": "UPSTREAM_SOURCE",
+      "not_proof_of": ["路① 上板验收", "本项目自写镜像的必要性"]
+    },
+    {
+      "id": "LUWU_ORG_REPOS",
+      "source": "GitHub API orgs/LuwuDynamics/repos?per_page=100 + github.com/orgs/LuwuDynamics/repositories（2026-11-11）",
+      "findings": [
+        "25 个公开仓；与鸭相关：xgoduck_hardware / xgoduck_runtime_arduino / xgoduck_rl / xgoduck_community / xgoduck_runtime_mosaico",
+        "xgoduck_community 是纯 HTML/CSS/JS 社区作品投稿站（Node 22+ 构建、零第三方依赖），不是控制台",
+        "luwu_os 是 CM4/CM5 嵌入式桌面 OS（Qt C++ Launcher + PySide6 Apps），也不是 Studio",
+        "搜索 q=LuwuDynamics+studio+in:name / xgoduck+studio / xgorobot+studio 三者 total_count 均为 0"
+      ],
+      "evidence_kind": "GITHUB_API",
+      "not_proof_of": ["存在陆吾官方 Studio 产品"]
+    }
+  ],
+  "required": {
+    "chain_ids": ["L1_CONSOLE_R17_V167", "L2_PUBLISH_ROBOTCTL", "L3_OFFICIAL_DAEMON"],
+    "ambiguous_tokens": ["robotctl", "8090", "studio", "publish", "9527"],
+    "superseded_ids": ["S1", "S2", "S3", "S4"],
+    "borrowed_ids": ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11"]
+  },
+  "scope": {
+    "live_hardware_accessed": false,
+    "not_proof_of": [
+      "R17 V167 中控已在本项目整机上跑通",
+      "p8head_2999 能被 V167 加载",
+      "人人 ¥80 IMU 上机认板",
+      "R3 / 500k 波特率悬案",
+      "任何 INCONCLUSIVE 悬案闭合"
+    ],
+    "known_gaps": [
+      "L1 四项上机必闭合（15 关节 identify / p8head_2999 加载 / control.43 / 手柄 mapping）+ 5GHz Wi-Fi 全部未做",
+      "kissqy R1 镜像 sha、V167 中控 ZIP sha、control.43 BUILD.json 均未本地实算（B2 已如实标 UPSTREAM_PUBLISHED / UNOBTAINABLE / UNPINNED）",
+      "line_labels.json 仍有 20 个 --selftest 工具为 REPORT_ONLY，未逐一定线",
+      "A1/A2/A3 + B2/B8/B1 与 B5 尚未接入 .github/workflows/deploy-gate.yml；该 workflow 自述 POST-PUSH ADVISORY 非 merge gate",
+      "官网一键烧录软件的 ZIP sha 与历史版本校验文件未下载实算；只作机制借鉴，不进 B2 四元组"
+    ]
+  }
+}

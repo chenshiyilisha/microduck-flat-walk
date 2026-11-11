@@ -206,6 +206,12 @@
       "line": "META_GUARD",
       "risk_tokens": [],
       "evidence": "B1 新增：上板验收清单与证据采集骨架，只写 COLLECTED 不判 PASS，不属任何硬件线"
+    },
+    {
+      "path": "tools/hd1910/check_deploy_chain.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B5 新增：部署链线别契约与跨线拒绝护栏，current_line 从本文件读取（不复制常量），不属任何硬件线"
     }
   ],
   "known_gaps": [
