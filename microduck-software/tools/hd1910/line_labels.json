@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "owner": "line_labels.json 是线别判据的唯一主人。line_contract.py / run_all_gates.py / 文档一律从这里派生，不得复制常量（借官方 contract.py『is a DESCRIPTION, not a second source of truth』与官方 AGENTS『每个机制一页主人』）。",
+  "authoritative_sources": [
+    "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬(行21-24)、订正㉔/㉕",
+    ".upstream/hd1910m/microduck/duck-control/src/feetech.rs:592 (Radxa/FT-SCS 原生 1M)",
+    ".upstream/DuckBuddy-main/duck-control/src/feetech.rs:34-35 (B代 500k)",
+    ".upstream/ft1910/docs/design/scs-bus.md:14-37 (自写分支 scs 后端)",
+    ".upstream/kissqy/README.md (R17 V167 / control.43 / 镜像 R1 配对)"
+  ],
+  "lines": {
+    "L1_RADXA_MIRROR": {
+      "role": "当前整机主路径（SSOT 订正⑬/㉔/㉕ 拍板）",
+      "board": "Radxa Zero 3W 1GB / 无 eMMC + 已有 64GB TF",
+      "baud": 1000000,
+      "reg6": 0,
+      "joint_ids": [20, 21, 22, 23, 24, 30, 31, 32, 33, 34, 10, 11, 12, 13, 14],
+      "imu_path": "总线 ID200；FT6 身份字节 06 00 00 00 F2；人人可做机器人 ¥80 IMU（技术名 imu_to_dxl）",
+      "deploy_chain": "官方 0.15.1 → kissqy R1 一键完整镜像 / fanhao 复刻镜像；R17→V167 中控；非 uv run publish",
+      "release_pair": "镜像 R1(预装 control.40) ↔ 升级 control.43 / API40 ↔ R17 V167(1.0.167) 中控 ↔ 训练中控 R1.5.27",
+      "licence": "仅个人非商业（kissqy 原创部分 + 10 个动作模型）",
+      "evidence_kind": "SSOT 拍板 + 上游源码 + 商品一手；非上板实测",
+      "breaks_if_wrong": "拿 B 代 500k/reg6=1/ID1-15 去判路① 配置，会静默判错；拿官方 publish manifest 判中控链，同 deploy61 分母差 1157x 事故"
+    },
+    "L2_BGEN": {
+      "role": "台架 / 训练 / 仿真资产线，不上这台整机（订正⑬）",
+      "board": "Orange Pi Zero 3W (A733) / 台架 PC + URT-2",
+      "baud": 500000,
+      "reg6": 1,
+      "joint_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "imu_path": "BNO08x I²C4 / 总线板 IMU200（DuckBuddy 2S 版）；开机硬校验 reg33=0 / reg9=0 / reg11=4095",
+      "deploy_chain": "DuckBuddy-main robotd 自编译；uv run publish；model_7999 / hd1910_kp8 plant",
+      "release_pair": "无一键镜像，固件与中控自行编译配对",
+      "licence": "仅作本地资产",
+      "evidence_kind": "上游 Rust 源码 + 台架实测；非整机线",
+      "breaks_if_wrong": "把 500k 当板子属性、把 reg6 逐颗写当免写，会重复 R3 零应答；kp_fw8 与 kp200 混用会让策略落地失效"
+    },
+    "L3_SELFWRITTEN_SCS": {
+      "role": "软件自写分支（商用才切；p8head_2999 8 契约 PASS），非当前整机线",
+      "board": "Radxa Zero 3W (RK3566) / /dev/ttyS2",
+      "baud": 1000000,
+      "reg6": null,
+      "joint_ids": "由 scs_config 定义：15 个实测 zero_ticks + direction，wire order；不写死数字",
+      "imu_path": "imu_id=200；node 与舵机共用 addr 56 的 15 字节块；sample counter 判新帧",
+      "deploy_chain": "官方 Apache-2.0 workspace + scs 后端；scs=true 且 scs_config 存在，Params::validate 两键不一致即拒；robotctl policy load",
+      "release_pair": "scs_config 是独立文件（校准值，不是偏好）；EEPROM 写入永不自动",
+      "licence": "Apache-2.0（官方运行时）",
+      "evidence_kind": "ft1910/docs/design/scs-bus.md 一手设计文档 + first light 记录；明确『nothing has been commanded to move』",
+      "breaks_if_wrong": "scs=true 无文件或文件存在但开关关 ⇒ Dynamixel 与 SCS 后端抢同一串口；误把 scs_config 的标定值当可编辑偏好会掰坏机器人"
+    }
+  },
+  "discriminators": ["baud", "reg6", "joint_ids", "imu_path", "deploy_chain", "board"],
+  "shared_not_discriminators": [
+    {
+      "fact": "policy.gain = 200",
+      "why": "XL330 参考值 / KP_REFERENCE=200，不是寄存器 P，也不是线别判据。reg50 = clamp(round(gain × position_kp / 200), 1, 254)；gain=8 会落 reg50=1 使机器人瘫软（SSOT 行366/431 已作废）。三处一手互证：SSOT、microduck-HD1910软件方案.md 行1055-1056、ft1910/docs/design/scs-bus.md 行116。"
+    },
+    {
+      "fact": "obs61 / act14 / 50Hz / normalizer 烤进图",
+      "why": "跨线共享的策略契约。官方 AGENTS Invariants、mdlab contract.py、luwu README 与我们的部署链判决四方一致。"
+    },
+    {
+      "fact": "deadman_ms = 500 / 跌倒 60° / FallPredictor 26°",
+      "why": "安全层语义，跨线共享；microduck-twin 与上板清单均有同值。"
+    }
+  ],
+  "policy": {
+    "current_line": "L1_RADXA_MIRROR",
+    "refuse_for_signoff": ["L2_BGEN", "L3_SELFWRITTEN_SCS"],
+    "unlabelled": "REPORT_ONLY",
+    "note": "跨线拒绝只作用于『整机签收』上下文：B 代工具仍可在 line=L2_BGEN 下自检，不得用来给路① 出 pass。借官方 policy-manifest『refused if it disagrees with the robot』与 ft1910 scs-bus 两键拒绝语义。"
+  },
+  "non_line_labels": {
+    "BENCH": "台架通用（单舵机 + URT-2），两线都可跑，但不作整机签收依据",
+    "META_GUARD": "本轮新增的护栏工具，不属于任何硬件线"
+  },
+  "tools": [
+    {
+      "path": "tools/hd1910/audit_robotd_toml.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["BAUD_RATE = 500_000", "reg6 = 1"],
+      "evidence": "audit_robotd_toml.py:493-495 的 hint 写死 B 代编译期常量；:29 的 policy.gain=200 是共享非判据，不因它判线"
+    },
+    {
+      "path": "tools/hd1910/verify_policy_bundle.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["DuckBuddy", "HL-2915", "check_width"],
+      "evidence": "B 代读侧；verify_official_loader.py 头部明写二者是不同 reader"
+    },
+    {
+      "path": "tools/hd1910/hardware_endtoend_check.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["DuckBuddy / Orange Pi line", "1-15 system"],
+      "evidence": ":22 自标 DuckBuddy / Orange Pi line；:85 写 1-15 system"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/probe_bus_budget.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["Orange Pi Zero 3W (A733)", "500_000"],
+      "evidence": ":378-383 明写 500k 是 A733 方案自己的硬约束"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/hd1910_ident.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["BAUD_RATE: u32 = 500_000"],
+      "evidence": ":113 引用 B 代编译期常量"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/identify_joints.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["robotd 部署档是 500000"],
+      "evidence": ":171/:200 把 500000 当部署档默认；只读 identify 可借，但路① 必须显式 --baud 1000000"
+    },
+    {
+      "path": "tools/hd1910/sim_port/apply_sim_port.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["DuckBuddy-main"],
+      "evidence": ":2/:38 把 robotd --sim 移植缝到 DuckBuddy-main checkout"
+    },
+    {
+      "path": "tools/hd1910/sim_e2e_check.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["DuckBuddy-main"],
+      "evidence": ":22/:46 以 DuckBuddy-main 为 CRATE_DIR"
+    },
+    {
+      "path": "tools/hd1910/rehearse_hd1910.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["XL330", "kp_fw=200"],
+      "evidence": ":5 上游 infer_policy 写死 XL330/m6/kp_fw=200；SSOT 判『勿用 HD1910 重训前的彩排』"
+    },
+    {
+      "path": "tools/hd1910/pre_deploy_check.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["B-gen Rust source", "--selftest-allow-skip"],
+      "evidence": ":217 的 --upstream 默认 B 代 Rust 源；5 守卫围绕 hd1910_kp8 bundle"
+    },
+    {
+      "path": "tools/hd1910/assert_clean_checkout.py",
+      "line": "L2_BGEN",
+      "risk_tokens": [".upstream/DuckBuddy-main/duck-control/src/policy.rs"],
+      "evidence": ":89-95 检查 DuckBuddy-main 源码清洁"
+    },
+    {
+      "path": "tools/hd1910/ci_gate_targets.py",
+      "line": "L2_BGEN",
+      "risk_tokens": ["out/hd1910_kp8_deploy_bundle.json"],
+      "evidence": "DEFAULT_BUNDLE 指向 B 代部署 bundle；只读该 bundle，不硬编码 onnx 路径"
+    },
+    {
+      "path": "tools/hd1910/verify_official_loader.py",
+      "line": "L3_SELFWRITTEN_SCS",
+      "risk_tokens": ["pollen-robotics/microduck", "check_matrix"],
+      "evidence": "官方 Apache-2.0 workspace 读侧静态门禁（30/30 selftest）；可作 ONNX 形状门禁，但不代替镜像内 loader"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/set_protection.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "只读/台架 reg19 保护位；两线可用，不作签收"
+    },
+    {
+      "path": "tools/hd1910/set_gains_all.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "台架 RAM50/51 与 EEPROM21/22；项目铁律『回读 PASS ≠ 持久 PASS』"
+    },
+    {
+      "path": "tools/hd1910/servo_probe/calibrate_offsets.py",
+      "line": "BENCH",
+      "risk_tokens": [],
+      "evidence": "零位标定，joint_offsets = raw_at_joint_zero - 2048"
+    },
+    {
+      "path": "tools/hd1910/line_contract.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "本轮新增：线别护栏"
+    },
+    {
+      "path": "tools/hd1910/check_closure.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "本轮新增：悬案闭合契约校验器"
+    },
+    {
+      "path": "tools/hd1910/run_all_gates.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "本轮新增：统一门禁入口"
+    }
+  ],
+  "known_gaps": [
+    "未登记工具以 REPORT_ONLY 输出覆盖差集，不假装全覆盖（借 mdlab CI 显式列 Windows 已知 gap）",
+    "risk_tokens 是正向断言，只防标签腐化；不从源码反推线别（docstring 里出现 DuckBuddy 作为负对照说明不得误判）",
+    "本契约不验证硬件、不消 INCONCLUSIVE_RATE_MISMATCH、不作实机签收"
+  ]
+}

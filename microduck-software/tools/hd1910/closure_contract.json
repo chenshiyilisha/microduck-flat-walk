@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "owner": "closure_contract.json 是全部未闭环标记的唯一主人。文档里出现而此处未登记的标记必须判红（借 open-microduck book/tools/check_book.py 的 edition.json 集合相等断言）。",
+  "rule": "UNVERIFIED 不等于 PASS。离线/源码/仿真/商品页/第三方叙述一律不升格为实机验收（官方 policy-manifest『Absent fields are not evidence』、kissqy『源码公开不扩大原有模型的实机验收范围』、fanhao『Board acceptance still required』、luwu『local validation tools excluded from the source release』四源互证）。",
+  "status_vocabulary": {
+    "UNVERIFIED": "尚无一手上板/实测证据；不算 PASS，整体判 NOT_SHIPPABLE",
+    "PASS": "已按 board_acceptance_required 全部闭环且 evidence 非空",
+    "CLOSED": "由后续订正/一手证据判定不再需要上板动作，evidence 非空",
+    "FAIL": "已有反证，禁止继续该动作"
+  },
+  "scope": {
+    "live_hardware_accessed": false,
+    "not_proof_of": ["整机可签收", "策略可上真机", "500k 位宽 / R3", "人人 HUB 几何与载流", "左右腿文字定义"],
+    "known_gaps": ["robotd --sim 验不了总线驱动/BLE/ISP+rkaiq 3A/NPU/编码器+RGA", "本地 28 个上游仓源码可读不等于我们的板已验证", "fanhao 20261023c 自动识别只做到伪串口 + 镜像离线核验"]
+  },
+  "contracts": [
+    {
+      "id": "INCONCLUSIVE_LIVE_IDENTIFY",
+      "status": "UNVERIFIED",
+      "summary": "人人可做机器人 ¥80 IMU（电商名 IMU / 技术名 imu_to_dxl）能否被 fanhao 复刻镜像 live 认板，以及 15 关节实际 ID 表",
+      "why_open": "kissqy 只认总线 ID200 + FT6 身份字节 06 00 00 00 F2；fanhao 的 imu_protocol=auto 只做过伪串口 + 镜像离线核验，真实小板未上机",
+      "evidence_kind": ["上机 identify 串口日志原文", "回读 ID200 身份字节的截图", "15 关节逐颗 ID 表与方向/零位记录"],
+      "verification_boundary": "只认 ID 数字与回读值；左右文字标签由 INCONCLUSIVE_LR_LABEL 单独闭环",
+      "local_verified": ["三块运动 IMU 板电商名/技术名/店家/价格已由 probe_out.txt 行44-47 钉死", "fanhao 20261023c 自动识别的离线核验记录已读"],
+      "board_acceptance_required": ["上板跑 identify，逐颗回读 15 个 ID 并记录 direction/zero_ticks", "接上人人 ¥80 IMU，确认 ID200 与身份字节被镜像读到", "断开 IMU 再跑一次，确认门禁变红（负对照）", "先卸力、机器人有支撑再上电"],
+      "still_owed": ["kissqy R1 是否认人人/fanhao ¥80 板", "control.43/.44 与 V167/V164 中控的实际配对回读"],
+      "negative_control": "拔掉 IMU 或把 ID 改成非 200 后，认板检查必须失败；若仍报绿则本契约不得闭合",
+      "blocked_actions": ["写死 15 关节 ID 表", "宣布镜像可直接刷整机", "把离线核验升级为实机签收"],
+      "source_refs": [
+        "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正㉔/㉕",
+        ".upstream/replica/docs/HD1910-20261023-总线IMU自动识别.md",
+        ".upstream/replica/docs/HD1910-20261011-kissqy-walk上机实测.md",
+        "docs/active/microduck-开源参考索引-2026-11-09.md §J.2.2 / §J.3.1"
+      ],
+      "signoff": "待上机实测；当前无人可签字",
+      "evidence": []
+    },
+    {
+      "id": "INCONCLUSIVE_DIMENSION",
+      "status": "UNVERIFIED",
+      "summary": "人人 HUB 分线板 ¥36（作取电板）的板框几何、双铜柱是否正对 NP-F550 电池孔、是否属 34mm 安装族、banana_pcb_locker 能否沿用",
+      "why_open": "只有商品名与价格一手，无任何几何一手；fanhao POGO_PIN STEP 与 community-kit banana_pcb kicad 不能外推到人人板",
+      "evidence_kind": ["到手卡尺实测照片与数值", "板框/孔位 STEP 或 3MF 对照", "与 NP-F550 实物电池孔的装配试配"],
+      "verification_boundary": "34mm 安装族与 banana_pcb_locker 是两件独立待量项，不得由其中一件推断另一件",
+      "local_verified": ["POGO_PIN_1V0A STEP 39.18x6.78x1.60mm / 两端孔中心距 33.8mm 已读", "banana_pcb kicad 39.19x6.79mm / Ø1.7x2 已读", "power_support STL 54x17x83mm 与 21mm 厚夹座口径已读"],
+      "board_acceptance_required": ["到手卡尺量人人 HUB 板框、孔径、孔距、铜柱间距", "与唯卓仕 NP-F550 2200mAh 实物正负凹孔试插", "量 HAT 四角金色孔位与官方 KiCad 0 MountingHole 的矛盾", "按实物重打 power_support / banana_pcb_locker，不套 fanhao STEP"],
+      "still_owed": ["金属结构件（共 7 个）到底对应哪 7 件打印受力件", "418MB SolidWorks 包内 PCB 3D 模型未下载核验"],
+      "negative_control": "把 25.5mm 厚壳电池塞进 21mm 夹座的装配检查必须失败；若通过则尺寸判据失效（Pass97 拓普赛电池否决同型）",
+      "blocked_actions": ["按 fanhao STEP 直接打印取电板固定位", "宣布人人 HUB 与腾壶/驭芯 banana pwr 兼容", "把几何写进 BOM 规格"],
+      "source_refs": [
+        "docs/active/microduck-选型与打印位决策-官方HAT一手-2026-11-10.md 文首索引块",
+        "docs/active/microduck-开源参考索引-2026-11-09.md §I.2",
+        "docs/active/.MicroDuck-采购BOM对比整合-2026-11-10.ref/probe_out.txt 行44-47"
+      ],
+      "signoff": "待到手卡尺；当前无人可签字",
+      "evidence": []
+    },
+    {
+      "id": "INCONCLUSIVE_CURRENT",
+      "status": "UNVERIFIED",
+      "summary": "腾壶/藤壶舱内取电顶针的持续载流能力（未选、不进 BOM，仅在若未来启用时需要）",
+      "why_open": "背面金属片可焊线只能证明可出线，不能证明能扛 15 颗舵机峰值；商品标示不是实测连续输出能力",
+      "evidence_kind": ["带载压降曲线", "温升实测", "持续电流 ≥8A 的一手实测记录"],
+      "verification_boundary": "充电器的 800mA 输出是充电电流，不是电池持续放电能力；电压无关量才是真值，载流属电压/热相关量",
+      "local_verified": ["用户一手：藤壶舱内有针柱、背面金属片可焊线", "与 A 族互斥理由已记：顶针占电池孔，双铜柱插不进同一对孔"],
+      "board_acceptance_required": ["若启用：接 15 路满载测压降与温升", "核对接插件与线径的持续载流", "确认有 soft-latch 或断载机制"],
+      "still_owed": ["无任何载流实测"],
+      "negative_control": "用『只量到有电压』或『充电器标 800mA』当作载流证据的断言必须红",
+      "blocked_actions": ["把腾壶写进 BOM", "把腾壶当作 A 族取电板的等价替代"],
+      "source_refs": [
+        ".workbuddy/memory/MEMORY.md 订正㉒",
+        "docs/active/microduck-选型与打印位决策-官方HAT一手-2026-11-10.md 文首索引块",
+        ".upstream/replica-kit/hardware/CURRENT_HARDWARE.md 行10/14（商品标示非实测）"
+      ],
+      "signoff": "未选件；不启用则无需签字",
+      "evidence": []
+    },
+    {
+      "id": "INCONCLUSIVE_RATE_MISMATCH",
+      "status": "UNVERIFIED",
+      "summary": "R3：500k 零应答是波特率不匹配还是适配器根本没发；1M PASS 20/20 但 115200/250k/400k/500k 全零应答",
+      "why_open": "驱动接受不等于芯片真发；无第三方观测者时『没发』与『听不懂』不可区分；robotd --sim 验不了总线驱动",
+      "evidence_kind": ["示波器量 500k 位宽", "真上板 500k 实测", "另备能发 500k 的适配器做解耦回滚"],
+      "verification_boundary": "软件只能准备解耦回滚脚本，不能消除该悬案；轮3 不切 reg6、保 1M、零 EEPROM 写",
+      "local_verified": ["URT-2 = CH343P 1A86:55D3 + TNOW 硬件方向脚已核", "轮2 实跑 ID10@4.6V reg6 实读 0（1M），1M RTT p50 0.2532ms", "drain() 提前 40-130ms 切向截断尾字节已复现"],
+      "board_acceptance_required": ["示波器量 500k 位宽并存档波形", "真上板跑 500k 并回读", "用另一适配器复跑以解耦回滚"],
+      "still_owed": ["三条闭环一条都没做"],
+      "negative_control": "把『驱动 accept』或『仿真通过』当作 500k 可用的证据，检查必须红",
+      "blocked_actions": ["切 reg6 到 500k", "宣布 45Hz 回滚可用", "用仿真通过作实机签收"],
+      "source_refs": [
+        "docs/active/microduck-Pi4B-完整部署方案-feetech_hls-2026-11-09.md 行299",
+        "docs/active/microduck-仿真鸭移植-robotd--sim-2026-11-09.md §9.6",
+        ".workbuddy/memory/MEMORY.md 台架先验/R3"
+      ],
+      "signoff": "待示波器/上板；当前无人可签字",
+      "evidence": []
+    },
+    {
+      "id": "INCONCLUSIVE_LR_LABEL",
+      "status": "UNVERIFIED",
+      "summary": "三来源对 10-14 / 20-24 哪边是左腿的文字定义 2:1 冲突（JieJie-H 与 Ley-WL 一致、janauto 相反且自注按机器人自身定义）",
+      "why_open": "很可能是机器人视角 vs 观察者视角的镜像差异；ID 数字集合三来源完全一致，只有文字冲突",
+      "evidence_kind": ["上机 identify 后的逐关节方向记录", "明确写出采用哪一套视角定义"],
+      "verification_boundary": "装配/标定只认 ID 数字，不认左/右文字；fanhao 训练前清单给出左右腿 pitch/knee/ankle 轴向符号相反的镜像装配解释",
+      "local_verified": ["55 项一手证据核验通过，含 4 组负对照（抹平冲突检测器翻绿、混入 B 代 ID1-15 翻红）", "三来源 ID 数字集合 10-14/20-24/30-34 完全一致"],
+      "board_acceptance_required": ["上机逐颗回读方向并与 ID 表对齐", "在记录里写明视角定义后再使用左右文字"],
+      "still_owed": ["未上机，视角定义未定"],
+      "negative_control": "只用文字左右、不核 ID 数字就生成关节映射的断言必须红",
+      "blocked_actions": ["在装配/标定文档里写死左右文字", "生成只按左右命名的 ID 表"],
+      "source_refs": [
+        "docs/active/microduck-开源参考索引-2026-11-09.md §J.2.2",
+        ".upstream/replica/docs/HD-1910训练前数据清单.md 行51",
+        "C:/Users/hejih/.wb_tmp/pass101_sw_evidence.py"
+      ],
+      "signoff": "待上机 identify；当前无人可签字",
+      "evidence": []
+    },
+    {
+      "id": "INCONCLUSIVE_PRICE",
+      "status": "CLOSED",
+      "summary": "订正㉓遗留的 ¥140 HAT 店铺归属 / 驭芯 HAT 价格未定；已由订正㉔/㉕ 一手 SKU 全部钉死",
+      "why_open": "历史标记，已被后续订正覆盖；此条保留作史料，防止重复打开",
+      "evidence_kind": ["用户一手 SKU 清单", "商品页 probe_out.txt", "SSOT 订正㉔/㉕ 回写"],
+      "verification_boundary": "闭环只针对价格与店家归属，不扩及几何/认板等实物项",
+      "local_verified": ["人人 HAT ¥140 / IMU ¥80 / HUB ¥36 / 金属件 ¥45 四样同商品页 id=1095772009248", "驭芯 HAT ¥165 / 带喇叭 ¥168 / IMU2DXL ¥89 / 6V6A 电源板 ¥28", "kissqy IMU TO DXL ¥99 / HAT ¥119 / HUB ¥69", "带负对照核验 13/13 PASS（TPU 件排除、四样 SKU 逐行坐实）"],
+      "board_acceptance_required": ["不适用：价格已由一手 SKU 闭环，无上板动作"],
+      "still_owed": [],
+      "negative_control": "把人人 ¥80 板叫成 IMU2DXL、或把 ¥46 规格页选中价当成 HAT 单价的断言必须红",
+      "blocked_actions": ["重新打开价格悬案", "恢复用户手删的 3 行采购项"],
+      "source_refs": [
+        "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正㉔/㉕ 行107",
+        "docs/active/.MicroDuck-采购BOM对比整合-2026-11-10.ref/probe_out.txt 行44-47",
+        "C:/Users/hejih/.wb_tmp/verify_bom_p25.py"
+      ],
+      "signoff": "Pass95b / Pass96 已闭环（仅价格口径）",
+      "evidence": [
+        "probe_out.txt 行44-47：人人四样 SKU 与价，同一商品页 id=1095772009248",
+        "用户 2026-11-10 一手三家 SKU 清单（人人/驭芯/kissqy）",
+        "SSOT 订正㉕ 价格基准行与整机预算 ≈¥2,500–2,579"
+      ]
+    }
+  ]
+}
