@@ -188,6 +188,24 @@
       "line": "META_GUARD",
       "risk_tokens": [],
       "evidence": "本轮新增：统一门禁入口"
+    },
+    {
+      "path": "tools/hd1910/check_image_pairing.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B2 新增：镜像/固件/中控/IMU 四元组版本配对契约校验器，不属任何硬件线"
+    },
+    {
+      "path": "tools/hd1910/reproducible_card.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B8 新增：可复现做卡配方与禁用 flag 审计，不执行 dd/写卡，不属任何硬件线"
+    },
+    {
+      "path": "tools/hd1910/board_acceptance.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B1 新增：上板验收清单与证据采集骨架，只写 COLLECTED 不判 PASS，不属任何硬件线"
     }
   ],
   "known_gaps": [

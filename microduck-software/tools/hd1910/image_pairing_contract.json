@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "owner": "image_pairing_contract.json 是『镜像 / 固件 / 中控 / IMU 节点』四元组版本配对的唯一主人。check_image_pairing.py 只从这里派生期望值，不得在代码里复制 sha 常量。借 kissqy README 行22『firmware/BUILD.json 与 V167 随包固件的 BUILD 记录一致，两个中控的程序源码与各自 ZIP 同步』、官方 policy-manifest『Absent fields are not evidence』、mdlab contract.py『不是第二份真相』。",
+  "rule": "四元组必须同批次配对；UNPINNED / UNOBTAINABLE / UPSTREAM_PUBLISHED / SOURCE_CONSTANT 都不等于 LOCAL_COMPUTED，只要有一个未本地实算闭环，整体即 NOT_SHIPPABLE。--ship-gate 必红。第三方公布的校验值只能证明『别人公布过这个值』，不能证明本机的文件是这个值。",
+  "authoritative_sources": [
+    ".upstream/kissqy/README.md 行9：control.43 已随 V167 中控提供；系统镜像 R1 仍预装 control.40",
+    ".upstream/kissqy/README.md 行17-20：官方 0.15.1 / control.43 / API40；R17 V167(1.0.167) 中控；训练中控 R1.5.27；Public Image R1",
+    ".upstream/kissqy/README.md 行22：V167 中控配套已编译 control.43，修复鸭身抖动；firmware/BUILD.json 与 V167 随包固件 BUILD 记录一致，两个中控源码与各自 ZIP 同步",
+    ".upstream/kissqy/README.md 行38-39：docs/BUILD.md 编译链、docs/BASELINE.md 验证范围、PUBLICATION-MANIFEST.json 校验记录（本轮联网均 404，见 known_gaps）",
+    ".upstream/replica/tools/radxa/kissqy-r1-v112.sh 行14：R1_SHA 注释明写『kissqy 发布页公布的校验值』",
+    ".upstream/replica/hardware/imu_to_dxl/firmware/VALIDATION.md 0.2.0 段：HEX 解码镜像 SHA-256、Flash 10,724 字节、真总线/舵机/T_resp/DE 释放『都还没测』",
+    "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬(行21-24)：路① R17→V167 中控非 uv run publish；上机前必闭合①identify ②p8head_2999 在 V167 加载 ③control.43 升级 ④手柄 mapping"
+  ],
+  "required_slots": [
+    "system_image_r1",
+    "robot_firmware_control43",
+    "robot_console_v167",
+    "imu_node_firmware_020"
+  ],
+  "pin_kinds": [
+    "LOCAL_COMPUTED",
+    "UPSTREAM_PUBLISHED",
+    "SOURCE_CONSTANT",
+    "UNPINNED",
+    "UNOBTAINABLE"
+  ],
+  "slots": [
+    {
+      "id": "system_image_r1",
+      "name": "kissqy Public Image R1 (microduck-zero3w-0.15.1-R1.img.xz)",
+      "expected": "sha256:75da978b5d56acd9e4146256431732381de84523bb683e4ab7ac9f0580a7bce5",
+      "pin_kind": "UPSTREAM_PUBLISHED",
+      "evidence_kind": [
+        "上游脚本常量（.upstream/replica/tools/radxa/kissqy-r1-v112.sh:14 的 R1_SHA）",
+        "该常量注释自述来自 kissqy 发布页，非本地实算"
+      ],
+      "local_file_present": false,
+      "why_not_closed": "本机没有 R1 .img.xz 实体，无法实算 sha256；只能记录别人公布过这个值",
+      "still_owed": [
+        "下载 R1 原包并本地实算 sha256 与契约比对",
+        "实算后把 pin_kind 升为 LOCAL_COMPUTED 并附证据路径"
+      ],
+      "source_refs": [
+        ".upstream/replica/tools/radxa/kissqy-r1-v112.sh:14",
+        ".upstream/kissqy/README.md 行20/26"
+      ]
+    },
+    {
+      "id": "robot_firmware_control43",
+      "name": "机器人固件 control.43 / API40（官方 0.15.1 适配）",
+      "expected": "control.43 / API40；固件 BUILD 记录须与 V167 随包固件一致",
+      "pin_kind": "UNOBTAINABLE",
+      "evidence_kind": [
+        ".upstream/kissqy/README.md 行9/17/22 的版本叙述",
+        "docs/BUILD.md 联网取 404、firmware/BUILD.json 联网取 404；本地 .upstream/kissqy 仅 6 个文件且无 firmware/ 目录"
+      ],
+      "local_file_present": false,
+      "why_not_closed": "control.43 是『已编译固件随 V167 中控提供』，编译链与 BUILD.json 一手正文当前都取不到；既无 sha 也无源码，不能宣称可自编译或已配对",
+      "still_owed": [
+        "取得 firmware/BUILD.json 与 docs/BUILD.md 正文，或从中控 ZIP 内提取随包固件并实算 sha",
+        "把编译链与随包固件 BUILD 记录做同批次比对"
+      ],
+      "source_refs": [
+        ".upstream/kissqy/README.md 行9/17/22/38/39"
+      ]
+    },
+    {
+      "id": "robot_console_v167",
+      "name": "R17 V167 (1.0.167) 机器人中控 ZIP",
+      "expected": "Microduck-Console-R17-V167.zip；程序源码须与 ZIP 同步",
+      "pin_kind": "UNPINNED",
+      "evidence_kind": [
+        ".upstream/kissqy/README.md 行18/22/28 给出版本、ZIP 直链与『源码与 ZIP 同步』声明"
+      ],
+      "local_file_present": false,
+      "why_not_closed": "ZIP 直链可读但未下载、无 sha、未与源码做同批次比对；README 行22 的『一致』是作者声明，不是本机校验",
+      "still_owed": [
+        "下载 V167 ZIP 并实算 sha256",
+        "核对 ZIP 内随包 control.43 的 BUILD 记录与 firmware/BUILD.json",
+        "上板确认 p8head_2999 能否在 V167 下加载（SSOT 上机前必闭合②）"
+      ],
+      "source_refs": [
+        ".upstream/kissqy/README.md 行18/22/28/30",
+        "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 行24"
+      ]
+    },
+    {
+      "id": "imu_node_firmware_020",
+      "name": "fanhao 复刻仓 imu_to_dxl 0.2.0（SCS ID200 / 1Mbps / STM32G031F8P6 + LSM6DSV16X）",
+      "expected": "HEX 文件 sha256:10ef4813c52a6f8ed0115d5ac09c271f895e1e1097d904f9f916cf7cde880f35；解码 Flash 镜像 sha256:66bc7c532f5a1ad87e3dfff71a4b51f8c4f20840a8f62436874fa5b7c665938e；10,724 字节，0x08000000..0x080029E3",
+      "pin_kind": "LOCAL_COMPUTED",
+      "evidence_kind": [
+        "本机对 .upstream/replica/hardware/imu_to_dxl/firmware/Build/imu_to_dxl.hex 实算文件 sha256",
+        "本机独立实现 Intel HEX 解码（671 条 type00 记录、校验和逐条验过），实算解码镜像 sha256",
+        "与 .upstream/replica/hardware/imu_to_dxl/firmware/VALIDATION.md 0.2.0 段记录的解码镜像 SHA-256 逐字一致（两独立来源互证）",
+        "board_config.h:18 的 BOARD_FIRMWARE_STRING = imu_to_dxl 0.2.0"
+      ],
+      "local_file_present": true,
+      "why_not_closed": "数值已本地实算闭环，但 VALIDATION.md 明写『真总线、舵机、T_resp 实测、DE 释放时序都还没测』；且该 HEX 属 fanhao 复刻仓硬件，不保证与人人 ¥80 IMU 板同硬件",
+      "still_owed": [
+        "上机认板：确认人人 ¥80 IMU 板是否同 MCU/同固件槽位（INCONCLUSIVE_LIVE_IDENTIFY）",
+        "认板前不得刷写；真总线 / T_resp / DE 释放时序实测"
+      ],
+      "source_refs": [
+        ".upstream/replica/hardware/imu_to_dxl/firmware/Build/imu_to_dxl.hex",
+        ".upstream/replica/hardware/imu_to_dxl/firmware/VALIDATION.md",
+        ".upstream/replica/hardware/imu_to_dxl/firmware/Core/Inc/board_config.h:18",
+        ".upstream/kissqy/README.md 行11（kissqy 的 IMU 板是另一套 STM32 FT6 刷法）"
+      ]
+    }
+  ],
+  "cross_slot_rules": [
+    {
+      "id": "R1_preinstalls_control40",
+      "rule": "R1 镜像预装 control.40，须升级到 control.43 才算与 V167 中控同批次（SSOT 上机前必闭合③）",
+      "source": ".upstream/kissqy/README.md 行9；docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 行23-24"
+    },
+    {
+      "id": "V167_bundles_control43",
+      "rule": "V167 中控随包已编译 control.43；firmware/BUILD.json 与随包固件 BUILD 记录一致，两个中控源码与各自 ZIP 同步",
+      "source": ".upstream/kissqy/README.md 行22"
+    },
+    {
+      "id": "deploy_chain_is_V167_not_publish",
+      "rule": "路① 部署链是 R17→V167 中控，不是官方 uv run publish；publish 链与这代 robotd 非一条链（normalizer 须烤进图、deploy61 分母差 1157 倍）",
+      "source": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 行23；docs/active/microduck-HD1910-策略导出部署链-2026-11-09.md"
+    },
+    {
+      "id": "imu_hex_is_not_console_firmware",
+      "rule": "IMU 节点 HEX（STM32G031）与机器人固件 control.43（烧到 ZERO）是不同对象；kissqy 行11 明写 control.43 安装到 ZERO 不会烧录外置 IMU",
+      "source": ".upstream/kissqy/README.md 行11"
+    }
+  ],
+  "blocked_actions": [
+    "不得把 uv run publish 的产物当成 V167 中控或 control.43",
+    "不得把 R1 预装的 control.40 写成 control.43",
+    "不得在认板前把 imu_to_dxl 0.2.0 HEX 刷进人人 ¥80 IMU 板",
+    "不得把 UPSTREAM_PUBLISHED 的 R1 sha 叙述成本机实测",
+    "不得用 B 代 bundle / model_7999 去判路① 的版本配对",
+    "不得因为四个 slot 都填了值就宣称 SHIPPABLE"
+  ],
+  "scope": {
+    "live_hardware_accessed": false,
+    "source_files_verified_by_default": false,
+    "not_proof_of": [
+      "R1 镜像可开机、可连 WiFi、可进 SSH",
+      "control.43 可自行编译或已升级成功",
+      "V167 中控可加载 p8head_2999",
+      "人人 ¥80 IMU 板被镜像 live 识别（INCONCLUSIVE_LIVE_IDENTIFY）",
+      "15 关节实际 ID 表、手柄 mapping、R3 零应答消解",
+      "任何一条上板验收"
+    ],
+    "known_gaps": [
+      "kissqy docs/BUILD.md、docs/BASELINE.md、firmware/BUILD.json、PUBLICATION-MANIFEST.json 本轮联网均取不到正文（404 / 未取），只引用 README 对它们的说明，不外推内容",
+      ".upstream/ 目录被 .gitignore 忽略，默认不随仓库分发；本机可用 --verify-sources 做实算复核，其他 clone 会如实报 source_files_verified=false",
+      "R1 原包与 V167 ZIP 均未下载，无本地实体可算 sha",
+      "imu_to_dxl 0.2.0 的 HEX 属 fanhao 复刻仓，与人人现货板是否同硬件未闭环",
+      "本契约不执行刷机、不下载文件、不修改任何上游仓"
+    ]
+  },
+  "signoff": {
+    "status": "UNVERIFIED",
+    "required": [
+      "四个 slot 全部 pin_kind=LOCAL_COMPUTED 且附实算证据",
+      "cross_slot_rules 逐条上板回读",
+      "closure_contract.json 的 5 个 UNVERIFIED 悬案全部闭合",
+      "人工按 board_acceptance.py 的判据签署"
+    ]
+  }
+}

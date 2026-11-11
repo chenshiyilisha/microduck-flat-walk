@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "owner": "card_build_contract.json 是『可复现做卡 + 可回滚』配方的唯一主人。reproducible_card.py 只从这里派生 sha / 扇区 / 禁止项，不得在代码里复制常量。配方本身来自 fanhao 复刻仓两个做卡脚本；本工具绝不执行 dd、不写 TF 卡、不改上游脚本。",
+  "rule": "可复现 != 已复现。脚本里钉了 sha 只证明『配方声明了这些值』，不证明本机的卡由这些值做出来。rollback 机制是借用目标而非现状：路① 的单分区 extlinux 卡没有 A/B 分区与自动回滚，不得把 Yocto 的机制说成已有。整体判 NOT_SHIPPABLE 直到所有配方值本地复核 + 回滚机制真实落地 + 上板验收。",
+  "authoritative_sources": [
+    ".upstream/replica/tools/radxa/build-armbian-card.sh 全文：Armbian 26.2.1 trixie vendor 6.1.115 minimal 底包，换瑞莎 U-Boot、extlinux、首登预设、WiFi、USB 串口、mask 舵机串口登录控制台",
+    ".upstream/replica/tools/radxa/kissqy-r1-v112.sh 全文：从 kissqy Public Image R1 只换引导，固件/模型/首次热点配网/账号锁定/SSH 密钥首启生成原样保留；R1 只认总线上 ID200 的 IMU 小板",
+    "官方 pollen-robotics/microduck_yocto 仓库页（2026-11-11 联网一手）：kas + Yocto 6.0 wrynose，Radxa Zero3W 对应官方 stand-in machine microduck-zero3，A/B RAUC 签名更新 + 健康检查自动回滚、dev/shipping 双镜像、QEMU 无板验 systemd 顺序；Apache-2.0",
+    "docs/hardware/microduck-Radxa上电验收清单-2026-11-06.md §3.4：确认镜像未把 ttyS2 占作登录控制台",
+    "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正㉑ + 2026-11-10 用户拍板：IMX219 摄像头与 VL53L5CX V2 ToF 必需、不可砍"
+  ],
+  "source_scripts": [
+    {
+      "id": "build_armbian_card",
+      "path": ".upstream/replica/tools/radxa/build-armbian-card.sh",
+      "role": "从 Armbian 底包做一张 Radxa Zero3W V1.12(AIC8800 WiFi) 能开机、自动连 WiFi、ssh 能进的卡",
+      "keeps_unchanged": [],
+      "pinned_facts": [
+        "UBOOT_DEB_URL / UBOOT_DEB_SHA / UBOOT_DEB_SHA 校验",
+        "idbloader @ 扇区 64、u-boot.itb @ 扇区 16384",
+        "extlinux.conf 挂 rk3568-uart2-m0.dtbo 与 rk3568-dwc3-peripheral.dtbo",
+        "kernel console=tty1（不占 ttyS2）",
+        "g_serial + serial-getty@ttyGS0 作救命控制台",
+        "mask serial-getty@ttyS2 / ttyFIQ0",
+        "底包 /etc/machine-id 必须为空，sshd-keygen.service 必须已启用，否则拒绝做卡",
+        "删除底包预生成的 /etc/ssh/ssh_host_* 以免每张卡共享主机密钥"
+      ]
+    },
+    {
+      "id": "kissqy_r1_v112",
+      "path": ".upstream/replica/tools/radxa/kissqy-r1-v112.sh",
+      "role": "在 kissqy 一键镜像 R1 上只换引导，使 V1.12 板也能开机；其余原样保留",
+      "keeps_unchanged": [
+        "kissqy 的固件",
+        "kissqy 的模型",
+        "首次热点配网",
+        "账号锁定",
+        "SSH 密钥首启生成"
+      ],
+      "pinned_facts": [
+        "先核对 R1 原包 sha256 才允许改",
+        "同一 UBOOT_DEB_URL / UBOOT_DEB_SHA（与 build_armbian_card.sh 互证）",
+        "根分区起始扇区必须 >= 32768，否则放不下瑞莎引导、直接停止",
+        "overlay/fdt/内核参数从镜像自己的 armbianEnv.txt 搬到 extlinux.conf",
+        "可选 --overlay NAME（如 i2c4-m0）",
+        "可选 --no-camera / --no-tof（本项目禁止，见 forbidden_flags）",
+        "写入 /etc/microduck-v112-image.txt 记录原包 sha、改动与日期",
+        "结尾 sha256sum 输出成品卡"
+      ]
+    }
+  ],
+  "pins": [
+    {
+      "id": "uboot_deb_sha256",
+      "value": "fb319203ab7d568aac77505504c05698385aea8a0e8f895c226c6bc557a1bce7",
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card", "kissqy_r1_v112"],
+      "why": "两个独立脚本写同一个 64 位 sha 常量且各自用 sha256sum -c 校验，属一手互证；但本轮没有下载 .deb 实体做本地实算"
+    },
+    {
+      "id": "uboot_deb_url",
+      "value": "https://radxa-repo.github.io/bookworm/pool/main/u/u-boot-rk2410/u-boot-rk2410_2017.09-64-39cd993_arm64.deb",
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card", "kissqy_r1_v112"],
+      "why": "版本号 2017.09-64-39cd993 与 sha 绑定；换版本必须同步换 sha"
+    },
+    {
+      "id": "r1_original_sha256",
+      "value": "75da978b5d56acd9e4146256431732381de84523bb683e4ab7ac9f0580a7bce5",
+      "kind": "UPSTREAM_PUBLISHED",
+      "witnesses": ["kissqy_r1_v112"],
+      "why": "脚本注释自述是 kissqy 发布页公布的校验值；本机无 R1 .img.xz 实体，未实算"
+    },
+    {
+      "id": "idbloader_sector",
+      "value": 64,
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card", "kissqy_r1_v112"],
+      "why": "dd seek=64"
+    },
+    {
+      "id": "uboot_itb_sector",
+      "value": 16384,
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card", "kissqy_r1_v112"],
+      "why": "dd seek=16384"
+    },
+    {
+      "id": "root_partition_min_sector",
+      "value": 32768,
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["kissqy_r1_v112"],
+      "why": "引导要放在扇区 64..32767，根分区必须从 32768 起，脚本显式检查并拒绝"
+    },
+    {
+      "id": "extlinux_overlays",
+      "value": ["uart2-m0", "dwc3-peripheral"],
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card"],
+      "why": "uart2-m0 开舵机串口 /dev/ttyS2；dwc3-peripheral 让 OTG 口当 USB 串口"
+    },
+    {
+      "id": "kernel_console",
+      "value": "console=tty1",
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card", "kissqy_r1_v112"],
+      "why": "控制台放 tty1，不占舵机串口；对应上电验收清单 §3.4"
+    },
+    {
+      "id": "masked_getty",
+      "value": ["serial-getty@ttyS2", "serial-getty@ttyFIQ0"],
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card"],
+      "why": "把登录控制台从舵机串口上拿掉，否则 robotd 打不开 /dev/ttyS2"
+    },
+    {
+      "id": "usb_serial_console",
+      "value": "g_serial + serial-getty@ttyGS0",
+      "kind": "SOURCE_CONSTANT",
+      "witnesses": ["build_armbian_card"],
+      "why": "板子插电脑多一个 COM 口（115200 8N1）作救命通道"
+    }
+  ],
+  "preconditions": [
+    "底包 /etc/machine-id 为空，且 sshd-keygen.service 已启用（否则每张卡共享 SSH 主机密钥）",
+    "删除底包预生成的 /etc/ssh/ssh_host_*",
+    "R1 原包 sha256 先核对再改；别的版本先核对再改脚本",
+    "根分区起始扇区 >= 32768",
+    "换瑞莎引导后 armbianEnv.txt 不再生效，以后加 overlay 要改 extlinux.conf",
+    "做卡过程全程 root / loop 挂载，须在本机 Linux 环境执行，本工具不代劳"
+  ],
+  "forbidden_flags": [
+    {
+      "flag": "--no-camera",
+      "why": "本项目 IMX219 摄像头是整机必需、不可砍（SSOT 订正㉑ + 用户 2026-11-10 拍板）；fanhao 脚本该 flag 只用于『没接摄像头时避免 mediad 反复崩溃占满一核』的临时调试，不能进交付卡",
+      "source": ".upstream/replica/tools/radxa/kissqy-r1-v112.sh 注释；docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正㉑"
+    },
+    {
+      "flag": "--no-tof",
+      "why": "VL53L5CX V2 ToF 是整机必需、不可砍；同理该 flag 只属临时调试",
+      "source": ".upstream/replica/tools/radxa/kissqy-r1-v112.sh 注释；docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正㉑"
+    }
+  ],
+  "allowed_flags": [
+    "--overlay <NAME>（如 i2c4-m0，加 overlay 不改固件与模型）"
+  ],
+  "rollback_contract": {
+    "status": "NOT_IMPLEMENTED",
+    "borrowed_from": "官方 pollen-robotics/microduck_yocto：A/B RAUC 签名更新 + 健康检查自动回滚、dev/shipping 双镜像、QEMU 无板验 systemd 顺序（2026-11-11 联网一手，Apache-2.0）",
+    "current_reality": "路① 用的 kissqy Public Image R1 / fanhao 改卡是单分区 extlinux 卡，没有 A/B 分区、没有 RAUC、没有自动回滚。做坏只能重刷 TF 卡；fanhao 脚本靠『先核 R1 sha + 只改引导 + 记录改动 + 输出成品 sha』降低风险，但这是可复现，不是可回滚。",
+    "owed": [
+      "决定是否在路① 引入 Yocto A/B 底座（代价：几百 GB / 首次数小时 / ssh-agent / 自建签名 CA，且要把飞特 SCS 后端重接）",
+      "若不换底座：至少落地『原卡 sha 留档 + 一键回到上一张已知好卡 + 健康检查判据』的人工回滚清单",
+      "把健康检查自动回滚从借用目标变成有证据的实装"
+    ],
+    "must_not_claim": "不得因为官方 Yocto 有 RAUC 自动回滚，就说路① 镜像已具备回滚能力"
+  },
+  "blocked_actions": [
+    "不得执行 dd、不得写 TF 卡、不得烧录固件（本工具只校验配方）",
+    "不得修改 .upstream 里的上游脚本",
+    "不得在交付卡上启用 --no-camera / --no-tof",
+    "不得把『只改引导』说成『固件模型原样保留已实测』（那是脚本声明，不是本机校验）",
+    "不得把 Yocto 的 A/B 回滚说成路① 现状",
+    "不得因为输出了成品卡 sha 就宣称该卡可开机"
+  ],
+  "scope": {
+    "live_hardware_accessed": false,
+    "source_files_verified_by_default": false,
+    "not_proof_of": [
+      "任何一张 TF 卡被实际做出或能开机",
+      "R1 原包 / U-Boot .deb 已下载并本地实算",
+      "固件与模型在改卡后确实原样保留",
+      "A/B 分区或健康检查自动回滚已实装",
+      "相机与 ToF 在镜像里已正常启动",
+      "任何一条上板验收"
+    ],
+    "known_gaps": [
+      "官方 Yocto 只有仓库页一手说明，本地无完整 clone；其 recipe 内容未逐行核验",
+      ".upstream/ 被 .gitignore 忽略，默认不随仓库分发；可用 --verify-sources 在本机做常量互证",
+      "成品卡 sha 只有『做出卡之后』才有，本轮无卡、无镜像实体",
+      "本工具不代跑 sudo / loop mount / root 环境下的真实做卡"
+    ]
+  },
+  "signoff": {
+    "status": "UNVERIFIED",
+    "required": [
+      "所有 pin 由本地实体实算或由两脚本实时互证",
+      "rollback_contract.status = IMPLEMENTED 且附实装与演练证据",
+      "上板验收清单 §3 首次上电与 §4 舵机总线全 PASS",
+      "closure_contract.json 的悬案全部闭合"
+    ]
+  }
+}

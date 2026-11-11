@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "owner": "board_acceptance_contract.json 是『拿到板子当天要跑什么、按什么判、哪些判据已被后续订正覆盖』的唯一主人。board_acceptance.py 只从这里派生清单；closure_contract.json 仍是悬案状态与签署的唯一主人，本契约不复制它的状态。",
+  "rule": "无证据默认 UNVERIFIED，整体默认 NOT_SHIPPABLE。--record 只采集观察值并留文件 sha256，绝不自动升级为 PASS；签署必须回 closure_contract.json 的 signoff。上电验收清单起草于 2026-11-06，其中多处已被 SSOT 订正⑬/㉑/㉔/㉕ 覆盖，被标 SUPERSEDED / LINE_MISMATCH 的条目不得当作现行判据执行。",
+  "authoritative_sources": [
+    "docs/hardware/microduck-Radxa上电验收清单-2026-11-06.md（§0-§9 全文，195 行）",
+    "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬(行21-24)、订正㉑、订正㉔/㉕",
+    "microduck-software/tools/hd1910/line_labels.json（三条线别判据、B 代 500k 台架工具）",
+    "microduck-software/tools/hd1910/closure_contract.json（6 个悬案的 board_acceptance_required / signoff）",
+    "microduck-software/tools/hd1910/card_build_contract.json（console=tty1 / mask ttyS2 的做卡前提）",
+    "docs/active/microduck-HD1910-策略导出部署链-2026-11-09.md（publish 链与路① 中控链不同）"
+  ],
+  "authority_kinds": ["CURRENT", "SUPERSEDED", "LINE_MISMATCH", "BENCH_ONLY"],
+  "required_check_ids": [
+    "BA-0-1", "BA-0-2", "BA-1-5", "BA-2-2", "BA-2-4", "BA-2-5",
+    "BA-3-2", "BA-3-4", "BA-4-1", "BA-4-2", "BA-4-3", "BA-4-4",
+    "BA-5-1", "BA-5-2", "BA-6-1", "BA-6-2", "BA-6-3", "BA-7-1",
+    "BA-7-2", "BA-8-1", "BA-X-1", "BA-X-2", "BA-X-3"
+  ],
+  "required_check_ids_note": "显式登记集合：删任意一条、或新增一条未登记的判据，都会让 --check 变红。借 open-microduck check_book.py 的 expected == actual 集合相等断言；新增判据必须同步登记，避免清单被悄悄裁掉。",
+  "authority_legend": {
+    "CURRENT": "与现行 SSOT 判决一致，可直接作判据",
+    "SUPERSEDED": "清单起草时的物料/规格已被后续订正覆盖，原文保留作史料，不得照抄执行",
+    "LINE_MISMATCH": "该条目沿用 B 代 / 官方 publish 线或另一套 IMU 路径，与路① 线别冲突，须按现行线别改写后再执行",
+    "BENCH_ONLY": "台架 4.6V 欠压读数或台架工具，真机 7.4V 后必须重测，不作整机签收"
+  },
+  "superseding_sources": {
+    "SSOT_13": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 行21-24（路① 瑞莎原生镜像、1GB/无eMMC、R17→V167、上机前必闭合四项）",
+    "SSOT_21": "订正㉑（J13/J14 TTL vs J3/J11 RS-485；相机 IMX219 与 VL53L5CX V2 ToF 必需不可砍）",
+    "SSOT_24_25": "订正㉔/㉕（人人 HAT C1 ¥140 + IMU ¥80 + HUB 取电板 ¥36 + 金属件 ¥45）",
+    "LINE_LABELS": "microduck-software/tools/hd1910/line_labels.json 的 L1_RADXA_MIRROR / L2_BGEN 判别表"
+  },
+  "checks": [
+    {
+      "id": "BA-0-1",
+      "section": "§0",
+      "title": "主控型号与板型",
+      "pass_criterion": "板面丝印 RADXA ZERO 3W，板型 65×30",
+      "command": "目视 + 卡尺",
+      "authority": "SUPERSEDED",
+      "authority_note": "清单 §0/§1.1 写『2GB 版』；SSOT 订正⑬ 已锁定 1GB / 无 eMMC + 已有 64GB TF（¥179）。2GB 是起草时口径，不得据此下单或判 FAIL。",
+      "superseded_by": ["SSOT_13"],
+      "evidence_kind": ["实物丝印", "内存容量 dmesg / free -h"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-0-2",
+      "section": "§0",
+      "title": "HAT 身份与四角孔",
+      "pass_criterion": "40-pin 母头物理贴合，无顶针错位",
+      "command": "目视 + 卡尺量四角孔位与孔距",
+      "authority": "SUPERSEDED",
+      "authority_note": "清单 §0/§1.2 写 kissqy RPI_Robot_HAT；订正㉕ 主路径已改人人可做机器人绿板 C1（同源 fork）。且两家 HAT 四角金色孔与官方 KiCad 0 MountingHole 矛盾待实物卡尺。",
+      "superseded_by": ["SSOT_24_25"],
+      "evidence_kind": ["实物卡尺", "HAT 丝印照片"],
+      "closure_refs": ["INCONCLUSIVE_DIMENSION"]
+    },
+    {
+      "id": "BA-1-5",
+      "section": "§1",
+      "title": "2S 电池实测电压",
+      "pass_criterion": "实测满电 ≤ 8.4 V（非 3S）",
+      "command": "万用表量电池输出；核对配置 [battery] cells=[2] + max_volts=8.4",
+      "authority": "CURRENT",
+      "authority_note": "清单 §1.5/§6.3 与 SSOT 一致；误接 3S 有烧毁风险，是硬判据。注意 §6.2 的键名属 B 代，见 BA-6-2。",
+      "superseded_by": [],
+      "evidence_kind": ["万用表读数", "配置文件回读"],
+      "closure_refs": ["INCONCLUSIVE_CURRENT"]
+    },
+    {
+      "id": "BA-2-2",
+      "section": "§2",
+      "title": "舵机排线座与极性",
+      "pass_criterion": "J13/J14（3P 2.5mm TTL 半双工）接 15 颗 HD-1910；J3/J11（4P RS-485 差分）空置；pin1=GND / pin2=+BATT / pin3=DATA 不错位",
+      "command": "目视 + 线序表；注意飞特 AMP2.0 与 HAT 2.5mm 需 2.0→2.5 转接线且脚序头尾颠倒",
+      "authority": "CURRENT",
+      "authority_note": "订正㉑ 已由 KiCad pad net + 卖家 UI 双证闭合；旧文档写 J3/J11 出 TTL 作废。",
+      "superseded_by": [],
+      "evidence_kind": ["接线照片", "线序实测"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-2-4",
+      "section": "§2",
+      "title": "装机阶段电池不接 / 供电端无短接",
+      "pass_criterion": "HAT 供电端无短接（< 1 Ω 报警）",
+      "command": "万用表量 HAT 供电端",
+      "authority": "CURRENT",
+      "authority_note": "与现行取电方案（人人 HUB 分线板双铜柱插 NP-F550 电池孔）不冲突；装夹座前先验无短接。",
+      "superseded_by": [],
+      "evidence_kind": ["万用表读数"],
+      "closure_refs": ["INCONCLUSIVE_DIMENSION"]
+    },
+    {
+      "id": "BA-2-5",
+      "section": "§2",
+      "title": "人人 HUB 取电板几何与夹座",
+      "pass_criterion": "到手卡尺量板框、孔径、孔距、双铜柱间距；与唯卓仕 NP-F550 2200mAh 实物正负凹孔试插；按实物重打 power_support / banana_pcb_locker，不套 fanhao STEP",
+      "command": "卡尺 + 试插 + 重打打印件",
+      "authority": "CURRENT",
+      "authority_note": "订正㉕ 新增主路径件，2026-11-06 清单没有对应条目；34mm 安装族归属待实测。",
+      "superseded_by": [],
+      "evidence_kind": ["实物卡尺记录", "试插照片", "重打 STL"],
+      "closure_refs": ["INCONCLUSIVE_DIMENSION"]
+    },
+    {
+      "id": "BA-3-2",
+      "section": "§3",
+      "title": "舵机总线节点 /dev/ttyS2",
+      "pass_criterion": "dmesg | grep tty 出现 /dev/ttyS2（UART2_M0），节点存在且当前用户有 rw 权限",
+      "command": "dmesg | grep tty; ls -l /dev/ttyS2",
+      "authority": "CURRENT",
+      "authority_note": "清单 §3.2/§3.3 与 ft1910 first light 记录一致；节点名不符先 dmesg 定位真实名，不臆改引脚。",
+      "superseded_by": [],
+      "evidence_kind": ["dmesg 输出", "ls -l 输出"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-3-4",
+      "section": "§3",
+      "title": "ttyS2 未被登录控制台占用",
+      "pass_criterion": "cat /proc/cmdline 无 console=ttyS2；robotd 能 open 成功",
+      "command": "cat /proc/cmdline; systemctl status serial-getty@ttyS2",
+      "authority": "CURRENT",
+      "authority_note": "与 card_build_contract.json 的 console=tty1 / mask serial-getty@ttyS2 前提互证；fanhao 做卡脚本已处理。",
+      "superseded_by": [],
+      "evidence_kind": ["cmdline 快照", "systemctl 输出"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-4-1",
+      "section": "§4",
+      "title": "15 颗舵机 1 Mbps 全应答 + ID 表",
+      "pass_criterion": "15/15 在 1 Mbps 下全部应答、无丢包；逐颗回读实际 ID / direction / zero_ticks 并存档",
+      "command": "identify（路① 必须显式 --baud 1000000，不能沿用 B 代 500000 默认）",
+      "authority": "CURRENT",
+      "authority_note": "清单 §4.1 与 SSOT 上机前必闭合①一致；line_labels 已标 B 代 identify 工具的 500000 默认值风险。左右文字定义未定，只认 ID 数字。",
+      "superseded_by": [],
+      "evidence_kind": ["逐颗回读日志", "ID 表", "方向表"],
+      "closure_refs": ["INCONCLUSIVE_LIVE_IDENTIFY", "INCONCLUSIVE_LR_LABEL"]
+    },
+    {
+      "id": "BA-4-2",
+      "section": "§4",
+      "title": "EEPROM 免写 / reg6 保持 0",
+      "pass_criterion": "BAUD_REGISTER_VALUE=0，未对任何舵机执行波特率改写；EEPROM 维持出厂",
+      "command": "回读 reg6；核对脚本未发写 EEPROM 指令",
+      "authority": "CURRENT",
+      "authority_note": "SSOT 订正⑬ 明写 reg6 出厂 0 免写 15 颗；把 B 代 reg6=1 逐颗写当免写会重复 R3 零应答。",
+      "superseded_by": [],
+      "evidence_kind": ["reg6 回读", "总线写指令日志"],
+      "closure_refs": ["INCONCLUSIVE_RATE_MISMATCH"]
+    },
+    {
+      "id": "BA-4-3",
+      "section": "§4",
+      "title": "500k 位宽 / 回滚解耦（R3）",
+      "pass_criterion": "示波器量 500k 位宽并存档波形；真上板跑 500k 并回读；用另一适配器复跑以解耦回滚",
+      "command": "示波器 + 台架复跑 + 另一适配器",
+      "authority": "CURRENT",
+      "authority_note": "轮3 决策是保 reg6=0 / 1M、不切 reg6；R3 未消，仿真鸭不能消 R3。此条是 R3 的唯一闭合路径，不是走路前置。",
+      "superseded_by": [],
+      "evidence_kind": ["示波器波形", "上板回读日志", "适配器对照日志"],
+      "closure_refs": ["INCONCLUSIVE_RATE_MISMATCH"]
+    },
+    {
+      "id": "BA-4-4",
+      "section": "§4",
+      "title": "速度标度 0.732 rpm/count",
+      "pass_criterion": "清单 §4.3 写速度标度 ≈ 0.732 rpm/count（台架 ratio 49.44 vs 理论 49.97）",
+      "command": "probe_pgain_speed.py 或标定脚本",
+      "authority": "BENCH_ONLY",
+      "authority_note": "台架 4.6 V 是合法但非额定欠压值；清单 §8.5 自己写明真机 7.4 V 后要重测 kp8/duty/齿隙。不得拿台架数当整机判据。",
+      "superseded_by": [],
+      "evidence_kind": ["7.4V 重测记录"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-5-1",
+      "section": "§5",
+      "title": "i2cdetect -y 3（头 IMU 辅助姿态）",
+      "pass_criterion": "清单 §5.1 写 IMU 出现在 0x68/0x69，配置总线号由 1 改 3",
+      "command": "i2cdetect -y 3",
+      "authority": "LINE_MISMATCH",
+      "authority_note": "清单写的是 HAT 板载 I2C 头 IMU（辅助姿态）；路① 走路策略 61 维角速度来自总线 ID200 躯干 IMU。两条路径不可互替，头 IMU 扫到也不代表策略 IMU 就绪。",
+      "superseded_by": ["LINE_LABELS"],
+      "evidence_kind": ["i2cdetect 输出"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-5-2",
+      "section": "§5",
+      "title": "总线 IMU ID200 与身份字节",
+      "pass_criterion": "接上人人 ¥80 IMU（技术名 imu_to_dxl），确认 ID200 与 FT6 身份字节 06 00 00 00 F2 被镜像读到；断开 IMU 再跑一次门禁必须变红（负对照）",
+      "command": "identify / 镜像 imu 状态；卸载后重跑",
+      "authority": "CURRENT",
+      "authority_note": "对应 SSOT 的 INCONCLUSIVE_LIVE_IDENTIFY；kissqy R1 只认总线上 ID200 的小板，fanhao 20261023c 自动识别仅伪串口 + 镜像离线核验，真实小板未上机。认板前不刷 IMU HEX。",
+      "superseded_by": [],
+      "evidence_kind": ["上板回读日志", "负对照门禁输出"],
+      "closure_refs": ["INCONCLUSIVE_LIVE_IDENTIFY"]
+    },
+    {
+      "id": "BA-6-1",
+      "section": "§6",
+      "title": "开机固件元数据快照硬校验",
+      "pass_criterion": "robotd 启动日志无 unverified HD1910M mode-4 firmware/registers 且无 BUILD FAILED 后退出；快照 row[0]=3、row[2..5]=[0,10,31]、row[5]==该舵机 ID、row[8]!=0、row[30]=1、row[33]=4",
+      "command": "robotd 启动日志 + sync_read(0,40) 快照",
+      "authority": "CURRENT",
+      "authority_note": "清单 §6.1 更正版原文；若报错说明固件/标定不匹配，不要按 DuckBuddy 表写 EEPROM。",
+      "superseded_by": [],
+      "evidence_kind": ["启动日志", "元数据快照"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-6-2",
+      "section": "§6",
+      "title": "robotd 部署档键名",
+      "pass_criterion": "清单 §6.2 表格列 [bus] servo=feetech_hls / joint_ids / imu_median=false / [battery] cells=[2] / position_kp=8 / position_kd=8",
+      "command": "核对部署档 TOML",
+      "authority": "LINE_MISMATCH",
+      "authority_note": "清单自己声明这是 DuckBuddy 线（feetech_hls）键名；hd191m 线参数结构为 {reference_native, port, installation, imu_bus, imu_address, allow_motion, servo_gain_profile, scheduled_bus}，键名完全不同。照抄会让配置整份加载失败；电池 2S 硬判据见 BA-1-5，不受本条影响。",
+      "superseded_by": ["LINE_LABELS", "SSOT_13"],
+      "evidence_kind": ["现行线别部署档"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-6-3",
+      "section": "§6",
+      "title": "P/D 环 reg50/51 回读",
+      "pass_criterion": "清单 §6.4 参考台架 P8→24 gain 0.350→0.744，reg50 = clamp(round(gain×kp/200),1,254)",
+      "command": "robotctl 读写 reg50/51",
+      "authority": "BENCH_ONLY",
+      "authority_note": "台架数是 4.6V 欠压值；SSOT 订正⑬ 已弃 kp_fw=8 单写者、定 P5/D0/转矩1000，gain=8 会落 reg50=1 使机器人瘫软。真机须按现行 P/D 重测。",
+      "superseded_by": ["SSOT_13"],
+      "evidence_kind": ["真机 reg50/51 回读", "带宽实测"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-7-1",
+      "section": "§7",
+      "title": "策略加载链",
+      "pass_criterion": "清单 §7.2 写 export.py → infer_policy.py --walking → uv run publish → robotctl policy load",
+      "command": "按清单执行",
+      "authority": "LINE_MISMATCH",
+      "authority_note": "SSOT 订正⑬ 已判路① 部署链是 R17→V167 中控、非 uv run publish；publish 与这代 robotd 非一条链（normalizer 须烤进图、deploy61 分母差 1157 倍）。§7.3/§7.4 的 ONNX 形状与归一化下限检查仍可作为离线门禁借用，但不能当中控签收。",
+      "superseded_by": ["SSOT_13"],
+      "evidence_kind": ["V167 中控加载日志"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-7-2",
+      "section": "§7",
+      "title": "p8head_2999 在 R17 V167 下能否加载",
+      "pass_criterion": "V167 中控加载成功且无字段 mismatch；若不成功，改用镜像配套现成模型",
+      "command": "R17 V167 中控加载 + 回读",
+      "authority": "CURRENT",
+      "authority_note": "SSOT 上机前必闭合②，明确『不保证』；官方 robotd 加载校验比 B 代严（policy load 只查宽度是 B 代口径，已推翻）。",
+      "superseded_by": [],
+      "evidence_kind": ["中控加载日志", "字段回读"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-8-1",
+      "section": "§8",
+      "title": "安全层配置",
+      "pass_criterion": "fall_gravity_z=-0.5（≈60°）/ debounce 200ms；FallPredictor 26°+速率+300ms → gain_limp=50 → 0.6s 回站；deadman_ms=500 只归零 twist；无关节限位、温度电流只观测",
+      "command": "核对配置 + 首次站立在限位/低速下做，确认 0.6s 回站触发",
+      "authority": "CURRENT",
+      "authority_note": "清单 §8.1-8.4 与 SSOT 安全层判决一致；离手前机器人须有支撑。",
+      "superseded_by": [],
+      "evidence_kind": ["配置回读", "回站触发日志"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-X-1",
+      "section": "§9+",
+      "title": "control.43 升级回读",
+      "pass_criterion": "R1 预装 control.40 升级到 control.43 / API40 后回读版本号，并与 V167 随包固件 BUILD 记录配对",
+      "command": "V167 中控『系统维护』安装随包固件 + 版本回读",
+      "authority": "CURRENT",
+      "authority_note": "SSOT 上机前必闭合③；B2 契约把 control.43 标 UNOBTAINABLE，升级前须先取得随包固件与 BUILD 记录。",
+      "superseded_by": [],
+      "evidence_kind": ["版本回读日志", "BUILD 记录比对"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-X-2",
+      "section": "§9+",
+      "title": "PS5 手柄 mapping",
+      "pass_criterion": "手柄各按键与动作映射实测通过，5GHz Wi-Fi 连接稳定",
+      "command": "手柄遥操作实测",
+      "authority": "CURRENT",
+      "authority_note": "SSOT 上机前必闭合④；许可项（仅个人使用）已闭合，不再是未决项。",
+      "superseded_by": [],
+      "evidence_kind": ["映射表", "实测记录"],
+      "closure_refs": []
+    },
+    {
+      "id": "BA-X-3",
+      "section": "§9+",
+      "title": "相机 + ToF 上线",
+      "pass_criterion": "IMX219 倒装 + rotation=180 出图；VL53L5CX V2 经 JST-SH 1mm 4P（I2C3）读数；mediad / duck_detector / tofd 均正常，无崩溃重启",
+      "command": "mediad / tofd 服务状态 + 图像与测距读数",
+      "authority": "CURRENT",
+      "authority_note": "SSOT 订正㉑：两件必需不可砍（2026-11-10 用户拍板）；B8 契约把 --no-camera / --no-tof 列为禁用 flag。清单起草时曾写『走路阶段可砍』，已作废。",
+      "superseded_by": [],
+      "evidence_kind": ["服务状态", "图像快照", "ToF 读数"],
+      "closure_refs": []
+    }
+  ],
+  "coverage_rule": "closure_contract.json 里每个 status=UNVERIFIED 的悬案，必须至少被一条 check 的 closure_refs 引用；引用了不存在的 id 或漏掉任一悬案都判结构 FAIL。借 open-microduck check_book.py 的集合相等断言。",
+  "record_rule": "--record 只写 COLLECTED（观察值 + 证据文件 sha256 + 字节数 + 时间戳），绝不写 PASS；是否闭合由 closure_contract.json 的 signoff 人工签署。证据目录默认 microduck-software/out/board_acceptance/（已被 .gitignore 忽略）。",
+  "scope": {
+    "live_hardware_accessed": false,
+    "not_proof_of": [
+      "任何一条判据已实际执行或已 PASS",
+      "镜像可开机、总线可通、IMU 被认出",
+      "人人 HUB 几何 / 夹座适配已量过",
+      "R3 零应答已消解",
+      "control.43 / p8head_2999 / 手柄 mapping 已完成",
+      "相机与 ToF 在真机上已出数"
+    ],
+    "known_gaps": [
+      "清单 §0 的 2GB、kissqy HAT、§5 的板载 I2C、§6.2 的 B 代键名、§7 的 publish 链均已标 SUPERSEDED / LINE_MISMATCH，但原文保留作史料，未改原文档",
+      "台架 4.6V 欠压读数（速度标度、P/D、齿隙）标 BENCH_ONLY，真机 7.4V 须重测",
+      "人人 HAT 四角金色孔 vs 官方 KiCad 0 MountingHole 的矛盾待实物卡尺",
+      "2.0→2.5 转接线整机侧缺口仍为风险（用户手删行不恢复）",
+      "本工具不执行任何上板动作，不采集串口/总线数据，只提供清单与证据留档骨架"
+    ]
+  },
+  "signoff": {
+    "status": "UNVERIFIED",
+    "required": [
+      "所有 authority=CURRENT 的判据逐条有证据",
+      "SUPERSEDED / LINE_MISMATCH 条目按现行 SSOT 改写后重跑",
+      "closure_contract.json 的 5 个 UNVERIFIED 悬案全部闭合",
+      "人工签署（B1 不自动升级 PASS）"
+    ]
+  }
+}
