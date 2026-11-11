@@ -6,7 +6,7 @@
     "docs/hardware/microduck-Radxa上电验收清单-2026-11-06.md（§0-§9 全文，195 行）",
     "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬(行21-24)、订正㉑、订正㉔/㉕",
     "microduck-software/tools/hd1910/line_labels.json（三条线别判据、B 代 500k 台架工具）",
-    "microduck-software/tools/hd1910/closure_contract.json（6 个悬案的 board_acceptance_required / signoff）",
+    "microduck-software/tools/hd1910/closure_contract.json（7 个悬案的 board_acceptance_required / signoff；C1 追加 INCONCLUSIVE_ROLLER_POLICY）",
     "microduck-software/tools/hd1910/card_build_contract.json（console=tty1 / mask ttyS2 的做卡前提）",
     "docs/active/microduck-HD1910-策略导出部署链-2026-11-09.md（publish 链与路① 中控链不同）"
   ],
@@ -15,7 +15,7 @@
     "BA-0-1", "BA-0-2", "BA-1-5", "BA-2-2", "BA-2-4", "BA-2-5",
     "BA-3-2", "BA-3-4", "BA-4-1", "BA-4-2", "BA-4-3", "BA-4-4",
     "BA-5-1", "BA-5-2", "BA-6-1", "BA-6-2", "BA-6-3", "BA-7-1",
-    "BA-7-2", "BA-8-1", "BA-X-1", "BA-X-2", "BA-X-3"
+    "BA-7-2", "BA-8-1", "BA-9-1", "BA-X-1", "BA-X-2", "BA-X-3"
   ],
   "required_check_ids_note": "显式登记集合：删任意一条、或新增一条未登记的判据，都会让 --check 变红。借 open-microduck check_book.py 的 expected == actual 集合相等断言；新增判据必须同步登记，避免清单被悄悄裁掉。",
   "authority_legend": {
@@ -306,6 +306,18 @@
       "superseded_by": [],
       "evidence_kind": ["服务状态", "图像快照", "ToF 读数"],
       "closure_refs": []
+    },
+    {
+      "id": "BA-9-1",
+      "section": "§9+",
+      "title": "R17 V167 roller 策略加载/切换与 action_scale 回读",
+      "pass_criterion": "中控读到可用策略清单且存在 roller 系策略；加载/切换后回读字段与形状无 mismatch；镜像内 action_scale 真实配置已回读记录；换装后按位移跨度实测，策略未加载时该判据必须失败",
+      "command": "R17 V167 中控策略管理 + 配置回读 + 位移跨度实测（不用 uv run publish / robotctl policy load）",
+      "authority": "CURRENT",
+      "authority_note": "C1 追加：用户 2026-11-11 拍板两版都做，机械件清单可执行但策略未验证。11-06 变体计划 §6 的 publish→robotctl 链已被 SSOT 订正⑬ 覆盖；action_scale 两来源冲突（0.8 vs SSOT 行365 的 1.0），一律按镜像实际配置核，不照抄。官方 5 个 roller 策略是 XL330 仿真训练值，只作跨 plant 对照。",
+      "superseded_by": [],
+      "evidence_kind": ["中控策略清单日志", "加载字段/形状回读", "配置回读", "位移跨度记录", "负对照：未加载策略必失败"],
+      "closure_refs": ["INCONCLUSIVE_ROLLER_POLICY"]
     }
   ],
   "coverage_rule": "closure_contract.json 里每个 status=UNVERIFIED 的悬案，必须至少被一条 check 的 closure_refs 引用；引用了不存在的 id 或漏掉任一悬案都判结构 FAIL。借 open-microduck check_book.py 的集合相等断言。",
@@ -318,7 +330,8 @@
       "人人 HUB 几何 / 夹座适配已量过",
       "R3 零应答已消解",
       "control.43 / p8head_2999 / 手柄 mapping 已完成",
-      "相机与 ToF 在真机上已出数"
+      "相机与 ToF 在真机上已出数",
+      "轮滑 roller 策略已在 R17 V167 加载或切换"
     ],
     "known_gaps": [
       "清单 §0 的 2GB、kissqy HAT、§5 的板载 I2C、§6.2 的 B 代键名、§7 的 publish 链均已标 SUPERSEDED / LINE_MISMATCH，但原文保留作史料，未改原文档",
@@ -333,7 +346,7 @@
     "required": [
       "所有 authority=CURRENT 的判据逐条有证据",
       "SUPERSEDED / LINE_MISMATCH 条目按现行 SSOT 改写后重跑",
-      "closure_contract.json 的 5 个 UNVERIFIED 悬案全部闭合",
+      "closure_contract.json 的 6 个 UNVERIFIED 悬案全部闭合（C1 追加 INCONCLUSIVE_ROLLER_POLICY）",
       "人工签署（B1 不自动升级 PASS）"
     ]
   }

@@ -123,6 +123,27 @@ jobs:
       - name: Inference negative-control self-test (stdlib-only)
         run: python tools/hd1910/verify_policy_inference.py --selftest
 
+      # B3 (2026-11-11): A1/A2/A3 + B1/B2/B5/B8 + C1/C3/P0-2 meta guards are
+      # stdlib-only and CAN run in this lean CI. run_all_gates.py --check can
+      # NOT: it discovers every --selftest tool, ten of which import
+      # onnx/onnxruntime/mjlab/torch at CLI time and are absent here. Reading a
+      # hand-written list of guards into YAML would rot, so ci_meta_targets.py
+      # derives the list from line_labels.json (single owner) and re-checks each
+      # file's imports with an AST probe. --check is a real gate: a missing
+      # guard file, a guard without --selftest, or a newly heavy guard turns
+      # this step RED instead of silently shrinking coverage.
+      # The workflow is still POST-PUSH ADVISORY, NOT a merge gate.
+      - name: Meta guards -- derived stdlib-only list (B3)
+        run: |
+          set -e
+          python tools/hd1910/ci_meta_targets.py --check
+          for G in $(python tools/hd1910/ci_meta_targets.py --names); do
+            echo "=== meta guard: $G ==="
+            python "tools/hd1910/$G" --selftest
+          done
+          echo "=== orchestrator plumbing (injected CLI fixtures only) ==="
+          python tools/hd1910/run_all_gates.py --selftest
+
       - name: Regression suite (tooling + config invariants)
         run: python -m pytest tests/ -q -rs
 
@@ -177,4 +198,6 @@ jobs:
           echo "full_gate=${{ steps.readiness.outputs.full_gate }}"
           echo "workflow_discoverable=${{ steps.readiness.outputs.workflow_discoverable }}"
           echo "CI IS A POST-PUSH ADVISORY CHECK, NOT A MERGE GATE -- main is unprotected (no branch protection / no rulesets); a red run does not stop a commit."
+          echo "META GUARDS GREEN IS AN OFFLINE GATE ONLY -- UNVERIFIED != PASS; no hardware was touched and no ship sign-off was issued."
           echo "CONTRACT STAGE NOT VERIFIED IN CI -- run pre_deploy_check.py and pytest tests/ with .venv-mjlab before shipping."
+          echo "run_all_gates.py --check (all 40+ tools) stays LOCAL: ten guards need onnx/onnxruntime/mjlab/torch, absent in this lean CI."

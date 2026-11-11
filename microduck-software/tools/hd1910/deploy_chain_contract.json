@@ -367,7 +367,7 @@
       "L1 四项上机必闭合（15 关节 identify / p8head_2999 加载 / control.43 / 手柄 mapping）+ 5GHz Wi-Fi 全部未做",
       "kissqy R1 镜像 sha、V167 中控 ZIP sha、control.43 BUILD.json 均未本地实算（B2 已如实标 UPSTREAM_PUBLISHED / UNOBTAINABLE / UNPINNED）",
       "line_labels.json 仍有 20 个 --selftest 工具为 REPORT_ONLY，未逐一定线",
-      "A1/A2/A3 + B2/B8/B1 与 B5 尚未接入 .github/workflows/deploy-gate.yml；该 workflow 自述 POST-PUSH ADVISORY 非 merge gate",
+      "B3 已把 stdlib-only meta guards 接入 .github/workflows/deploy-gate.yml（名单由 ci_meta_targets.py 从 line_labels.json 派生，计数不写进本契约）；run_all_gates.py --check 因依赖 torch/mjlab/mujoco 仍只留本地 .venv-mjlab 真跑；该 workflow 自述 POST-PUSH ADVISORY 非 merge gate，绿勾不等于签收",
       "官网一键烧录软件的 ZIP sha 与历史版本校验文件未下载实算；只作机制借鉴，不进 B2 四元组"
     ]
   }

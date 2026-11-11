@@ -131,7 +131,11 @@ def test_cli_selftest_list_and_check_really_run():
     lst = subprocess.run([sys.executable, SCRIPT, "--list"],
                          cwd=str(ROOT), capture_output=True, text=True)
     assert lst.returncode == 0
-    assert "BA-7-1" in lst.stdout and "total = 23" in lst.stdout
+    # Count comes from the contract, never a hard-coded snapshot: C1 added
+    # BA-9-1 (roller policy board check) and the old "total = 23" rotted.
+    expected_total = len(ba.load()["checks"])
+    assert "BA-7-1" in lst.stdout
+    assert "total = %d" % expected_total in lst.stdout
 
     ok = subprocess.run([sys.executable, SCRIPT, "--check", "--json"],
                         cwd=str(ROOT), capture_output=True, text=True)

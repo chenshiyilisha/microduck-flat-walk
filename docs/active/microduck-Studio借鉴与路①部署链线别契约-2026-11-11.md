@@ -142,9 +142,11 @@ _主线仍按上一轮建议推进 B5：路① 中控链几乎零工具覆盖，
 - kissqy R1 镜像 sha / V167 中控 ZIP sha / control.43 `BUILD.json` **未本地实算**（B2 已如实标 `UPSTREAM_PUBLISHED` / `UNOBTAINABLE` / `UNPINNED`）。
 - 官网一键烧录软件的 ZIP sha 与历史版本校验文件**未下载实算**，只作机制借鉴，不进 B2 四元组。
 - `line_labels.json` 仍有 **20 个 `--selftest` 工具为 `REPORT_ONLY`**（B4 待办，未逐一定线）。
-- A1/A2/A3 + B2/B8/B1 + B5 **尚未接入** `.github/workflows/deploy-gate.yml`（B3 待办）；该 workflow 自述 **POST-PUSH ADVISORY、非 merge gate**，不能把绿勾当 merge 门禁。
+- A1/A2/A3 + B2/B8/B1 + B5 **尚未接入** `.github/workflows/deploy-gate.yml`（B3 待办）；该 workflow 自述 **POST-PUSH ADVISORY、非 merge gate**，不能把绿勾当 merge 门禁。（**历史条目，保留作史料**）
+  - 📌 **2026-11-11 B3 订正**：已接入。lean CI（Python 3.12 + `requirements.txt`，无 torch/mjlab/mujoco）只跑 `ci_meta_targets.py` 从 `line_labels.json` 派生的 stdlib-only meta guards 逐条 `--selftest`，外加 `run_all_gates.py --selftest`（只跑注入 fixture 的编排器自检）；**`run_all_gates.py --check` 不接 CI**，它发现的 40+ 工具里有十个在 CLI 期 import 重依赖，接进去只会得到一片诚实的假红。重依赖全量真跑仍留本地 `.venv-mjlab`。边界不变：**POST-PUSH ADVISORY、非 merge gate**，绿勾不等于签收、`UNVERIFIED != PASS`。详见 `microduck-轮滑策略契约与C1C3B3护栏落地-2026-11-11.md`。
 - 金属结构件「共 7 个」按 BOM 备注推断（颈部×2 + 躯干底座×1 + 上腿加固板×2 + 轴承滚轮×2），**非卖家确认**，到货逐件核对。
-- **轮滑版 roller 策略未闭合**：官方 `pretrained_models.json` 的 5 个 roller 策略是 XL330 仿真训练值，本项目路①镜像是否自带可切换的 roller 策略、V167 中控能否加载、`action_scale` 真值（11-06 §6 引 0.8 vs 本项目 SSOT 行 365 记 1.0，两来源冲突）**均未上板验证**；`ROLLER_STAND_Z=0.138` 台架漂移、TPU 轮胎轴孔过盈也未实测。⇒ 机械清单可执行，软件/策略验收仍属 `INCONCLUSIVE`，不得据本轮文档宣布轮滑版跑通。
+- **轮滑版 roller 策略未闭合**：官方 `pretrained_models.json` 的 5 个 roller 策略是 XL330 仿真训练值，本项目路①镜像是否自带可切换的 roller 策略、V167 中控能否加载、`action_scale` 真值（11-06 §6 引 0.8 vs 本项目 SSOT 行 365 记 1.0，两来源冲突）**均未上板验证**；`ROLLER_STAND_Z=0.138` 台架漂移、TPU 轮胎轴孔过盈也未实测。⇒ 机械清单可执行，软件/策略验收仍属 `INCONCLUSIVE_ROLLER_POLICY`，不得据本轮文档宣布轮滑版跑通。
+  - 📌 **2026-11-11 C1 订正**：上面这条原本只是「文档级」标记、只写在 gitignored 打印包里，`check_closure.py` 旧版只扫 `docs/**/*.md` ⇒ 检不到也不判红。现已扩扫描白名单并把它正式登记为 A2 第 7 条契约（`UNVERIFIED`、`evidence=[]`、`--ship-gate` 必红），详见本轮 `microduck-轮滑策略契约与C1C3B3护栏落地-2026-11-11.md`。文档级标记与门禁契约从此是同一个 id，不再有「绕过门禁」的口子。
 - 训练线 #76 多 seed sweep、#77 VelStand / 手柄遥操作仍 pending。
 
 ## 9. 边界声明

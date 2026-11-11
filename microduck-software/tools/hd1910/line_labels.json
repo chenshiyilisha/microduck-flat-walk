@@ -212,6 +212,24 @@
       "line": "META_GUARD",
       "risk_tokens": [],
       "evidence": "B5 新增：部署链线别契约与跨线拒绝护栏，current_line 从本文件读取（不复制常量），不属任何硬件线"
+    },
+    {
+      "path": "tools/hd1910/check_roller_policy.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "P0-2 新增：轮滑策略离线结构契约与上游目录实算（--verify-sources），恒 UNVERIFIED，不属任何硬件线"
+    },
+    {
+      "path": "tools/hd1910/link_evidence.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "C3 新增：B1 COLLECTED → A2 四列表只读证据桥接，链接只从 board_acceptance_contract.json#closure_refs 派生，COLLECTED != PASS，不属任何硬件线"
+    },
+    {
+      "path": "tools/hd1910/ci_meta_targets.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "B3 新增：从本文件派生 lean CI 可跑的 stdlib-only 护栏名单（AST 依赖探测 + 负对照），排除 run_all_gates.py --check，不属任何硬件线"
     }
   ],
   "known_gaps": [

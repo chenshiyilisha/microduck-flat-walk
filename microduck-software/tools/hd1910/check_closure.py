@@ -27,6 +27,20 @@ open-microduck 的 evidence-backlog / source-ledger (证据性质、尚不能排
 
 Single source of truth: closure_contract.json. Stdlib only.
 
+Scan coverage (C1, 2026-11-11)
+------------------------------
+The first version scanned ONLY ROOT/docs/**/*.md. A marker introduced by a
+user decision could therefore live in a delivery note under out/deliverables/
+(or in a tool docstring / root README) without ever being registered here --
+the "a marker in a document with no contract entry turns the gate red"
+promise was bypassable. scan_doc_marks() now walks an EXPLICIT allow-list of
+roots and the report names the roots it actually walked, so the coverage is
+auditable. Deliberately excluded: .workbuddy/memory/** (historical work log,
+not a live contract), .upstream/** (third-party markers), and out/** other
+than deliverables (scratch / evidence snapshots). Those are史料, not 规范文档.
+An explicit allow-list -- not a whole-repo rglob -- is required: a blanket
+scan would drag dozens of historical markers into the "must register" set.
+
 Usage (cwd = microduck-software):
     python tools/hd1910/check_closure.py --check
     python tools/hd1910/check_closure.py --check --ship-gate
@@ -42,6 +56,7 @@ import io
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -49,6 +64,21 @@ SOFTWARE = HERE.parents[1]
 ROOT = SOFTWARE.parent
 CONTRACT = HERE / "closure_contract.json"
 MARK = re.compile(r"INCONCLUSIVE_[A-Z_]+")
+# Explicit allow-list. Relative to ROOT. A file entry is scanned as one .md.
+SCAN_ROOTS = (
+    "docs",
+    "out/deliverables",
+    "microduck-software/tools/hd1910",
+    "README.md",
+    "AGENTS.md",
+)
+EXCLUDED_SCAN_ROOTS = (
+    ".workbuddy/memory",
+    ".upstream",
+    "out (outside out/deliverables)",
+)
+EXCLUDED_REASON = ("史料与第三方文档不是活的契约；全仓 rglob 会把历史标记拉进『必须登记』集合，"
+                   "造成大量假红。只扫显式白名单，缺失的根自动跳过并在报告里如实列出。")
 
 REQUIRED = ("id", "status", "summary", "why_open", "evidence_kind",
             "verification_boundary", "local_verified",
@@ -65,16 +95,27 @@ def sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def scan_doc_marks() -> set[str]:
-    """Every marker that actually appears in docs/ must be registered.
+def default_scan_roots(root: Path = ROOT) -> list[Path]:
+    """Allow-listed roots that actually exist (CI has no gitignored out/)."""
+    return [root / rel for rel in SCAN_ROOTS if (root / rel).exists()]
+
+
+def scan_doc_marks(roots: list[Path] | None = None) -> set[str]:
+    """Every marker in the allow-listed documents must be registered.
 
     This is the check_book.py "expected == {actual}" assertion: a new
-    INCONCLUSIVE_* in a document with no contract entry turns the gate red
-    instead of silently becoming an untracked open question.
+    INCONCLUSIVE_* in ANY scanned document with no contract entry turns the
+    gate red instead of silently becoming an untracked open question.
+    `roots` is injectable so the negative control can PROVE that an extra
+    root is really walked (and that dropping it really loses the marker).
     """
     out: set[str] = set()
-    for f in (ROOT / "docs").rglob("*.md"):
-        out.update(MARK.findall(io.open(f, encoding="utf-8", errors="replace").read()))
+    for r in (default_scan_roots() if roots is None else roots):
+        files = [r] if r.is_file() else sorted(r.rglob("*.md"))
+        for f in files:
+            if f.suffix.lower() != ".md":
+                continue
+            out.update(MARK.findall(io.open(f, encoding="utf-8", errors="replace").read()))
     return out
 
 
@@ -197,6 +238,39 @@ def selftest() -> int:
     ck("负对照：docs 出现未登记标记必红",
        bool(validate(data, marks | {"INCONCLUSIVE_GHOST_MARKER"})))
 
+    # --- C1: prove the widened scan really walks extra roots -----------------
+    roots = default_scan_roots()
+    ck("扫描根是显式白名单且 docs 在内",
+       any(r.name == "docs" for r in roots)
+       and all(not any(x in r.as_posix() for x in (".workbuddy/memory", ".upstream"))
+               for r in roots),
+       "roots=%d" % len(roots))
+    ck("扫描根排除史料日志与第三方上游",
+       not any(any(x in r.as_posix() for x in (".workbuddy/memory", ".upstream"))
+               for r in roots))
+    with tempfile.TemporaryDirectory(prefix="md_closure_scan_") as td:
+        tmp = Path(td)
+        with_marker = tmp / "deliverable"
+        clean = tmp / "clean"
+        with_marker.mkdir()
+        clean.mkdir()
+        (with_marker / "note.md").write_text(
+            "new decision: INCONCLUSIVE_GHOST_MARKER is open\n", encoding="utf-8")
+        (clean / "note.md").write_text("nothing open here\n", encoding="utf-8")
+        ck("扩扫描：交付说明里的新标记被检到",
+           "INCONCLUSIVE_GHOST_MARKER" in scan_doc_marks([with_marker]))
+        ck("负对照：同一扫描器对无标记根不报",
+           "INCONCLUSIVE_GHOST_MARKER" not in scan_doc_marks([clean]))
+        widened = scan_doc_marks(roots + [with_marker])
+        ck("负对照：新根里的未登记标记让门禁变红",
+           bool(validate(data, widened)) and "INCONCLUSIVE_GHOST_MARKER" in widened)
+        ck("负对照：去掉新根后门禁恢复绿",
+           not validate(data, scan_doc_marks(roots)))
+    ck("报告如实列出实际扫描根与排除理由",
+       set(report(data, [], marks, roots)["scan_roots"])
+       == {r.relative_to(ROOT).as_posix() for r in roots}
+       and bool(report(data, [], marks, roots)["scan_excluded"]))
+
     for name, ok, note in checks:
         print("  [%s] %s%s" % ("ok" if ok else "XX", name, ("  <- " + note) if note else ""))
     bad_n = [n for n, ok, _ in checks if not ok]
@@ -208,13 +282,24 @@ def selftest() -> int:
     return 0
 
 
-def report(data: dict, problems: list[str], marks: set[str]) -> dict:
+def report(data: dict, problems: list[str], marks: set[str],
+           roots: list[Path] | None = None) -> dict:
     counts: dict[str, int] = {}
     for c in data.get("contracts") or []:
         counts[c.get("status", "?")] = counts.get(c.get("status", "?"), 0) + 1
+    walked = default_scan_roots() if roots is None else roots
+    walked_names = []
+    for r in walked:
+        try:
+            walked_names.append(r.relative_to(ROOT).as_posix())
+        except ValueError:
+            walked_names.append(str(r))
     return {
         "tool": "check_closure.py",
         "contract_sha256": sha256_of(CONTRACT),
+        "scan_roots": sorted(walked_names),
+        "scan_excluded": list(EXCLUDED_SCAN_ROOTS),
+        "scan_excluded_reason": EXCLUDED_REASON,
         "doc_markers": sorted(marks),
         "contract_ids": [c["id"] for c in data["contracts"]],
         "status_counts": counts,
@@ -242,14 +327,16 @@ def main() -> int:
         return selftest()
 
     data = load()
-    marks = scan_doc_marks()
+    roots = default_scan_roots()
+    marks = scan_doc_marks(roots)
     problems = validate(data, marks)
-    rep = report(data, problems, marks)
+    rep = report(data, problems, marks, roots)
     if args.json:
         print(json.dumps(rep, ensure_ascii=False, indent=2))
     else:
         print("closure_contract.json sha256 = " + rep["contract_sha256"])
-        print("docs markers = %d  contract ids = %d" % (len(marks), len(rep["contract_ids"])))
+        print("scan roots = %s" % ", ".join(rep["scan_roots"]))
+        print("doc markers = %d  contract ids = %d" % (len(marks), len(rep["contract_ids"])))
         print("status counts = " + json.dumps(rep["status_counts"], ensure_ascii=False))
         for x in problems:
             print("  [FAIL] " + x)

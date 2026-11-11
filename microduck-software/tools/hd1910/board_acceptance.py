@@ -237,7 +237,7 @@ def selftest() -> int:
 
     base = validate(data, closure)
     ck("盘上清单结构自校验通过", not base, "; ".join(base[:3]))
-    ck("5 个 UNVERIFIED 悬案全部被清单引用",
+    ck("全部 UNVERIFIED 悬案（C1 后为 6 个）都被清单引用",
        open_contract_ids(closure) <= {r for c in data["checks"]
                                       for r in c["closure_refs"]})
     ck("当前整体判 NOT_SHIPPABLE", overall_verdict(data) == "NOT_SHIPPABLE")

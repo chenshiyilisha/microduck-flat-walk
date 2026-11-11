@@ -1,0 +1,139 @@
+{
+  "contract": "roller_policy_contract",
+  "schema": 1,
+  "date": "2026-11-11",
+  "title": "轮滑版软件/策略契约 —— 离线结构，不宣布能跑",
+  "owner": "本文件只承载『轮滑策略应该是什么』；是否闭合由 closure_contract.json#INCONCLUSIVE_ROLLER_POLICY 唯一裁决，线别由 line_labels.json 唯一裁决，部署链由 deploy_chain_contract.json 唯一裁决，策略目录由上游 pretrained_models.json 唯一裁决。本文件不复制这些常量作为判据。",
+  "status": "UNVERIFIED",
+  "rule": "机械清单可执行 ≠ 轮滑版能跑。官方 XL330 仿真权重、上游目录条目、作者 QEMU ARM64 审计、本地离线门禁全绿，一律不升格为实机验收（四源共识 UNVERIFIED != PASS）。本契约恒 NOT_SHIPPABLE，--ship-gate 必 rc=1。",
+  "authority": {
+    "single_source_of_line": "line_labels.json#policy.current_line",
+    "single_source_of_chain": "deploy_chain_contract.json#required.chain_ids",
+    "single_source_of_closure": "closure_contract.json#contracts[INCONCLUSIVE_ROLLER_POLICY]",
+    "single_source_of_catalog": "microduck-software/.upstream/replica/software/training-studio/training_studio/pretrained_models.json",
+    "note": "借 microai-lab Studio AGENTS.md『不复制兄弟仓职责 / 不是第二份真相』与官方 contract.py『is a DESCRIPTION, not a second source of truth』。校验器运行时读这些文件并断言一致；读不到就是 FAIL，不是 SKIP。"
+  },
+  "line": "L1_RADXA_MIRROR",
+  "task": {
+    "id": "Mjlab-Velocity-Flat-MicroDuck-Rollers",
+    "plant": "hd1910_kp8",
+    "training_entry": "microduck-software/tools/hd1910/train_roller.sh（从零训，SEED=42，ENVS/ITERS 可覆盖）",
+    "eval_entry": "microduck-software/tools/hd1910/eval_roller_onnx.py（--onnx 为跨 plant 对照，--checkpoint 为本 plant 原生）",
+    "note": "train_roller.sh 头部明写：官方 roller.onnx 是 B 代训练、内嵌 norm + action_scale=0.8，直接权重启 warm-start 会跨 norm/action-scale 边界，故 HD1910 从零训；官方 ONNX 只作为同 plant 上的 apple-to-apple baseline（17.2% fall）对照。"
+  },
+  "shared_contract": {
+    "observation_dim": 61,
+    "action_dim": 14,
+    "control_hz": 50,
+    "normalizer": "烤进 ONNX 图（raw obs 进，不打包 EXTERNAL 权重）",
+    "note": "与走路版共享、跨线共享非判据（line_labels.json#shared_not_discriminators）。官方清单详情也明写『需匹配关节顺序、HOME、命令编码、归一化与动作缩放』。"
+  },
+  "roller_specific": {
+    "passive_wheels": 4,
+    "passive_joint_names": ["passive_LFwheel", "passive_LRwheel", "passive_RFwheel", "passive_RRwheel"],
+    "friction_curriculum": "ENABLE_WHEEL_FRICTION_RANDOMIZATION=True / dr.dof_frictionloss 轴承课程，部署姿态要匹配",
+    "standup": "ROLLER_STAND_Z=0.138（实测 0.1407 收口）；腿关节索引 [0-4, 11-15]；无轮模型 [0-4, 9-13] 会指到轮子，勿照抄",
+    "source": "docs/hardware/microduck-两版轮滑变体组件与装配计划-2026-11-06.md §6"
+  },
+  "policy_catalog": {
+    "catalog_source": "microduck-software/.upstream/replica/software/training-studio/training_studio/pretrained_models.json（20 条，2026-11-11 本地实读）",
+    "official_v8": {
+      "ids": ["official-v8-roller", "official-v8-roller_crouch"],
+      "servos": "XL330",
+      "hardware": "XL330 舵机 · 滑轮脚",
+      "compatibility": "官方清单适配 XL330；当前 HD1910 训练环境尚未适配这些权重，不能直接替换。",
+      "verification": "官方发布的预训练策略；本训练台尚未对该模型完成本地物理评估或真机验证。",
+      "note": "这两条是 XL330 仿真训练值，不可当本项目整机策略。"
+    },
+    "kissqy_v167": {
+      "ids": ["kissqy-roller_swizzle", "kissqy-roller_crouch", "kissqy-roller_spin", "kissqy-roller_standup"],
+      "servos": "HD1910",
+      "version": "V167",
+      "revision": "525a215a19397767a073b782f57e97cf53683761",
+      "release_bundle": "Microduck-Robotd-FT6-R17.tar.gz（download_url 所指，本项目本地尚未下载、sha256 未实算）",
+      "license_label": "个人非商业许可（与项目『仅个人使用』一致，不新增许可障碍）",
+      "verification": "作者 V167 审计记录 QEMU ARM64 推理通过，hardware_tested=false；不是本机物理评估结果。",
+      "capabilities": "installed=false / local_evaluation=false / resume_training=false（训练台字段，不等于机器人上没有）",
+      "entries": [
+        {"id": "kissqy-roller_swizzle", "task_id": "Mjlab-Velocity-Swizzle-Backlash-MicroDuck", "model_file": "roller/swizzle/policy.onnx", "sha256": "14195135fcaa60cc45c36181d31542e76f07d873261ecae41dca72c0b795fcc8", "size_bytes": 795459},
+        {"id": "kissqy-roller_crouch", "task_id": "Mjlab-RollerCrouch-Flat-Backlash-MicroDuck", "model_file": "roller/crouch/policy.onnx", "sha256": "82be20b115d925ab5adfd20c12188364dd841a2c533eba3bfd64fb9212fe4aa4", "size_bytes": 795485},
+        {"id": "kissqy-roller_spin", "task_id": "Mjlab-Spin-Flat-MicroDuck", "model_file": "roller/spin/policy.onnx", "sha256": "621fe9f3ae3463089033c76354f8290e23457898af7e3e78de008af4a7180569", "size_bytes": 795476},
+        {"id": "kissqy-roller_standup", "task_id": "Mjlab-RollerStandUp-Flat-MicroDuck", "model_file": "roller/standup/policy.onnx", "sha256": "2575b5894bcd8e3fdbe005b1a7b90d9491085726df32000c26cf5b92b7a10ebb", "size_bytes": 795427}
+      ],
+      "note": "🔴 目录级一手证据：V167 对应的 R17 固件发布包里确实列了 4 个 HD1910 专用滑轮 ONNX，且作者做过 QEMU ARM64 推理审计。但 hardware_tested=false、发布包未本地实算、中控能否列出/加载/切换未上机 ⇒ 只把『有没有策略』从全盲收窄为『目录已有』，绝不能据此宣布可跑。清单里没有普通 `roller` 滑行条目，只有 swizzle 对称滑行。"
+    },
+    "other_source_five_names": {
+      "names": ["roller", "roller_crouch", "roller_spin", "roller_standup", "roller_swizzle"],
+      "different_source": true,
+      "source": "docs/hardware/microduck-两版轮滑变体组件与装配计划-2026-11-06.md §6 引官方 pretrained_models.json（另一份来源，非本训练台 JSON）",
+      "note": "🔴 两套清单不同源、项集合不同（本训练台 JSON 里官方 roller 只有 2 个 + kissqy 4 个）。按『项集合绑单一权威源码』，本契约的 required 集合只绑上面这份本地实读文件，绝不把 5 个名字与 6 个条目混算。"
+    }
+  },
+  "action_scale_conflict": {
+    "sources": [
+      {"source": "docs/hardware/microduck-两版轮滑变体组件与装配计划-2026-11-06.md §6 引 hardware-teardown.en.md:564", "claim": "walk=0.9 / roller=0.8", "scope": "官方 XL330 线"},
+      {"source": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 行365", "claim": "action_scale=1.0", "scope": "本项目 B 代/台架策略配置"}
+    ],
+    "resolution": "UNRESOLVED",
+    "rule": "两者都不是本项目整机的轮滑实机验收值。切策略时按镜像实际配置回读，不照抄任一数值；本契约禁止出现单一权威数值字段 resolved_action_scale。",
+    "cross_check": "train_roller.sh 头部把 action_scale=0.8 归给官方 roller.onnx（B 代训练、内嵌 norm），eval_roller_onnx.py 用 --action-scale 0.8 只作跨 plant baseline。"
+  },
+  "deploy_chain": {
+    "chain_id": "L1_CONSOLE_R17_V167",
+    "name": "R17→V167 中控自带模型管理（电脑端 ZIP + 浏览器 8090 + SSH）",
+    "authority": "SSOT 订正⑬（2026-11-10 拍板）",
+    "loading_path": ["ckpt（HD1910 plant 从零训）", "export.py → ONNX（normalizer 烤进图）", "R17 V167 中控模型管理加载/切换", "上板按位移跨度实测"],
+    "forbidden_commands": ["uv run publish --onnx ... --repo ... --kind perpetual --slot walk", "sudo robotctl policy load walk <repo>"],
+    "note": "11-06 §6 写的 export.py→infer_policy.py→publish→robotctl policy load 是 B 代链，已由 SSOT⑬ 覆盖；照抄会给路① 造成线别错配。"
+  },
+  "acceptance": {
+    "metric": "位移跨度（非『请求已发』，非『已加载』提示）",
+    "criteria": [
+      "R17 V167 中控读回可用策略清单，确认 roller 系条目存在且可切换",
+      "加载后回读字段/形状与 action_scale 真实配置",
+      "换装轮滑件后实测前进/侧移/跌倒率，与走路版对照",
+      "负对照：策略未加载或仍是走路版权重时，位移判据必须不绿"
+    ],
+    "negative_control": "把『上游目录里有 roller 条目』『作者 QEMU 推理通过』『3mf 里有轮滑件』或『离线门禁全绿』当作能走的证据，检查必须红。",
+    "blocked_actions": ["宣布轮滑版已跑通/可签收", "照抄 0.8 或 1.0 进配置", "用官方 XL330 roller ONNX 当本项目整机策略", "用 publish→robotctl 给路① 部署"]
+  },
+  "closure_ref": "INCONCLUSIVE_ROLLER_POLICY",
+  "still_owed": [
+    "Microduck-Robotd-FT6-R17.tar.gz 未本地下载，4 个 ONNX 的 sha256 未实算（目录记录 ≠ 文件到手）",
+    "R17 V167 中控在本项目整机上能否列出/加载/切换 roller 策略未上机",
+    "action_scale 真值未回读",
+    "HD1910 plant 的 roller 策略从零训与评估未完成",
+    "hardware_tested=false 未由实机证据推翻",
+    "ROLLER_STAND_Z=0.138 台架漂移、TPU 合体轮胎轴孔过盈、4 颗 6×12×3 轴承点数未实测"
+  ],
+  "required": {
+    "kissqy_roller_ids": ["kissqy-roller_swizzle", "kissqy-roller_crouch", "kissqy-roller_spin", "kissqy-roller_standup"],
+    "official_roller_ids": ["official-v8-roller", "official-v8-roller_crouch"],
+    "forbidden_commands": ["uv run publish --onnx ... --repo ... --kind perpetual --slot walk", "sudo robotctl policy load walk <repo>"],
+    "shared_dims": {"observation_dim": 61, "action_dim": 14, "control_hz": 50},
+    "closure_ref": "INCONCLUSIVE_ROLLER_POLICY"
+  },
+  "scope": {
+    "live_hardware_accessed": false,
+    "not_proof_of": [
+      "轮滑版已能走 / 可签收",
+      "R17 V167 中控可加载或切换 roller 策略",
+      "4 个 kissqy ONNX 文件已到手或 sha256 已实算",
+      "action_scale 真值",
+      "任何 INCONCLUSIVE 悬案闭合"
+    ],
+    "known_gaps": [
+      "默认 --check 只读本契约与三份本仓契约，不读 gitignored 的 .upstream/；--verify-sources 显式要求时才会实算目录，上游文件缺失判 FAIL 而不是 SKIP",
+      "本契约不执行训练、不下载发布包、不打开串口、不加载 ONNX",
+      "11-06 §6 的『官方 5 个 roller 策略』来自另一份来源，与本训练台 JSON 的 6 个 roller 条目不同源，已分开记录不混算"
+    ],
+    "source_refs": [
+      "microduck-software/.upstream/replica/software/training-studio/training_studio/pretrained_models.json",
+      "docs/hardware/microduck-两版轮滑变体组件与装配计划-2026-11-06.md §0/§2.1/§6/§7",
+      "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬ 行22 / 行365",
+      "microduck-software/tools/hd1910/train_roller.sh",
+      "microduck-software/tools/hd1910/eval_roller_onnx.py",
+      "out/deliverables/fanhao-打印包-2026-11-11/10-两版都做的打印与装配执行清单.md §4"
+    ]
+  }
+}

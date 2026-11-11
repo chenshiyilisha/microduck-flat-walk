@@ -12,8 +12,10 @@ import copy
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HERE = ROOT / "tools" / "hd1910"
@@ -38,6 +40,37 @@ def test_every_marker_in_docs_has_a_contract_entry():
     assert ids == marks, (ids - marks, marks - ids)
     assert not cc.validate(data, marks)
     assert any(x.startswith("INCONCLUSIVE_LIVE_IDENTIFY") for x in ids)
+    # C1: the roller decision is now a real contract, not just a delivery note.
+    assert "INCONCLUSIVE_ROLLER_POLICY" in ids
+    roller = next(c for c in data["contracts"]
+                  if c["id"] == "INCONCLUSIVE_ROLLER_POLICY")
+    assert roller["status"] == "UNVERIFIED" and roller["evidence"] == []
+    assert roller["still_owed"] and roller["negative_control"]
+
+
+def test_widened_scan_roots_are_explicit_and_walked():
+    roots = cc.default_scan_roots()
+    assert any(r.name == "docs" for r in roots)
+    assert not any(".workbuddy" in r.as_posix() or ".upstream" in r.as_posix()
+                   for r in roots)
+    with tempfile.TemporaryDirectory(prefix="md_closure_test_") as td:
+        extra = pathlib.Path(td) / "deliverable"
+        extra.mkdir()
+        (extra / "note.md").write_text(
+            "INCONCLUSIVE_GHOST_MARKER is open\n", encoding="utf-8")
+        widened = cc.scan_doc_marks(roots + [extra])
+        assert "INCONCLUSIVE_GHOST_MARKER" in widened
+        assert "INCONCLUSIVE_GHOST_MARKER" not in cc.scan_doc_marks(roots)
+        # a marker in an extra root with no contract entry must turn the gate red
+        assert cc.validate(cc.load(), widened)
+        empty = pathlib.Path(td) / "empty"
+        empty.mkdir()
+        (empty / "note.md").write_text("nothing open\n", encoding="utf-8")
+        assert "INCONCLUSIVE_GHOST_MARKER" not in cc.scan_doc_marks([empty])
+    rep = cc.report(cc.load(), [], cc.scan_doc_marks(), roots)
+    assert rep["scan_roots"] and rep["scan_excluded"]
+    assert set(rep["scan_roots"]) == {r.relative_to(cc.ROOT).as_posix()
+                                      for r in roots}
 
 
 def test_unverified_is_not_a_pass():
@@ -87,7 +120,10 @@ def test_cli_selftest_check_and_ship_gate():
     selftest = subprocess.run([sys.executable, str(HERE / "check_closure.py"), "--selftest"],
                               cwd=str(ROOT), capture_output=True, text=True)
     assert selftest.returncode == 0, selftest.stdout + selftest.stderr
-    assert "17/17 passed" in selftest.stdout
+    # Do NOT pin the case count: C1 added scan-coverage negative controls and
+    # the project has already been bitten by a hard-coded "n/n".
+    m = re.search(r"(\d+)/(\d+) passed", selftest.stdout)
+    assert m and m.group(1) == m.group(2) and int(m.group(2)) >= 17, selftest.stdout
 
     check = subprocess.run([sys.executable, str(HERE / "check_closure.py"), "--check"],
                            cwd=str(ROOT), capture_output=True, text=True)

@@ -10,8 +10,8 @@
   },
   "scope": {
     "live_hardware_accessed": false,
-    "not_proof_of": ["整机可签收", "策略可上真机", "500k 位宽 / R3", "人人 HUB 几何与载流", "左右腿文字定义"],
-    "known_gaps": ["robotd --sim 验不了总线驱动/BLE/ISP+rkaiq 3A/NPU/编码器+RGA", "本地 28 个上游仓源码可读不等于我们的板已验证", "fanhao 20261023c 自动识别只做到伪串口 + 镜像离线核验"]
+    "not_proof_of": ["整机可签收", "策略可上真机", "轮滑版能走", "500k 位宽 / R3", "人人 HUB 几何与载流", "左右腿文字定义"],
+    "known_gaps": ["robotd --sim 验不了总线驱动/BLE/ISP+rkaiq 3A/NPU/编码器+RGA", "本地 28 个上游仓源码可读不等于我们的板已验证", "fanhao 20261023c 自动识别只做到伪串口 + 镜像离线核验", "C1 扩展扫描仍只覆盖显式白名单根，非全仓 rglob；新交付目录需先登记进 SCAN_ROOTS"]
   },
   "contracts": [
     {
@@ -138,6 +138,29 @@
         "用户 2026-11-10 一手三家 SKU 清单（人人/驭芯/kissqy）",
         "SSOT 订正㉕ 价格基准行与整机预算 ≈¥2,500–2,579"
       ]
+    },
+    {
+      "id": "INCONCLUSIVE_ROLLER_POLICY",
+      "status": "UNVERIFIED",
+      "summary": "轮滑版 roller 策略能否在路① R17→V167 中控镜像上加载/切换、action_scale 真值；官方 XL330 权重不可直接用，kissqy V167 的 HD1910 滑轮策略只有目录级证据",
+      "why_open": "用户 2026-11-11 拍板『本项目也做轮滑版』，机械清单已可执行，但软件/策略侧零上板证据。🔴 C1 同轮查全订正：本地上游训练台 pretrained_models.json 实读 20 条，其中官方 XL330 roller 仅 2 条（official-v8-roller / official-v8-roller_crouch），另有 4 条 kissqy V167 / HD1910 专用滑轮 ONNX（swizzle / crouch / spin / standup，带 sha256 与 R17 固件发布包路径），其 verification 明写『作者 V167 审计记录 QEMU ARM64 推理通过，hardware_tested=false』⇒ 『有没有 HD1910 策略』由全盲收窄为『目录已有』，但中控实机能否列出/加载/切换仍未验。11-06 §6 说的 5 个 roller 名字来自另一份来源，不把两套清单混算。eval_roller_onnx.py 头部明写官方 ONNX 只作跨 plant 对照，train_roller.sh 是 hd1910_kp8 从零训。action_scale 两来源冲突：11-06 §6 引 hardware-teardown.en.md:564 记 walk 0.9 / roller 0.8，本项目 SSOT 行 365 记 1.0；两者都不是本项目整机的轮滑实机验收值。",
+      "evidence_kind": ["R17 V167 中控策略清单与切换日志原文", "策略加载字段/形状回读", "镜像内 action_scale 配置回读", "换装后位移跨度（非『请求已发』）实测记录", "ckpt→ONNX→中控加载路径的逐段证据"],
+      "verification_boundary": "机械打印/装配清单可执行 ≠ 轮滑版能跑；obs61 / act14 / 50Hz 跨线共享契约不变，但 roller 多 4 个被动轮（passive_{L,R}{F,R}wheel）与轴承摩擦课程，实机姿态须实测。部署链以 SSOT 订正⑬ 为准：R17→V167 中控，非 11-06 §6 写的 uv run publish → robotctl policy load（B 代链，已作废）。细节由 roller_policy_contract.json 单独承载，本条只管『是否闭合』。",
+      "local_verified": ["11-02 版 3mf 内嵌 source_file 一手钉死轮滑 8 件与仅走路 6 件，四组互斥、两版合计 34 个不同打印件", "11-06 变体计划 §6 与 SSOT 行 365 的 action_scale 冲突已逐字核对（0.8 vs 1.0）", "train_roller.sh / eval_roller_onnx.py 头部关于 plant 与跨 plant 对照的声明已读", "训练台 pretrained_models.json 20 条逐条实读：官方 2 条 XL330 + kissqy 4 条 HD1910/V167，sha256 / size_bytes / model_file / task_id 已由 check_roller_policy.py --verify-sources 实算一致", "打印包 10- §4 的文档级 INCONCLUSIVE_ROLLER_POLICY 已由 C1 正式登记为本契约，扫描白名单覆盖 out/deliverables"],
+      "board_acceptance_required": ["R17 V167 中控读回可用策略清单，确认目录里那 4 个 kissqy roller 条目是否真的出现且可切换", "尝试加载/切换并回读字段与形状，失败须如实记录（不得用 B 代 publish 链替代）", "回读镜像内 action_scale 真实配置，不照抄 0.8 或 1.0", "换装轮滑件后按位移跨度判据实测前进/侧移/跌倒率，含负对照（策略未加载时不得判绿）", "先卸力、机器人有支撑、低增益起步"],
+      "still_owed": ["Microduck-Robotd-FT6-R17.tar.gz 未本地下载，4 个 ONNX 的 sha256 未实算（目录记录 ≠ 文件到手）", "R17 V167 中控在本项目整机上能否列出/加载/切换 roller 策略", "hardware_tested=false 未由实机证据推翻", "HD-1910 plant 的 roller 策略从零训与评估", "action_scale 真值", "ROLLER_STAND_Z=0.138 台架漂移与 TPU 轮胎轴孔过盈实测"],
+      "negative_control": "把『官方 roller.onnx 在仿真里跑通』『上游目录里有 kissqy roller 条目』『作者 QEMU ARM64 推理通过』『机械换装完成』或『3mf 里有轮滑件』当作轮滑版已能走的证据，检查必须红；若仍报绿则本契约不得闭合",
+      "blocked_actions": ["宣布轮滑版已跑通 / 可签收", "照抄 0.8 或 1.0 任一个 action_scale 进配置", "照抄 11-06 §6 的 publish→robotctl 部署链给路①", "把官方 XL330 roller ONNX 当本项目整机策略"],
+      "source_refs": [
+        "docs/hardware/microduck-两版轮滑变体组件与装配计划-2026-11-06.md §0/§2.1/§6/§7",
+        "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬ 行22 / action_scale 行365",
+        "microduck-software/tools/hd1910/train_roller.sh 头部",
+        "microduck-software/tools/hd1910/eval_roller_onnx.py 头部",
+        "out/deliverables/fanhao-打印包-2026-11-11/10-两版都做的打印与装配执行清单.md §4",
+        "microduck-software/.upstream/replica/software/training-studio/training_studio/pretrained_models.json"
+      ],
+      "signoff": "待 R17 V167 上机实测；当前无人可签字",
+      "evidence": []
     }
   ]
 }
