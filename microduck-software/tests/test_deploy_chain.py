@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,7 +31,12 @@ def cli(*args):
 def test_selftest_cli_really_runs():
     r = cli("--selftest")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "31/31 passed" not in r.stdout or "passed" in r.stdout
+    # Anchor the real conclusion line `NN/MM passed`; assert numerator==denominator
+    # WITHOUT hardcoding the count (it drifted 31 -> 33 once already). A bare
+    # `"31/31" not in out or "passed" in out` was a tautology (always True).
+    ratio = re.search(r"(?<![\w/])(\d+)\s*/\s*(\d+)\s+passed\b", r.stdout)
+    assert ratio, "no `N/N passed` conclusion line in:\n" + r.stdout
+    assert ratio.group(1) == ratio.group(2), "degenerate pass ratio: " + ratio.group(0)
     assert "self-test: PASS" in r.stdout
 
 

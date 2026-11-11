@@ -3,11 +3,12 @@
 
 Why this exists (2026-11-11)
 ---------------------------
-The repo has 33 tools with a --selftest, but pre_deploy_check.py --selftest
-conducts only five deployment guards. A guard's own unit tests can be all
-green while its CLI dies at argparse -- the exact "50 tests green, --selftest
-rc=2" incident recorded in tests/test_hd1910_tooling.py:714. So this entry
-point:
+The repo has dozens of tools with a --selftest (discovered dynamically by
+discover(); do NOT hardcode a count here -- it has drifted 33 -> 47+ already),
+but pre_deploy_check.py --selftest conducts only five deployment guards. A
+guard's own unit tests can be all green while its CLI dies at argparse -- the
+exact "50 tests green, --selftest rc=2" incident recorded in
+tests/test_hd1910_tooling.py:714. So this entry point:
 
   1. runs the two new meta guards (line guard + closure contract) with their
      negative controls, as real CLI processes;
@@ -34,13 +35,15 @@ it does NOT close INCONCLUSIVE_RATE_MISMATCH.
 Interpreter matters (found in the pre-commit review, 2026-11-11)
 ---------------------------------------------------------------
 PY below is sys.executable, so every child guard inherits the interpreter
-that launched THIS script. Ten guards import onnx / onnxruntime at CLI
-time. With a bare system python a run is 28/38 and rc=1; with the repo's
-.venv-mjlab it is 38/38 and rc=0. Both are honest results, but a red run
-under the wrong interpreter is NOT evidence that a guard is broken. The
-report therefore records the interpreter and its dependency probe as an
-explicit fact, and prints a HINT naming the project venv when deps are
-missing. A missing dep is still rc=1 FAIL -- never a SKIP, never a pass.
+that launched THIS script. Several guards import onnx / onnxruntime / torch
+at CLI time. Under a bare system python those guards FAIL (rc=1); with the
+repo's .venv-mjlab they pass. Do NOT hardcode a pass count here -- the tool
+set grows over time and a stale number is itself a documentation bug. Both
+outcomes are honest, but a red run under the wrong interpreter is NOT
+evidence that a guard is broken. The report therefore records the
+interpreter and its dependency probe as an explicit fact, and prints a HINT
+naming the project venv when deps are missing. A missing dep is still rc=1
+FAIL -- never a SKIP, never a pass.
 
 Usage (cwd = microduck-software):
     .venv-mjlab/Scripts/python.exe tools/hd1910/run_all_gates.py --list
