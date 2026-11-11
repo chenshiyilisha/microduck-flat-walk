@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "owner": "stream_parity_contract.json 是 SCS v1 流解析双实现逐字节对拍的单一契约主人。check_stream_parity.py 运行时从这里派生脏流用例集合、协议常量与判决；不复制常量（借 line_labels.json / deploy_chain_contract.json 的『DESCRIPTION not second source of truth』）。",
+  "id": "STREAM_PARITY_SCS_V1",
+  "rule": "离线双实现逐字节同解是『解析器与协议规范一致』的证明，不是上板验收。UNVERIFIED != PASS；OFFLINE_PARITY_ONLY != SHIPPABLE。",
+  "line": "META_GUARD",
+  "status": "OFFLINE_PARITY_ONLY",
+  "scope": {
+    "live_hardware_accessed": false,
+    "what_it_proves": "生产解析器 check_imu_bridge.parse_scs 与一个独立正交字节状态机，对同一批 SCS v1 字节流（含混合脏流）切出逐字节相同的包序列；且坏输入必被拒。",
+    "what_it_does_not_prove": [
+      "真实总线上 ID200 是否应答、波特率是否匹配（R3 不消）",
+      "IMU 载荷 gyro 符号/轴/mount 是否正确（需已知倾角实机）",
+      "半双工方向脚时序、drain 截断是否真的发生在某个具体适配器",
+      "任何整机可签收结论（四源共识 UNVERIFIED != PASS）"
+    ]
+  },
+  "protocol": {
+    "source": "check_imu_bridge.py 模块头 (ft_protocol.c, read 2026-11-03) + parse_scs() 本体；A 实现直接从该文件 AST 提取真函数，不在此复制算法",
+    "frame": "FF FF ID LEN INST PARAM... SUM",
+    "len_rule": "LEN = len(params) + 2",
+    "sum_rule": "SUM = ~(sum(bytes[2..end-1])) & 0xFF; 验收 sum(bytes[2:]) & 0xFF == 0xFF",
+    "total_rule": "total = LEN + 4",
+    "header": "ffff",
+    "reject_id": 255,
+    "min_len": 2
+  },
+  "implementations": {
+    "A": {
+      "role": "生产参照实现（not a copy）",
+      "origin": "check_imu_bridge.py :: _scs_checksum / ScsPacket / parse_scs",
+      "extraction": "stdlib ast：从源文件选出三个顶层定义，with dataclass injected，在受限 namespace exec；只取这三个符号，不执行模块其余任何代码（无串口、无 I/O）"
+    },
+    "B": {
+      "role": "独立正交字节状态机",
+      "design": "显式游标 cursor 逐字节推进 + 一次性滑窗校验，不调用 bytes.find、不切片生产 raw、不 import A；与 A 的算法路径正交，任何 framing 语义分歧都会暴露为逐字节不等",
+      "contract": "输入同一 bytes，输出与 A 相同的 (dxl_id, instruction, params, checksum_ok, raw) 元组序列"
+    }
+  },
+  "framing": {
+    "driver": "共享 framing 驱动：offset 从 0 推进；A/B 各自实现 parse_first(buf) -> (packet|None, consumed)；None 时 offset+=1（跳过噪声字节），有包时 offset+=consumed；逐包归一化后比对整个序列",
+    "normalise": "(dxl_id, instruction, params.hex(), checksum_ok, raw.hex()) 逐字段逐字节比较",
+    "note": "驱动相同、只有 parse_first 不同，保证比的是解析器本身而非跳字节策略；A 与 B 都必须对伪帧头 / 截断返回 None 才推进"
+  },
+  "required_dirty_cases": [
+    "valid_ping_response",
+    "valid_status_frame",
+    "bad_checksum",
+    "nan_payload_bytes",
+    "embedded_ffff_in_payload",
+    "injected_duck_ip_string",
+    "crlf_noise",
+    "leading_stale_fragment",
+    "truncated_tail",
+    "reserved_id_255",
+    "len_below_two",
+    "consecutive_frames"
+  ],
+  "case_notes": {
+    "valid_ping_response": "合法 ping 响应帧（ID200/INST0/无参），必须切出恰好 1 个包且 checksum_ok；是『解析器没坏』的基线，防止两个空实现靠都返回 [] 假装同解",
+    "valid_status_frame": "合法读响应帧（ID200/带 12 字节参数），LEN 随参数变化，验证 total=LEN+4 在正常帧上被 A/B 同解",
+    "bad_checksum": "合法帧翻转校验和末字节；必须仍切出 1 个包但 checksum_ok=False（坏 CRC 被标记而非静默吞掉），A/B 对该标志也须逐字段相同",
+    "reserved_id_255": "ID 255 是 SCS v1 保留值；FF FF FF 开头的伪帧头必须被拒（返回 None 跳过），不得当合法包。专治 find 到 FF FF 就把下一字节当 ID 的天真实现",
+    "len_below_two": "LEN<2 的伪帧头（FF FF C8 01 ...）必须被拒；LEN 至少容纳 INST+SUM 两字节，否则 total 算错会错位切帧",
+    "nan_payload_bytes": "半精度 NaN/Inf 位型 (0x7E00 / 0x7C00) 作为 SFLP 四元数字节塞进合法帧的 payload；解析器必须当作不透明字节切帧，不得因数值非有限而丢帧（数值拒绝是 decode_block 的职责，不是 framing 的）",
+    "embedded_ffff_in_payload": "payload 里出现 FF FF 字节，伪造成第二个帧头；A 按 total 消费整帧、B 按 LEN 跨过，两者都不得把它切成新包",
+    "injected_duck_ip_string": "帧间夹 b'DUCK_IP=192.168.1.50' 之类的无关字符串（曾导致 CRLF shell 拼 URL 出错）；必须被跳过且不产生幽灵包",
+    "crlf_noise": "帧间夹 b'master\\r\\n'（Windows CRLF 坑，曾让 HTTP=000）；裸子串匹配会被反噬，逐字节解析必须免疫",
+    "leading_stale_fragment": "流开头是上一帧残留的几个字节（半双工尾字节截断后遗），必须先跳到真帧头",
+    "truncated_tail": "末帧声明的 total 超过剩余字节（drain 提前切向截断）；必须返回 None 而非半个包",
+    "consecutive_frames": "两个合法帧首尾相连，必须切出恰好 2 个包，不得漏切或粘连"
+  },
+  "negative_controls": [
+    "删掉任一 required_dirty_cases → 集合相等断言必红",
+    "把 A 的 LEN+4 篡改（注入改坏的源文件）→ A/B 逐字节不等，parity 必红",
+    "把 A 的 checksum 判定篡改 → 坏 CRC 用例上 A/B 分歧，必红",
+    "往 B 注入一个 framing bug（把 total 少算 1）→ 对拍必红，证明测试不是空操作",
+    "A 与 B 同时返回空序列的空实现 → 必须有『至少切出 N 个合法包』的正向断言拦住，不许两个都空就算同解",
+    "伪造 verdict=SHIPPABLE 或 live_hardware_accessed=true → validate 必红"
+  ],
+  "acceptance": {
+    "metric": "A/B 对全部 required_dirty_cases 流切出的包序列逐字节相同 + 每个用例的法帧计数符合 expected_valid_packets + 全部坏输入被拒",
+    "verdict": "OFFLINE_PARITY_ONLY",
+    "empty_run_is_fail": true
+  },
+  "borrowed_from_luwu": {
+    "source": "docs/active/microduck-陆吾XGO-Duck成熟产品深挖-2026-11-11.md §3 表行 7（xgoduck_runtime_mosaico tests/test_parity.py, sha256 ba6c6f75...）",
+    "mechanism": "双实现逐字节同解 + 脏流负对照（坏 CRC / NaN 载荷 / 夹无关字符串）",
+    "not_borrowed": "陆吾 C 运行时与 ESP-Mosaico 硬件、权重/几何/板型一概不移植；只借离线 parity 手法"
+  }
+}
