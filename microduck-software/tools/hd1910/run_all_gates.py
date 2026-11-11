@@ -78,6 +78,52 @@ VERDICT_LINE = re.compile(
     r"(PASS|FAIL|SKIP|PARTIAL|UNVERIFIED|NOT_SHIPPABLE)\b", re.I)
 BARE_CONCLUSION = re.compile(r"^\s*(SKIP|PARTIAL|UNVERIFIED|NOT_SHIPPABLE|FAIL)\b")
 
+# A3 self-audit (2026-11-11): the marker above only recognises a fixed status
+# word. 47 real tools were run and 33/47 emit NO recognised marker -- their
+# conclusion is a bare ratio (`selftest: 30/30 passed`, `全部通过`,
+# `selftest: ALL PASS`, `15 checks, all consistent` ...). So `classify()` has
+# been leaning entirely on rc: a tool whose selftest degrades to
+# `selftest: 1/5 passed` while its main() forgets `return 1` would still be
+# called PASS. This guard closes that blind spot independently of each tool's
+# own discipline.
+#
+# Scope is DELIBERATELY narrow to dodge rule-10 (bare-substring backfire). A
+# first broad `(\d+)/(\d+)` matcher false-positived on 6/47 real tools:
+# `50/200 is 0.25x` (a ratio), `0.8 / 1.0` (source values), `26/28 passed (2
+# FAIL)` (an intentional negative-control fixture), `3/15 -> refuse` (a
+# rejection-path test), `100/107/100 deg/s` (angular rates), `10/20 -> FLAKY`.
+# The narrowed form only matches a CONCLUSION line (status prefix or bare ratio
+# followed by an explicit pass word) and skips any line carrying an antonym
+# context. Verified: 0/47 false positives, all `N!=M` conclusions caught.
+VERDICT_RATIO = re.compile(
+    r"^\s*(?:self-?test|selftest|verdict|status|全部|共)?\s*[:：]?\s*"
+    r"(\d+)\s*/\s*(\d+)\s*(?:checks?\s*)?"
+    r"(?:passed|pass|ok|green|通过|自检通过)\b", re.I)
+# Antonym / non-verdict context: a whole line matching this is skipped, so a
+# negative-control fixture or a ratio computation is never mistaken for the
+# guard's real pass/fail tally.
+RATIO_ANTONYM = re.compile(
+    r"FAIL|拒绝|FLAKY|负对照|期望|must|refus|is\s*\d|应答|折", re.I)
+
+
+def verdict_ratio_mismatch(output: str) -> tuple[int, int, str] | None:
+    """Return (passed, total, line) if a conclusion line reports N/M with N!=M.
+
+    Independent of rc and of the fixed-word marker: even a tool that exits 0
+    and prints no `self-test: PASS` cannot hide a degraded `1/5 passed`.
+    Lines with antonym context (negative controls, ratios, rejection-path
+    tests) are skipped on purpose -- rely on the tool's own rc for those.
+    """
+    for line in output.splitlines():
+        if RATIO_ANTONYM.search(line):
+            continue
+        m = VERDICT_RATIO.match(line)
+        if m:
+            got, total = int(m.group(1)), int(m.group(2))
+            if total > 0 and got != total:
+                return got, total, line.strip()
+    return None
+
 
 def conclusion_marker(output: str) -> str:
     """Extract the guard's own verdict word, never a word from a test name."""
@@ -168,6 +214,15 @@ def classify(rc: int, output: str, timed_out: bool = False, strict: bool = True)
         return "FAIL", "conclusion line says FAIL while rc=0"
     if marker and marker != "PASS":
         return "SUSPECT_SKIP", "conclusion line says %s while rc=0: not evidence of a pass" % marker
+    # A3 self-audit fail-safe: independently of the tool's own rc discipline,
+    # a conclusion line reporting N/M with N!=M is a degraded selftest even
+    # when rc=0 and no fixed status word is present. This is the third layer:
+    # (1) rc!=0, (2) explicit FAIL/PARTIAL marker, (3) this ratio guard.
+    ratio = verdict_ratio_mismatch(output)
+    if ratio:
+        got, total, line = ratio
+        return "SUSPECT_SKIP", ("conclusion ratio %d/%d while rc=0: degraded "
+                                "selftest, not evidence of a pass (%s)" % (got, total, line[:60]))
     return "PASS", "rc=0, conclusion line has no skip marker"
 
 
@@ -229,6 +284,13 @@ def fake_tools(root: Path) -> None:
     (root / "mentions_skip.py").write_text(
         "# --selftest\nprint('negative control mentions SKIP and NOT_SHIPPABLE in its name')\n"
         "print('self-test: PASS -- negative-control logic wired correctly')\n", encoding="utf-8")
+    # A3 self-audit: a tool that reports a DEGRADED ratio (1/5) yet exits 0.
+    # Its main() forgot `return 1`; only the A3 ratio guard can catch it.
+    (root / "ratio_degenerate.py").write_text(
+        "# --selftest\nprint('selftest: 1/5 passed')\n", encoding="utf-8")
+    # Positive control: same shape, all checks pass (N==M) -- must stay PASS.
+    (root / "ratio_allgreen.py").write_text(
+        "# --selftest\nprint('selftest: 5/5 passed')\n", encoding="utf-8")
 
 
 def selftest() -> int:
@@ -241,9 +303,15 @@ def selftest() -> int:
         root = Path(td)
         fake_tools(root)
         found = discover(root)
-        ck("假工具目录被发现 5 个", len(found) == 5, "found=%d" % len(found))
+        ck("假工具目录被发现 7 个", len(found) == 7, "found=%d" % len(found))
         results = {r["tool"]: r for r in (run_one(f, root, 20) for f in found)}
         ck("green rc=0 判 PASS", results["green.py"]["status"] == "PASS")
+        ck("A3 自查：1/5 退化但 rc=0 必判 SUSPECT_SKIP",
+           results["ratio_degenerate.py"]["status"] == "SUSPECT_SKIP",
+           results["ratio_degenerate.py"]["detail"])
+        ck("A3 正对照：5/5 全绿保持 PASS",
+           results["ratio_allgreen.py"]["status"] == "PASS",
+           results["ratio_allgreen.py"]["detail"])
         ck("rc=2 argparse 判 FAIL（不是 SKIP）",
            results["argparse_broken.py"]["status"] == "FAIL"
            and "GUARD INVOCATION BROKEN" in results["argparse_broken.py"]["detail"])
@@ -265,6 +333,23 @@ def selftest() -> int:
        classify(0, "negative control mentions NOT_SHIPPABLE and SKIP\nself-test: PASS -- ok")[0] == "PASS")
     ck("结论行 PARTIAL 不算 PASS",
        classify(0, "self-test: PARTIAL -- 1 guard skipped")[0] == "SUSPECT_SKIP")
+    # A3 self-audit: the ratio guard must bite on degraded conclusions ...
+    for degraded in ("selftest: 1/5 passed", "selftest: 0/9 passed",
+                     "verdict: 14/15 passed", "全部 8/10 通过",
+                     "selftest: 26/28 checks passed"):
+        ck("A3 负对照：退化结论 %s 必红" % degraded,
+           classify(0, degraded)[0] == "SUSPECT_SKIP")
+    # ... and must NOT bite on N==M, on antonym context (negative-control
+    # fixtures / ratio computations), or on the 33 rc-only markers in the wild.
+    for clean in ("selftest: 31/31 passed", "39/39 passed", "selftest: ALL PASS",
+                  "15 checks, all consistent", "selftest: 30/30 passed"):
+        ck("A3 正对照：%s 不误红" % clean, classify(0, clean)[0] == "PASS")
+    for antonym in ("26/28 checks passed (2 FAIL)", "只读到 3/15 → 拒绝写入",
+                    "N2b 10/20 应答 -> FLAKY", "50/200 is 0.25x", "0.8 / 1.0 对照"):
+        ck("A3 反义上下文不误红：%s" % antonym,
+           verdict_ratio_mismatch(antonym) is None)
+    ck("A3 端到端：注入退化工具使全量报告 FAILED",
+       build_report([], [{"status": "SUSPECT_SKIP"}], [], False)["verdict"] == "FAILED")
     ck("负对照：空发现清单不得报全绿",
        discover(Path(tempfile.gettempdir()) / "_md_no_such_dir_9f3a") == [])
 

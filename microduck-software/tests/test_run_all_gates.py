@@ -50,6 +50,72 @@ def test_classifier_never_calls_a_skip_a_pass():
                 "self-test: PASS -- ok")[0] == "PASS"
 
 
+def test_a3_ratio_guard_catches_degraded_selftest_without_false_positives():
+    """A3 self-audit (2026-11-11): classify() used to call a tool whose
+    selftest degrades to `1/5 passed` (yet exits 0) a PASS -- 33/47 real tools
+    print no fixed status word, so rc alone was the only defence. The ratio
+    guard must bite on N!=M conclusions, and must NOT bite on: N==M, antonym
+    context (negative-control fixtures / ratio computations), or the 9 kinds
+    of rc-only conclusion line found in the wild."""
+    c = gates.classify
+    # Negative controls: a degraded tally is never evidence of a pass, even
+    # when rc=0 and no fixed status word is emitted.
+    for degraded in ("selftest: 1/5 passed", "selftest: 0/9 passed",
+                     "verdict: 14/15 passed", "全部 8/10 通过",
+                     "selftest: 26/28 checks passed"):
+        assert c(0, degraded)[0] == "SUSPECT_SKIP", degraded
+        assert "ratio" in c(0, degraded)[1], degraded
+    # The parser itself, for direct assertion.
+    assert gates.verdict_ratio_mismatch("selftest: 1/5 passed") == (
+        1, 5, "selftest: 1/5 passed")
+    assert gates.verdict_ratio_mismatch("selftest: 5/5 passed") is None
+    # Positive controls: N==M and non-ratio conclusions must stay green.
+    for clean in ("selftest: 31/31 passed", "39/39 passed", "30/30 passed",
+                  "selftest: ALL PASS", "15 checks, all consistent",
+                  "selftest: all green", "全部通过", "selftest passed"):
+        assert c(0, clean)[0] == "PASS", clean
+    # Rule-10 backfire guard: ratio computations, source values, and the
+    # intentional negative-control fixtures in real tools must be skipped.
+    for antonym in ("26/28 checks passed (2 FAIL)", "只读到 3/15 → 拒绝写入",
+                    "N2b 10/20 应答 -> FLAKY", "50/200 is 0.25x",
+                    "0.8 / 1.0 对照", "100/107/100 °/s"):
+        assert gates.verdict_ratio_mismatch(antonym) is None, antonym
+    # Layer ordering: explicit FAIL / skip markers still win over the ratio.
+    assert c(0, "self-test: FAIL\nselftest: 1/5 passed")[0] == "FAIL"
+    assert c(0, "SKIP: dep absent")[0] == "SUSPECT_SKIP"
+    # rc!=0 remains the primary defence, untouched by this guard.
+    assert c(1, "selftest: 5/5 passed")[0] == "FAIL"
+    assert c(2, "usage: x.py [-h]")[0] == "FAIL"
+
+
+def test_a3_injected_degenerate_tool_turns_gate_red():
+    """End-to-end, real CLI: a tool that prints `selftest: 1/5 passed` and
+    exits 0 must flip --check to FAILED. This is the negative control that
+    proves the guard is wired into the real gate, not just the classifier."""
+    with tempfile.TemporaryDirectory(prefix="md_gates_ratio_") as td:
+        root = pathlib.Path(td)
+        (root / "degenerate.py").write_text(
+            "# --selftest\nprint('selftest: 1/5 passed')\n", encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(HERE / "run_all_gates.py"),
+                               "--check", "--tools-dir", str(root), "--json"],
+                              cwd=str(ROOT), capture_output=True, text=True)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        rep = json.loads(proc.stdout)
+        assert rep["verdict"] == "FAILED"
+        stages = {t["tool"]: t for t in rep["tool_stages"]}
+        assert stages["degenerate.py"]["status"] == "SUSPECT_SKIP"
+        assert "ratio" in stages["degenerate.py"]["detail"]
+        assert rep["live_hardware_accessed"] is False
+        # Positive control: swap to N==M -> green again.
+        (root / "degenerate.py").write_text(
+            "# --selftest\nprint('selftest: 5/5 passed')\n", encoding="utf-8")
+        ok = subprocess.run([sys.executable, str(HERE / "run_all_gates.py"),
+                             "--check", "--tools-dir", str(root), "--json"],
+                            cwd=str(ROOT), capture_output=True, text=True)
+        assert ok.returncode == 0, ok.stdout + ok.stderr
+        assert json.loads(ok.stdout)["verdict"] == "ALL_PASS"
+
+
 def test_discovery_finds_the_real_tools():
     found = gates.discover(ROOT / "tools")
     assert len(found) >= 30
@@ -63,7 +129,12 @@ def test_cli_selftest_and_list_really_run():
     assert selftest.returncode == 0, selftest.stdout + selftest.stderr
     # Do not hardcode the count: the project already got bitten once by a
     # hardcoded check count drifting away from the real number of checks.
-    m = re.search(r"(\d+)/(\d+) passed", selftest.stdout)
+    # Anchor to the tool's OWN conclusion line (`run_all_gates selftest:
+    # N/M passed`). A bare `(\d+)/(\d+) passed` search now backfires: the A3
+    # self-audit deliberately prints `退化结论 1/5 passed 必红` as a negative
+    # control name, which a full-text search would grab (rule-10 again).
+    m = re.search(r"^run_all_gates selftest:\s*(\d+)/(\d+) passed",
+                  selftest.stdout, re.M)
     assert m and m.group(1) == m.group(2) and int(m.group(1)) >= 12, selftest.stdout
 
     listing = subprocess.run([sys.executable, str(HERE / "run_all_gates.py"), "--list"],
