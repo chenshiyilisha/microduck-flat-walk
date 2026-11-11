@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "owner": "procurement_baseline.json 是采购域工作副本『相对本时点是否被静默改动』的唯一机器主人。它不存采购内容、不入库采购本体、不写回任何 xlsx/build.py/SSOT；只登记指针 + 权威 sha256 + 语义锚点期望值。与 A2 closure_contract（INCONCLUSIVE 悬案）、D1 decision_contract（主动决议）三者正交：本契约管的是『未跟踪工作副本的字节与关键口径是否被动过』。",
+  "rule": "采购域本体（两份手改 xlsx / 两份 build.py / p25.tmp / SSOT）按用户 2026-11-10 手改口径为权威，一律不入库、不重建、不覆盖（准则8：重跑 build.py 会把用户手删 3 行写回）。本契约把『采购域零改动』从 stat mtime + 暂存区 grep 的人工声明升级为机器断言：四态结论 BASELINE_MATCH / DRIFT_UNCONFIRMED / COVERAGE_SUSPECT / UNVERIFIED，绝无二值化 PASS，绝不冒充『历史上从未改过』（只能证明相对本 baseline 时点未变，与 bundle provenance 同型）。",
+  "scope": {
+    "live_hardware_accessed": false,
+    "ship_verdict": "NOT_SHIPPABLE",
+    "proves": "登记文件相对 baseline.recorded_at 时点的字节未变（hash+size），且从 xlsx 实抽的关键口径锚点仍成立",
+    "not_proof_of": [
+      "过去从未被改过（baseline 首次生成只能锁定当下一刻，无法追溯历史）",
+      "采购内容本身正确 / 价格是实时结算价 / 链接库存有效",
+      "任何决议正确性、整机可签收、策略可上真机",
+      "A2 的 INCONCLUSIVE_* 悬案闭合、D1 决议口径"
+    ],
+    "note": "CI 干净 checkout 上没有这些未跟踪工作副本文件：--check 遇文件缺失必须报 UNVERIFIED，绝不 PASS。只有 --selftest（注入临时副本）进 lean CI，真文件校验 --check 只在本机跑。"
+  },
+  "baseline": {
+    "recorded_at": "2026-11-11T16:40:00+08:00",
+    "recorded_by": "Pass119 / 用户 2026-11-11『可以做，按照最优的来』授权建立",
+    "captured_case": "用户 2026-11-10 手删 3 采购行（电源/万用表/转接线）+ 订正㉕ 16→19 行后的磁盘态；重跑 build.py 会破坏它（准则8）",
+    "rebaseline_policy": "必须显式 --rebaseline --confirm --reason，旧 hash 进 history；工具只写本契约，永不写采购文件",
+    "history": []
+  },
+  "scope_semantics": {
+    "BASELINE_MATCH": "全部登记文件 hash+size 匹配，且所有语义锚点成立 → 相对该时点未变",
+    "DRIFT_UNCONFIRMED": "字节 hash/size 变了但语义锚点全在（疑似合法手改，如勾选☑/换行/另存）→ 不算绿，需人工看 diff 并显式 re-baseline",
+    "COVERAGE_SUSPECT": "语义锚点破裂（物料行数变、手删行复活、订正㉕ SKU/价被改、关键口径丢失）→ 判红，疑似 build.py 覆盖或口径漂移事故",
+    "UNVERIFIED": "登记文件缺失（CI / 未同步工作副本）→ 不算 PASS，也不算漂移；如实报缺失"
+  },
+  "files": [
+    {
+      "id": "BUY_SHEET",
+      "path": "docs/active/MicroDuck-照着买采购执行清单-2026-11-10.xlsx",
+      "kind": "hand_edited_xlsx",
+      "sha256": "bd092c19377a946fc447675cbb73bab2a5067e0581e4a44913ecf3c660478959",
+      "size_bytes": 28094,
+      "why_protected": "用户手改主表：手删 3 行 + 订正㉕ 补 3 行 = 19 行物料；重跑 build.py 必破坏"
+    },
+    {
+      "id": "BOM_XLSX",
+      "path": "docs/active/MicroDuck-采购BOM对比整合-2026-11-10.xlsx",
+      "kind": "xlsx",
+      "sha256": "02042a1e130cb7e995e426a80c4e02ebefff4bf1bdc80941741a6211ce0fde02",
+      "size_bytes": 32496,
+      "why_protected": "两源表并集镜像，含 §16 项目判决盖本表与电池容量一手订正"
+    },
+    {
+      "id": "P25_TMP",
+      "path": "docs/active/.MicroDuck-照着买-2026-11-10.p25.tmp.xlsx",
+      "kind": "tmp_snapshot",
+      "sha256": "bd092c19377a946fc447675cbb73bab2a5067e0581e4a44913ecf3c660478959",
+      "size_bytes": 28094,
+      "why_protected": "订正㉕ 中间态快照；字节与 BUY_SHEET 相同是交叉对照证据，二者若分叉需人工确认"
+    },
+    {
+      "id": "BUY_BUILD",
+      "path": "docs/active/.MicroDuck-照着买采购清单-2026-11-10.ref/build.py",
+      "kind": "generator_source",
+      "sha256": "56c5662de219a8c5787e46df2bbda9ebdedf9e01dda2590ad7cb3926490f313f",
+      "size_bytes": 52944,
+      "why_protected": "照着买生成源；若被改须同步契约，且禁止据此重跑覆盖手改表"
+    },
+    {
+      "id": "BOM_BUILD",
+      "path": "docs/active/.MicroDuck-采购BOM对比整合-2026-11-10.ref/build.py",
+      "kind": "generator_source",
+      "sha256": "b6dc5fc5453450310459b92453c36c1a4dfbaeba5eccef83d28abf8b4f63e9a3",
+      "size_bytes": 31036,
+      "why_protected": "BOM 生成源"
+    },
+    {
+      "id": "SSOT",
+      "path": "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md",
+      "kind": "ssot_markdown",
+      "sha256": "1c265e24792544202d0ae236be9485068e9077eda2d2b603384c592475ba144b",
+      "size_bytes": 133731,
+      "why_protected": "采购口径唯一权威源（顶部判决表 + 订正①–㉕）；改判必须先回写它"
+    }
+  ],
+  "cross_file_invariants": [
+    {
+      "id": "X_TMP_EQUALS_BUY",
+      "rule": "P25_TMP 与 BUY_SHEET 当前字节相同（同一 sha256）；若仅其一变化，报 DRIFT_UNCONFIRMED 并提示二者已分叉（不自动判红，因 tmp 本就是历史快照）",
+      "left": "P25_TMP",
+      "right": "BUY_SHEET",
+      "expect_equal_at_baseline": true
+    }
+  ],
+  "semantic_anchors": [
+    {
+      "id": "A_BUY_MATERIAL_ROWS",
+      "file": "BUY_SHEET",
+      "sheet": "照着买",
+      "kind": "material_row_count",
+      "expected": 19,
+      "range": [5, 23],
+      "why": "订正㉕ 16→19 行后的权威行数；退回 16 = 手删 3 行被 build.py 写回（准则8 事故）"
+    },
+    {
+      "id": "A_BUY_HAND_DELETED_ABSENT",
+      "file": "BUY_SHEET",
+      "sheet": "照着买",
+      "kind": "absent_as_material_subject",
+      "range": [5, 23],
+      "subject_col_index": 3,
+      "terms": ["直流稳压电源", "万用表", "转接线"],
+      "why": "手删 3 项不得作为『独立物料行』复活。🔴 准则10 实证：真实表第17行是合法物料『扬声器…（kissqy同源）+配套转接线』，其整行含『转接线』但物料主体(D列)是『扬声器…』；最初用整行裸子串会误报手删行复活（首跑 COVERAGE_SUSPECT 假红），故改判 D 列主体是否以禁词开头——独立『转接线 2.0→2.5 3P』行会命中、『扬声器+配套转接线』不会，且不依赖具体规格字符、无需 exclude 词打补丁。本锚点类型自带负对照（退回顾整行裸子串必误红）。"
+    },
+    {
+      "id": "A_BUY_SKU_25",
+      "file": "BUY_SHEET",
+      "sheet": "照着买",
+      "kind": "contains_any_in_material_rows",
+      "groups": {
+        "HUB取电板": ["人人 HUB 分线板", "HUB 分线板"],
+        "金属结构件": ["金属结构件"],
+        "Radxa1GB": ["Radxa ZERO 3W 1GB"],
+        "ToF": ["VL53L5CX"],
+        "摄像头": ["IMX219"]
+      },
+      "why": "订正㉕ 与主线定案的关键 SKU 必须仍在物料行"
+    },
+    {
+      "id": "A_BUY_BUDGET",
+      "file": "BUY_SHEET",
+      "sheet": "阶段与现状",
+      "kind": "contains_all_in_sheet",
+      "terms": ["2,500", "2,579"],
+      "why": "整机预算区间 ≈¥2,500–2,579（SSOT 订正㉕）；与 D1 已闭合价格口径一致"
+    },
+    {
+      "id": "A_BOM_SHEETS",
+      "file": "BOM_XLSX",
+      "kind": "sheet_names",
+      "expected": ["对比总览", "外购件逐项对比", "整合采购清单", "3D打印件清单", "口径与差异说明"],
+      "why": "BOM 整合表 5 个 sheet 结构不得丢"
+    },
+    {
+      "id": "A_BOM_VERDICT",
+      "file": "BOM_XLSX",
+      "sheet": "口径与差异说明",
+      "kind": "contains_all_in_sheet",
+      "terms": ["2026-11-10 项目判决", "电池容量一手订正"],
+      "why": "§16/§17 项目判决与电池一手订正仍在"
+    },
+    {
+      "id": "A_SSOT_CORRECTIONS",
+      "file": "SSOT",
+      "kind": "contains_all_in_text",
+      "terms": ["采购域唯一权威判决表", "订正㉕"],
+      "why": "SSOT 顶部判决表与订正㉕ 标记在（改判必须先回写它）"
+    }
+  ],
+  "negative_controls": [
+    "把 BUY_SHEET 的 sha256 改 1 位 → 该文件 DRIFT_UNCONFIRMED（非 MATCH）",
+    "把 BUY_SHEET 替换成 build.py 生成的 16 行旧态 → A_BUY_MATERIAL_ROWS=16≠19 且手删行作为独立物料复活 → COVERAGE_SUSPECT（判红）",
+    "把订正㉕ 金属结构件行从 BUY_SHEET 删掉 → A_BUY_SKU_25 缺组 → COVERAGE_SUSPECT",
+    "把合法『扬声器…+配套转接线』误判成手删行复活（整行裸子串）→ 不得红；主体判据(D列以禁词开头)保证不误红，退回顾整行裸子串则必误红（准则10 实证）",
+    "把任一登记文件改成缺失 → UNVERIFIED（不算 PASS，也不算漂移）",
+    "在干净 checkout（无工作副本）跑 --check → 全 UNVERIFIED，退出码不为 0，CI 不会误绿",
+    "故意删掉契约里的 A_BUY_MATERIAL_ROWS 锚点 → validate 必红（契约自校验）"
+  ]
+}

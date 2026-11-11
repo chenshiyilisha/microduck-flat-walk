@@ -375,6 +375,12 @@
       "line": "META_GUARD",
       "risk_tokens": [],
       "evidence": "D1 新增：工程决议唯一主人台账，管理『主动决议不做/暂缓/撤销/否决』（DEFERRED/REJECTED/WITHDRAWN≠PENDING），与 A2 closure_contract 的 INCONCLUSIVE 悬案语义正交。起因=21组开源查全时 reasoning 子代理把 11-09 已判『❌不搬』的 HostImuGate 重挖成 top1 新缺口，且两份文档口径相反。机制=DECISION_* 标记集合相等 + 每条必须有可执行 reopen_when/rationale + watch_terms×stale_terms 缺指针必红（准则10 只用具体复合词）+ owner doc 标记（路径归一化，防 Windows 反斜杠静默失效）。首条真实决议即 HostImuGate，另含 USB 主总线/ xgoduck 任务两条已闭合决议。verdict 恒 LOCAL_RESOLUTION_ONLY / NOT_SHIPPABLE、live_hardware_accessed=false；不验硬件、不消任何 A2 悬案。stdlib-only，随 B3 派生名单进 lean CI"
+    },
+    {
+      "path": "tools/hd1910/check_procurement_baseline.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "E2 新增：采购域未跟踪工作副本（两份手改 xlsx / 两份 build.py / p25.tmp / 价格 SSOT）相对 baseline 时点的字节+语义一致性门禁，把『采购域零改动』从 stat 人工声明升级为机器断言。与 A2（INCONCLUSIVE 悬案）、D1（主动决议）正交：本契约管工作副本是否被静默改动。四态 verdict：BASELINE_MATCH / DRIFT_UNCONFIRMED（字节变但锚点在=疑似合法手改，不冒绿）/ COVERAGE_SUSPECT（语义锚点破=疑似 build.py 覆盖事故，判红）/ UNVERIFIED（文件缺失=CI 干净 checkout，不 PASS）。两层判据：sha256+size + 从 xlsx 用纯 stdlib(zipfile+xml.etree, 全 inlineStr)实抽的语义锚点（19 物料行/手删 3 项未作为独立物料复活/订正㉕ SKU/预算/5 sheet/SSOT 订正表）。🔴 准则10 实证：手删『转接线』复活判据用『D 列物料主体以禁词开头』而非整行裸子串——真实表第17行合法『扬声器+配套转接线』不得误红，旧裸子串规则负对照必误红。工具永不写采购文件，只在本机显式 --rebaseline --confirm --reason 时更新契约 JSON 且旧值进 history；CI 上 --check 因文件缺失报 UNVERIFIED（不误绿），--selftest（注入临时 xlsx + 11 条负对照）随 B3 派生名单进 lean CI。仅证明相对 recorded_at 时点未变、不追溯历史、不验硬件、ship_verdict 恒 NOT_SHIPPABLE"
     }
   ],
   "known_gaps": [
