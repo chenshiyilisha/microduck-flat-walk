@@ -148,6 +148,8 @@ WCH 官方 `wch.cn/products/CH343.html` 原话「**支持半双工，提供正�
 - 🟡 **Linux 驱动路径分叉**（同一颗 CH343 会有不同节点与不同行为）：CDC-ACM → `/dev/ttyACM*`；内核 `ch341` 模块（5.14+ 扩展覆盖 CH343）→ `/dev/ttyUSB*`；WCH 厂商 VCP 驱动 `ch343.ko` → `/dev/ttyCH343USB*`。⇒ 上板先 `dmesg` / `ls -l /dev/tty*` 确认绑的是哪条，非标准波特率行为不能跨驱动外推。
 
 ⇒ 🔴 **判决**：总线预算最坏档已吃掉 20 ms 周期的 83–87%，USB 额外几毫秒几乎必然把 50 Hz 环顶到 45 Hz 以下。所以 **Pi 4B 主方案 = 板载 PL011（U2）+ 外部自动方向板（路径 B）**；USB（U3 / Adapter A 跳线 B）**只用于台架单舵机调试、不用于整机**。
+
+> 🔑 **唯一决议主人 = `DECISION_USB_MAIN_BUS`**（`microduck-software/tools/hd1910/decision_contract.json`；REJECTED）。本节是它的 `decided_in` 落点。台架 CH343 @1M ping 通单舵机 ≠ 整机 16 节点 50 Hz 环，不得据此翻案；重开须换可控 `latency_timer` 适配器并在本项目整机实测 tick 余量 ≥ 5 ms 且连续 1 小时不跌破 45 Hz（附原始日志）。
 - ✅ **负对照（能删就红）**：整机 15 颗 + IMU 跑起来后，把 `port` 从 `/dev/ttyAMA3` 改回 `/dev/ttyACM0` 重测，应观测到 loop <45 Hz / missed ticks / 读超时；若两者一样稳，说明 N2 的判据在本硬件上不成立，需要重新测预算而不是照抄结论。
 - ✅ 为什么 LeKiwi 用 `/dev/ttyACM0` 没事：那是 6 颗机械臂、没有 15 颗 + IMU 的 sync_read 预算压力，也不是 50 Hz 硬实时步态环 —— **不能被当作「USB 也能跑整机」的证据**。
 

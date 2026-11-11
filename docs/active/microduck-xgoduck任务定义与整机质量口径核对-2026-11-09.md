@@ -64,6 +64,8 @@ Mjlab-GroundPick-*-XgoDuck → Mjlab-StandUp-*-XgoDuck → Mjlab-Velocity-*-XgoD
 
 🔴 **撤销行动建议 1**。四条理由：代码不缺 / `roller_standup` 硬件不适用 / `sitstand` 目标不对 / 跌倒起身 `standup` 本就在 P3。
 
+> 🔑 **唯一决议主人 = `DECISION_XGODUCK_TASKS_WITHDRAWN`**（`microduck-software/tools/hd1910/decision_contract.json`；WITHDRAWN）。本节是它的一手判决落点；`microduck-开源参考索引` §行动建议 1（已划线撤销）与 `microduck-仿真鸭移植` §行187 均已就地指向本决议。上游目录里有这两个任务名 **不是** 本项目仍待搬运的证据。
+
 若将来仍要借 xgoduck 的东西，只剩两项，且都是**对照**而非「搬」：
 
 1. `standup_training_rewards.py` 的 `upright_linear_angle_gate()` —— 直接读 free-joint 四元数算倾角门控，文件头说明是为了**避开 projected gravity 滞后一个物理子步**。可对照我们 `standup` 的 tilt gating 有没有同样的滞后。

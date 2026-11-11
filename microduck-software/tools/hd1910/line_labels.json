@@ -369,6 +369,12 @@
       "line": "META_GUARD",
       "risk_tokens": [],
       "evidence": "C4 新增：SCS v1 流解析双实现离线逐字节 parity（陆吾 mosaico test_parity 手法，只补查全确认的正交缺口 row7）。A=stdlib ast 从 check_imu_bridge.py 真提取生产 parse_scs（不 import、不复制、不漂移），B=独立字节状态机；共享 driver 对 12 个混合脏流用例逐字节同解。不碰串口、不消 R3、verdict 恒 OFFLINE_PARITY_ONLY / NOT_SHIPPABLE；含篡改 LEN+4 / B 注入 bug / 删用例 / 伪造 PASS 负对照；stdlib-only（check_imu_bridge 经 AST 文本提取而非 import，规避其 lazy serial），随 B3 派生名单进 lean CI"
+    },
+    {
+      "path": "tools/hd1910/check_decisions.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "D1 新增：工程决议唯一主人台账，管理『主动决议不做/暂缓/撤销/否决』（DEFERRED/REJECTED/WITHDRAWN≠PENDING），与 A2 closure_contract 的 INCONCLUSIVE 悬案语义正交。起因=21组开源查全时 reasoning 子代理把 11-09 已判『❌不搬』的 HostImuGate 重挖成 top1 新缺口，且两份文档口径相反。机制=DECISION_* 标记集合相等 + 每条必须有可执行 reopen_when/rationale + watch_terms×stale_terms 缺指针必红（准则10 只用具体复合词）+ owner doc 标记（路径归一化，防 Windows 反斜杠静默失效）。首条真实决议即 HostImuGate，另含 USB 主总线/ xgoduck 任务两条已闭合决议。verdict 恒 LOCAL_RESOLUTION_ONLY / NOT_SHIPPABLE、live_hardware_accessed=false；不验硬件、不消任何 A2 悬案。stdlib-only，随 B3 派生名单进 lean CI"
     }
   ],
   "known_gaps": [

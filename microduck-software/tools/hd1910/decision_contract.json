@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "owner": "decision_contract.json 是全部『主动决议不做/暂缓/撤销/否决』的唯一主人。docs 里具名事项出现 DEFERRED/REJECTED/WITHDRAWN 却列作待新增/待办、且无本契约标记者必须判红（借 open-microduck check_book.py 集合相等断言与 A2 closure_contract 的同型机制，但语义正交：A2 管证据未闭合的 INCONCLUSIVE_* 悬案，本契约管已拍板的工程决议）。",
+  "rule": "DEFERRED / REJECTED / WITHDRAWN 不等于 PENDING / DO。一条『不做』决议必须带可执行的 reopen_when（什么一手证据出现才重新立项）与 rationale（为什么现在不做），否则是拍脑袋的永久否决，不得进入本契约。文档之间对同一具名事项口径冲突（一处判不做、另一处列新增/待办）且没有指向本契约的决议标记时判红。",
+  "orthogonality": "与 closure_contract.json（A2）正交：A2 的 MARK=INCONCLUSIVE_* 只覆盖『尚无一手上板证据、不算 PASS』的悬案；本契约的 MARK=DECISION_* 覆盖『已评估并主动决定不做、但保留重开条件』的决议。一个事项从 DEFERRED 重新立项后应转入 A2 作为 INCONCLUSIVE 悬案，而不是留在决议台账。",
+  "status_vocabulary": {
+    "DEFERRED": "当前代次/阶段不做，但有明确 reopen_when；不是永久否决",
+    "REJECTED": "有反证/不适用，原则上不做；若推翻需一手证据且须写 supersedes",
+    "WITHDRAWN": "曾被列入计划或别处仍写作待办，但本仓已撤销（如上游早已实现、或不适用本线），别处须加指针"
+  },
+  "scope": {
+    "live_hardware_accessed": false,
+    "not_proof_of": ["任何决议的正确性需重开时的一手证据", "整机可签收", "策略可上真机", "INCONCLUSIVE_* 悬案闭合"],
+    "ship_verdict": "NOT_SHIPPABLE",
+    "note": "决议台账是信息一致性门禁，不验证硬件、不消任何 A2 悬案、不作实机签收。"
+  },
+  "decision_schema": {
+    "required": ["id", "subject", "status", "statement", "rationale", "reopen_when", "watch_terms", "stale_terms", "resolution_marker", "decided_in", "source_refs", "conflicts_with", "negative_control"],
+    "id_pattern": "DECISION_[A-Z_]+",
+    "watch_terms_def": "具名事项在 docs 里出现这些词 => 该文档必须能找到 resolution_marker（本契约 id），否则若同时含 stale_terms 判口径冲突",
+    "stale_terms_def": "把一件已判不做的事写成待新增/待办/最优解的复合词；必须是具体复合词，禁止单字（防裸子串反噬准则10）",
+    "min_reopen_when_chars": 12
+  },
+  "decisions": [
+    {
+      "id": "DECISION_HOSTIMU_GATE",
+      "subject": "fanhao HostImuGate 冻结/新鲜度门控（50ms 龄 / 1s 稳定期 / 3 次连续重复判冻结 + reader 线程解耦）",
+      "status": "DEFERRED",
+      "statement": "当前部署代次（DuckBuddy-main 总线 LSM6DSV16X / SflpDecoder）不搬 HostImuGate；沿用现有 150ms 龄 + 30ms 偏斜门 + 启动期，粗但够用。",
+      "rationale": "BNO085 移植执行清单 §7 一手评估：已有等价的粗门（duck-control bno08x.rs sample():107-111），且 check_imu_bridge.py 是接线前读一帧的台架验收工具、无连续块流输入源；离线无真实 seq/status 流时造冻结判据只能合成数据自证，违反『测真实入口』准则。三个 status 位常量（NOT_READY/STALE/READER_SLOW）已全部进 --selftest。",
+      "reopen_when": "上板真出现『旧 sample 冒充新鲜』：seq 不推进但 status 报新鲜，且有串口日志原文；届时先转入 A2 作 INCONCLUSIVE 悬案再决定搬不搬。",
+      "watch_terms": ["HostImuGate", "HOST_IMU_REPEATS", "HOST_IMU_MAX_AGE", "HOST_IMU_SETTLE"],
+      "stale_terms": ["C-IMU（新增）", "门控可细化", "顺带把", "细化两代次"],
+      "resolution_marker": "DECISION_HOSTIMU_GATE",
+      "decided_in": "docs/active/microduck-HD1910-BNO085-gyro_fusion移植执行清单-2026-11-09.md §7（行 88/161）",
+      "source_refs": [
+        "docs/active/microduck-HD1910-BNO085-gyro_fusion移植执行清单-2026-11-09.md",
+        "docs/active/microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md",
+        "docs/active/microduck-开源参考深挖交叉诊断与工程决议台账-2026-11-11.md"
+      ],
+      "conflicts_with": [
+        "docs/active/microduck-kissqy-HD1910-robotd-IMU与调参-参考价值-2026-11-09.md §7 行156『门控可细化…参考 HostImuGate』/ 行163『顺带把 sample() 的 150ms 龄收紧…加 repeats』/ §8 行172『C-IMU（新增）：HostImuGate…』——与 BNO085 清单 §7『❌不搬』口径相反，已就地补决议指针统一"
+      ],
+      "resolution_pointer": "上述冲突文档在对应行补『→ 见 DECISION_HOSTIMU_GATE，本仓不搬，除非上板旧 sample 冒充新鲜』；读任一份都应被引到本契约",
+      "negative_control": "若某文档同时含 watch_term（HostImuGate）与 stale_term（如『C-IMU（新增）』）却不含 resolution_marker，检查必须红；只出现 watch_term 讲上游架构、或已带指针，不得误报。",
+      "evidence": []
+    },
+    {
+      "id": "DECISION_USB_MAIN_BUS",
+      "subject": "USB CDC 作为整机主总线（U3）",
+      "status": "REJECTED",
+      "statement": "整机主方案必须是板载 PL011 + 外部硬件自动方向板；USB CDC 只用于台架单舵机调试。",
+      "rationale": "Pi4B 完整部署方案 §5/§12.1 与 probe_bus_budget.py 实测：500k/16 设备最坏 16.68–17.41 ms / 20 ms 周期，只剩 2.59–3.32 ms 给 ONNX；USB 批延迟不可调会把 50 Hz 环顶到 update_gate 45 Hz 门槛以下，症状像发布系统故障。",
+      "reopen_when": "换用可控 latency_timer 的 USB 适配器并在本项目整机上实测 500k/16 设备 tick 余量 ≥ 5 ms 且连续 1 小时不掉到 45 Hz 以下，附原始日志。",
+      "watch_terms": ["USB CDC", "U3：USB CDC", "USB 路径"],
+      "stale_terms": ["整机主方案走 USB", "U3 可作主总线"],
+      "resolution_marker": "DECISION_USB_MAIN_BUS",
+      "decided_in": "docs/active/microduck-Pi4B-完整部署方案-feetech_hls-2026-11-09.md §5 / §12.1",
+      "source_refs": [
+        "docs/active/microduck-Pi4B-完整部署方案-feetech_hls-2026-11-09.md",
+        "docs/active/microduck-Pi4B-开源Feetech总线舵机方案-2026-11-09.md",
+        "docs/active/microduck-SBC选型-四板对比-2026-11-09.md"
+      ],
+      "conflicts_with": [],
+      "resolution_pointer": "三份文档均已记『USB 被总线预算否决』，本条把该否决收为唯一主人并钉死重开门槛。",
+      "negative_control": "把『CH343 台架 1M ping 通』当作 USB 可作整机主总线的证据，检查必须红（台架单舵机 ≠ 整机 16 节点 50 Hz 环）。",
+      "evidence": []
+    },
+    {
+      "id": "DECISION_XGODUCK_TASKS_WITHDRAWN",
+      "subject": "从 xgoduck_rl 抄 roller_standup / sitstand 任务",
+      "status": "WITHDRAWN",
+      "statement": "不搬 xgoduck_rl 的 roller_standup / sitstand；本地训练包早已注册这些任务，且 roller_standup 是带轮版专用、HD-1910 不适用。",
+      "rationale": "2026-11-09 核对一手发现本地 LIVE 训练包已注册；sitstand 是坐↔站、跌倒起身 standup 本就在 P3，滚动起身属轮滑版专用。",
+      "reopen_when": "仅当本项目上马带轮版且确认该任务对应 HD-1910 plant（非 XL330/带轮专用）并给出新的训练契约时，才作为新任务重新登记。",
+      "watch_terms": ["roller_standup", "sitstand"],
+      "stale_terms": ["行动建议 1", "抄 xgoduck_rl 的 roller_standup"],
+      "resolution_marker": "DECISION_XGODUCK_TASKS_WITHDRAWN",
+      "decided_in": "docs/active/microduck-仿真鸭移植-robotd--sim-2026-11-09.md 行187 / 开源参考索引 §行动建议1",
+      "source_refs": [
+        "docs/active/microduck-仿真鸭移植-robotd--sim-2026-11-09.md",
+        "docs/active/microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md",
+        "docs/active/microduck-开源参考索引-2026-11-09.md"
+      ],
+      "conflicts_with": [],
+      "resolution_pointer": "开源参考索引 §行动建议1 已标『已撤销（2026-11-09 核对）』，仿真鸭文档行187 标『已撤销』；本条收为唯一主人。",
+      "negative_control": "把上游任务目录里存在 roller_standup 当作『本项目仍需搬运』的待办证据，检查必须红。",
+      "evidence": []
+    }
+  ]
+}

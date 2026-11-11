@@ -159,6 +159,7 @@ Phase 0 若显示不跳 ⇒ **不进 Phase 1**，省掉 1363 行改动（fanhao 
 ## 7. 明确不做（防止范围膨胀）
 
 - ❌ **不搬 `HostImuGate`**（50ms 龄 / 1s 稳定 / 3 次冻结判定）：我们已有 150ms 龄 + 30ms 偏斜门（`:107-111`）与启动期，粗但够用；除非上板真出现「旧 sample 冒充新鲜」再立项。
+  - 🔑 **唯一决议主人 = `DECISION_HOSTIMU_GATE`**（`microduck-software/tools/hd1910/decision_contract.json`；DEFERRED）。本节是它的 `decided_in` 落点；`microduck-kissqy…-IMU与调参-参考价值` §7/§8 早期把本项写作「可细化 / C-IMU 新增」，已就地加指针统一到本决议，勿再当作待办重挖。重开须满足上面的上板证据并先转入 A2 `INCONCLUSIVE_*` 悬案。
 - ❌ **不搬 `trunk_imu_raw_log.rs`**（我之前把名字说成 `bno08x_raw_log`，**订正**：实际是 `microduck-hd1910/firmware/robotd/src/trunk_imu_raw_log.rs`；开关 `[trunk_imu] bno08x_raw_log` 指向文件路径，CSV 列 `host_us,packet,channel,shtp_seq,report_id,report_seq,status,delay_100us,v0…v5`，64MiB 上限、独立 writer + 有界队列、绝不阻塞 reader）。**Phase 0 用 `report_stats()` 已能回答「跳不跳」**；只有 Phase 2 需要重定阈值时才搬它采 100Hz 原始报告。
 - ❌ **不改 `reference_native`**（§5.4）。
 - ❌ **不动 `DuckBuddy-main` / `out/robotd_hd1910_mode0.toml` 那条总线板线**（§0）。

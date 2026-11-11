@@ -154,6 +154,7 @@ pub enum TrunkImuKind { Bus, Bno08x, Lsm6dsv16x }
 **对 `DuckBuddy-main` 部署代次（当前 `robotd_hd1910_mode0.toml`）**
 1. IMU = 总线 LSM6DSV16X 板，硬件路线无需改；fanhao 的 EasyEDA 工程 + `firmware/imu-source/` 是这块板的维修/重制一手参考（项目软件方案已引用）。
 2. 门控可细化：在 `SflpDecoder` 外加 `max_age`/`repeats`（参考 `HostImuGate`），不阻塞控制循环。
+   > ⚠️ **本节 §7/§8 关于 `HostImuGate` 的「可细化 / C-IMU 新增」措辞已被后续判决取代** → 见 `DECISION_HOSTIMU_GATE`（唯一决议主人，落在本清单配套 `decision_contract.json`）：本仓当前**不搬** `HostImuGate`（沿用 150 ms 龄 + 30 ms 偏斜门），除非上板真出现「旧 sample 冒充新鲜」。本行仅保留作上游能力记录，不是待办。
 3. **`gyro_fusion` 暂不需要**（板上 SFLP）。若实测 SFLP 走路也乱跳，再移植。
 4. 增益只走我们的 `reg50=clamp(round(gain·position_kp/200),1,254)` + `position_kd=8`，不抄 P5/D0。
 
@@ -161,6 +162,7 @@ pub enum TrunkImuKind { Bus, Bno08x, Lsm6dsv16x }
 1. 🔴 **上板第一检查项**：录 100Hz 原始 0x08 报告（fanhao `bno08x_raw_log` 有现成 CSV 机制，约 1MB/min、64MB 封顶），统计走路帧里 >5° 单 tick 跳变比例；若命中，就是 fanhao 描述的乱跳。
 2. 若命中 → 移植 `gyro_fusion.rs`（纯算法、无依赖）做 host 陀螺积分姿态，默认 `gyro` 模式；注意它是**标量优先**四元数、`w≥0`，与 `bno08x.rs:88-92 normalized([w,x,y,z])` 顺序一致。
 3. 顺带把 `sample()` 的 150ms 龄收紧到 50ms 量级并加 `repeats` 冻结判据（与 fanhao 对齐）。
+   > ⚠️ 本行「加 repeats 冻结判据」同属 `DECISION_HOSTIMU_GATE`：本仓**不搬**，重开条件见 BNO085 移植执行清单 §7 / `decision_contract.json`。保留作上游对齐参考，不是本仓待办。
 4. `reference_native` 保留为陀螺 EMA（与 gyro_fusion 不冲突，一个管 gyro 平滑、一个管 quat 门控）。
 
 ---
@@ -169,7 +171,7 @@ pub enum TrunkImuKind { Bus, Bno08x, Lsm6dsv16x }
 
 - **C1（总线 IMU 从机 ID200）**：对部署代次 = "已用"，参考价值降为**实物/固件维修参考**；对 hd1910m BNO08x 路径不适用。
 - **C2（IMU 融合务必自做）**：具体化 = `gyro_fusion.rs` 倾斜门控（6°/0.66s/0.5s/5°·s⁻¹）+ BNO085 乱跳真机实证；**并新增一条真实风险**：我们 `hd1910m/bno08x.rs` 的 0x08 直接采信、`reference_native` 只 EMA 陀螺，不设防。
-- **C-IMU（新增）**：`HostImuGate` 50ms/1s/3-repeats + reader 线程解耦，细化两代次的门控。
+- **C-IMU（新增）**：`HostImuGate` 50ms/1s/3-repeats + reader 线程解耦，细化两代次的门控。→ ⚠️ **已由 `DECISION_HOSTIMU_GATE` 判「本仓 DEFERRED 不搬」取代**：本行是 11-09 早期评估的历史记录，**不是待办**；唯一主人与重开条件见 `decision_contract.json` / BNO085 移植执行清单 §7。
 - **C-伺服（新增）**：P/D/转矩限制写 RAM 48–51 + 回读核对 + 卸力恢复；增益口径差异不可抄数字。
 - **C4（obs 契约）**：`trunk_imu.rs` 把三种 IMU 统一进 `TrunkFrame`、policy 只看 obs —— 印证我们 obs 契约（gyro/gravity 进 obs）正确。
 - **项目准则回填**：本次"只读一个 crate 就想推翻 MEMORY"再次命中 `MEMORY.md` 的「查全比查到更重要」与「plant 是一等坐标」——**IMU 类型、EEPROM 校验、增益口径都必须绑定 robotd 代次**。

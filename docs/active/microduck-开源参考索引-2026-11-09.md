@@ -157,7 +157,7 @@ _⚠️ 本节为 2026-11-09 判决。2026-11-11 复核后，`7757/fanduck`、`S
 
 ## 行动建议（按性价比）
 
-1. ~~抄 xgoduck_rl 的 `roller_standup` + `sitstand`~~ → **已撤销（2026-11-09 核对）**：这些任务本地训练包早已注册；`roller_standup` 是带轮版、HD-1910 不适用；`sitstand` 是坐↔站；跌倒起身 `standup` 本就在 P3。详见 `docs/active/microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md` Part A。
+1. ~~抄 xgoduck_rl 的 `roller_standup` + `sitstand`~~ → **已撤销（2026-11-09 核对）**：这些任务本地训练包早已注册；`roller_standup` 是带轮版、HD-1910 不适用；`sitstand` 是坐↔站；跌倒起身 `standup` 本就在 P3。详见 `docs/active/microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md` Part A。→ 🔑 唯一决议主人 = `DECISION_XGODUCK_TASKS_WITHDRAWN`（`decision_contract.json`；WITHDRAWN），本行不是待办。
 2. **`backlash.py` 对照我们齿隙设定（≤0.5°）**，看是否同一量级 —— 仍有效。
 3. **microduck_yocto 作为上板 OS 候选**（microduck-zero3 机种就是我们的板）；updater RAUC 回滚链值得在真机上跑一次。
 4. **读 fanhao375 `踩坑记录.md`/`调试记录.md` 目录**挑未踩坑，避免重复。

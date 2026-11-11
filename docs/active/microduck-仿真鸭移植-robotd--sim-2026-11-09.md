@@ -184,7 +184,7 @@ robotd --sim 127.0.0.1:7801
 
 1. ~~放开 WSL、WSL2 里编整栈~~ ✅ **已完成**，见 §9。
 2. ~~验 50 Hz / `robotctl health` / policy 名~~ ✅ **已完成**，见 §9；并额外抓出 torque 缺口。
-3. ~~搬 `xgoduck_rl` 的 `roller_standup`/`sitstand`~~ **已撤销**：2026-11-09 核对发现 LIVE 训练包早已注册这两个任务，且 `roller_standup` 是带轮版专用。详见 `microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md`。
+3. ~~搬 `xgoduck_rl` 的 `roller_standup`/`sitstand`~~ **已撤销**：2026-11-09 核对发现 LIVE 训练包早已注册这两个任务，且 `roller_standup` 是带轮版专用。详见 `microduck-xgoduck任务定义与整机质量口径核对-2026-11-09.md`。→ 🔑 唯一决议主人 = `DECISION_XGODUCK_TASKS_WITHDRAWN`（`decision_contract.json`；WITHDRAWN），本行不是待办。
 4. 剩下的真缺口：① 把 `torque on` 补进 `--sim` 的 bringup（见 §9.4，目前由门禁脚本外部发）；② `updaterd`/`configd` 未起，`health` 里这两块永远 unavailable；③ 真机总线时序 / R3 仍不在本链验证范围内（§7）。
 5. Windows 侧已到极限且全部达成：§5.2 工具链配方（gnu + rust-lld 自包含 + zig dlltool shim）、§5.4 真服务器端到端门禁、§5.5 可重放移植包。
 
