@@ -119,6 +119,8 @@
 
 > **悬案登记（收尾补齐）**：本文引入的 `INCONCLUSIVE_LIVE_TRACKING` 已按 A2 铁律登记进 `microduck-software/tools/hd1910/closure_contract.json`（`status=UNVERIFIED`、`evidence=[]`，故 `ship_verdict` 仍为 `NOT_SHIPPABLE`），并在 `board_acceptance_contract.json` 新增 B1 判据 `BA-X-4`（真机按 E3 同协议实测时变命令跟随）挂接之——`link_evidence.py` 的"每个 UNVERIFIED 悬案必须有上板判据链接"由此闭合。仿真侧 `PATH_3` 判决不因登记而改变；真机侧闭合仍 `INCONCLUSIVE_LIVE_TRACKING`，待上板实测签字。
 
+> **真机侧闭合工具已就绪（E4，2026-11-12）**：`tools/eval_tracking_live.py` 把本文判决器（`grade_period` / `_axis_report` / `classify_sweep` / `baseline_healthy`，两入口测试断言 `is` 同一对象）接上真机时序前端，上板当天按 `docs/active/microduck-真机跟踪评测前端-E4-2026-11-12.md` §4 采集并喂数即可出同口径判决，含命令注入负对照 + 冻结/策略未加载两种负对照。**工具就绪不等于有证据**：`INCONCLUSIVE_LIVE_TRACKING` 的 `status` 仍 `UNVERIFIED`、`evidence` 仍空、`live_hardware_accessed=false`，须真机实测 + 人工按 `BA-X-4` 签字才可能闭合。本轮另修掉 `baseline_healthy` 把合法 0.0 误判缺失的继承性静默 bug（`--against-sim` 证明本文已发判决零漂移）。
+
 ---
 
 ## 6. 真跑抓修的四个自身 bug（自指证据，均有负对照）

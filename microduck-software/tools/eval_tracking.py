@@ -425,6 +425,85 @@ def classify_sweep(results: list[dict], healthy: bool | None) -> str:
     return "PATH_3"
 
 
+# ----------------------------------------------------- shared verdict / gates
+#
+# These two functions are the SINGLE source of truth for turning already-computed
+# diagnostic scalars into a gate set + verdict. Both the mjlab sim runner
+# (``run_one``) and the live-hardware frontend (``eval_tracking_live.py``) import
+# THESE functions -- tests assert ``eval_tracking_live.grade_period is
+# eval_tracking.grade_period`` so a second, drifting copy cannot creep in.
+#
+# They deliberately take plain scalars, not mjlab tensors/env objects: the sim
+# side feeds values derived from 32 envs, the live side feeds values derived from
+# a recorded real-robot time series, but the *judgement* must be identical.
+# Anything source-specific (mjlab's ``waveform_injected_ok``, live's command-
+# injection integrity check) is computed by the caller and passed in as a bool.
+
+
+def grade_period(*, nrmse, terminated_frac, upright_mean, cmd_vx_min,
+                 survivors, num_envs, lag_s, period, vx_base,
+                 waveform_injected_ok) -> dict:
+    """Turn per-period diagnostic scalars into ``gates`` + ``verdict``.
+
+    Pure (no I/O, no torch, no sim). Every input is a scalar already reduced by
+    the caller; ``None`` means "not determinable" and propagates to a ``None``
+    gate rather than being silently coerced. Threshold constants are shared with
+    the sim runner so a live grade and a sim grade of the same numbers agree
+    bit-for-bit.
+
+    ``waveform_injected_ok`` is the measurement-integrity gate. The sim runner
+    computes it from ``last_step_cmd == expected_last``; the live frontend
+    computes it by checking the recorded command series actually varies and the
+    measured series actually responds. Either way, if it is False the verdict is
+    ``invalid`` -- "we measured something, but not the thing we asked about".
+    """
+    gates = {
+        "waveform_injected_ok": bool(waveform_injected_ok),
+        "cmd_vx_above_deadzone": (bool(cmd_vx_min >= DEADZONE_VX)
+                                  if (cmd_vx_min is not None and vx_base != 0) else None),
+        "survivors_enough": (bool(survivors >= max(4, 0.5 * num_envs))
+                             if (survivors is not None and num_envs is not None) else None),
+        "no_fall": (bool(terminated_frac < MAX_TERMINATED_FRAC)
+                    if terminated_frac is not None else None),
+        "stays_upright": (bool(upright_mean > 0.90) if upright_mean is not None else None),
+        "tracks_period": (bool(nrmse <= NRMSE_USABLE) if nrmse is not None else None),
+        "lag_is_transport_delay": (bool(lag_s <= 0.2)
+                                   if (period > 0 and lag_s is not None) else None),
+    }
+    verdict = None
+    if nrmse is not None and terminated_frac is not None:
+        if nrmse <= NRMSE_USABLE and terminated_frac < MAX_TERMINATED_FRAC:
+            verdict = "usable"
+        elif nrmse <= NRMSE_MARGINAL:
+            verdict = "marginal"
+        else:
+            verdict = "fail"
+    if not gates["waveform_injected_ok"]:
+        verdict = "invalid"
+    return {"gates": gates, "verdict": verdict}
+
+
+def baseline_healthy(baseline) -> bool | None:
+    """Health of the period-0 static hold; the gate for the whole sweep.
+
+    Pure. ``baseline`` is a full per-period report dict (as emitted by
+    ``run_one`` or ``eval_tracking_live``). Kept identical to the CLI's original
+    inline expression so the extraction does not move the sim verdict by one bit.
+    """
+    if baseline is None:
+        return None
+    b = baseline
+    nrmse = b["headline"]["nrmse_vx_best"]
+    # NOTE: distinguish "undefined" (None -> unhealthy, nothing measurable) from
+    # a legitimate 0.0 (a perfect static hold, e.g. a fixed-gain model's baseline).
+    # The original inline expression ``(nrmse or 9.9)`` treated 0.0 as missing and
+    # falsely red a healthy baseline; it was masked in E3 only because the real
+    # period-0 nRMSE was 0.143. Fixed here and covered by a negative-control test.
+    nrmse_cmp = 9.9 if nrmse is None else nrmse
+    return bool(b["terminated_frac"] < MAX_TERMINATED_FRAC
+                and nrmse_cmp <= NRMSE_USABLE)
+
+
 # --------------------------------------------------------------------------- run
 
 
@@ -588,32 +667,31 @@ def run_one(task_id, checkpoint, num_envs, seconds, warmup_s, device, plant,
     nrmse = _pk("nrmse_best")
     nrmse0 = _pk("nrmse_lag0")
     cmd_vx_min = None if not idx else float(cmd_t[n_warm:, idx, 0].min())
-    gates = {
-        # Measurement integrity first -- if the command was not ours, nothing below means anything.
-        "waveform_injected_ok": bool(abs(float(last_step_cmd[0]) - float(expected_last[0])) <= 1e-6
-                                     and abs(float(last_step_cmd[2]) - float(expected_last[2])) <= 1e-6),
-        # Keep the experiment inside the region where the policy is monostable.
-        "cmd_vx_above_deadzone": (bool(cmd_vx_min >= DEADZONE_VX)
-                                  if (cmd_vx_min is not None and vx_base != 0) else None),
-        "survivors_enough": bool(len(idx) >= max(4, 0.5 * num_envs)),
-        "no_fall": bool(terminated_frac < MAX_TERMINATED_FRAC),
-        "stays_upright": (bool(float(up_t[:, idx].mean()) > 0.90) if idx else None),
-        "tracks_period": (bool(nrmse <= NRMSE_USABLE) if nrmse is not None else None),
-        # A policy that follows only after 0.4 s of lag is not following: the lag
-        # must be a transport delay, not the whole response.
-        "lag_is_transport_delay": (bool(_pk("lag_s_best", 1.0) <= 0.2)
-                                   if period > 0 else None),
-    }
-    verdict = None
-    if nrmse is not None:
-        if nrmse <= NRMSE_USABLE and terminated_frac < MAX_TERMINATED_FRAC:
-            verdict = "usable"
-        elif nrmse <= NRMSE_MARGINAL:
-            verdict = "marginal"
-        else:
-            verdict = "fail"
-    if not gates["waveform_injected_ok"]:
-        verdict = "invalid"
+    upright_mean = float(up_t[:, idx].mean()) if idx else None
+    # Measurement integrity first -- if the command was not ours, nothing below
+    # means anything. The sim runner knows the exact waveform it drove, so it
+    # checks the last written command against the expected last sample. The live
+    # frontend has no such oracle and uses a command-series integrity check
+    # instead; both feed the SAME grade_period() below.
+    waveform_injected_ok = bool(
+        abs(float(last_step_cmd[0]) - float(expected_last[0])) <= 1e-6
+        and abs(float(last_step_cmd[2]) - float(expected_last[2])) <= 1e-6
+    )
+    # A policy that follows only after 0.4 s of lag is not following: the lag
+    # must be a transport delay, not the whole response.
+    _graded = grade_period(
+        nrmse=nrmse,
+        terminated_frac=terminated_frac,
+        upright_mean=upright_mean,
+        cmd_vx_min=cmd_vx_min,
+        survivors=len(idx),
+        num_envs=num_envs,
+        lag_s=_pk("lag_s_best", 1.0),
+        period=period,
+        vx_base=vx_base,
+        waveform_injected_ok=waveform_injected_ok,
+    )
+    gates, verdict = _graded["gates"], _graded["verdict"]
 
     env.close()
 
@@ -652,7 +730,7 @@ def run_one(task_id, checkpoint, num_envs, seconds, warmup_s, device, plant,
         },
         "survivors": len(idx),
         "terminated_frac": terminated_frac,
-        "upright_mean": float(up_t[:, idx].mean()) if idx else None,
+        "upright_mean": upright_mean,
         "vx_tracking": vx_agg,
         "wz_tracking": wz_agg,
         "contact_duty_median": float(duty.median()) if (duty is not None and duty.numel()) else None,
@@ -809,11 +887,9 @@ def main() -> int:
     # The baseline is the health check for the whole sweep. If the policy cannot hold a
     # CONSTANT command here, every tracking number below measures falling, not tracking --
     # and the honest answer is "this instrument is broken", not "the policy cannot follow".
-    healthy = None
+    healthy = baseline_healthy(baseline)
     if baseline is not None:
         b = baseline
-        healthy = bool(b["terminated_frac"] < MAX_TERMINATED_FRAC
-                       and (b["headline"]["nrmse_vx_best"] or 9.9) <= NRMSE_USABLE)
         print(f"baseline    terminated {b['terminated_frac']*100:.1f}%  "
               f"survivors {b['survivors']}/{a.num_envs}  "
               f"nRMSE {b['headline']['nrmse_vx_best']}  -> "

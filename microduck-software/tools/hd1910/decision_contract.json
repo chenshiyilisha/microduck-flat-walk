@@ -86,6 +86,71 @@
       "resolution_pointer": "开源参考索引 §行动建议1 已标『已撤销（2026-11-09 核对）』，仿真鸭文档行187 标『已撤销』；本条收为唯一主人。",
       "negative_control": "把上游任务目录里存在 roller_standup 当作『本项目仍需搬运』的待办证据，检查必须红。",
       "evidence": []
+    },
+    {
+      "id": "DECISION_SIM_TORQUE_BRINGUP",
+      "subject": "把 robotd --sim 上电扭矩 at_powered 从『外部 harness 注入』改为『内部』",
+      "status": "WITHDRAWN",
+      "statement": "不搬这项：at_powered 早已是 robotd --sim 的内部实现（2026-11-09 sim 移植完成），外部 sim_stack_check.py 门禁刻意『不发 torque』正是隔离内部行为的负对照，不是待补的注入缺口。",
+      "rationale": "2026-11-12 查全一手源码：robotd/src/main.rs:1055 直接构造 RemoteIo::at_powered(addr)；sim_port/sim.rs:191 置 powered=true、:251-262 握手后自动发 Request::Torque 并校验 ack；该 sim.rs 与已应用的 upstream DuckBuddy-main/duck-control/src/sim.rs:191,251 逐字节一致。sim_stack_check.py:11-13 明写『This gate deliberately never sends torque or gain』、:24-30 把 at_powered 称为 the fix；apply_sim_port.py:153-159 用 POWERED_WIRING 内容断言防回退。记忆『外部注入→内部』描述的是移植前历史状态，已过时。",
+      "reopen_when": "出现握手后 body 仍被 body_server.py:201-202 的 restore() 钉住、joint_span≈0 的一手仿真失败日志（含时间戳与原始日志），才转 A2 重开。",
+      "watch_terms": ["at_powered", "torque bringup", "上电扭矩注入", "外部注入扭矩"],
+      "stale_terms": ["把 at_powered 改成内部", "外部 harness 注入扭矩待改", "扭矩 bringup 待内部化"],
+      "resolution_marker": "DECISION_SIM_TORQUE_BRINGUP",
+      "decided_in": "docs/active/microduck-真机跟踪评测前端-E4-2026-11-12.md §8",
+      "source_refs": [
+        "microduck-software/.upstream/DuckBuddy-main/robotd/src/main.rs:1055",
+        "microduck-software/tools/hd1910/sim_port/sim.rs:191,251-262",
+        "microduck-software/tools/hd1910/sim_stack_check.py:11-13,24-30",
+        "microduck-software/tools/hd1910/sim_port/apply_sim_port.py:153-159"
+      ],
+      "conflicts_with": [],
+      "resolution_pointer": "E4 文档 §8 记『经查证为 WITHDRAWN：内部实现 2026-11-09 已完成』；本条收为唯一主人，防再次从记忆挖出重做。",
+      "negative_control": "把『sim_stack_check.py 门禁不发 torque』当作『at_powered 尚缺、需外部注入』的证据，检查必须红——门禁不发正是负对照，robotd 内部才发。",
+      "evidence": []
+    },
+    {
+      "id": "DECISION_SIM_HEALTH_UNAVAILABLE",
+      "subject": "修 --sim 下 updaterd/configd 未起时 health 显示 unavailable",
+      "status": "REJECTED",
+      "statement": "不修：daemon 未起报 unavailable 是协议/CLI 刻意设计的诚实行为，有 default 语义、文档与负对照，不是 bug。",
+      "rationale": "2026-11-12 查全一手：duck-ipc-proto/src/lib.rs:2420-2427 把『up but not healthy must say so rather than fail to answer』定为协议一等公民、Default=『nothing known』；robotctl/src/main.rs:1505-1510(updaterd)/:1550-1560(configd) 把 daemon 连不上统一 ServiceReport::failed 并渲染 unavailable，明写『Unreachable is routine…reported, not an error』；install-by-hand.md:159 把台架报 unhealthy 当作 the honest answer。记忆把 robotctl health（只问 robotd）与 robotctl version（列全部 daemon）混为一谈，但两条命令下未起→unavailable 都是设计使然。",
+      "reopen_when": "拿到『daemon 确实在运行却仍被误报 unavailable』的一手日志（含 robotctl 命令原文与进程表），才算真 bug、转 A2 重开。",
+      "watch_terms": ["health unavailable", "updaterd 未起", "configd 未起", "health unavailable 缺口"],
+      "stale_terms": ["修 health unavailable", "updaterd configd 状态待修", "health 显示 unavailable 是 bug"],
+      "resolution_marker": "DECISION_SIM_HEALTH_UNAVAILABLE",
+      "decided_in": "docs/active/microduck-真机跟踪评测前端-E4-2026-11-12.md §8",
+      "source_refs": [
+        "microduck-software/.upstream/DuckBuddy-main/duck-ipc-proto/src/lib.rs:2420-2427",
+        "microduck-software/.upstream/DuckBuddy-main/robotctl/src/main.rs:1505-1510,1550-1560",
+        "microduck-software/.upstream/DuckBuddy-main/docs/robot/install-by-hand.md:159",
+        "microduck-software/tools/hd1910/sim_port/apply_sim_port.py:54-57"
+      ],
+      "conflicts_with": [],
+      "resolution_pointer": "E4 文档 §8 记『经查证为 REJECTED：诚实上报非缺陷』；本条收为唯一主人。",
+      "negative_control": "把『robotctl 输出 unavailable』当作『状态上报有 bug 待修』的证据，检查必须红——upstream 文档明写这是 honest answer。",
+      "evidence": []
+    },
+    {
+      "id": "DECISION_MDUCK_CLI_GPU_LOCK",
+      "subject": "新增 mduck 统一 CLI + GPU 单卡互斥锁 out/.gpu0.lock",
+      "status": "DEFERRED",
+      "statement": "当前代次不做 mduck CLI 与 GPU 单卡锁：二者确实不存在，但属纯工程便利，不产生一手上板证据、不消任何 INCONCLUSIVE_* 悬案、不改 ship_verdict=NOT_SHIPPABLE。",
+      "rationale": "2026-11-12 查全：全仓（含 .upstream/）无 mduck CLI 或 console_scripts 封装（唯一 mduck 命中是 community-kit README 的淘宝店铺链接）；.gpu0.lock 零命中，flock/fcntl 命中全部与 GPU 无关（config store 串行、I2C ioctl、updater 进程互斥）。项目自身门禁语义：ship_verdict 只由 A2 一手上板证据驱动，决策台账 informational never ships hardware。一条包装 CLI + 一把单卡锁都不碰它，属边际递减。",
+      "reopen_when": "出现 1 小时内 ≥2 次多任务抢单卡导致训练 OOM/失败的一手日志（GPU 锁），或每周 ≥3 次重复调用需要一条命令串起多个 gate 的量化证据（CLI），附原始日志再立项。",
+      "watch_terms": ["mduck CLI", "GPU 单卡锁", "gpu0.lock", "单卡互斥"],
+      "stale_terms": ["新增 mduck CLI 待办", "GPU 单卡锁待加", "做 mduck 统一命令行"],
+      "resolution_marker": "DECISION_MDUCK_CLI_GPU_LOCK",
+      "decided_in": "docs/active/microduck-真机跟踪评测前端-E4-2026-11-12.md §8",
+      "source_refs": [
+        "microduck-software/tools/hd1910/decision_contract.json:14（ship_verdict 只由 A2 驱动）",
+        "microduck-software/tools/hd1910/check_decisions.py:2,240（台账 informational，never ships hardware）",
+        "microduck-software/tools/hd1910/check_closure.py:308,344"
+      ],
+      "conflicts_with": [],
+      "resolution_pointer": "E4 文档 §8 记『经查证为 DEFERRED：工具不存在但属边际便利，留重开条件』；本条收为唯一主人。",
+      "negative_control": "把项目里已有 flock/config-store 串行锁当作『GPU 单卡锁已实现』的证据，或把上游 robotctl/duckctl 当作『本项目 mduck CLI 已存在』的证据，检查必须红——两者语义完全不同。",
+      "evidence": []
     }
   ]
 }

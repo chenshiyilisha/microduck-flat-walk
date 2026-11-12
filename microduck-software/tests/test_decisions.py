@@ -60,12 +60,27 @@ def test_check_json_shape():
     assert len(d["contract_sha256"]) == 64
 
 
-def test_list_cli_shows_three_decisions():
+def test_list_cli_shows_every_registered_decision():
+    """--list must show EVERY decision in the on-disk contract, not a frozen
+    count. The ledger legitimately grew 3 -> 6 on 2026-11-12 (E4 registered
+    three more NOT-to-do decisions); a hardcoded len==3 would have gone red on a
+    valid growth and tempted someone to delete real entries. Assert the semantic
+    relation instead, keeping a lower bound as the 'ledger not emptied' control.
+    """
     r = run("--list")
     assert r.returncode == 0
     lines = [l for l in r.stdout.splitlines() if l.strip()]
-    assert len(lines) == 3
+    contract_ids = {x["id"] for x in load()["decisions"]}
+    listed_ids = {l.split()[0] for l in lines if l.strip()}
+    assert len(lines) >= 3, "ledger must never be emptied (structural control)"
+    assert contract_ids == listed_ids, (
+        f"--list drifted from contract: missing={contract_ids - listed_ids}, "
+        f"extra={listed_ids - contract_ids}")
     assert any("DECISION_HOSTIMU_GATE" in l and "DEFERRED" in l for l in lines)
+    # E4 additions must each appear with their decided status.
+    assert any("DECISION_SIM_TORQUE_BRINGUP" in l and "WITHDRAWN" in l for l in lines)
+    assert any("DECISION_SIM_HEALTH_UNAVAILABLE" in l and "REJECTED" in l for l in lines)
+    assert any("DECISION_MDUCK_CLI_GPU_LOCK" in l and "DEFERRED" in l for l in lines)
 
 
 def test_captured_real_case_is_registered():
