@@ -16,11 +16,11 @@ _2026-11-12。用户已下单 Radxa Zero 3W 1GB（SSOT 订正⑫）+ 整机物�
 
 | # | 阻塞 | 卡住哪步 | 现状 | 解除动作 | owner |
 |---|---|---|---|---|---|
-| **P0-1** | **kissqy R1 镜像 `.img.xz` 未本地下载** | ① 做卡 | B2 `system_image_r1` 只是 `UPSTREAM_PUBLISHED`（别人公布的 sha），本机无实体 | 从 [public-image-r1](https://github.com/kissqy/Microduck-kissqy/releases/tag/public-image-r1) 下 `microduck-zero3w-0.15.1-R1.img.xz`，本地实算 sha 与 `75da978b…` 对齐 → slot 升 `LOCAL_COMPUTED` | 用户/网络可达时 |
-| **P0-2** | **V167 中控 ZIP 未下载、无 sha；control.43 固件 `UNOBTAINABLE`** | ② control.43 升级 (`BA-X-1`)、③ 策略加载 (`BA-7-2`) | B2 `robot_console_v167`=`UNPINNED`、`robot_firmware_control43`=`UNOBTAINABLE`（README 叙述，无源码无 sha）；R1 预装 control.40，**必须升 .43** | 下 `Microduck-Console-R17-V167.zip` 实算 sha；升级前确认随包固件 BUILD 记录可取（取不到就如实记，别假称配对） | 用户/网络可达时 |
+| **P0-1** | ~~kissqy R1 镜像 `.img.xz` 未本地下载~~ **已下载+本机实算（2026-11-12）** | ① 做卡 | ✅ 本机有 R1 实体（`.upstream/downloads/`，gitignored），sha256 与 GitHub 官方 digest / fanhao 脚本 / contract 三源对账；详见 `microduck-底座产物下载与本机实算sha-P0预处理-2026-11-12.md` §3。contract `pin_kind` 按 distributable 语义仍 `UPSTREAM_PUBLISHED`（不冒充 clone 方有文件） | 到货当天 `local_evidence.py --verify` 复核一次即可做卡 | 已完成 |
+| **P0-2** | ~~V167 中控 ZIP 未下载、control.43 `UNOBTAINABLE`~~ **已下载+固件包实算（2026-11-12）** | ② control.43 升级 (`BA-X-1`)、③ 策略加载 (`BA-7-2`) | ✅ V167 ZIP 本机实算 `7e2d70ba…`（git blob SHA-1 双算互证）；control.43 固件包从 ZIP 内抽出实算 `bcfd5c18…` 与三源一致；R1 预装 control.40，**升级判据仍按 `BA-X-1` 上板回读**。见本报告 §4（证据升级但不改 contract pin_kind、未上真机） | 到货当天 `local_evidence.py --verify` 复核 + 执行单 2.5 升级后版本回读 | 已完成（实算）/ 待上板（`BA-X-1`） |
 | **P0-3** | **人人 HUB 取电板 / NP-F550 几何未量** | ③ 装配前 (`BA-2-5` / `DIMENSION` 悬案) | 只有商品名与价，无几何一手；`power_support` / `banana_pcb_locker` 需按实物重打，不能套 fanhao STEP | 到手卡尺量板框/孔径/孔距/双铜柱间距，与 NP-F550 实物凹孔试插，再重打打印件 | 到货当天（卡尺） |
 
-> P0-1/P0-2 是**网络可达就能提前做**的，做好了里程碑 ①② 才不会空等；P0-3 必须等实物。三者都**不改采购域权威文件、不碰用户手改 xlsx**。
+> P0-1/P0-2 已于 2026-11-12 提前解除（本机实算闭环，工具 `local_evidence.py`，报告见 `microduck-底座产物下载与本机实算sha-P0预处理-2026-11-12.md`）；**但实算 ≠ 上板**：contract `pin_kind` 与 `ship_verdict` 不变、`BA-X-1` 上板判据仍等整机。P0-3 必须等实物。三者都**不改采购域权威文件、不碰用户手改 xlsx**。
 
 ---
 

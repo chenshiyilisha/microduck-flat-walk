@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "owner": "local_evidence_manifest.json 是『本机已下载底座产物的公布校验值』的唯一主人。local_evidence.py 只从这里取 published_sha256 并与本地实算对账，不得在代码里复制 sha 常量。它与 image_pairing_contract.json 正交：后者描述随仓库可分发的 pin_kind 状态（.upstream/ 被 gitignore，故保持 UNOBTAINABLE/UNPINNED/UPSTREAM_PUBLISHED），本文件描述『这些文件恰好在本机时』的多源实算证据。",
+  "rule": "published_sha256 只能证明『多个一手来源公布过同一个值』；只有 local_evidence.py --verify 对本地字节实算一致，才把该 artifact 判 LOCAL_COMPUTED。任何 artifact 的 LOCAL_COMPUTED 都不改 contract.pin_kind、不宣布 SHIPPABLE、不消 A2 悬案（board acceptance 仍需上板 + 人工签字）。",
+  "downloaded_on": "2026-11-12",
+  "download_context": "主板已下单，到货前预处理 P0-1/P0-2。下载的是 kissqy 主仓发布的底座原件（fanhao375/Microduck-kissqy fork 是叠层、不另发镜像/固件；该 fork 远端本轮实测已 404，源码快照留 .upstream/hd1910m/）。全部落 gitignored 的 .upstream/downloads/。",
+  "channel_notes": {
+    "r1": "GitHub release asset；直连/API-asset 通道实测仅 64KB/s，改用 gh-proxy.com 镜像全量下载，靠 sha256 对账完整性（是否断点续传不影响，digest 兜底）。",
+    "v167": "GitHub raw via gh-proxy；2.26MB/s，39,865,662 B 与 API contents size 一致。",
+    "control43_pkg": "不从网络单独下：直接从 V167 ZIP 的 updates/Microduck-Robotd-FT6-R17.tar.gz 抽出（README 行22『V167 随包已编译 control.43』），本机实算与两处元数据一致。"
+  },
+  "artifacts": [
+    {
+      "id": "system_image_r1",
+      "file": "microduck-zero3w-0.15.1-R1.img.xz",
+      "contract_slot": "system_image_r1",
+      "contract_pin_index": 0,
+      "published_sha256": "75da978b5d56acd9e4146256431732381de84523bb683e4ab7ac9f0580a7bce5",
+      "size_expected": 767412924,
+      "witnesses": [
+        "GitHub API releases/tags/public-image-r1 assets[0].digest（2026-11-12 实测 HTTP 200）",
+        ".upstream/replica/tools/radxa/kissqy-r1-v112.sh:21 R1_SHA 常量",
+        "image_pairing_contract.json slots[system_image_r1].expected"
+      ],
+      "note": "本机实算 sha256 与上列三源逐字一致才判 LOCAL_COMPUTED；仅证明字节同一，不证明可开机。"
+    },
+    {
+      "id": "robot_console_v167",
+      "file": "Microduck-Console-R17-V167.zip",
+      "contract_slot": "robot_console_v167",
+      "contract_pin_index": 0,
+      "published_sha256": "7e2d70bac58464f67d3e71e8761f515068322bb419cec0c29f57810a7132bffa",
+      "size_expected": 39865662,
+      "git_blob_sha1": "b8ed246cc04c230d64cedb7b4eb7aba4c58a3053",
+      "witnesses": [
+        "本机 sha256 实算（7e2d70ba…）",
+        "GitHub API contents/release-assets 报 git blob sha=b8ed246c…（2026-11-12 实测 HTTP 200），本机用 sha1('blob <size>\\0'+content) 独立复现一致",
+        "GitHub API contents 报 size=39865662 与本地字节数一致"
+      ],
+      "note": "contract 该槽 expected 无 sha pin（UNPINNED），故 contract_pin_sha256 为空；published_sha256 与 git_blob_sha1 双重对账。"
+    },
+    {
+      "id": "robot_firmware_control43_pkg",
+      "file": "Microduck-Robotd-FT6-R17.tar.gz",
+      "contract_slot": "robot_firmware_control43",
+      "contract_pin_index": 0,
+      "published_sha256": "bcfd5c183c697b9c4e0fdbd563d995eda6a48331a7c49b9e76d20bd156c65cce",
+      "size_expected": 34138802,
+      "embedded_in": {
+        "zip": "Microduck-Console-R17-V167.zip",
+        "member": "Microduck-Console-R17-V167/updates/Microduck-Robotd-FT6-R17.tar.gz"
+      },
+      "witnesses": [
+        ".upstream/downloads/firmware-control43.json sha256 字段（GitHub raw via gh-proxy 实测 HTTP 200）",
+        "V167 ZIP 内 BUILD_MANIFEST.json 的 service_package_sha256 字段",
+        ".upstream/downloads/Microduck-Robotd-FT6-R17.sha256 发布清单"
+      ],
+      "note": "从 V167 ZIP 抽取，本机实算与上方三源逐字一致；build=1fa8438-feetech-ft6-control.43 / API40 / console 1.0.167。元数据 physical_robot_operated=false、BUILD_MANIFEST hardware_verified=false 均自述未上真机；源码 firmware/BUILD.json 仍 404（不可自编译）。"
+    },
+    {
+      "id": "imu_ft6_bin",
+      "file": "imu_to_feetech_ReVA_FT6_SYNC15_UART_IRQ_v1.bin",
+      "contract_slot": "",
+      "contract_pin_index": 0,
+      "published_sha256": "d7bd2f37a6a4e0e15d1f9650a3959bcf4d8c704524d8ec319d72d8bdf104ab6d",
+      "size_expected": 8428,
+      "witnesses": [
+        ".upstream/downloads/imu-ft6.sha256 发布清单",
+        "V167 ZIP 内 updates/imu_to_feetech_ReVA_FT6_SYNC15_UART_IRQ_v1.bin 本机实算"
+      ],
+      "note": "这是 kissqy 的 FT6 外置 IMU 板固件，与 contract 的 imu_node_firmware_020（fanhao 复刻 STM32G031 HEX）是不同对象，不得混；不映射到任何 contract slot。"
+    }
+  ],
+  "not_covered": [
+    "image_pairing_contract.json 的 imu_node_firmware_020 走 check_image_pairing.py --verify-sources（decode_intel_hex 双 sha），不重复列入本 manifest。",
+    "R1 镜像解压后的 rootfs 内容、签名、启动链：本工具只核 .img.xz 压缩包的 sha256，不解压、不校验内部。"
+  ]
+}
