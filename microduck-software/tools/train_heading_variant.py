@@ -820,6 +820,14 @@ def main() -> int:
         "cfg_sha256_16": _sha16(live / "microduck_velocity_env_cfg.py"),
         "mdp_sha256_16": _sha16(live / "mdp.py"),
         "passthrough_args": passthrough,
+        # E4-5 §5.3: record the EFFECTIVE command-resampling window, read back
+        # from the very object the env will be built from (``cmd`` was resolved
+        # by tyro from ``passthrough`` above), not the declared string in
+        # ``passthrough_args``. A declared override is not evidence that it took
+        # effect; this field is the evidence, and --dry-run writes it too so a
+        # 10 h run can be pre-flighted for the window it will actually train on.
+        # Purely additive: absent an override this is the task default (3.0, 8.0).
+        "resampling_time_range_effective": list(cmd.resampling_time_range),
         # Reproducibility block: git commit + uncommitted-diff fingerprint + seed
         # + dependency versions. Lets a good run be identified and re-run later.
         "provenance": capture_provenance(ROOT),
@@ -863,6 +871,11 @@ def main() -> int:
         print(f"  replaced ramp: {ramp}")
         # Machine-checked by tools/hd1910/explore_heading.sh; keep the format.
         print(f"pin action_rate_l2 weight: {pin_after['seed_weight']}")
+    # E4-5 §5.3 log-side proof: same effective value as the meta field, so a
+    # plain `grep` on the training log answers "which window did this run train
+    # on" without parsing JSON. The machine-checked gate reads the meta.
+    print(f"command resampling_time_range (effective): "
+          f"{list(cmd.resampling_time_range)}")
     print(f"heading meta -> {meta_path}")
 
     if known.dry_run:

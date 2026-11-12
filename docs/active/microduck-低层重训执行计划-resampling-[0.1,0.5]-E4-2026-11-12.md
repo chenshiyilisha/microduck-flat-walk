@@ -102,3 +102,36 @@ EXTRA/直接调用同上，去掉 --dry-run，MICRODUCK_WARM_START=0，SAVE=250
 ## 9. 下一步（需用户再确认一个点）
 
 Dry-run 证明**技术路径通**，但真跑前有一个决策点需用户拍板：**选项 A（直接调 `.py` 手工对齐 plant）还是选项 B（给 `explore_heading.sh` 加 `$EXTRA_ARGS` 透传位，推荐）**，以及**先跑 3000 iter 探路（≈2.6 h）还是直接 12000（≈10.3 h）**。这两点确认后，按 §5 补 runmeta 生效值 → 补透传位 → `--dry-run` 复验 → 真跑。在此之前不启动任何 GPU 训练。
+
+## 10. 前置缺口已补齐（2026-11-12，Pass123；用户「都做、按最优、不缺时间」授权）
+
+> 本节是 §5 缺口的落地记录。**仍没有启动 GPU 训练、没有新 ckpt**；本节只把 §5.1/§5.3 两个纯代码缺口补上并端到端 Dry-run 实证，真跑的算力决策见 §10.5。
+
+### 10.1 计划内部矛盾与裁断（如实记录）
+§5.1 把「选项 A（直接调 `.py` 手工对齐 plant）」标为推荐，但 §6/§79 又说「更稳妥的是选项 B」，两处自相矛盾。按「两来源矛盾⇒找更深层真相」裁断：**取 B**。理由是一手风险——选项 A 要人工复现 `explore_heading.sh:88-126` 的 kp8 BAM plant 注入（BAM JSON + `kp_fw=8.0` + `PLANT_ID`），§79 自己承认这是「最易漏的一步，漏了就在默认 plant 上训、10 h 白跑」，正是本项目反复出现的 XL330↔HD1910 plant 混淆事故类（见记忆准则3/铁律）。选项 B 让 plant 注入继续由已验证的 wrapper 持有，只在训练命令末尾追加一个 `$EXTRA_ARGS`，改动最小、不碰 plant 路径。
+
+### 10.2 改了什么（全部纯新增，默认行为字节不变）
+| 文件 | 改动 | 对应缺口 |
+|---|---|---|
+| `tools/train_heading_variant.py` | meta 增 `resampling_time_range_effective`（从 tyro 解析后的 `cmd` 对象直读，非声明字符串）；日志增一行 `command resampling_time_range (effective): [...]` | §5.3 生效值只记声明不记生效 |
+| `tools/hd1910/explore_heading.sh` | 增 `EXTRA_ARGS` word-split 透传位（照搬 `train_velocity.sh`）；训练 flag 抽成单一 `TRAIN_FLAGS` 数组（DRY 与真跑共用，杜绝两处漂移）；增 `DRY=1`（照搬 `explore_heading_control.sh`，`--dry-run` + `dryrun_` 唯一名，不训练）；runmeta 增 `extra_args`（声明） | §5.1 无透传位 |
+| `tools/hd1910/resampling_gate.py`（新） | 单一权威纯函数 `declared_window()` / `grade()` + CLI `--check`：把 EXTRA_ARGS 的**声明值**与 heading_meta 的**生效值**逐项对账，不符即 rc=6 | §5.3「声明≠生效」机器化 |
+| `tests/test_lowlevel_retrain_preflight.py`（新） | 15 条：纯函数三态+负对照（mismatch/bad/missing 必红）、CLI 真进程 rc0/rc6、`--dry-run` 三态、wrapper `DRY=1` 端到端透传 | 防回归 |
+
+**单一权威**：gate 逻辑在 `resampling_gate.py`，wrapper 的 post-run 门禁直接调它，pytest 也 import 它——对账语义只有一份，不会在 shell heredoc 与测试间漂移（准则2）。新模块**不含**门禁发现字面，`run_all_gates.discover()` 仍 48，不扰动门禁体系。
+
+### 10.3 端到端实证（本地 `.venv-mjlab`，纯 CPU，未训练）
+| 实验 | 结果 | 意义 |
+|---|---|---|
+| trainer `--dry-run` 无 override | log + meta 均 `[3.0, 8.0]` | 默认不变，字段纯新增 |
+| trainer `--dry-run` override `0.1,0.5` | log + meta 均 `[0.1, 0.5]` | **生效值被真实记录** |
+| trainer `--dry-run` 坏值 `0.1 0.5`（空格） | rc=2，tyro 拒绝 | 负对照：坏语法必红 |
+| wrapper `DRY=1 PLANT=p8 EXTRA_ARGS=…` | rc=0；runmeta 记声明、heading_meta 记生效、交叉核对 PASS | 选项 B 全链通、plant gate(kp8) 过 |
+| wrapper 默认 `PLANT=p3` 但 live=kp8 | rc=1，plant gate 拦截 | 正对照：既有 plant 混淆门禁仍工作 |
+| 改前基线 `heading_meta_p8head_030_4096x3000.json` | 确认**无** `resampling_time_range_effective` | 新增字段是真能力，非摆设 |
+
+### 10.4 测试分层（CI 与本地不打架）
+CI 用 lean `requirements.txt`（无 mjlab/torch）跑 `pytest tests/`。故 `resampling_gate` 纯函数 + CLI 测试用纯标准库，**CI 常驻**；`--dry-run` / wrapper 端到端用 `importorskip("mjlab")`，**仅本地 `.venv-mjlab` 跑**，不在 CI 假红。新测试文件不含门禁发现字面。
+
+### 10.5 真跑算力决策（仍未执行，交回用户拍板）
+前置缺口已全闭合，本机实测 **RTX 4070 Laptop 8 GB / torch 2.9.1+cu128 / `cuda_available=True` / 无 GPU 锁**（计划 §2 的 4096-env 甜点卡，正是这台）。但按计划 §8「重训不保证成功、E3 §5 仍推荐暂缓跟随为首选」+ §9「在此之前不启动 GPU」，是否把 2.6 h（3000 iter 探路）/10.3 h（12000 iter）算力与覆盖现有候选的风险押上，**仍须用户明确拍板**。推荐路径：先 3000 iter 探路 (`PLANT=p8 ENVS=4096 ITERS=3000 MICRODUCK_WARM_START=0 EXTRA_ARGS="--env.commands.twist.resampling-time-range 0.1,0.5" bash tools/hd1910/explore_heading.sh <run>`)，按 §7 双判据（跟踪 PATH 升级 + gait 不退化、≥3 seed）验，胜出也不宣布替代 `p8head_2999`。`ship_verdict=NOT_SHIPPABLE`、`INCONCLUSIVE_LIVE_TRACKING` 不变。

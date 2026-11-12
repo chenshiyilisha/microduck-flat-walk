@@ -54,6 +54,23 @@ HEADING_TRACKING="${HEADING_TRACKING:-3.0}"
 ANG_VEL_Z_CLIP="${ANG_VEL_Z_CLIP:-0.5}"
 HEADING_STAGE_ITERS="${HEADING_STAGE_ITERS:-0,1000,1750,2500}"
 PLANT="${PLANT:-p3}"
+# E4-5 (low-level retrain, resampling window experiment): single-variable tyro
+# overrides forwarded verbatim (word-split) to train_heading_variant.py, exactly
+# like tools/train_velocity.sh's EXTRA_ARGS. This keeps the kp8 BAM plant
+# injection in this wrapper (the one thing option A would make a human redo by
+# hand) while letting the twist command-resampling window vary:
+#   EXTRA_ARGS="--env.commands.twist.resampling-time-range 0.1,0.5" \
+#     PLANT=p8 bash tools/hd1910/explore_heading.sh myrun
+# NOTE: tuple values must be comma-joined WITHOUT spaces (0.1,0.5), because the
+# consumer (train_heading_variant.py) resolves them through tyro. The resolved
+# EFFECTIVE value is written to heading_meta by the trainer and checked below --
+# a declared override is not evidence that it took effect.
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+# DRY=1 runs the full plant/recipe path + train_heading_variant.py --dry-run and
+# records a heading_meta (with the effective resampling window), but launches no
+# GPU training. Mirrors explore_heading_control.sh. Use it to verify that an
+# EXTRA_ARGS override actually reaches tyro before committing to a 2.6-10.3 h run.
+DRY="${DRY:-0}"
 case "$PLANT" in
   p3) PLANT_ID=hd1910_official_m6_kp5; DET_EXPECT=hd1910_kp5; KP_EXPECT=5.0 ;;
   p8) PLANT_ID=hd1910_official_m6_kp8; DET_EXPECT=hd1910_kp8; KP_EXPECT=8.0 ;;
@@ -107,6 +124,12 @@ meta={
   'pin_action_rate_weight': ('${PIN_ARATE}' or None),
   'expected_heading_x_forward_overlap': $REL_HEADING * 0.20,
   'envs': $ENVS, 'iters': $ITERS, 'seed': $SEED,
+  # E4-5: declare the single-variable override here. The EFFECTIVE resolved
+  # window is NOT copied from this string -- it is read back from tyro by
+  # train_heading_variant.py into heading_meta_<run>.json under
+  # `resampling_time_range_effective`. Keep declaration and evidence separate:
+  # a declared override is not proof it took effect.
+  'extra_args': '$EXTRA_ARGS',
   'ref': '$PLANT plant ($PLANT_ID) + heading closed loop (yaw gap fix)',
 }
 pathlib.Path('out/runmeta_${RUN}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
@@ -129,26 +152,56 @@ echo "heading: hold=$HEADING_HOLD tracking=$HEADING_TRACKING clip=$ANG_VEL_Z_CLI
 LOG="out/train_${RUN}.log"
 echo "== explore_heading $RUN envs=$ENVS iters=$ITERS (GPU) =="
 echo "log $LOG"
+echo "extra_args=${EXTRA_ARGS:-<none>}  dry=${DRY}"
 set +e
 AR_FLAG=""
 if [ -n "$PIN_ARATE" ]; then AR_FLAG="--pin-action-rate $PIN_ARATE"; fi
+# Single source of truth for the training flags: DRY and the real run consume
+# this SAME array, so a --dry-run check cannot drift from what the 10 h job sees.
+# EXTRA_ARGS is appended verbatim (word-split), like train_velocity.sh; tuple
+# values must be space-free (0.1,0.5). The resolved effective values are read
+# back from live objects by train_heading_variant.py and written to heading_meta.
+TRAIN_FLAGS=(
+  --rel-heading-envs "$REL_HEADING"
+  --heading-hold-weight "$HEADING_HOLD"
+  --heading-tracking-final-weight "$HEADING_TRACKING"
+  --ang-vel-z-clip "$ANG_VEL_Z_CLIP"
+  --heading-stage-iters "$HEADING_STAGE_ITERS"
+)
+# shellcheck disable=SC2206  # deliberate word-split: "--pin-action-rate <w>" is 2 words
+if [ -n "$AR_FLAG" ]; then TRAIN_FLAGS+=($AR_FLAG); fi
+TRAIN_FLAGS+=(
+  --task "$TASK"
+  --env.scene.num-envs "$ENVS"
+  --env.sim.mujoco.iterations 100
+  --env.sim.mujoco.ls-iterations 50
+  --agent.max-iterations "$ITERS"
+  --agent.save-interval "$SAVE"
+  --agent.seed "$SEED"
+  --gpu-ids '[0]'
+  --agent.logger tensorboard
+  --agent.experiment-name microduck_velocity_hd1910
+)
+# shellcheck disable=SC2206  # deliberate word-split: mirrors train_velocity.sh EXTRA_ARGS
+EXTRA_ARR=( $EXTRA_ARGS )
+
+if [ "$DRY" = "1" ]; then
+  echo "== DRY: resolved variant + effective resampling window, no training =="
+  "$PY" tools/train_heading_variant.py \
+    "${TRAIN_FLAGS[@]}" "${EXTRA_ARR[@]}" \
+    --agent.run-name "dryrun_${RUN}" --dry-run 2>&1 | tail -20
+  RC=${PIPESTATUS[0]}
+  set -e
+  if [ "$RC" -ne 0 ]; then
+    echo "FAIL: --dry-run rejected the resolved config (rc=$RC)" >&2
+    exit "$RC"
+  fi
+  echo "DRY ok — launch without DRY=1 to train"
+  exit 0
+fi
+
 "$PY" tools/train_heading_variant.py \
-  --rel-heading-envs "$REL_HEADING" \
-  --heading-hold-weight "$HEADING_HOLD" \
-  --heading-tracking-final-weight "$HEADING_TRACKING" \
-  --ang-vel-z-clip "$ANG_VEL_Z_CLIP" \
-  --heading-stage-iters "$HEADING_STAGE_ITERS" \
-  $AR_FLAG \
-  --task "$TASK" \
-  --env.scene.num-envs "$ENVS" \
-  --env.sim.mujoco.iterations 100 \
-  --env.sim.mujoco.ls-iterations 50 \
-  --agent.max-iterations "$ITERS" \
-  --agent.save-interval "$SAVE" \
-  --agent.seed "$SEED" \
-  --gpu-ids '[0]' \
-  --agent.logger tensorboard \
-  --agent.experiment-name microduck_velocity_hd1910 \
+  "${TRAIN_FLAGS[@]}" "${EXTRA_ARR[@]}" \
   --agent.run-name "$RUN" \
   > "$LOG" 2>&1
 RC=$?
@@ -175,6 +228,18 @@ if got is None or abs(got - want) > 1e-9:
     sys.exit(3)
 print(f'ok: heading knob readback {got} == {want}')
 " || exit 3
+
+# Gate (E4-5): when EXTRA_ARGS declares a twist resampling override, the
+# EFFECTIVE value resolved by tyro (written to heading_meta + printed to the log
+# by train_heading_variant.py) must equal the declared one. This is the "a
+# declared override is not evidence that it took effect" check: a mistyped flag
+# that tyro silently ignores, or a comma/space mistake, turns this red instead of
+# letting a 10 h run train on the wrong command distribution. No-op when no
+# override is declared (the task default is still recorded for provenance).
+if [ -n "$EXTRA_ARGS" ]; then
+  "$PY" tools/hd1910/resampling_gate.py --check \
+    --meta "out/heading_meta_${RUN}.json" --extra-args "$EXTRA_ARGS" || exit 6
+fi
 
 # Gate: the action-rate pin (when requested) reached the object training uses,
 # AND the training log's own curriculum telemetry agrees -- the printed readback
