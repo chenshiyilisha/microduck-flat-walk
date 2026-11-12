@@ -81,6 +81,39 @@ def test_list_cli_shows_every_registered_decision():
     assert any("DECISION_SIM_TORQUE_BRINGUP" in l and "WITHDRAWN" in l for l in lines)
     assert any("DECISION_SIM_HEALTH_UNAVAILABLE" in l and "REJECTED" in l for l in lines)
     assert any("DECISION_MDUCK_CLI_GPU_LOCK" in l and "DEFERRED" in l for l in lines)
+    assert any("DECISION_LOWLEVEL_RETRAIN_DEFERRED" in l and "DEFERRED" in l for l in lines)
+
+
+def test_lowlevel_retrain_deferred_has_executable_reopen_and_no_stale_drift():
+    """User 2026-11-12 chose 'defer until whole robot'. The ledger must own it:
+    DEFERRED status, an executable reopen_when (board + ≥3 logs), and the owner
+    plan doc must have landed the marker with the old 'await user decision'
+    phrasing removed, so a later agent cannot re-mine the retrain as a TODO.
+    """
+    sys.path.insert(0, str(HERE / "tools" / "hd1910"))
+    import check_decisions as cd  # noqa: E402
+    d = load()
+    dec = next(x for x in d["decisions"] if x["id"] == "DECISION_LOWLEVEL_RETRAIN_DEFERRED")
+    assert dec["status"] == "DEFERRED"
+    assert dec["resolution_marker"] == "DECISION_LOWLEVEL_RETRAIN_DEFERRED"
+    rw = dec["reopen_when"]
+    assert "BA-X-4" in rw and "上板" in rw  # executable, gated on whole robot
+    assert any(ch.isdigit() for ch in rw)  # ≥3 log groups / measurable trigger
+    assert "GPU" in dec["negative_control"]
+    # real docs: marker landed in owner doc AND no watch+stale conflict anywhere
+    docs = cd.walk_markdown()
+    marks = {x["id"] for x in d["decisions"]}
+    assert not cd.validate(d, marks, docs), cd.validate(d, marks, docs)
+    owner_path = dec["decided_in"].split()[0].replace("\\", "/")
+    assert any(rel.replace("\\", "/") == owner_path and dec["resolution_marker"] in text
+               for rel, text in docs), "owner plan doc must carry its DECISION marker"
+    # negative control: deleting this decision must turn --check-driven validate red
+    bad = copy.deepcopy(d)
+    bad["decisions"] = [x for x in bad["decisions"] if x["id"] != dec["id"]]
+    text_by_owner = dict(docs)
+    assert any("DECISION_LOWLEVEL_RETRAIN_DEFERRED" in x
+               for x in cd.validate(bad, marks, docs)), (
+                   "removing the owner decision while docs still reference it must go red")
 
 
 def test_captured_real_case_is_registered():

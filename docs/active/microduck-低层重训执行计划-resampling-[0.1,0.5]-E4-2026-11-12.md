@@ -1,6 +1,6 @@
 # E4-5 · 低层重训执行计划（`resampling_time_range → [0.1, 0.5] s`）
 
-_2026-11-12。承接 E3（`PATH_3`：现行 `p8head_2999` 跟不住变化命令）与 E4（`tools/eval_tracking_live.py` 真机前端）。用户「都做、不缺时间」授权了低层重训这一 domain 改动。**本文是只读可行性评估 + Dry-run 实证 + 执行计划，未启动任何 GPU 训练、未产出任何新 ckpt、未改任何采购文件。** `live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE` 不变。_
+_2026-11-12。承接 E3（`PATH_3`：现行 `p8head_2999` 跟不住变化命令）与 E4（`tools/eval_tracking_live.py` 真机前端）。用户「都做、不缺时间」授权了低层重训这一 domain 改动的前置准备，但**2026-11-12 在算力三选中拍板「暂缓，等整机落地」，不启动长训** → 见 `DECISION_LOWLEVEL_RETRAIN_DEFERRED`（D1 唯一主人）。**本文是只读可行性评估 + Dry-run 实证 + 执行计划（冻结态），未启动任何 GPU 训练、未产出任何新 ckpt、未改任何采购文件。** `live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE` 不变。_
 
 ## 0. 一句话
 
@@ -99,9 +99,11 @@ EXTRA/直接调用同上，去掉 --dry-run，MICRODUCK_WARM_START=0，SAVE=250
 - **可复现性缺口未补**：§5.3 的 runmeta 生效值记录本轮**未改代码**（不属"重训"授权范围，且会动训练脚本需单独门禁回归），列为重训第一步的前置。
 - 采购域零改动；Dry-run 临时产物全部精确清理。
 
-## 9. 下一步（需用户再确认一个点）
+## 9. 算力决策（2026-11-12 用户已拍板：暂缓，等整机落地）
 
-Dry-run 证明**技术路径通**，但真跑前有一个决策点需用户拍板：**选项 A（直接调 `.py` 手工对齐 plant）还是选项 B（给 `explore_heading.sh` 加 `$EXTRA_ARGS` 透传位，推荐）**，以及**先跑 3000 iter 探路（≈2.6 h）还是直接 12000（≈10.3 h）**。这两点确认后，按 §5 补 runmeta 生效值 → 补透传位 → `--dry-run` 复验 → 真跑。在此之前不启动任何 GPU 训练。
+> **→ 见 `DECISION_LOWLEVEL_RETRAIN_DEFERRED`（D1 `decision_contract.json` 唯一主人）。本节由「待拍板」改为已裁决，防止后续会话把低层重训重新挖成待办。**
+
+Dry-run 证明**技术路径通**（选项 A/B 矛盾已按 §10.1 裁断取 B、§5 前置缺口已全闭合），但**用户 2026-11-12 明确选择「暂缓，等整机落地」，不启动 GPU 长训**。理由与 E3 §5「暂缓跟随为首选」一致：现状无整机，重训出的 ckpt 只能改变仿真侧跟踪判决、无法上板验证；`INCONCLUSIVE_LIVE_TRACKING` 仍 UNVERIFIED，`ship_verdict=NOT_SHIPPABLE` 不因「训了一个模型」而变。重开条件（整机落地后上板 BA-X-4 真机跟踪实测仍判 PATH_3 且复现 undershoot）写在 D1 契约的 `reopen_when`，触发前本计划保持冻结、零 GPU 占用。
 
 ## 10. 前置缺口已补齐（2026-11-12，Pass123；用户「都做、按最优、不缺时间」授权）
 
@@ -133,5 +135,7 @@ Dry-run 证明**技术路径通**，但真跑前有一个决策点需用户拍�
 ### 10.4 测试分层（CI 与本地不打架）
 CI 用 lean `requirements.txt`（无 mjlab/torch）跑 `pytest tests/`。故 `resampling_gate` 纯函数 + CLI 测试用纯标准库，**CI 常驻**；`--dry-run` / wrapper 端到端用 `importorskip("mjlab")`，**仅本地 `.venv-mjlab` 跑**，不在 CI 假红。新测试文件不含门禁发现字面。
 
-### 10.5 真跑算力决策（仍未执行，交回用户拍板）
-前置缺口已全闭合，本机实测 **RTX 4070 Laptop 8 GB / torch 2.9.1+cu128 / `cuda_available=True` / 无 GPU 锁**（计划 §2 的 4096-env 甜点卡，正是这台）。但按计划 §8「重训不保证成功、E3 §5 仍推荐暂缓跟随为首选」+ §9「在此之前不启动 GPU」，是否把 2.6 h（3000 iter 探路）/10.3 h（12000 iter）算力与覆盖现有候选的风险押上，**仍须用户明确拍板**。推荐路径：先 3000 iter 探路 (`PLANT=p8 ENVS=4096 ITERS=3000 MICRODUCK_WARM_START=0 EXTRA_ARGS="--env.commands.twist.resampling-time-range 0.1,0.5" bash tools/hd1910/explore_heading.sh <run>`)，按 §7 双判据（跟踪 PATH 升级 + gait 不退化、≥3 seed）验，胜出也不宣布替代 `p8head_2999`。`ship_verdict=NOT_SHIPPABLE`、`INCONCLUSIVE_LIVE_TRACKING` 不变。
+### 10.5 真跑算力决策（2026-11-12 已裁决：暂缓，等整机落地 → `DECISION_LOWLEVEL_RETRAIN_DEFERRED`）
+前置缺口已全闭合，本机实测 **RTX 4070 Laptop 8 GB / torch 2.9.1+cu128 / `cuda_available=True` / 无 GPU 锁**（计划 §2 的 4096-env 甜点卡，正是这台），真跑分支物理就绪。但用户 2026-11-12 在「3000 iter 探路 / 12000 跑满 / 暂缓等整机」三选中**明确选择暂缓**。按计划 §8「重训不保证成功、E3 §5 仍推荐暂缓跟随为首选」+ 无整机时 ckpt 无法上板验证，**不启动任何 GPU 长训**，本计划冻结。
+
+**保留的就绪命令**（仅在 D1 `reopen_when` 触发、用户重新拍板后才执行）：`PLANT=p8 ENVS=4096 ITERS=3000 MICRODUCK_WARM_START=0 EXTRA_ARGS="--env.commands.twist.resampling-time-range 0.1,0.5" bash tools/hd1910/explore_heading.sh <run>`；真跑后按 §7 双判据（跟踪 PATH 升级 + gait 不退化、≥3 seed）验，胜出也不宣布替代 `p8head_2999`。`ship_verdict=NOT_SHIPPABLE`、`INCONCLUSIVE_LIVE_TRACKING` 不变。重开触发见 D1 契约 `DECISION_LOWLEVEL_RETRAIN_DEFERRED.reopen_when`。

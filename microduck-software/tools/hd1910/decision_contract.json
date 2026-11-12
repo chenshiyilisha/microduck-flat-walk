@@ -151,6 +151,28 @@
       "resolution_pointer": "E4 文档 §8 记『经查证为 DEFERRED：工具不存在但属边际便利，留重开条件』；本条收为唯一主人。",
       "negative_control": "把项目里已有 flock/config-store 串行锁当作『GPU 单卡锁已实现』的证据，或把上游 robotctl/duckctl 当作『本项目 mduck CLI 已存在』的证据，检查必须红——两者语义完全不同。",
       "evidence": []
+    },
+    {
+      "id": "DECISION_LOWLEVEL_RETRAIN_DEFERRED",
+      "subject": "低层命令跟踪重训：resampling_time_range (3.0,8.0)→[0.1,0.5] 从零重训低层",
+      "status": "DEFERRED",
+      "statement": "当前不启动 GPU 长训（3000 iter 探路≈2.6h / 12000 跑满≈10.3h）；E4-5 已把重训前置缺口全闭合、真跑分支物理就绪，但用户 2026-11-12 在算力三选中拍板『暂缓，等整机落地』。计划文档冻结，现行 p8head_2999 保持不动。",
+      "rationale": "E3 §5 一手判决仍把『暂缓跟随』列为首选：现状无整机（台架PC+URT-2+单舵机），重训出的 ckpt 只能改变仿真侧跟踪判决、无法上板验证，而 INCONCLUSIVE_LIVE_TRACKING 仍 UNVERIFIED、真机侧零证据。本机 RTX 4070 Laptop 8GB/cuda 可用只说明『能训』，不产生一手上板证据，也不改 ship_verdict=NOT_SHIPPABLE；重训不保证成功、胜出也不替代现行候选。这是纯仿真侧 domain 改动的算力/风险决策，与 A2 悬案闭合无关，故按 E3§5 首选暂缓、把 GPU 与现行候选保留到整机落地。",
+      "reopen_when": "整机落地并完成上板 identify+零位 SOP 后，用 E4 前端 eval_tracking_live.py 采集真机时序跑 BA-X-4：若真机时变命令跟踪也判 PATH_3、且 meas/cmd≈0.45 与 undershoot 在 ≥3 组原始日志中复现（附时间戳与命令原文），则转入 A2 作 INCONCLUSIVE 悬案并重新拍板是否启动低层重训；在此之前不占用 GPU。",
+      "watch_terms": ["低层重训", "低层命令通道响应", "resampling_time_range → [0.1, 0.5]"],
+      "stale_terms": ["真跑算力决策", "待用户拍板算力", "确认后真跑"],
+      "resolution_marker": "DECISION_LOWLEVEL_RETRAIN_DEFERRED",
+      "decided_in": "docs/active/microduck-低层重训执行计划-resampling-[0.1,0.5]-E4-2026-11-12.md §9 / §10.5",
+      "source_refs": [
+        "docs/active/microduck-低层重训执行计划-resampling-[0.1,0.5]-E4-2026-11-12.md",
+        "docs/active/microduck-时变命令跟踪评测-E3-判决2026-11-11.md §5（暂缓跟随为首选）",
+        "microduck-software/tools/hd1910/resampling_gate.py",
+        "microduck-software/tools/eval_tracking_live.py"
+      ],
+      "conflicts_with": [],
+      "resolution_pointer": "计划文档 §0/§9/§10.5 已就地改为『2026-11-12 用户拍板暂缓、见 DECISION_LOWLEVEL_RETRAIN_DEFERRED』，把 §9 旧的『待用户拍板算力/先探路还是跑满』待办口吻收为唯一主人，防后续会话重挖为待办。",
+      "negative_control": "把『E4-5 前置缺口全闭合 + 本机 GPU/cuda 可用 + Dry-run 技术路径通』当作『应立即启动 GPU 长训』的证据，检查必须红——能训≠该训，无整机时 ckpt 无法上板验证，算力/风险决策已由用户拍板暂缓。",
+      "evidence": []
     }
   ]
 }
