@@ -10,7 +10,7 @@
   },
   "scope": {
     "live_hardware_accessed": false,
-    "not_proof_of": ["整机可签收", "策略可上真机", "轮滑版能走", "500k 位宽 / R3", "人人 HUB 几何与载流", "左右腿文字定义"],
+    "not_proof_of": ["整机可签收", "策略可上真机", "轮滑版能走", "500k 位宽 / R3", "人人 HUB 几何与载流", "左右腿文字定义", "真机对时变命令的跟随能力（E3 只判了仿真侧 PATH_3）"],
     "known_gaps": ["robotd --sim 验不了总线驱动/BLE/ISP+rkaiq 3A/NPU/编码器+RGA", "本地 28 个上游仓源码可读不等于我们的板已验证", "fanhao 20261023c 自动识别只做到伪串口 + 镜像离线核验", "C1 扩展扫描仍只覆盖显式白名单根，非全仓 rglob；新交付目录需先登记进 SCAN_ROOTS"]
   },
   "contracts": [
@@ -160,6 +160,51 @@
         "microduck-software/.upstream/replica/software/training-studio/training_studio/pretrained_models.json"
       ],
       "signoff": "待 R17 V167 上机实测；当前无人可签字",
+      "evidence": []
+    },
+    {
+      "id": "INCONCLUSIVE_LIVE_TRACKING",
+      "status": "UNVERIFIED",
+      "summary": "现行 HD-1910 kp8 走路策略 p8head_2999 在真机上能否跟随变化的 (vx, ωz) 速度命令。E3 仿真侧已确定它跟不住（PATH_3：sine/step 全周期 fail、连 20 s 极慢 in-distribution 周期也不跟），但真机侧零证据；真机实际能否跟随仍未验证。",
+      "why_open": "E3 时变命令跟踪评测（docs/active/microduck-时变命令跟踪评测-E3-判决2026-11-11.md）只在本地 MuJoCo（mjlab）完成，live_hardware_accessed=false。仿真已给出确定判决（PATH_3，三条独立证据 + 慢周期负对照），但真实 HD-1910 的延迟/齿隙/摩擦只会让跟踪更难，不能由仿真判决推出真机结论；也没有任何上板实测记录回答过『真机发变化的命令，本体速度是否跟随』。",
+      "evidence_kind": [
+        "真机 50 Hz 下发 sine/step 变化 (vx,ωz) 命令、回读本体 root_link 速度的原始时间序列",
+        "与 E3 同口径的 nRMSE（去 DC 交流分量归一化）/ lag_explains / meas-cmd 比，逐周期记录",
+        "命令变化时的实测速度时间序列（证明波形确被注入且本体响应 measurable）",
+        "负对照：策略未加载 / 命令冻结时同一评测必须给出不同结果"
+      ],
+      "verification_boundary": "E3 已把『仿真侧能否跟随』变成已知（PATH_3，不依赖硬件）；本悬案只覆盖真机侧，不重开仿真判决。真机与仿真的 plant 保真差异（kp_fw、齿隙、摩擦、50 Hz 指令下发链路）属被测对象，不能由图上一致推断。测的是执行层开环命令跟踪；上层闭环反馈跟随另论，本契约不覆盖。",
+      "local_verified": [
+        "E3 仪器自证 32 条纯 torch CPU 测试全绿，含 4 个会改变判决的自身 bug 的负对照",
+        "sine 0/0.5/1/2/5 s 与 step 0/1/5/10/20 s 全时变周期 fail（nRMSE 0.76–1.17 > usable 0.40），period-0 基准 usable（0.143/0.158），lag_explains 全 < 0.08、meas/cmd 恒 ~0.45",
+        "step 1 s 突变下 20.8% 环境摔倒；动作加速度代价 ≈×1.0（没有为跟随多做功）",
+        "sine/step 产物 sha256 01421815…/1520f17a… 与 E3 判决文档逐字吻合，落顶层权威 artifacts/flat_walk/evals/"
+      ],
+      "board_acceptance_required": [
+        "R17 V167 中控上真机加载 p8head_2999，50 Hz 下发与 E3 同协议（vx 0.30±0.10、wz 0±0.6）的 sine/step 变化命令",
+        "回读本体 root_link 速度，按 E3 同口径逐周期算 nRMSE / lag_explains / meas-cmd 比并记录原始时间序列",
+        "先卸力、机器人有支撑、低增益起步；确认波形确被注入（命令唯一值数 / 注入检查），否则读数无效",
+        "负对照：命令冻结（period 0）与策略未加载两种情形必须给出可区分的结果，否则判据失效"
+      ],
+      "still_owed": [
+        "真机 sine/step 各周期的开环命令跟踪 nRMSE / lag / meas-cmd 原始记录（零上板证据）",
+        "真机摔倒率与动作代价是否复现仿真的『突变更危险、没为跟随做功』",
+        "若真机也跟不住：阶段 3 自动跟随须暂缓，或先把 resampling_time_range 收到 [0.1,0.5]s 从零重训低层（属 domain 改动，需拍板）"
+      ],
+      "negative_control": "把 E3 的仿真 PATH_3 判决、或 period-0 基准 healthy、或『真机发过一次恒定速度命令』当作『真机已能跟随变化命令』的证据，检查必须红；反之把仿真判决直接当真机跟随不可行也会红——真机侧必须实测（四源共识：UNVERIFIED != PASS，离线/仿真不升格实机验收）。",
+      "blocked_actions": [
+        "宣布阶段 3 自动跟随（高层 50 Hz 发命令）在真机可行",
+        "把 E3 仿真 PATH_3 判决说成真机跟随能力的结论",
+        "在未做低层重训/未上板实测前，把跟随纳入阶段 2 整机落地路径"
+      ],
+      "source_refs": [
+        "docs/active/microduck-时变命令跟踪评测-E3-判决2026-11-11.md §1/§3/§5/§6",
+        "microduck-software/tools/eval_tracking.py（评测工具，usage 头部）",
+        "artifacts/flat_walk/evals/tracking_p8head2999_sine.json",
+        "artifacts/flat_walk/evals/tracking_p8head2999_step.json",
+        "docs/active/microduck-阶段3-自动跟随.md §4/§8"
+      ],
+      "signoff": "待真机按 E3 同协议实测；当前无人可签字",
       "evidence": []
     }
   ]

@@ -1,0 +1,1378 @@
+[
+  {
+    "task": "Mjlab-Velocity-Flat-MicroDuck",
+    "checkpoint": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-03_08-33-18_p8head_030_4096x3000/model_2999.pt",
+    "num_envs": 24,
+    "seconds": 24.0,
+    "warmup_s": 2.0,
+    "step_dt": 0.02,
+    "device": "cuda:0",
+    "plant": "hd1910_kp8",
+    "plant_info": {
+      "plant": "hd1910_kp8",
+      "spec_fn": "get_walk_spec",
+      "actuators": [
+        "FrictionDRBamActuatorCfg"
+      ],
+      "kp_fw": 8.0,
+      "json": "official_m6_stslaw.json",
+      "json_path": "E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15/microduck-software/tools/bam_params/hd1910/official_m6_stslaw.json",
+      "action_term": "JointPositionActionCfg",
+      "conditioner": {}
+    },
+    "plant_fingerprint": {
+      "name": "hd1910_kp8",
+      "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+      "source_sha256_12": "30768e18ffeb",
+      "kwargs": {
+        "json_path": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\tools\\bam_params\\hd1910\\official_m6_stslaw.json",
+        "target_names_expr": [
+          "^(?!passive_).*"
+        ],
+        "kp_fw": 8.0,
+        "vin_range": [
+          6.5,
+          8.2
+        ],
+        "vin_drop_gain_range": [
+          0.0,
+          0.2
+        ],
+        "vin_min": 6.0,
+        "delay_min_lag": 3,
+        "delay_max_lag": 6
+      },
+      "json_path_exists": true,
+      "json_sha256_12": "799800a2ea0d",
+      "kp_fw": 8.0,
+      "actuator_class": "FrictionDRBamActuatorCfg",
+      "kp_fw_matches_spec": true
+    },
+    "solver": {
+      "before": {
+        "iterations": 10,
+        "ls_iterations": 20
+      },
+      "after": {
+        "iterations": 100,
+        "ls_iterations": 50
+      }
+    },
+    "device_name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+    "seed": 11,
+    "swept_command_knobs": {
+      "init_velocity_prob": 0.0,
+      "rel_forward_envs": 0.2,
+      "rel_heading_envs": 0.0,
+      "rel_standing_envs": 0.02,
+      "rel_turn_in_place_envs": 0.15,
+      "rel_world_envs": 0.0
+    },
+    "dropped_events": [
+      "push_robot"
+    ],
+    "curriculum_counter_before_pin": 72000,
+    "episode_length_s": {
+      "before": 20.0,
+      "after": 26.0
+    },
+    "waveform": "step",
+    "period_s": 0.0,
+    "amp": {
+      "vx": 0.1,
+      "vy": 0.0,
+      "wz": 0.6
+    },
+    "base": {
+      "vx": 0.3,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "max_lag_steps": 20,
+    "command_check": {
+      "uniq_cmd_vx": [
+        0.3
+      ],
+      "n_uniq_cmd_vx": 1,
+      "last_cmd_env0": [
+        0.3,
+        0.0,
+        0.0
+      ],
+      "expected_last": [
+        0.3,
+        0.0,
+        0.0
+      ]
+    },
+    "survivors": 24,
+    "terminated_frac": 0.0,
+    "upright_mean": 0.9977223844991789,
+    "vx_tracking": {
+      "nrmse_best": {
+        "n": 24,
+        "p10": 0.11946355411726997,
+        "p50": 0.1578441883020103,
+        "p90": 0.22952051240799604,
+        "mean": 0.16921360789024528,
+        "std": 0.06393878918112873,
+        "sem": 0.013051450688762574
+      },
+      "nrmse_lag0": {
+        "n": 24,
+        "p10": 0.11977309749104216,
+        "p50": 0.15909523718869661,
+        "p90": 0.23032851682787533,
+        "mean": 0.16965575274232605,
+        "std": 0.06388781861152643,
+        "sem": 0.013041046364810517
+      },
+      "lag_s_best": {
+        "n": 24,
+        "p10": 0.0,
+        "p50": 0.02,
+        "p90": 0.374,
+        "mean": 0.12,
+        "std": 0.15681614823680018,
+        "sem": 0.032009962217400705
+      },
+      "phase_lag_deg": {
+        "n": 0
+      },
+      "gain_best": {
+        "n": 24,
+        "p10": 0.31900594489927325,
+        "p50": 0.4471917270124046,
+        "p90": 0.5539997878323547,
+        "mean": 0.4263564411758618,
+        "std": 0.14802742579806846,
+        "sem": 0.030215971761913894
+      },
+      "gain_lag0": {
+        "n": 24,
+        "p10": 0.31881733597489614,
+        "p50": 0.4464850848341065,
+        "p90": 0.5537382073394673,
+        "mean": 0.426477717773726,
+        "std": 0.14833478079773002,
+        "sem": 0.03027871033850257
+      },
+      "bias_best": {
+        "n": 24,
+        "p10": -3.262566937611116e-17,
+        "p50": -1.0663683042979438e-17,
+        "p90": 5.0249595946925685e-18,
+        "mean": -1.2147069535009871e-17,
+        "std": 1.4721806735423105e-17,
+        "sem": 3.0050762161379337e-18
+      },
+      "lag_explains": {
+        "n": 24,
+        "p10": 0.0,
+        "p50": 0.00017203214455602245,
+        "p90": 0.0098339107984945,
+        "mean": 0.0027810694738458577,
+        "std": 0.005537223761594912,
+        "sem": 0.001130281067293502
+      },
+      "meas_mean": {
+        "n": 24,
+        "p10": 0.09564520459306765,
+        "p50": 0.1339455307727489,
+        "p90": 0.166121468802914,
+        "mean": 0.12794332041612835,
+        "std": 0.044500436007607384,
+        "sem": 0.009083613462501125
+      }
+    },
+    "wz_tracking": {
+      "nrmse_best": {
+        "n": 24,
+        "p10": 0.6802350711458444,
+        "p50": 0.7646680666036132,
+        "p90": 0.9043495840448464,
+        "mean": 0.7847873736865264,
+        "std": 0.0996303111379774,
+        "sem": 0.020336952100231027
+      },
+      "nrmse_lag0": {
+        "n": 24,
+        "p10": 0.6815330311813618,
+        "p50": 0.7651269967657777,
+        "p90": 0.9086021172923111,
+        "mean": 0.7861105437466267,
+        "std": 0.10002731474688145,
+        "sem": 0.020417990122552555
+      },
+      "lag_s_best": {
+        "n": 24,
+        "p10": 0.0,
+        "p50": 0.11,
+        "p90": 0.4,
+        "mean": 0.16833333333333333,
+        "std": 0.15691777593949355,
+        "sem": 0.03203070688534487
+      },
+      "gain_best": {
+        "n": 24,
+        "p10": 0.0,
+        "p50": 0.0,
+        "p90": 0.0,
+        "mean": 0.0,
+        "std": 0.0,
+        "sem": 0.0
+      },
+      "lag_explains": {
+        "n": 24,
+        "p10": 0.0,
+        "p50": 0.0010781118402891643,
+        "p90": 0.004400105490393436,
+        "mean": 0.0016466256122656907,
+        "std": 0.001814680240855755,
+        "sem": 0.0003704200530339566
+      }
+    },
+    "contact_duty_median": 0.5154545454545455,
+    "metrics_env0": {
+      "mean_action_acc": 0.08978078748254727
+    },
+    "headline": {
+      "nrmse_vx_best": 0.1578441883020103,
+      "nrmse_vx_lag0": 0.15909523718869661,
+      "nrmse_normaliser": "uncentred_rms_cmd (static baseline)",
+      "lag_s": 0.02,
+      "phase_lag_deg": null,
+      "gain": 0.4471917270124046
+    },
+    "gates": {
+      "waveform_injected_ok": true,
+      "cmd_vx_above_deadzone": true,
+      "survivors_enough": true,
+      "no_fall": true,
+      "stays_upright": true,
+      "tracks_period": true,
+      "lag_is_transport_delay": null
+    },
+    "verdict": "usable",
+    "passed": [
+      "waveform_injected_ok",
+      "cmd_vx_above_deadzone",
+      "survivors_enough",
+      "no_fall",
+      "stays_upright",
+      "tracks_period"
+    ],
+    "failed": [],
+    "cost_vs_baseline": {
+      "is_baseline": true
+    }
+  },
+  {
+    "task": "Mjlab-Velocity-Flat-MicroDuck",
+    "checkpoint": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-03_08-33-18_p8head_030_4096x3000/model_2999.pt",
+    "num_envs": 24,
+    "seconds": 24.0,
+    "warmup_s": 2.0,
+    "step_dt": 0.02,
+    "device": "cuda:0",
+    "plant": "hd1910_kp8",
+    "plant_info": {
+      "plant": "hd1910_kp8",
+      "spec_fn": "get_walk_spec",
+      "actuators": [
+        "FrictionDRBamActuatorCfg"
+      ],
+      "kp_fw": 8.0,
+      "json": "official_m6_stslaw.json",
+      "json_path": "E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15/microduck-software/tools/bam_params/hd1910/official_m6_stslaw.json",
+      "action_term": "JointPositionActionCfg",
+      "conditioner": {}
+    },
+    "plant_fingerprint": {
+      "name": "hd1910_kp8",
+      "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+      "source_sha256_12": "30768e18ffeb",
+      "kwargs": {
+        "json_path": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\tools\\bam_params\\hd1910\\official_m6_stslaw.json",
+        "target_names_expr": [
+          "^(?!passive_).*"
+        ],
+        "kp_fw": 8.0,
+        "vin_range": [
+          6.5,
+          8.2
+        ],
+        "vin_drop_gain_range": [
+          0.0,
+          0.2
+        ],
+        "vin_min": 6.0,
+        "delay_min_lag": 3,
+        "delay_max_lag": 6
+      },
+      "json_path_exists": true,
+      "json_sha256_12": "799800a2ea0d",
+      "kp_fw": 8.0,
+      "actuator_class": "FrictionDRBamActuatorCfg",
+      "kp_fw_matches_spec": true
+    },
+    "solver": {
+      "before": {
+        "iterations": 10,
+        "ls_iterations": 20
+      },
+      "after": {
+        "iterations": 100,
+        "ls_iterations": 50
+      }
+    },
+    "device_name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+    "seed": 11,
+    "swept_command_knobs": {
+      "init_velocity_prob": 0.0,
+      "rel_forward_envs": 0.2,
+      "rel_heading_envs": 0.0,
+      "rel_standing_envs": 0.02,
+      "rel_turn_in_place_envs": 0.15,
+      "rel_world_envs": 0.0
+    },
+    "dropped_events": [
+      "push_robot"
+    ],
+    "curriculum_counter_before_pin": 72000,
+    "episode_length_s": {
+      "before": 20.0,
+      "after": 26.0
+    },
+    "waveform": "step",
+    "period_s": 1.0,
+    "amp": {
+      "vx": 0.1,
+      "vy": 0.0,
+      "wz": 0.6
+    },
+    "base": {
+      "vx": 0.3,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "max_lag_steps": 20,
+    "command_check": {
+      "uniq_cmd_vx": [
+        0.2,
+        0.4
+      ],
+      "n_uniq_cmd_vx": 2,
+      "last_cmd_env0": [
+        0.2,
+        0.0,
+        -0.6
+      ],
+      "expected_last": [
+        0.2,
+        0.0,
+        -0.6
+      ]
+    },
+    "survivors": 19,
+    "terminated_frac": 0.2083333432674408,
+    "upright_mean": 0.9961516753231223,
+    "vx_tracking": {
+      "nrmse_best": {
+        "n": 19,
+        "p10": 0.854697338693662,
+        "p50": 1.0498813919037537,
+        "p90": 1.238024814083026,
+        "mean": 1.0484087299101112,
+        "std": 0.16470599482617493,
+        "sem": 0.03778614667592787
+      },
+      "nrmse_lag0": {
+        "n": 19,
+        "p10": 0.8782885779049668,
+        "p50": 1.1224347297536619,
+        "p90": 1.301109277785778,
+        "mean": 1.0905046071145155,
+        "std": 0.18073841782390698,
+        "sem": 0.04146423676367584
+      },
+      "lag_s_best": {
+        "n": 19,
+        "p10": 0.0,
+        "p50": 0.1,
+        "p90": 0.364,
+        "mean": 0.15368421052631578,
+        "std": 0.13695946384548277,
+        "sem": 0.0314206559086301
+      },
+      "phase_lag_deg": {
+        "n": 19,
+        "p10": 0.0,
+        "p50": 36.0,
+        "p90": 131.04,
+        "mean": 55.32631578947369,
+        "std": 49.3054069843738,
+        "sem": 11.311436127106838
+      },
+      "gain_best": {
+        "n": 19,
+        "p10": 0.21081559334490746,
+        "p50": 0.3666968418802503,
+        "p90": 0.5384591283571197,
+        "mean": 0.3672060042187769,
+        "std": 0.16049689378558737,
+        "sem": 0.03682051267176613
+      },
+      "gain_lag0": {
+        "n": 19,
+        "p10": 0.19855477316873232,
+        "p50": 0.35668074786381027,
+        "p90": 0.5120347828145501,
+        "mean": 0.3562162631508044,
+        "std": 0.15593001336032516,
+        "sem": 0.03577279844750549
+      },
+      "bias_best": {
+        "n": 19,
+        "p10": 0.002880270925683259,
+        "p50": 0.005535335239586515,
+        "p90": 0.011593318870042472,
+        "mean": 0.006785746253635344,
+        "std": 0.004204515543980322,
+        "sem": 0.0009645820190924297
+      },
+      "lag_explains": {
+        "n": 19,
+        "p10": 0.0,
+        "p50": 0.016776834441196598,
+        "p90": 0.08969503337754696,
+        "mean": 0.036333383829285255,
+        "std": 0.03713660902964676,
+        "sem": 0.00851972241400054
+      },
+      "meas_mean": {
+        "n": 19,
+        "p10": 0.06581042893886545,
+        "p50": 0.11679273610172623,
+        "p90": 0.16776431976822312,
+        "mean": 0.11714424444695891,
+        "std": 0.05091681581244227,
+        "sem": 0.011681118665963665
+      }
+    },
+    "wz_tracking": {
+      "nrmse_best": {
+        "n": 19,
+        "p10": 1.7666133727814175,
+        "p50": 1.923659932889014,
+        "p90": 2.256120764536765,
+        "mean": 2.0005283356472763,
+        "std": 0.21427984308093495,
+        "sem": 0.049159167454081505
+      },
+      "nrmse_lag0": {
+        "n": 19,
+        "p10": 2.6173660917164714,
+        "p50": 2.7919861309359617,
+        "p90": 2.9260835314109057,
+        "mean": 2.7689372827452954,
+        "std": 0.14657042531572165,
+        "sem": 0.033625561687526645
+      },
+      "lag_s_best": {
+        "n": 19,
+        "p10": 0.12,
+        "p50": 0.12,
+        "p90": 0.14,
+        "mean": 0.12526315789473683,
+        "std": 0.011239029738980333,
+        "sem": 0.002578410255561241
+      },
+      "gain_best": {
+        "n": 19,
+        "p10": 2.043871580467794,
+        "p50": 2.3244830235531837,
+        "p90": 2.5918984685875297,
+        "mean": 2.305094616303881,
+        "std": 0.24682352891418238,
+        "sem": 0.05662520102236897
+      },
+      "lag_explains": {
+        "n": 19,
+        "p10": 0.19348393060181351,
+        "p50": 0.300781984830768,
+        "p90": 0.3287198200818436,
+        "mean": 0.2785846199022647,
+        "std": 0.05240934382162511,
+        "sem": 0.012023528074512716
+      }
+    },
+    "contact_duty_median": 0.5104545454545455,
+    "metrics_env0": {
+      "mean_action_acc": 0.10014302677319696
+    },
+    "headline": {
+      "nrmse_vx_best": 1.0498813919037537,
+      "nrmse_vx_lag0": 1.1224347297536619,
+      "nrmse_normaliser": "ac_rms (period>0, mean-removed command swing)",
+      "lag_s": 0.1,
+      "phase_lag_deg": 36.0,
+      "gain": 0.3666968418802503
+    },
+    "gates": {
+      "waveform_injected_ok": true,
+      "cmd_vx_above_deadzone": true,
+      "survivors_enough": true,
+      "no_fall": false,
+      "stays_upright": true,
+      "tracks_period": false,
+      "lag_is_transport_delay": true
+    },
+    "verdict": "fail",
+    "passed": [
+      "waveform_injected_ok",
+      "cmd_vx_above_deadzone",
+      "survivors_enough",
+      "stays_upright",
+      "lag_is_transport_delay"
+    ],
+    "failed": [
+      "no_fall",
+      "tracks_period"
+    ],
+    "cost_vs_baseline": {
+      "mean_action_acc": 1.1154171129615458
+    }
+  },
+  {
+    "task": "Mjlab-Velocity-Flat-MicroDuck",
+    "checkpoint": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-03_08-33-18_p8head_030_4096x3000/model_2999.pt",
+    "num_envs": 24,
+    "seconds": 24.0,
+    "warmup_s": 2.0,
+    "step_dt": 0.02,
+    "device": "cuda:0",
+    "plant": "hd1910_kp8",
+    "plant_info": {
+      "plant": "hd1910_kp8",
+      "spec_fn": "get_walk_spec",
+      "actuators": [
+        "FrictionDRBamActuatorCfg"
+      ],
+      "kp_fw": 8.0,
+      "json": "official_m6_stslaw.json",
+      "json_path": "E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15/microduck-software/tools/bam_params/hd1910/official_m6_stslaw.json",
+      "action_term": "JointPositionActionCfg",
+      "conditioner": {}
+    },
+    "plant_fingerprint": {
+      "name": "hd1910_kp8",
+      "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+      "source_sha256_12": "30768e18ffeb",
+      "kwargs": {
+        "json_path": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\tools\\bam_params\\hd1910\\official_m6_stslaw.json",
+        "target_names_expr": [
+          "^(?!passive_).*"
+        ],
+        "kp_fw": 8.0,
+        "vin_range": [
+          6.5,
+          8.2
+        ],
+        "vin_drop_gain_range": [
+          0.0,
+          0.2
+        ],
+        "vin_min": 6.0,
+        "delay_min_lag": 3,
+        "delay_max_lag": 6
+      },
+      "json_path_exists": true,
+      "json_sha256_12": "799800a2ea0d",
+      "kp_fw": 8.0,
+      "actuator_class": "FrictionDRBamActuatorCfg",
+      "kp_fw_matches_spec": true
+    },
+    "solver": {
+      "before": {
+        "iterations": 10,
+        "ls_iterations": 20
+      },
+      "after": {
+        "iterations": 100,
+        "ls_iterations": 50
+      }
+    },
+    "device_name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+    "seed": 11,
+    "swept_command_knobs": {
+      "init_velocity_prob": 0.0,
+      "rel_forward_envs": 0.2,
+      "rel_heading_envs": 0.0,
+      "rel_standing_envs": 0.02,
+      "rel_turn_in_place_envs": 0.15,
+      "rel_world_envs": 0.0
+    },
+    "dropped_events": [
+      "push_robot"
+    ],
+    "curriculum_counter_before_pin": 72000,
+    "episode_length_s": {
+      "before": 20.0,
+      "after": 26.0
+    },
+    "waveform": "step",
+    "period_s": 5.0,
+    "amp": {
+      "vx": 0.1,
+      "vy": 0.0,
+      "wz": 0.6
+    },
+    "base": {
+      "vx": 0.3,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "max_lag_steps": 20,
+    "command_check": {
+      "uniq_cmd_vx": [
+        0.2,
+        0.4
+      ],
+      "n_uniq_cmd_vx": 2,
+      "last_cmd_env0": [
+        0.2,
+        0.0,
+        -0.6
+      ],
+      "expected_last": [
+        0.2,
+        0.0,
+        -0.6
+      ]
+    },
+    "survivors": 23,
+    "terminated_frac": 0.0416666679084301,
+    "upright_mean": 0.9965207828689312,
+    "vx_tracking": {
+      "nrmse_best": {
+        "n": 23,
+        "p10": 0.7115226316863903,
+        "p50": 0.8323164466446302,
+        "p90": 1.003203812541203,
+        "mean": 0.8481369938541903,
+        "std": 0.13518129069266324,
+        "sem": 0.028187247620259773
+      },
+      "nrmse_lag0": {
+        "n": 23,
+        "p10": 0.7160850018385331,
+        "p50": 0.8538963823942263,
+        "p90": 1.0117845085664077,
+        "mean": 0.8692289585194262,
+        "std": 0.13387407204477372,
+        "sem": 0.027914673689850608
+      },
+      "lag_s_best": {
+        "n": 23,
+        "p10": 0.0,
+        "p50": 0.18,
+        "p90": 0.34400000000000003,
+        "mean": 0.17043478260869566,
+        "std": 0.1192201272234595,
+        "sem": 0.024859114971809565
+      },
+      "phase_lag_deg": {
+        "n": 23,
+        "p10": 0.0,
+        "p50": 12.959999999999999,
+        "p90": 24.768000000000004,
+        "mean": 12.271304347826087,
+        "std": 8.583849160089082,
+        "sem": 1.7898562779702885
+      },
+      "gain_best": {
+        "n": 23,
+        "p10": 0.23194634207990064,
+        "p50": 0.3949594000584138,
+        "p90": 0.5341431166984505,
+        "mean": 0.3818723178982596,
+        "std": 0.13742654704865315,
+        "sem": 0.02865541593373693
+      },
+      "gain_lag0": {
+        "n": 23,
+        "p10": 0.231980181382691,
+        "p50": 0.39087354573529537,
+        "p90": 0.5285146651930802,
+        "mean": 0.37883451214651925,
+        "std": 0.13599200156074268,
+        "sem": 0.02835629252188706
+      },
+      "bias_best": {
+        "n": 23,
+        "p10": -0.002011416242504509,
+        "p50": 0.005303635406070936,
+        "p90": 0.00941708077918213,
+        "mean": 0.004039996439524693,
+        "std": 0.006611281616449221,
+        "sem": 0.0013785475124202195
+      },
+      "lag_explains": {
+        "n": 23,
+        "p10": 0.0,
+        "p50": 0.021188454860612493,
+        "p90": 0.05193176781870057,
+        "mean": 0.02455170308695128,
+        "std": 0.02108971035621575,
+        "sem": 0.004397508597559749
+      },
+      "meas_mean": {
+        "n": 23,
+        "p10": 0.06092820476532374,
+        "p50": 0.123116089458027,
+        "p90": 0.16700727140844207,
+        "mean": 0.11729063037210896,
+        "std": 0.04577238295522341,
+        "sem": 0.009544201611904446
+      }
+    },
+    "wz_tracking": {
+      "nrmse_best": {
+        "n": 23,
+        "p10": 1.5288142906533055,
+        "p50": 1.7023605926810095,
+        "p90": 1.9733623234980238,
+        "mean": 1.7344292139222175,
+        "std": 0.17456739162503693,
+        "sem": 0.03639981737816648
+      },
+      "nrmse_lag0": {
+        "n": 23,
+        "p10": 1.9095610071040425,
+        "p50": 2.093049336951299,
+        "p90": 2.3133264221679504,
+        "mean": 2.1032999446317535,
+        "std": 0.17462837935426695,
+        "sem": 0.03641253419879155
+      },
+      "lag_s_best": {
+        "n": 23,
+        "p10": 0.1,
+        "p50": 0.14,
+        "p90": 0.16,
+        "mean": 0.12869565217391307,
+        "std": 0.02685048633825448,
+        "sem": 0.005598713425968624
+      },
+      "gain_best": {
+        "n": 23,
+        "p10": 2.963521304664924,
+        "p50": 3.1510081408096493,
+        "p90": 3.370458470492777,
+        "mean": 3.166819575302246,
+        "std": 0.15414840100465949,
+        "sem": 0.03214216351332157
+      },
+      "lag_explains": {
+        "n": 23,
+        "p10": 0.14529464645026474,
+        "p50": 0.17154793389026035,
+        "p90": 0.2172158389139681,
+        "mean": 0.17602605908841185,
+        "std": 0.031572209687090055,
+        "sem": 0.0065832608033906835
+      }
+    },
+    "contact_duty_median": 0.5109090909090909,
+    "metrics_env0": {
+      "mean_action_acc": 0.09013891096226871
+    },
+    "headline": {
+      "nrmse_vx_best": 0.8323164466446302,
+      "nrmse_vx_lag0": 0.8538963823942263,
+      "nrmse_normaliser": "ac_rms (period>0, mean-removed command swing)",
+      "lag_s": 0.18,
+      "phase_lag_deg": 12.959999999999999,
+      "gain": 0.3949594000584138
+    },
+    "gates": {
+      "waveform_injected_ok": true,
+      "cmd_vx_above_deadzone": true,
+      "survivors_enough": true,
+      "no_fall": true,
+      "stays_upright": true,
+      "tracks_period": false,
+      "lag_is_transport_delay": true
+    },
+    "verdict": "fail",
+    "passed": [
+      "waveform_injected_ok",
+      "cmd_vx_above_deadzone",
+      "survivors_enough",
+      "no_fall",
+      "stays_upright",
+      "lag_is_transport_delay"
+    ],
+    "failed": [
+      "tracks_period"
+    ],
+    "cost_vs_baseline": {
+      "mean_action_acc": 1.0039888654328306
+    }
+  },
+  {
+    "task": "Mjlab-Velocity-Flat-MicroDuck",
+    "checkpoint": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-03_08-33-18_p8head_030_4096x3000/model_2999.pt",
+    "num_envs": 24,
+    "seconds": 24.0,
+    "warmup_s": 2.0,
+    "step_dt": 0.02,
+    "device": "cuda:0",
+    "plant": "hd1910_kp8",
+    "plant_info": {
+      "plant": "hd1910_kp8",
+      "spec_fn": "get_walk_spec",
+      "actuators": [
+        "FrictionDRBamActuatorCfg"
+      ],
+      "kp_fw": 8.0,
+      "json": "official_m6_stslaw.json",
+      "json_path": "E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15/microduck-software/tools/bam_params/hd1910/official_m6_stslaw.json",
+      "action_term": "JointPositionActionCfg",
+      "conditioner": {}
+    },
+    "plant_fingerprint": {
+      "name": "hd1910_kp8",
+      "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+      "source_sha256_12": "30768e18ffeb",
+      "kwargs": {
+        "json_path": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\tools\\bam_params\\hd1910\\official_m6_stslaw.json",
+        "target_names_expr": [
+          "^(?!passive_).*"
+        ],
+        "kp_fw": 8.0,
+        "vin_range": [
+          6.5,
+          8.2
+        ],
+        "vin_drop_gain_range": [
+          0.0,
+          0.2
+        ],
+        "vin_min": 6.0,
+        "delay_min_lag": 3,
+        "delay_max_lag": 6
+      },
+      "json_path_exists": true,
+      "json_sha256_12": "799800a2ea0d",
+      "kp_fw": 8.0,
+      "actuator_class": "FrictionDRBamActuatorCfg",
+      "kp_fw_matches_spec": true
+    },
+    "solver": {
+      "before": {
+        "iterations": 10,
+        "ls_iterations": 20
+      },
+      "after": {
+        "iterations": 100,
+        "ls_iterations": 50
+      }
+    },
+    "device_name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+    "seed": 11,
+    "swept_command_knobs": {
+      "init_velocity_prob": 0.0,
+      "rel_forward_envs": 0.2,
+      "rel_heading_envs": 0.0,
+      "rel_standing_envs": 0.02,
+      "rel_turn_in_place_envs": 0.15,
+      "rel_world_envs": 0.0
+    },
+    "dropped_events": [
+      "push_robot"
+    ],
+    "curriculum_counter_before_pin": 72000,
+    "episode_length_s": {
+      "before": 20.0,
+      "after": 26.0
+    },
+    "waveform": "step",
+    "period_s": 10.0,
+    "amp": {
+      "vx": 0.1,
+      "vy": 0.0,
+      "wz": 0.6
+    },
+    "base": {
+      "vx": 0.3,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "max_lag_steps": 20,
+    "command_check": {
+      "uniq_cmd_vx": [
+        0.2,
+        0.4
+      ],
+      "n_uniq_cmd_vx": 2,
+      "last_cmd_env0": [
+        0.4,
+        0.0,
+        0.6
+      ],
+      "expected_last": [
+        0.4,
+        0.0,
+        0.6
+      ]
+    },
+    "survivors": 22,
+    "terminated_frac": 0.0833333358168602,
+    "upright_mean": 0.9965907999511922,
+    "vx_tracking": {
+      "nrmse_best": {
+        "n": 22,
+        "p10": 0.6790804281005519,
+        "p50": 0.759824112814953,
+        "p90": 0.9112779465094042,
+        "mean": 0.7980909229703101,
+        "std": 0.1330079478778905,
+        "sem": 0.028357389768555948
+      },
+      "nrmse_lag0": {
+        "n": 22,
+        "p10": 0.6889362619407533,
+        "p50": 0.7799986345091836,
+        "p90": 0.9143105068659723,
+        "mean": 0.8098212926092163,
+        "std": 0.12814273188955516,
+        "sem": 0.027320122234618084
+      },
+      "lag_s_best": {
+        "n": 22,
+        "p10": 0.0,
+        "p50": 0.15000000000000002,
+        "p90": 0.3980000000000001,
+        "mean": 0.19090909090909092,
+        "std": 0.1484814912598646,
+        "sem": 0.03165636030215244
+      },
+      "phase_lag_deg": {
+        "n": 22,
+        "p10": 0.0,
+        "p50": 5.4,
+        "p90": 14.328000000000001,
+        "mean": 6.872727272727272,
+        "std": 5.345333685355126,
+        "sem": 1.1396289708774878
+      },
+      "gain_best": {
+        "n": 22,
+        "p10": 0.18859464465532735,
+        "p50": 0.4194513681182904,
+        "p90": 0.48686969743160086,
+        "mean": 0.36548556349786326,
+        "std": 0.13665624693310782,
+        "sem": 0.02913520974060778
+      },
+      "gain_lag0": {
+        "n": 22,
+        "p10": 0.18765405722146364,
+        "p50": 0.41233014091795095,
+        "p90": 0.48339321186390455,
+        "mean": 0.3625095380254581,
+        "std": 0.13726796073247904,
+        "sem": 0.029265627560838333
+      },
+      "bias_best": {
+        "n": 22,
+        "p10": -0.005409463291269952,
+        "p50": 0.0040957452766753125,
+        "p90": 0.009271076094015247,
+        "mean": 0.002383831215493569,
+        "std": 0.00675466384726982,
+        "sem": 0.001440099170979269
+      },
+      "lag_explains": {
+        "n": 22,
+        "p10": 0.0,
+        "p50": 0.00705265610119743,
+        "p90": 0.0461235355165654,
+        "mean": 0.015389672633965039,
+        "std": 0.019237863455914148,
+        "sem": 0.004101526269952315
+      },
+      "meas_mean": {
+        "n": 22,
+        "p10": 0.05599910059589605,
+        "p50": 0.1352316847766038,
+        "p90": 0.15528623425939375,
+        "mean": 0.11513746947055004,
+        "std": 0.04706794886165249,
+        "sem": 0.01003492041469355
+      }
+    },
+    "wz_tracking": {
+      "nrmse_best": {
+        "n": 22,
+        "p10": 1.5565920409888705,
+        "p50": 1.7173406425761195,
+        "p90": 1.8526082861128694,
+        "mean": 1.7099492543182953,
+        "std": 0.14047355029845737,
+        "sem": 0.029949061552646986
+      },
+      "nrmse_lag0": {
+        "n": 22,
+        "p10": 1.6974149797032816,
+        "p50": 1.8817064266915158,
+        "p90": 2.127625543822941,
+        "mean": 1.8991189534307282,
+        "std": 0.1582302394097832,
+        "sem": 0.03373480039128552
+      },
+      "lag_s_best": {
+        "n": 22,
+        "p10": 0.1,
+        "p50": 0.13,
+        "p90": 0.19800000000000006,
+        "mean": 0.13909090909090907,
+        "std": 0.03624113565301056,
+        "sem": 0.007726636082762705
+      },
+      "gain_best": {
+        "n": 22,
+        "p10": 2.9757891753234196,
+        "p50": 3.283133059251815,
+        "p90": 3.4940060903643686,
+        "mean": 3.26359474378965,
+        "std": 0.21602958786823726,
+        "sem": 0.04605766288751547
+      },
+      "lag_explains": {
+        "n": 22,
+        "p10": 0.06040187673417199,
+        "p50": 0.09995628276980106,
+        "p90": 0.12330479394572105,
+        "mean": 0.09900990726648512,
+        "std": 0.032305626874452986,
+        "sem": 0.006887582791950436
+      }
+    },
+    "contact_duty_median": 0.5109090909090909,
+    "metrics_env0": {
+      "mean_action_acc": 0.0874693805895125
+    },
+    "headline": {
+      "nrmse_vx_best": 0.759824112814953,
+      "nrmse_vx_lag0": 0.7799986345091836,
+      "nrmse_normaliser": "ac_rms (period>0, mean-removed command swing)",
+      "lag_s": 0.15000000000000002,
+      "phase_lag_deg": 5.4,
+      "gain": 0.4194513681182904
+    },
+    "gates": {
+      "waveform_injected_ok": true,
+      "cmd_vx_above_deadzone": true,
+      "survivors_enough": true,
+      "no_fall": false,
+      "stays_upright": true,
+      "tracks_period": false,
+      "lag_is_transport_delay": true
+    },
+    "verdict": "fail",
+    "passed": [
+      "waveform_injected_ok",
+      "cmd_vx_above_deadzone",
+      "survivors_enough",
+      "stays_upright",
+      "lag_is_transport_delay"
+    ],
+    "failed": [
+      "no_fall",
+      "tracks_period"
+    ],
+    "cost_vs_baseline": {
+      "mean_action_acc": 0.9742549942159496
+    }
+  },
+  {
+    "task": "Mjlab-Velocity-Flat-MicroDuck",
+    "checkpoint": "logs/rsl_rl/microduck_velocity_hd1910/2026-11-03_08-33-18_p8head_030_4096x3000/model_2999.pt",
+    "num_envs": 24,
+    "seconds": 24.0,
+    "warmup_s": 2.0,
+    "step_dt": 0.02,
+    "device": "cuda:0",
+    "plant": "hd1910_kp8",
+    "plant_info": {
+      "plant": "hd1910_kp8",
+      "spec_fn": "get_walk_spec",
+      "actuators": [
+        "FrictionDRBamActuatorCfg"
+      ],
+      "kp_fw": 8.0,
+      "json": "official_m6_stslaw.json",
+      "json_path": "E:/WorkBuddyData/WorkBuddy/2026-10-23-08-26-15/microduck-software/tools/bam_params/hd1910/official_m6_stslaw.json",
+      "action_term": "JointPositionActionCfg",
+      "conditioner": {}
+    },
+    "plant_fingerprint": {
+      "name": "hd1910_kp8",
+      "source_file": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\.venv-mjlab\\Lib\\site-packages\\mjlab_microduck\\robot\\microduck_constants.py",
+      "source_sha256_12": "30768e18ffeb",
+      "kwargs": {
+        "json_path": "E:\\WorkBuddyData\\WorkBuddy\\2026-10-23-08-26-15\\microduck-software\\tools\\bam_params\\hd1910\\official_m6_stslaw.json",
+        "target_names_expr": [
+          "^(?!passive_).*"
+        ],
+        "kp_fw": 8.0,
+        "vin_range": [
+          6.5,
+          8.2
+        ],
+        "vin_drop_gain_range": [
+          0.0,
+          0.2
+        ],
+        "vin_min": 6.0,
+        "delay_min_lag": 3,
+        "delay_max_lag": 6
+      },
+      "json_path_exists": true,
+      "json_sha256_12": "799800a2ea0d",
+      "kp_fw": 8.0,
+      "actuator_class": "FrictionDRBamActuatorCfg",
+      "kp_fw_matches_spec": true
+    },
+    "solver": {
+      "before": {
+        "iterations": 10,
+        "ls_iterations": 20
+      },
+      "after": {
+        "iterations": 100,
+        "ls_iterations": 50
+      }
+    },
+    "device_name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+    "seed": 11,
+    "swept_command_knobs": {
+      "init_velocity_prob": 0.0,
+      "rel_forward_envs": 0.2,
+      "rel_heading_envs": 0.0,
+      "rel_standing_envs": 0.02,
+      "rel_turn_in_place_envs": 0.15,
+      "rel_world_envs": 0.0
+    },
+    "dropped_events": [
+      "push_robot"
+    ],
+    "curriculum_counter_before_pin": 72000,
+    "episode_length_s": {
+      "before": 20.0,
+      "after": 26.0
+    },
+    "waveform": "step",
+    "period_s": 20.0,
+    "amp": {
+      "vx": 0.1,
+      "vy": 0.0,
+      "wz": 0.6
+    },
+    "base": {
+      "vx": 0.3,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "max_lag_steps": 20,
+    "command_check": {
+      "uniq_cmd_vx": [
+        0.2,
+        0.4
+      ],
+      "n_uniq_cmd_vx": 2,
+      "last_cmd_env0": [
+        0.4,
+        0.0,
+        0.6
+      ],
+      "expected_last": [
+        0.4,
+        0.0,
+        0.6
+      ]
+    },
+    "survivors": 23,
+    "terminated_frac": 0.0416666679084301,
+    "upright_mean": 0.9965270293147668,
+    "vx_tracking": {
+      "nrmse_best": {
+        "n": 23,
+        "p10": 0.6628929999109959,
+        "p50": 0.7925736471380092,
+        "p90": 0.9210372746217299,
+        "mean": 0.8086700224155371,
+        "std": 0.17521702043040327,
+        "sem": 0.036535274347872036
+      },
+      "nrmse_lag0": {
+        "n": 23,
+        "p10": 0.6698687725745524,
+        "p50": 0.792615113740809,
+        "p90": 0.9210372746217299,
+        "mean": 0.8138447698775204,
+        "std": 0.17480582504499464,
+        "sem": 0.036449534183020584
+      },
+      "lag_s_best": {
+        "n": 23,
+        "p10": 0.0,
+        "p50": 0.1,
+        "p90": 0.4,
+        "mean": 0.16086956521739132,
+        "std": 0.1632040842703688,
+        "sem": 0.034030404003357405
+      },
+      "phase_lag_deg": {
+        "n": 23,
+        "p10": 0.0,
+        "p50": 1.8,
+        "p90": 7.2,
+        "mean": 2.895652173913043,
+        "std": 2.937673516866639,
+        "sem": 0.6125472720604335
+      },
+      "gain_best": {
+        "n": 23,
+        "p10": 0.19852250592777634,
+        "p50": 0.428662387445863,
+        "p90": 0.4954650659786499,
+        "mean": 0.37829762013480406,
+        "std": 0.13174723099612562,
+        "sem": 0.027471196674799213
+      },
+      "gain_lag0": {
+        "n": 23,
+        "p10": 0.19611639912126172,
+        "p50": 0.4263568100501956,
+        "p90": 0.49180872050421487,
+        "mean": 0.3768811272703386,
+        "std": 0.13099393253114847,
+        "sem": 0.02731412308676441
+      },
+      "bias_best": {
+        "n": 23,
+        "p10": -0.0002558333201647686,
+        "p50": 0.005487951968308033,
+        "p90": 0.011592317620800664,
+        "mean": 0.004754951547118712,
+        "std": 0.007083179084575947,
+        "sem": 0.001476944936481681
+      },
+      "lag_explains": {
+        "n": 23,
+        "p10": 0.0,
+        "p50": 0.005129213964365276,
+        "p90": 0.016215918782470574,
+        "mean": 0.006626118127445334,
+        "std": 0.006760987141022448,
+        "sem": 0.0014097632721577129
+      },
+      "meas_mean": {
+        "n": 23,
+        "p10": 0.06483845296070319,
+        "p50": 0.1362091460999165,
+        "p90": 0.16040873586310242,
+        "mean": 0.12145624395170032,
+        "std": 0.044648055962833604,
+        "sem": 0.009309763227877733
+      }
+    },
+    "wz_tracking": {
+      "nrmse_best": {
+        "n": 23,
+        "p10": 1.4918480067162498,
+        "p50": 1.6013515174698343,
+        "p90": 1.885680801144003,
+        "mean": 1.6620263563337923,
+        "std": 0.17651747550169772,
+        "sem": 0.03680643797507055
+      },
+      "nrmse_lag0": {
+        "n": 23,
+        "p10": 1.5894364664928577,
+        "p50": 1.7334936422066218,
+        "p90": 2.071672477649877,
+        "mean": 1.7811484836168257,
+        "std": 0.18322003468558157,
+        "sem": 0.03820401817598096
+      },
+      "lag_s_best": {
+        "n": 23,
+        "p10": 0.064,
+        "p50": 0.12,
+        "p90": 0.16,
+        "mean": 0.12260869565217393,
+        "std": 0.03828332075749626,
+        "sem": 0.007982624195908382
+      },
+      "gain_best": {
+        "n": 23,
+        "p10": 3.0723329330289415,
+        "p50": 3.3712055742467633,
+        "p90": 3.547514952327372,
+        "mean": 3.3602689975079234,
+        "std": 0.23492015961386187,
+        "sem": 0.04898423943207889
+      },
+      "lag_explains": {
+        "n": 23,
+        "p10": 0.03831747119634614,
+        "p50": 0.07297767960228063,
+        "p90": 0.08957711616930204,
+        "mean": 0.066895403398112,
+        "std": 0.022151287553770306,
+        "sem": 0.004618862744884189
+      }
+    },
+    "contact_duty_median": 0.5104545454545455,
+    "metrics_env0": {
+      "mean_action_acc": 0.09586737425066531
+    },
+    "headline": {
+      "nrmse_vx_best": 0.7925736471380092,
+      "nrmse_vx_lag0": 0.792615113740809,
+      "nrmse_normaliser": "ac_rms (period>0, mean-removed command swing)",
+      "lag_s": 0.1,
+      "phase_lag_deg": 1.8,
+      "gain": 0.428662387445863
+    },
+    "gates": {
+      "waveform_injected_ok": true,
+      "cmd_vx_above_deadzone": true,
+      "survivors_enough": true,
+      "no_fall": true,
+      "stays_upright": true,
+      "tracks_period": false,
+      "lag_is_transport_delay": true
+    },
+    "verdict": "fail",
+    "passed": [
+      "waveform_injected_ok",
+      "cmd_vx_above_deadzone",
+      "survivors_enough",
+      "no_fall",
+      "stays_upright",
+      "lag_is_transport_delay"
+    ],
+    "failed": [
+      "tracks_period"
+    ],
+    "cost_vs_baseline": {
+      "mean_action_acc": 1.0677938670264084
+    }
+  }
+]

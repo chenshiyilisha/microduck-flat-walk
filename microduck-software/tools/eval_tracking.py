@@ -56,17 +56,24 @@ step k+1 already carries roughly 1-2 steps of transport delay. At 50 Hz that is
 20-40 ms -- 7-14 deg of phase at ``period 1 s``, but 25-50% of a ``period 0.5 s``
 cycle. Searching the lag separates "cannot track" from "tracks, one step late".
 
-Usage:
-  # the question itself: does it still follow when the command moves?
-  python microduck-software/tools/eval_tracking.py \
-      --checkpoint artifacts/flat_walk/checkpoints/model_1250_std004.pt \
-      --periods 0 0.5 1 2 5 --waveform sine
+Usage (2026-11-11: ckpt updated from the historic walk_std004_1250 to the
+CURRENT HD-1910 deploy candidate; the old artifact/ckpt is archived history and
+must NOT be used to answer the following question):
+  # the question itself: does the current policy follow when the command moves?
+  python tools/eval_tracking.py \
+      --checkpoint logs/rsl_rl/microduck_velocity_hd1910/2026-11-03_08-33-18_p8head_030_4096x3000/model_2999.pt \
+      --plant hd1910_kp8 --waveform sine --periods 0 0.5 1 2 5 \
+      --solver-iters 100 --solver-ls 50 --seed 11 \
+      --out artifacts/flat_walk/evals/tracking_p8head2999_sine.json
 
-  # step inputs instead of sine
-  python microduck-software/tools/eval_tracking.py \
-      --checkpoint ... --waveform step --periods 1 2 5
+  # step inputs instead of sine (the --plant / --checkpoint above still apply)
+  python tools/eval_tracking.py --checkpoint ... --plant hd1910_kp8 \
+      --waveform step --periods 0 1 5
 
-Exit code 0 when every requested period grades ``usable``, 1 otherwise.
+Exit code 0 when every requested period grades ``usable``, 1 otherwise;
+2 for an unhealthy baseline with ``--require-baseline`` (nothing is measurable).
+A baseline-only run (``--periods 0``) is a legal instrument health check and
+exits 0 when the static hold is healthy.
 """
 
 from __future__ import annotations
@@ -310,11 +317,34 @@ def _axis_report(cmd: torch.Tensor, meas: torch.Tensor, dt: float, max_lag: int,
     lag, gain, rmse, bias = best
     g0, b0, r0 = _fit(cmd, meas)
     rms_cmd = float(torch.sqrt((cmd * cmd).mean()))
-    norm = rms_cmd if rms_cmd > 1e-9 else 1.0
+    # NORMALISER (calibrated 2026-11-11, see
+    # tests/test_eval_tracking_instrument.py::TestNormaliserCatchesNonTracking):
+    # a time-varying command sits on a large DC base (vx base 0.30, amplitude
+    # only 0.10). Dividing the residual by the UNCENTRED rms_cmd (0.308 here)
+    # means 97% of the denominator is the constant base, so ANY response --
+    # unrelated-frequency, white noise, even anti-phase -- scores nRMSE 0.14-0.37
+    # and lands under NRMSE_USABLE=0.40. That is a false green: "it follows"
+    # when it demonstrably does not. For period>0 the quantity under test is
+    # tracking the *variation*, so normalise by the AC-facing (mean-removed) RMS
+    # of the command. A static gain error is already absorbed by the fitted
+    # gain, leaving only the tracking residual in the numerator.
+    #
+    # period==0 has no variation by definition; there we keep the uncentred
+    # rms_cmd so the baseline stays finite and comparable to itself (the fitted
+    # gain absorbs the constant under-shoot; nRMSE ~0 simply means "steady").
+    ac_rms = float(torch.sqrt(((cmd - cmd.mean()) ** 2).mean()))
+    if period > 0 and ac_rms > 1e-9:
+        norm = ac_rms
+        norm_kind = "ac_rms"
+    else:
+        norm = rms_cmd if rms_cmd > 1e-9 else 1.0
+        norm_kind = "uncentred_rms_cmd"
     out.update(
         lag_steps_best=lag,
         lag_s_best=lag * dt,
         phase_lag_deg=(360.0 * lag * dt / period) if period > 0 else None,
+        norm_kind=norm_kind,
+        norm_value=norm,
         nrmse_best=rmse / norm,
         gain_best=gain,
         bias_best=bias,
@@ -347,6 +377,52 @@ def _spread(vals: list[float]) -> dict:
         "std": sd,
         "sem": (sd / math.sqrt(n)) if sd is not None else None,
     }
+
+
+def aggregate_axis(reports: list[dict], key: str) -> dict:
+    """Spread one field across env reports, skipping entries where it is undefined.
+
+    Pulled out of ``run_one`` so a real negative-control test can exercise it
+    (a closure cannot be unit-tested; an untested None-filter is how the 2026-11-11
+    "torch.tensor([None])" crash first reached the CLI). ``n`` counts only the
+    defined values, so a period where most envs have an undefined field stays
+    visible as a shrunk sample instead of being silently padded with zeros.
+    """
+    vals = [r[key] for r in reports if key in r and r[key] is not None]
+    return _spread(vals)
+
+
+def classify_sweep(results: list[dict], healthy: bool | None) -> str:
+    """Map a finished sweep to one of the three architecture paths (or baseline).
+
+    Pure function (no I/O, no sim) so the CLI's path-1/2/3 decision -- and the
+    2026-11-11 baseline-only ``UnboundLocalError`` regression -- have real
+    negative-control coverage. Rules:
+
+      * ``INSTRUMENT_BROKEN``: baseline not healthy (nothing below is usable).
+      * ``BASELINE_ONLY``: no time-varying period requested (all()'s vacuous
+        truth on an empty ``fast`` must NOT be mistaken for path 1).
+      * ``PATH_1``: every fast period (0 < period <= 2s) is usable.
+      * ``PATH_2``: at least one TIME-VARYING period usable, but not every fast
+        one. The period-0 baseline NEVER counts here: it is healthy by
+        construction, and including it made "nothing tracks" (all fast + slow
+        periods fail) look like "slow commands track" -- a decision-changing
+        false green caught by unit test 2026-11-11.
+      * ``PATH_3``: no time-varying period tracks at all.
+    """
+    if healthy is False:
+        return "INSTRUMENT_BROKEN"
+    # Only time-varying periods can answer "does it follow a moving command".
+    # The static period-0 baseline is a health check, not a tracking sample.
+    varied = [r for r in results if r["period_s"] > 0]
+    if not varied:
+        return "BASELINE_ONLY"
+    fast = [r for r in varied if r["period_s"] <= 2.0]
+    if fast and all(r["verdict"] == "usable" for r in fast):
+        return "PATH_1"
+    if any(r["verdict"] == "usable" for r in varied):
+        return "PATH_2"
+    return "PATH_3"
 
 
 # --------------------------------------------------------------------------- run
@@ -485,8 +561,11 @@ def run_one(task_id, checkpoint, num_envs, seconds, warmup_s, device, plant,
             wz_rep.append(_axis_report(cmd_t[n_warm:, e, 2], wz_t[n_warm:, e],
                                        step_dt, max_lag, period))
 
-    def _agg(reports: list[dict], key: str) -> dict:
-        return _spread([r[key] for r in reports if key in r])
+    # Some fields are legitimately undefined per env/period (phase_lag_deg at
+    # period 0; lag_explains whenever the lag-0 residual is ~0). aggregate_axis
+    # skips those honestly and reports n = count of defined values; use it for
+    # every axis aggregation so no None can crash torch.tensor downstream.
+    _agg = aggregate_axis
 
     vx_agg = {k: _agg(vx_rep, k) for k in
               ("nrmse_best", "nrmse_lag0", "lag_s_best", "phase_lag_deg",
@@ -581,6 +660,13 @@ def run_one(task_id, checkpoint, num_envs, seconds, warmup_s, device, plant,
         "headline": {
             "nrmse_vx_best": nrmse,
             "nrmse_vx_lag0": nrmse0,
+            # nRMSE is residual / AC-facing command RMS for period>0 (the swing
+            # that actually has to be followed), and / uncentred rms_cmd for the
+            # period-0 static baseline. So 0.40 means "residual <= 40% of the
+            # command's swing", NOT 40% of the DC-inclusive level (which would
+            # dilute the swing by ~4x and false-green a non-follower).
+            "nrmse_normaliser": ("ac_rms (period>0, mean-removed command swing)"
+                                 if period > 0 else "uncentred_rms_cmd (static baseline)"),
             "lag_s": _pk("lag_s_best"),
             "phase_lag_deg": _pk("phase_lag_deg"),
             "gain": _pk("gain_best"),
@@ -742,16 +828,18 @@ def main() -> int:
 
     bad = [r for r in results if r["period_s"] != 0 and r["verdict"] != "usable"]
     unusable_instrument = (healthy is False and a.require_baseline)
-    if healthy is not False:
-        if baseline is not None and len(results) > 1:
-            fast = [r for r in results if 0 < r["period_s"] <= 2.0]
-        if all(r["verdict"] == "usable" for r in fast) and fast:
-            print("=> path ①: nothing to change; the current checkpoint already runs following.")
-        elif any(r["verdict"] == "usable" for r in results):
-            print("=> path ② candidate: it survives slow commands only -> consider "
-                  "resampling_time_range ~ [0.1, 0.5] and RETRAIN FROM SCRATCH.")
-        else:
-            print("=> path ③: no period tracks -> a high-rate follower needs a new low-level policy.")
+    # classify_sweep is a pure function so its path-1/2/3 + baseline-only logic
+    # has real negative-control unit coverage without needing a GPU/ckpt/sim.
+    path = classify_sweep(results, healthy)
+    _PATH_MSG = {
+        "PATH_1": "=> path 1: nothing to change; the current checkpoint already runs following.",
+        "PATH_2": "=> path 2 candidate: it survives slow commands only -> consider "
+                  "resampling_time_range ~ [0.1, 0.5] and RETRAIN FROM SCRATCH.",
+        "PATH_3": "=> path 3: no period tracks -> a high-rate follower needs a new low-level policy.",
+        "BASELINE_ONLY": "=> baseline-only run: instrument is healthy; no tracking period requested.",
+    }
+    if path in _PATH_MSG:
+        print(_PATH_MSG[path])
     if unusable_instrument:
         print("=> INSTRUMENT NOT HEALTHY: baseline failed; nothing above is usable.")
         return 2

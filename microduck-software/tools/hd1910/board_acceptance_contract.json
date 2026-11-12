@@ -6,7 +6,7 @@
     "docs/hardware/microduck-Radxa上电验收清单-2026-11-06.md（§0-§9 全文，195 行）",
     "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬(行21-24)、订正㉑、订正㉔/㉕",
     "microduck-software/tools/hd1910/line_labels.json（三条线别判据、B 代 500k 台架工具）",
-    "microduck-software/tools/hd1910/closure_contract.json（7 个悬案的 board_acceptance_required / signoff；C1 追加 INCONCLUSIVE_ROLLER_POLICY）",
+    "microduck-software/tools/hd1910/closure_contract.json（8 个悬案的 board_acceptance_required / signoff；C1 追加 INCONCLUSIVE_ROLLER_POLICY，E3 追加 INCONCLUSIVE_LIVE_TRACKING）",
     "microduck-software/tools/hd1910/card_build_contract.json（console=tty1 / mask ttyS2 的做卡前提）",
     "docs/active/microduck-HD1910-策略导出部署链-2026-11-09.md（publish 链与路① 中控链不同）"
   ],
@@ -15,7 +15,7 @@
     "BA-0-1", "BA-0-2", "BA-1-5", "BA-2-2", "BA-2-4", "BA-2-5",
     "BA-3-2", "BA-3-4", "BA-4-1", "BA-4-2", "BA-4-3", "BA-4-4",
     "BA-5-1", "BA-5-2", "BA-6-1", "BA-6-2", "BA-6-3", "BA-7-1",
-    "BA-7-2", "BA-8-1", "BA-9-1", "BA-X-1", "BA-X-2", "BA-X-3"
+    "BA-7-2", "BA-8-1", "BA-9-1", "BA-X-1", "BA-X-2", "BA-X-3", "BA-X-4"
   ],
   "required_check_ids_note": "显式登记集合：删任意一条、或新增一条未登记的判据，都会让 --check 变红。借 open-microduck check_book.py 的 expected == actual 集合相等断言；新增判据必须同步登记，避免清单被悄悄裁掉。",
   "authority_legend": {
@@ -318,6 +318,18 @@
       "superseded_by": [],
       "evidence_kind": ["中控策略清单日志", "加载字段/形状回读", "配置回读", "位移跨度记录", "负对照：未加载策略必失败"],
       "closure_refs": ["INCONCLUSIVE_ROLLER_POLICY"]
+    },
+    {
+      "id": "BA-X-4",
+      "section": "§9+",
+      "title": "真机时变命令跟踪（阶段3 自动跟随前置）",
+      "pass_criterion": "R17 V167 中控以 50 Hz 下发与 E3 同协议（vx 0.30±0.10、wz 0±0.6）的 sine/step 变化命令，回读本体 root_link 速度，逐周期算 nRMSE（去 DC 归一化）/ lag_explains / meas-cmd 比；判据与 E3 一致：nRMSE ≤ 0.40 才算跟住，且 lag_explains 需高（不是没跟）。命令未真正注入（注入检查不过）则读数无效。负对照：命令冻结 period 0 与策略未加载两种情形须给出可区分结果。",
+      "command": "R17 V167 中控 50 Hz 下发时变 twist + 本体速度回读 + E3 同口径分析（eval_tracking.py 协议）",
+      "authority": "CURRENT",
+      "authority_note": "E3（2026-11-11）已在仿真侧把该问题判为 PATH_3：p8head_2999 在 hd1910_kp8 下 sine/step 全时变周期 fail、连 20 s 极慢 in-distribution 周期都不跟，三条独立证据指向低层 vx 命令通道响应弱（静态 undershoot ~45% + 波动抹平），不是频率 OOD。但那是 MuJoCo 仿真，live_hardware_accessed=false；本条是真机侧唯一闭合路径，不重开仿真判决。若真机也跟不住，阶段3 自动跟随须暂缓或先重训低层（resampling_time_range 收到 [0.1,0.5]s，属 domain 改动需拍板）。",
+      "superseded_by": [],
+      "evidence_kind": ["真机命令注入检查（命令唯一值数 / 注入 ok）", "本体速度原始时间序列", "逐周期 nRMSE / lag_explains / meas-cmd 表", "period-0 冻结与策略未加载的负对照输出"],
+      "closure_refs": ["INCONCLUSIVE_LIVE_TRACKING"]
     }
   ],
   "coverage_rule": "closure_contract.json 里每个 status=UNVERIFIED 的悬案，必须至少被一条 check 的 closure_refs 引用；引用了不存在的 id 或漏掉任一悬案都判结构 FAIL。借 open-microduck check_book.py 的集合相等断言。",
@@ -331,7 +343,8 @@
       "R3 零应答已消解",
       "control.43 / p8head_2999 / 手柄 mapping 已完成",
       "相机与 ToF 在真机上已出数",
-      "轮滑 roller 策略已在 R17 V167 加载或切换"
+      "轮滑 roller 策略已在 R17 V167 加载或切换",
+      "真机已按 E3 协议验证时变命令跟随（仿真侧 PATH_3 不代替真机实测）"
     ],
     "known_gaps": [
       "清单 §0 的 2GB、kissqy HAT、§5 的板载 I2C、§6.2 的 B 代键名、§7 的 publish 链均已标 SUPERSEDED / LINE_MISMATCH，但原文保留作史料，未改原文档",
@@ -346,7 +359,7 @@
     "required": [
       "所有 authority=CURRENT 的判据逐条有证据",
       "SUPERSEDED / LINE_MISMATCH 条目按现行 SSOT 改写后重跑",
-      "closure_contract.json 的 6 个 UNVERIFIED 悬案全部闭合（C1 追加 INCONCLUSIVE_ROLLER_POLICY）",
+      "closure_contract.json 的 7 个 UNVERIFIED 悬案全部闭合（C1 追加 INCONCLUSIVE_ROLLER_POLICY，E3 追加 INCONCLUSIVE_LIVE_TRACKING）",
       "人工签署（B1 不自动升级 PASS）"
     ]
   }
