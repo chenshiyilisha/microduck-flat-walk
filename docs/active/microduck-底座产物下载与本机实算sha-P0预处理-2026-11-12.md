@@ -107,7 +107,11 @@ _2026-11-12。承接 `microduck-主板到货上板执行单-2026-11-12.md` §0 �
 # 3) 到货后按执行单 §1-§3 逐 --record；COLLECTED != PASS，闭合仍要人工签字
 ```
 
-**bug 修复记录（真跑抓出、已加负对照防回归）**：`grade()` 曾有 3 个会改变判决的自身 bug——①存在文件分支漏 `results.append`（导致 selftest 越界 / 正常 artifact 消失）；② `git_blob_sha1` 匹配时误把 local sha 塞进 mismatches（V167 假红）；③ 下载中半成品被笼统判 MISMATCH（伪造"损坏"结论）。三者均已修 + selftest 覆盖。
+**§5 三入口 2026-11-12 本机实跑复核（全部 rc=0，工具链就绪证据）**：上述命令 0/1/2 已按字面在本机真跑一遍，确认 P0 下载的 4 个实体被三个下游消费端正确读取——`local_evidence.py --verify`=`ALL_LOCAL_COMPUTED`（4/4 实体本地 sha 与发布 pin 一致）、`check_image_pairing.py --check --verify-sources .upstream`=`structure PASS / source_files_verified=true`、`reproducible_card.py --check --verify-sources .upstream --flags "--overlay i2c4-m0"`=`structure PASS / audited flags refused=none / source_files_verified=true`。三者 `ship_verdict` 均 `NOT_SHIPPABLE`。**这只证明"到货当天照抄不会因工具/路径/实体缺失当场炸"，非上板验收**；完整判据表见执行单 §8。
+
+> **本机 A2 门禁红灯自助判读**：本机跑门禁会看到 48/50 / 2 pytest failed / `check_closure.py --check` rc=1，这是**未入库安卓草稿文档**被文件系统扫描计入导致的已知本地假红，CI 干净树 8=8 绿。到货当天先跑 `.venv-mjlab/Scripts/python.exe tools/hd1910/check_closure.py --explain`（只读、恒 rc=0）：`committed structure=PASS` 即为假红可继续；`FAIL` 才是真回归。三条禁路与正确闭合时机见执行单 §8。任何 tracked 文档都不得写出那条第 9 标记的**字面全名**（会反噬 CI），故此处只用中文描述。
+
+**bug 修复记录（真跑抓出、已加负对照防回归）**：`grade()` 曾有 3 个会改变判决的自身 bug——①存在文件分支漏 `results.append`（导致 selftest 越界 / 正常 artifact 消失）；② `git_blob_sha1` 匹配时误把 local sha 塞进 mismatches（V167 假红）；③ 下载中半成品被笼统判 MISMATCH（伪造"损坏"结论）。三者均已修 + selftest 覆盖。**本轮 `--explain` 又抓出 1 个 CLI-only bug**：`grade_env` 的 `committed_view_markers` 直接返回 `set`，文本模式正常但 `--explain --json` 会 `TypeError` 崩溃；已改 `sorted()` 并加 `test_explain_cli_json_is_serializable_and_not_a_gate` 守卫（只测内部函数会漏掉，必须真跑 CLI）。
 
 ---
 

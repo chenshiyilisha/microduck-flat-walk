@@ -46,6 +46,18 @@ Usage (cwd = microduck-software):
     python tools/hd1910/check_closure.py --check --ship-gate
     python tools/hd1910/check_closure.py --selftest
     python tools/hd1910/check_closure.py --check --json
+    python tools/hd1910/check_closure.py --explain [--json]
+
+--explain (read-only diagnostic, NEVER a gate)
+----------------------------------------------
+scan_doc_marks() walks the FILESYSTEM over the allow-listed roots, so an
+untracked draft .md bearing a new marker turns the LOCAL structure check red
+while a clean CI checkout (tracked files only) stays green. That asymmetry is
+by design: tracked-only scanning would hide a marker the moment it is staged.
+--explain makes the asymmetry legible WITHOUT changing --check's verdict or
+rc: it reports which markers are visible in the committed view (git index),
+which are local-only, and attributes each to its file(s). It never turns a red
+structure green. If git is unavailable it reports INCONCLUSIVE, not green.
 """
 from __future__ import annotations
 
@@ -55,6 +67,7 @@ import hashlib
 import io
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -271,6 +284,53 @@ def selftest() -> int:
        == {r.relative_to(ROOT).as_posix() for r in roots}
        and bool(report(data, [], marks, roots)["scan_excluded"]))
 
+    # --- D2: local-vs-committed diagnosis (fully injected; disk-independent) --
+    # These run green on BOTH a dirty local workspace and a clean CI checkout.
+    ids = [c["id"] for c in data["contracts"]]
+    base = {m: [{"file": "docs/tracked_note.md", "tracked": True}] for m in ids}
+    ghost = "INCONCLUSIVE_GHOST_MARKER"
+    any_set = {"docs/tracked_note.md"}
+
+    aligned = grade_env(data, base, any_set, [])
+    ck("正对照：本机与提交态一致判 ALIGNED 且双绿",
+       aligned["classification"] == "ALIGNED"
+       and aligned["local_structure_verdict"] == "PASS"
+       and aligned["committed_structure_verdict"] == "PASS")
+
+    draft = dict(base)
+    draft[ghost] = [{"file": "docs/active/untracked_draft.md", "tracked": False}]
+    d_rep = grade_env(data, draft, any_set, validate(data, set(draft)))
+    ck("本机假红：草稿未登记标记 → LOCAL_ONLY_DRAFT_RED / 本机红·提交态绿",
+       d_rep["classification"] == "LOCAL_ONLY_DRAFT_RED"
+       and d_rep["local_structure_verdict"] == "FAIL"
+       and d_rep["committed_structure_verdict"] == "PASS")
+    ck("负对照：本机假红不得改 ship_verdict（仍 NOT_SHIPPABLE）",
+       d_rep["ship_verdict"] == "NOT_SHIPPABLE")
+
+    committed_bad = dict(base)
+    committed_bad[ghost] = [{"file": "docs/active/committed.md", "tracked": True}]
+    cb_rep = grade_env(data, committed_bad, any_set, validate(data, set(committed_bad)))
+    ck("负对照：未登记标记进 tracked → REAL_CI_RED / 提交态红",
+       cb_rep["classification"] == "REAL_CI_RED"
+       and cb_rep["committed_structure_verdict"] == "FAIL"
+       and ghost in (cb_rep["ci_unregistered_markers"] or []))
+
+    mixed = dict(base)
+    mixed[ghost] = [{"file": "docs/active/unknown.md", "tracked": None}]
+    m_rep = grade_env(data, mixed, any_set, validate(data, set(mixed)))
+    ck("负对照：来源 tracked 状态未知 → MIXED 不判 benign",
+       m_rep["classification"] == "MIXED_UNATTRIBUTED")
+
+    nogit = grade_env(data, draft, None, validate(data, set(draft)))
+    ck("负对照：git 不可用 → INCONCLUSIVE_NO_GIT（提交态 UNKNOWN，不宣称绿）",
+       nogit["classification"] == "INCONCLUSIVE_NO_GIT"
+       and nogit["committed_structure_verdict"] == "UNKNOWN")
+
+    frozen = copy.deepcopy(draft)
+    grade_env(data, draft, any_set, [])
+    ck("只读性：grade_env 不改动注入的 by_source 与契约",
+       draft == frozen and data["contracts"] == load()["contracts"])
+
     for name, ok, note in checks:
         print("  [%s] %s%s" % ("ok" if ok else "XX", name, ("  <- " + note) if note else ""))
     bad_n = [n for n, ok, _ in checks if not ok]
@@ -313,6 +373,136 @@ def report(data: dict, problems: list[str], marks: set[str],
     }
 
 
+def doc_marks_by_source(roots: list[Path] | None = None,
+                        tracked: set[str] | None = None) -> dict:
+    """Attribute every scanned marker to its files and to the committed view.
+
+    `tracked` is the set of repo-relative paths known to git (the index). When
+    None (or when git is unavailable) the committed view is UNKNOWN -- we do
+    not guess that local == committed. Two views are produced:
+
+      * filesystem view  == what --check actually scans (all .md on disk)
+      * committed view   == markers in .md files that are tracked by git
+
+    A marker present on disk but absent from the committed view is a
+    LOCAL_ONLY candidate; it only becomes a benign "untracked draft" when
+    every file carrying it is untracked. If ANY tracked file carries a marker
+    that has no contract entry, that is a REAL regression (CI will be red).
+    """
+    roots = default_scan_roots() if roots is None else roots
+    by_mark: dict[str, list[dict]] = {}
+    for r in roots:
+        files = [r] if r.is_file() else sorted(r.rglob("*.md"))
+        for f in files:
+            if f.suffix.lower() != ".md":
+                continue
+            try:
+                rel = f.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel = str(f)
+            marks = MARK.findall(io.open(f, encoding="utf-8", errors="replace").read())
+            is_tracked = None if tracked is None else (rel in tracked)
+            for m in set(marks):
+                by_mark.setdefault(m, []).append({"file": rel, "tracked": is_tracked})
+    return by_mark
+
+
+def git_tracked_paths(root: Path = ROOT) -> set[str] | None:
+    """Repo-relative tracked paths from the git index, or None if unavailable.
+
+    Uses `git -C <real toplevel> ls-files -z`. The ROOT here may be a junction
+    path (E:/WorkBuddy/...) that differs from the real worktree reported by
+    `rev-parse --show-toplevel` (E:/WorkBuddyData/...); resolving the toplevel
+    first is REQUIRED or ls-files silently returns an empty set.
+    """
+    try:
+        top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=15)
+        if top.returncode != 0 or not top.stdout.strip():
+            return None
+        real = Path(top.stdout.strip())
+        ls = subprocess.run(["git", "-C", str(real), "ls-files", "-z"],
+                            capture_output=True, timeout=15)
+        if ls.returncode != 0:
+            return None
+        return set(p for p in ls.stdout.decode("utf-8", "replace").split("\0") if p)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def grade_env(data: dict, by_source: dict,
+              tracked: set[str] | None, problems: list[str]) -> dict:
+    """Pure classifier: separate a benign local-only draft red from a real CI red.
+
+    Injectable by_source / tracked / problems so negative controls never touch
+    the real workspace. Owns no verdict: --check still decides rc; this only
+    explains WHY local and committed views differ.
+    """
+    ids = set(c["id"] for c in data.get("contracts") or [])
+    fs_marks = set(by_source)
+    if tracked is None:
+        ci_marks = None  # committed view genuinely unknown
+    else:
+        ci_marks = {m for m, srcs in by_source.items()
+                    if any(s["tracked"] for s in srcs)}
+
+    local_only = sorted(fs_marks - ci_marks) if ci_marks is not None else None
+    ci_unregistered = (sorted(ci_marks - ids) if ci_marks is not None else None)
+    # A local-only marker is a benign draft iff EVERY file carrying it is
+    # untracked. If a tracked file carries an unregistered marker, CI is red.
+    draft_ok: dict[str, bool] = {}
+    for m in local_only or []:
+        srcs = by_source[m]
+        draft_ok[m] = all(s["tracked"] is False for s in srcs) and bool(srcs)
+
+    if tracked is None:
+        classification = "INCONCLUSIVE_NO_GIT"
+    elif ci_unregistered:
+        classification = "REAL_CI_RED"
+    elif local_only and all(draft_ok.values()):
+        classification = "LOCAL_ONLY_DRAFT_RED"
+    elif local_only:
+        classification = "MIXED_UNATTRIBUTED"
+    else:
+        classification = "ALIGNED"
+
+    return {
+        "tool": "check_closure.py",
+        "mode": "explain",
+        "classification": classification,
+        "classification_meaning": {
+            "ALIGNED": "本机与提交态一致：没有未登记标记。",
+            "LOCAL_ONLY_DRAFT_RED": ("本机红仅因未入库草稿文档带未登记标记；"
+                                      "提交态(tracked)集合与契约 id 相等，CI 干净树结构绿。"
+                                      "这是已知假红，不是交付缺陷；仍 NOT_SHIPPABLE。"),
+            "REAL_CI_RED": ("有已 tracked 文档带未登记标记 ⇒ 提交态结构也红，"
+                             "必须登记契约或移除标记，不能当本机假红放过。"),
+            "MIXED_UNATTRIBUTED": ("本机多出的标记里有的同时出现在 tracked 文件，"
+                                    "归因不明；按最坏处理，不当假红。"),
+            "INCONCLUSIVE_NO_GIT": ("取不到 git 提交态，无法判定本机红是否会在 CI 复现；"
+                                     "INCONCLUSIVE，不宣称绿。"),
+        }[classification],
+        "local_filesystem_markers": sorted(fs_marks),
+        # sorted list, NOT the raw set: --json serializes this report directly.
+        "committed_view_markers": sorted(ci_marks) if ci_marks is not None else None,
+        "contract_ids": sorted(ids),
+        "local_structure_problems": problems,
+        "ci_unregistered_markers": ci_unregistered,
+        "local_only_markers": local_only,
+        "local_only_draft_ok": draft_ok,
+        "by_source": by_source,
+        "local_structure_verdict": "PASS" if not problems else "FAIL",
+        "committed_structure_verdict": (
+            "UNKNOWN" if ci_marks is None
+            else ("PASS" if not (ci_unregistered or (ids - ci_marks)) else "FAIL")
+        ),
+        "ship_verdict": overall_verdict(data),
+        "live_hardware_accessed": False,
+        "not_a_gate": ("--explain 只读、不改 --check 的判定与 rc；"
+                        "UNVERIFIED != PASS；工具/SOP 就绪 != 悬案闭合。"),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -320,6 +510,8 @@ def main() -> int:
     ap.add_argument("--selftest", action="store_true", help="run negative controls")
     ap.add_argument("--ship-gate", action="store_true",
                     help="with --check, rc=1 when anything is still UNVERIFIED")
+    ap.add_argument("--explain", action="store_true",
+                    help="READ-ONLY: diagnose local-vs-committed marker divergence (never a gate)")
     ap.add_argument("--json", action="store_true", help="emit the machine-readable report")
     args = ap.parse_args()
 
@@ -327,6 +519,36 @@ def main() -> int:
         return selftest()
 
     data = load()
+
+    if args.explain:
+        tracked = git_tracked_paths(ROOT)
+        by_source = doc_marks_by_source(tracked=tracked)
+        local_problems = validate(data, set(by_source))
+        rep = grade_env(data, by_source, tracked, local_problems)
+        if args.json:
+            print(json.dumps(rep, ensure_ascii=False, indent=2))
+        else:
+            print("mode = explain (READ-ONLY, not a gate; --check keeps its own rc)")
+            print("classification = " + rep["classification"])
+            print("  -> " + rep["classification_meaning"])
+            print("local filesystem markers = %d  contract ids = %d"
+                  % (len(rep["local_filesystem_markers"]), len(rep["contract_ids"])))
+            print("committed-view markers   = %s"
+                  % ("UNKNOWN (git unavailable)" if rep["committed_view_markers"] is None
+                     else len(rep["committed_view_markers"])))
+            print("local structure verdict  = " + rep["local_structure_verdict"])
+            print("committed structure      = " + rep["committed_structure_verdict"])
+            for m in (rep["local_only_markers"] or []):
+                srcs = ", ".join("%s[%s]" % (s["file"], "tracked" if s["tracked"] else "untracked")
+                                 for s in rep["by_source"][m])
+                print("  [LOCAL-ONLY] %s  <- %s" % (m, srcs))
+            for m in (rep["ci_unregistered_markers"] or []):
+                print("  [CI-RED] %s" % m)
+            print("ship_verdict = " + rep["ship_verdict"] + "  (UNVERIFIED != PASS)")
+            print("live_hardware_accessed = false")
+            print("note: " + rep["not_a_gate"])
+        return 0  # a diagnostic is never a gate; --check alone decides rc
+
     roots = default_scan_roots()
     marks = scan_doc_marks(roots)
     problems = validate(data, marks)

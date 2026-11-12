@@ -141,4 +141,41 @@ $PY tools/hd1910/board_capture.py --plan
 | 单颗舵机工具 | `tools/hd1910/servo_probe/`（identify_joints / hd1910_ident / calibrate_offsets / hd1910_snapshot 等） |
 | 现行线别 / 部署链 | SSOT `docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md` 订正⑫⑬㉑㉔㉕ |
 
-_本文纯新增，未改任何既有工具/契约数字，未碰采购域 SSOT、生成源、用户手改 xlsx 与 `.ref/`。所有 Dry-run 在 `live_hardware_accessed=false` 下完成，`ship_verdict=NOT_SHIPPABLE` 不变。_
+---
+
+## 8. 上板当天的门禁判读：本机红灯 ≠ 交付缺陷（2026-11-12 补）
+
+> ⚠️ **先读这节再跑门禁**。在本机（开发者工作树）跑 `run_all_gates` / `pytest` 会看到 **48/50门禁、2 条 pytest failed、`check_closure.py --check` rc=1**；**这是已知的本地假红，不是回归，也不是交付缺陷**。到货当天在干净 checkout（CI 环境）上这些全绿（A2 selftest 31/31、8 条 A2 测试全过、`--check` 8=8 rc=0）。别为本机红灯做任何"修复"。
+
+**根因（一句话）**：A2 的文档标记扫描 `scan_doc_marks()` 走**文件系统**遍历白名单根（`docs/` 等），于是本机一份**尚未入库（untracked）的安卓 App 线 C2 草稿文档**里那条"`robot.state` 通知流/重订阅未验"的标记被扫了进来，使本机 docs 标记数 9 > 契约 id 数 8；CI 干净树不含未跟踪文件，只扫到 8，与契约相等 → 绿。该安卓标记属**另一条软件产品线的 C2 悬案**，未登记进本仓库 A2 契约，也不该现在登记（见下「三条禁路」）。
+
+**自助判读（到货当天照跑，只读、不改任何东西）**：
+```bash
+cd microduck-software
+.venv-mjlab/Scripts/python.exe tools/hd1910/check_closure.py --explain
+# 本机有草稿时:  classification = LOCAL_ONLY_DRAFT_RED
+#                local structure = FAIL  /  committed structure = PASS  /  rc=0
+# 干净 checkout:  classification = ALIGNED  双绿  /  rc=0
+```
+`--explain` 会逐条列出多出的标记来自哪个文件、该文件是否 tracked，并给出**提交态（git 索引视角）**的结构判定。它**只是诊断、永远 rc=0、不是门禁**，`--check` 的判定与 rc 一个字没改。`--explain --json` 供脚本消费。判据：只要 `committed structure = PASS` 且 `ci_unregistered_markers` 为空，本机红灯就是假红，可安全继续 §1–§3 上板动作；若 `committed structure = FAIL`，那是**真回归**（有人把未登记标记写进了 tracked 文档），必须先修再上板。
+
+**三条禁路（做了会把 CI 干净树反向弄红，或掩盖缺口）**：
+- ❌ **只把那条标记加进 `closure_contract.json`**：CI 干净树没有那份草稿文档 → 契约多一条、docs 少一条 → `extra` 反向红。
+- ❌ **放宽/改成只扫 tracked 文档**：会削弱 C1「文档出现未登记标记必红」的承诺——一旦有人把带标记的文档 `git add`，本机就再也发现不了。
+- ❌ **移走/删除用户的安卓草稿文档来消红**：掩盖缺口，且那条 C2 悬案仍需闭合。
+
+**唯一正确闭合时机**：安卓 App 线正式入库时，**该草稿文档转 tracked** 与**把那条标记登记为 A2 第 9 条契约**必须**原子地同时做**，使本机与干净树的 id 集合一起变 9=9；在此之前本机 9/8 保持假红、CI 8/8 保持绿，两者都如实、都不动契约判定。⚠️ 任何 tracked 文档（含本单）都**不得写出那条标记的字面全名**——扫描正则是 `INCONCLUSIVE_` + 大写串，写出即被当成第 9 个文档标记反噬 CI，故本单只用中文描述、不落字面。
+
+**到货前消费端 Dry-run 证据（2026-11-12 本机实跑，全部 rc=0）**：P0 已下载的 4 个实体（R1 / V167 / control.43 固件包 / IMU bin）被下游三个入口正确消费，证明「到货当天照抄命令不会因工具/路径/实体缺失当场炸」——但这**只是工具链就绪**，非上板验收：
+
+| §0 表入口 | 命令（cwd=`microduck-software`） | 实跑结果 | 边界 |
+|---|---|---|---|
+| P0-1/P0-2 复核 | `local_evidence.py --verify` | `verdict=ALL_LOCAL_COMPUTED`，4/4 实体本地 sha 与发布 pin 一致；`ship=NOT_SHIPPABLE` | 只证字节同一，不证能刷入/过 `BA-X-1` |
+| §1.4 四元组配对 | `check_image_pairing.py --check --verify-sources .upstream` | `structure=PASS`，`source_files_verified=true`，`ship=NOT_SHIPPABLE` | control.43 版本仍等上板回读 |
+| §1.1 做卡配方 | `reproducible_card.py --check --verify-sources .upstream --flags "--overlay i2c4-m0"` | `structure=PASS`，`audited flags` 无 refused，`source_files_verified=true` | 不执行 dd；相机/ToF flag 仍强制 |
+
+> 三入口全 rc=0 仅说明**软件准备到位**；里程碑 ① 的 `live_hardware_accessed` 翻 true、A2 悬案闭合、人工签字仍全部等整机上板。`COLLECTED != PASS`、`工具就绪 != 悬案闭合` 不变。
+
+---
+
+_本文纯新增，未改任何既有工具/契约数字，未碰采购域 SSOT、生成源、用户手改 xlsx 与 `.ref/`。所有 Dry-run 在 `live_hardware_accessed=false` 下完成，`ship_verdict=NOT_SHIPPABLE` 不变。第 8 节为纯文档补充 + 只读诊断工具 `--explain`（`check_closure.py` 内新增，判定语义与 `--check` rc 不变）；新增 7 条注入式 selftest 负对照 + 3 条 CLI 回归测试，本机/CI 干净树双向已验。_
