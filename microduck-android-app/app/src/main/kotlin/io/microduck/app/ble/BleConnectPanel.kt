@@ -41,7 +41,7 @@ import java.util.Locale
  * ── 一手依据 ──
  *  1. Android 官方 Bluetooth permissions：API31+ 的 SCAN/CONNECT 是运行时权限；
  *     不用扫描结果推位置可加 neverForLocation 并把 FINE_LOCATION 限到 maxSdkVersion=30。
- *  2. BoBo 本地 `docs/design/app-path-design.md` §3.3：**不要用 service UUID 硬件过滤**——
+ *  2. **Pollen 原厂** `docs/design/app-path-design.md` §3.3（经 BoBo 本地副本核对）：**不要用 service UUID 硬件过滤**——
  *     bonded peripheral 常以空 service list 广播，过滤后「not reported at all」；
  *     应「scan unfiltered and discriminate your own candidates」，且「poll until a candidate
  *     appears」，单次 sleep 后取快照不可靠。
@@ -200,7 +200,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         scanning = true
         setStatus("扫描中 · 全量接收（无 UUID 硬件过滤）…")
 
-        // 🔴 传 null filters：官方 §3.3 与 DuckLink 实测都证明 service filter 会漏掉
+        // 🔴 传 null filters：Pollen 原厂 `app-path-design.md` §3.3 与 DuckLink 实测都证明 service filter 会漏掉
         // 以空 service list 广播的已绑定设备。判别放到下面的 discriminate()。
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)

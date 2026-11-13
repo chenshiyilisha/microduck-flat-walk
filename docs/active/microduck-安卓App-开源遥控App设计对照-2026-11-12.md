@@ -15,7 +15,7 @@
 - 每条「采纳」都要落到代码或明确标注为「不采纳 + 理由」；
   不把「看到别人有」当成「我们该有」。
 
-## 1. 仓库核验表（GitHub 官方 API 实测）
+## 1. 仓库核验表（GitHub REST API（`api.github.com`） 实测）
 
 | 类别 | 仓库（API 返回的 full_name） | ★ | 语言 | License | 默认分支 | 一手文档 |
 |---|---|---|---|---|---|---|
@@ -73,7 +73,7 @@
 - README：跨平台（Windows/macOS/Linux/**Android**/iOS）单代码库；
   「**Live Fly View** — real-time flight display with map, **instruments**, and full vehicle
   telemetry」、「**Vehicle setup** — guided wizards」、「**Mission planning**」。
-- 官方 Fly View User Guide：`View Selector` 切 Fly / Plan / Analyze / Vehicle Configuration /
+- QGC Fly View User Guide（QGroundControl 项目文档）：`View Selector` 切 Fly / Plan / Analyze / Vehicle Configuration /
   Application Settings；`Status Indicators`、`Telemetry Values`（**configurable**）、
   `Attitude/Compass`、`Video`（可与 Map 切主显示，video switcher 在左下角）。
 - ⇒ 强印证「驾驶/命令页 与 设置/分析页 分离」；只读仪表放顶部；视频是主显示而非小窗。
@@ -112,9 +112,12 @@
   「**View/Operator mode toggle** with operator seat locking」、
   「Real-time connection status display」；`bottom-bar.tsx` 放连接状态与模式切换。
 
-**Weston Robot Teleop / Uni Bonn RoMan 2012 / Blue Robotics Cockpit / Enou GCS**（前一轮已查）
+**Weston Robot Teleop / Blue Robotics Cockpit / Enou GCS**（前一轮已查）
 - driving view 布局独立于 dashboard；全屏相机 + 左右下角双摇杆 + 双拇指；松手即停；
   顶部/底部 mini widgets 放遥测。已在多页架构中落地。
+- ⚠️ 2026-11-13 复核：原列在此处的「Uni Bonn RoMan 2012 §A/§B.1」经核验**无原文可证**
+  （RoMan 2012 论文列表无此 Uni Bonn teleoperation 论文及章节），已从依据中移除；
+  双摇杆改以 arXiv:2110.08753 + FPV OSD 为依据，拆页改以 M3 / Weston / QGC 为依据。
 
 ## 3. 取长补短对照表
 
@@ -189,7 +192,7 @@
 用户 2026-11-13 点名核查：`pollen-robotics/microduck` 主仓（`btd/src/route.rs`、`duck-ble`、`duck-ipc-proto`）
 + `Ley-WL/ducklink`（Java/Android 原生）、`apirrone/microduck_app`（TS）、`KilllerBoss/microduck`（Kotlin RL）。
 **方法**：主仓协议文件走本地 `.upstream/DuckBuddy-main` + `out/evidence-official/official-main` 一手源码；
-3 个社区仓库走 GitHub 官方 API 核验（不采信搜索引擎）。
+3 个社区仓库走 GitHub REST API（`api.github.com`） 核验（不采信搜索引擎）。
 
 ### 7.1 主仓协议（`duck-ipc-proto` / `btd`）—— 确认 App 契约正确
 
@@ -198,7 +201,7 @@
 | 线格式 | `JSONRPC_VERSION="2.0"`，NDJSON | ✅ App 用 JSON-RPC 2.0 / NDJSON，一致 |
 | 方法面 | `robot.move / head / subscribe / state`、`system.authenticate`、`robot.health`、`robot.do`、`robot.setMode`、`pad.* / net.* / update.* / tof.* / chorale.*` 等一大票 | ✅ App 只取步行/遥测子集（`move/head/subscribe/state` + BLE 的 `system.authenticate`），主仓全有 ⇒ App 子集合法，未用的方法（look/theremin/chorale/pad/tof）正确不碰 |
 | 错误码 | `-32601` METHOD_NOT_FOUND、`-32602` INVALID_PARAMS、`-32603`、`PERMISSION_DENIED=14`；`route.rs` 明确「a refusal must be distinguishable from no-such-method」 | ✅ App 的 `-32601/-32602` 能力降级 + `AuthPolicy.AUTO` 按 kind 判 PIN 归属，正是这套语义 |
-| GATT UUID | `btd/src/gatt.rs`：`SERVICE_UUID=6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019`、`RPC_UUID=6f5d2a11-…-6019` | ✅ App `Wire.BLE_SERVICE_UUID` 用同一个 `6f5d2a10-…-6019`，与官方一致 |
+| GATT UUID | `btd/src/gatt.rs`：`SERVICE_UUID=6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019`、`RPC_UUID=6f5d2a11-…-6019` | ✅ App `Wire.BLE_SERVICE_UUID` 用同一个 `6f5d2a10-…-6019`，与 **Pollen 原厂**一致 |
 | 链路/插座 | `robotd` 监听 unix `/run/robotd.sock`；`route.rs` 路由 `Route::Local / To(upstream,lane) / Refused` | ✅ App「PC 侧 relay 转 TCP」正是为仿真期绕开 unix socket；`RobotTransport` 四后端（Ble/Tcp/WebRtc/Mock）统一收口 |
 | **API 版本分歧** | 主仓 `API_VERSION=16` | ⚠️ **fanhao 分支（App 实际对接）是 API40**（control.43/API40/imu-ft6）。这正是 App 不做「版本硬拒」、而靠 `-32601` 能力降级的理由；`HelloResult` 无 serial 不依赖、能力靠 -32601 判 |
 

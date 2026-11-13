@@ -3,7 +3,7 @@
 > 生成日期：2026-11-13（第二轮，针对首页）
 > 原则：本页每一项布局 / 元素 / 结构决策都需有一手或开源资料支撑，禁止凭空臆造。
 > 核验方式：2026-11-13 用 WebSearch 对关键断言逐一一手核验（见文末来源清单）；开源方案为
-> 「取长补短」式借鉴（仓库经 GitHub 官方 API / 官方文档核验存在），仅取其设计思路。
+> 「取长补短」式借鉴（仓库经 GitHub REST API（`api.github.com`） / 官方文档核验存在），仅取其设计思路。
 >
 > 分类标记：
 > ✅ 一手核验 —— 已用 WebSearch 抓到原文 / 原文页面 URL，断言与来源一致。
@@ -151,10 +151,10 @@
 - NIST UTAP 工作草案 3.2.19 — http://ws680.nist.gov/publication/get_pdf.cfm?pub_id=820526
 - OpenBot（DISCLAIMERS / 控制显示）— https://github.com/intel-isl/OpenBot
 - ohho.apk（LIVE/DEMO 诚实标注）— https://github.com/ohho-robotics/ohho.apk
-- ble-rc-controller / ROS_Robot_Controller（可调死区 / 持久偏好）— GitHub 官方 API 核验存在
+- ble-rc-controller / ROS_Robot_Controller（可调死区 / 持久偏好）— GitHub REST API（`api.github.com`） 核验存在
 - 车载 HUD 设计原则（MOMOUX / EVKX / NHTSA 人因指南）— 信息层级 / 视觉降噪通用文献
 
-## 开源借鉴仓库（GitHub 官方 API 核验存在，取设计思路）
+## 开源借鉴仓库（GitHub REST API（`api.github.com`） 核验存在，取设计思路）
 
 - `Lukaszm94/AndroidROSRobotTeleoperation`、`livekit-examples/teleop`、`ohho-robotics/ohho.apk`、
   `OpenBot`、`NextGTI/ble-rc-controller`、`Ley-WL/ducklink`、`Falcon` / `TechnoLynx` / `ColorSift`
@@ -166,8 +166,14 @@
    **无任何 Uni Bonn teleoperation 论文**，更无「§A：用户选择定义控制视图内容」章节。与遥控页
    此前删除的「RoMan 2012 §B.1」为**同类未核验引用**，已从类注释移除，改以 NIST UTAP 3.2.19
    （已一手核验）+ 用户拆页需求替代。
-2. **降级「BoBo mobile-app.md §4」引用**：全仓 Grep 无 `tolerates the link` 字符串、本地无该
-   文件，无法证实；linkBanner 依据改写为通用 teleop 安全共识 + OpenBot DISCLAIMERS。
+2. **⚠️ 复核纠正（同日第三轮，本条为上一轮的误判）**：上一轮把「Every screen tolerates the
+   link dropping underneath it and coming back」判为「无法证实」并降级为通用共识，**是错的**。
+   原文在 **Pollen 原厂** `pollen-robotics/microduck@main` 的
+   `docs/design/mobile-app.md` §4:156-157（fanhao 副本同），逐字命中。误判原因：当时只 Grep
+   工作区、漏查本地 `/tmp/fanhao` 一手源码（该 fork 不在 git worktree 内）。本轮用 GitHub REST
+   API（api.github.com）抓原厂原文（18796 B / md5 `a4652408f430`）与 fanhao 副本（`5cb5394f864e`）逐行
+   比对，除 §7 一行措辞外完全一致 ⇒ 引用成立，`MainActivity.kt` 的 linkBanner 注释已恢复为一手引用。
+   教训：**「查不到」先怀疑搜索范围，不要先判来源不存在**。
 3. **修正「4 列栅格是车载/IoT 标准」出处**：车载 HUD 文献无此说法，改写为「真机门禁单屏约束 +
    Material 3 compact window 通用高密度做法」。
 4. **升级已核验引用标注**：Weston Robot Teleop、NIST UTAP 3.2.19 经 WebSearch 一手核对原文，

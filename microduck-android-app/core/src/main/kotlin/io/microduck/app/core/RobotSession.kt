@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 会话层 —— P0 真正的核心复杂度（官方 mobile-app.md §4 明说）。
+ * 会话层 —— P0 真正的核心复杂度（**Pollen 原厂** `docs/design/mobile-app.md` §4 明说）。
  *
  * 职责：把「一次性 transport」变成「常驻、抗掉线的会话」：
  *   1. 握手状态机 DISCONNECTED → HELLO → [AUTH，仅 BLE] → READY
@@ -101,7 +101,7 @@ class RobotSession(
      *   握手**中途**又断」时 state 不是 RECONNECTING，旧代码就又启动一个 loop →
      *   多个 loop 并发 transport.connect() → 后建的连接拆掉前一个刚握到一半的链路 →
      *   指数级重连风暴（日志刷几百条 hello、卡在 AUTH、最终 hang）。
-     *   这与 Reachy Mini 官方 App 的坑同构：stopSession 作用在「刚 connect 的同名
+     *   这与 Reachy Mini App（Pollen 另一产品，非本项目官方）的坑同构：stopSession 作用在「刚 connect 的同名
      *   session」，mid-handshake 调用会拆掉自己刚建的 peer state（connection-controller.ts:480）。
      *
      * 🔑 修法有一手依据：社区连接去重共识是用「连接锁 / isConnecting / in-flight 标志」

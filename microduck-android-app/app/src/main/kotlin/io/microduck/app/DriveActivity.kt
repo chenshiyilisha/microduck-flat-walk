@@ -71,7 +71,7 @@ import io.microduck.app.core.NetpadDriveSink
  * 不可 opt out），且长时间遥控看不到电量。故采用 **edge-to-edge 透明栏 + 状态栏 scrim +
  * insets 让开交互控件**，不 hide systemBars。
  *
- * ## 开源方案「取长补短」落点（2026-11-12，仓库均经 GitHub 官方 API 核验）
+ * ## 开源方案「取长补短」落点（2026-11-12，仓库均经 GitHub REST API（`api.github.com`）核验）
  *  - QGroundControl Fly View（官方 User Guide）：顶部 Status Indicators + 「configurable
  *    Telemetry Values」只读仪表、Video/Map 主显示切换；Fly / Plan / Analyze / Setup 分离
  *    ⇒ 本页顶部只读 HUD + 取景框铺底，设置全放控制台页。

@@ -90,13 +90,14 @@ Native Kotlin。**当前进度：P0 全闭环 + P1 驾驶/健康 + 多页/横屏
   `components/navigation-bar/guidelines`：3–5 个顶层目的地用 navigation bar；
   `components/snackbar/guidelines`：半透明容器文字要清晰 ⇒ 浮层 alpha≈238。
 - **双拇指热区**：arXiv:2110.08753 横屏实测摇杆中心距左/下边 9.8–19.4mm 为推荐区；
-  Uni Bonn RoMan 2012 §B.1 全屏相机画面 + 左右下角双虚拟摇杆、双手握持双拇指操作。
+  FPV OSD（Oscar Liang / Betaflight）「keep the center frame clean」⇒ 全屏取景 +
+  双摇杆贴两下角、中央留画面。（原引「RoMan 2012 §B.1」2026-11-13 核验为未证实，已移除）
 - **手势冲突**：官方 gesture-nav 文档 `setSystemGestureExclusionRects()` 只对左右边缘返回手势
   局部 opt-out；**底部 home 手势不可 opt-out** ⇒ 靠 bottom padding 让开，且**不隐藏系统栏**
   （官方 immersive 文档：只在收益超过「单纯多占屏幕」时才隐藏）。
 - **拆页**：M3 Navigation bar、Weston Robot Teleop「driving view has its own arrangement ...
-  kept separately from the dashboard's」、RoMan 2012 §A 模式/页面选择与控制视图分离、
-  QGC 官方 Fly View 的 View Selector（Fly / Plan / Analyze / Setup）。
+  kept separately from the dashboard's」、QGC Fly View User Guide 的 View Selector
+  （Fly / Plan / Analyze / Setup）。（原引「RoMan 2012 §A」核验未证实，已移除）
 - **方向**：官方 `<activity>` 文档 `screenOrientation` 是 per-Activity 属性；
   `uses-feature ... required="false"` 避免 Google Play 按方向过滤设备。
   ⚠️ Android 16 (API36) 在 `sw>=600dp` 大屏会忽略方向限制，本项目 targetSdk35 / 手机暂不受影响，
@@ -105,7 +106,7 @@ Native Kotlin。**当前进度：P0 全闭环 + P1 驾驶/健康 + 多页/横屏
   AUTO = supervisory **监督/监测视图**，App 零驾驶帧。契约里虽有 `robot.do` / `robot.loadPolicy`，
   但**无整机、未验证策略启停** ⇒ 不调用、不宣称已启动自主行走。
 
-### 开源方案「取长补短」（仓库均经 GitHub 官方 API 核验）
+### 开源方案「取长补短」（仓库均经 GitHub REST API 核验）
 
 完整对照表、原文摘录、采纳/不采纳理由见
 `docs/active/microduck-安卓App-开源遥控App设计对照-2026-11-12.md`。摘要：
@@ -162,11 +163,11 @@ App 的骨架是 `RobotTransport` 抽象——四个后端收发**同一份 NDJS
   ↑core编排真测/app GATT仅编译↑ ↑真固件活体已验↑
 ```
 
-**为什么能换后端**：官方设计意图就是同一套 serde 消息类型复用在 BLE / WebRTC 数据通道上；
+**为什么能换后端**：**Pollen 原厂**的设计意图就是同一套 serde 消息类型复用在 BLE / WebRTC 数据通道上；
 `robot.*` JSON-RPC 在 unix socket / BLE / mediad control datachannel 上是同一份协议。
 `robotd` 只在 unix socket 服务，Android 连不了 → 仿真期经 PC 侧 `ssh -L`/relay 转 TCP。
 
-## 版本基线（已查官方矩阵，别乱改）
+## 版本基线（已查 JetBrains / Google / Gradle 三方兼容矩阵，别乱改）
 
 | 项 | 值 | 依据 |
 |---|---|---|

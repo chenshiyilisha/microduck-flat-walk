@@ -2,13 +2,21 @@
 
 > 日期 2026-11-12。用户要求：给 MicroDuck 开发一款安卓 App，先调研需要什么功能。
 > 用户补充：主链用 **fanhao 的方案**（ft1910 系），并希望在调研结果之外**自行考虑需要什么功能**。
-> 本文件只做调研，不写代码。结论基于一手资料：官方设计文档、机器人侧协议源码、社区 APK。
+> 本文件只做调研，不写代码。结论基于一手资料：Pollen 原厂设计文档、机器人侧协议源码、社区 APK。
+>
+> **🔴 来源术语（2026-11-13 用户明确；准绳见 `docs/active/microduck-来源术语约定-2026-11-13.md`）：
+> 本项目「官方 / 原厂」只指 Pollen Robotics 原厂 `pollen-robotics/microduck`。**
+> 本文历史行文里的「官方」一律读作 Pollen 原厂；`fanhao375/Microduck-kissqy`（API40，本 App
+> 对接目标）、B 代 API16 本地快照、`pollen-robotics/reachy_mini_mobile_app`（Pollen **另一产品**
+> Reachy Mini 的公开 App）均**不是官方**，须具名。原厂手机 App 仓 `pollen-robotics/microduck-app`
+> 私有（GitHub API 404），只能引用其设计文档。
+> ⚠️ API 版本三套别混：原厂 main=61（2026-11-13 实测）、fanhao=40（对接）、B 代=16（联调证据）。
 >
 > **核心结论：对接目标已定为 fanhao 栈（`fanhao375/Microduck-kissqy` fork）。**
-> 官方早就设计并实现过这款 App（`pollen-robotics/microduck-app`，Tauri 2 + React），但仓库私有（GitHub 404）。
-> fanhao 栈**完整继承了官方的 BLE 契约**（`duck-ble`/`duck-ipc-proto`/`btd/route.rs`），
-> 且 `API_VERSION=40` 满足官方 App 的下限 31。我们要做的不是从零设计功能，而是：
-> **照官方功能清单裁剪 → 结合我们实际处境补充 → 自研客户端**。
+> Pollen 原厂早就设计并实现过这款 App（`pollen-robotics/microduck-app`，Tauri 2 + React），但仓库私有。
+> fanhao 栈**完整继承了 Pollen 原厂的 BLE 契约**（`duck-ble`/`duck-ipc-proto`/`btd/route.rs`），
+> 且 `API_VERSION=40` 满足原厂设计文档 §6 的 App 下限 31。我们要做的不是从零设计功能，而是：
+> **照原厂功能清单裁剪 → 结合我们实际处境补充 → 自研客户端**。
 
 ---
 
@@ -193,7 +201,7 @@ FallPredictor、gain_limp、跌倒事件。显示：跌倒检测、limp 模式�
 
 **设计要点（P0 核心）**：App 定义一个 `RobotTransport` 接口（`connect` / `send(NDJSON)` / `subscribe` / `close`），四个实现 `BleTransport`(真机) / `TcpTransport`(仿真+relay) / `WebRtcTransport`(驾驶+视频) / `MockTransport`(无后端自测)。**上层会话层（重连/重认证/重订阅）、所有屏幕、安全逻辑只面对这一个接口**——于是：
 - 无整机期用 `Mock` + `Tcp(sim)` 把会话层和各屏全部开发测完；
-- 整机落地后**只换 transport 实现**，上层零改动（Reachy Mini 官方 `daemon --sim` 与真机同 API、SDK 不改代码，是同一思路）。
+- 整机落地后**只换 transport 实现**，上层零改动（Reachy Mini（Pollen 另一产品）的 `daemon --sim` 与真机同 API、SDK 不改代码，是同一思路）。
 - 🔑 这把「仿真开发模式」和「会话层」两个 P0 合并成**同一个架构决策**：先定 `RobotTransport`，两者一起落地。
 
 ⚠️ 注意 sim fidelity：microduck-mcp 的独立实测指出**参考 MuJoCo 场景对小速度命令 under-track、弱 yaw**（与我们 E3 的 undershoot ~45% 独立吻合）→ 仿真后端**不能用来标定驾驶手感**，只用来测协议/会话/UI 数据流；真实手感必须整机调。
@@ -216,9 +224,10 @@ E3 显示低层 vx 响应弱（undershoot ~45%），则 App 摇杆需要：
 
 用户要求「多找资料对照，取长补短」。除官方文档外，找到两份**公开源码**可对照：
 
-### 对照一：`pollen-robotics/reachy_mini_mobile_app`（官方参考实现，Apache-2.0，公开）
+### 对照一：`pollen-robotics/reachy_mini_mobile_app`（Pollen **另一产品** Reachy Mini 的参考 App，Apache-2.0，公开）
 
-这是官方文档 §2 说的「参考实现」，仓库**公开可读**（microduck-app 本身私有，但 Reachy Mini 的同类 App 开源）。
+这是 **Pollen 原厂** `docs/design/mobile-app.md` §2 说的「参考实现」，仓库**公开可读**
+（`pollen-robotics/microduck-app` 本身私有；此仓是 **Reachy Mini**，**不是 MicroDuck 官方**）。
 Tauri 2 + React 19 + MUI + tauri-plugin-blec，iOS/Android/桌面三端。**它的 BLE 是「跑一次」的配网向导，
 我们的是「永久通道」——结构不同，但配网 FSM、错误恢复、地址可见性的做法可直接借。**
 
@@ -338,7 +347,7 @@ Tauri 2 + React 19 + MUI + tauri-plugin-blec，iOS/Android/桌面三端。**它�
 - **`joeynyc/microduck-mcp`**（LobeHub 索引）—— MCP server，`DuckTransport` 单接口统一
   `mock`(canned) / `sim`(CPU MuJoCo+官方ONNX, sidecar) / `unix` / `ssh`，原文「工具与安全层在仿真和真机上完全相同」。
   **§5.6 `RobotTransport` 抽象的直接原型**；其 sim fidelity note（小速度 under-track、弱 yaw）与 E3 独立吻合。
-- **Reachy Mini 官方文档**（Seeed wiki + `involvex/reachy_mini` `docs/platforms/simulation/get_started.md`）——
+- **Reachy Mini（Pollen 另一产品）的文档**（Seeed wiki + `involvex/reachy_mini` `docs/platforms/simulation/get_started.md`）——
   `reachy-mini-daemon --sim` 与真机**同一套 HTTP(localhost:8000)/WebSocket API**，Python SDK 不改代码；
   Daemon 监听 localhost 提供 REST+WebSocket。**「仿真/真机同 API、客户端不改代码」的官方背书**。
 - **Hey Reachy**（`apps.apple.com` 独立客户端，非 Pollen 官方）—— Connect 页 Developer 下

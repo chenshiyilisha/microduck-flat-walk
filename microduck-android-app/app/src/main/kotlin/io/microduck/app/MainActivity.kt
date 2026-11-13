@@ -187,9 +187,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 链路状态横幅（A3）。断链/重连是 teleop **安全信息**，须在任何页面都可见
-     * （断链停车 / 失败第一态是 field-robot 安全共识，OpenBot DISCLAIMERS 亦要求随时可感知
-     * 连接状态）；本横幅默认 GONE，正常态不占视觉空间，异常时整条着色，不靠小字暗示。
+     * 链路状态横幅（A3）。一手依据：**Pollen 原厂**（唯一官方）`pollen-robotics/microduck@main`
+     * 的 `docs/design/mobile-app.md` §4:156-157 原文（fanhao fork 副本同源，见《来源术语约定》）
+     * 「Every screen tolerates the link dropping underneath it and coming back — including
+     *  during an update, where `btd` restarts five seconds after the reply goes out」。
+     * BLE 是**常驻通道**（不是一次性配网向导）：btd 断链即丢弃会话，重连后手机处于未认证态，
+     * 故断链/重连是安全信息，必须在每个页面可见。
+     * 本横幅默认 GONE，正常态不占视觉空间，异常时整条着色，不靠小字暗示。
+     *
+     * ⚠️ 2026-11-13 复核纠正：上一轮曾把这条引用判为「无法证实」并降级为通用共识，
+     * 实因当时只 Grep 了工作区、漏查本地 `/tmp/fanhao` 一手源码；现逐字命中，恢复一手引用。
      */
     private fun buildLinkBanner() = TextView(this).apply {
         contentDescription = "链路状态横幅"

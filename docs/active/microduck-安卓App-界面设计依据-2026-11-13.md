@@ -3,7 +3,7 @@
 > 生成日期：2026-11-13
 > 原则：本页每一项布局 / 元素 / 结构决策都需有一手或开源资料支撑，禁止凭空臆造。
 > 核验方式：2026-11-13 用 WebSearch 对关键断言做一手核验；开源方案为「取长补短」式借鉴
-> （仓库经 GitHub 官方 API 核验存在），仅取其设计思路，非逐字引用。
+> （仓库经 GitHub REST API（`api.github.com`） 核验存在），仅取其设计思路，非逐字引用。
 >
 > 分类标记：
 > ✅ 一手核验 —— 已用 WebSearch 抓到原文 / 原文页面 URL，断言与来源一致。
@@ -139,7 +139,7 @@
 - Android 15 behavior changes（edge-to-edge 强制）— developer.android.com/about/versions/15/behavior-changes-15
 - Android immersive / system-ui 文档 — developer.android.com/training/system-ui/immersive
 
-## 开源借鉴仓库（GitHub 官方 API 核验存在，取设计思路）
+## 开源借鉴仓库（GitHub REST API（`api.github.com`） 核验存在，取设计思路）
 
 - `Lukaszm94/AndroidROSRobotTeleoperation`（SP/PV 速度曲线）
 - `livekit-examples/teleop`（View/Operator 模式切换 + 角度刻度）

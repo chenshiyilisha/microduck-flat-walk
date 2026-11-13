@@ -19,7 +19,7 @@ package io.microduck.app.core
  *      回调 → 再处理下一个」；Android GATT 一次一个操作，不能并发（一手：Polidea react-native-ble-plx
  *      wiki、capacitor-community/bluetooth-le#751、NOOP ANDROID.md、bota-dev 真实 bug 报告
  *      "writeCharacteristic() - prior command is not finished"）。
- *   5. write type 用 **WRITE_TYPE_DEFAULT（WithResponse / acknowledged）**：fanhao 官方
+ *   5. write type 用 **WRITE_TYPE_DEFAULT（WithResponse / acknowledged）**：fanhao fork（非原厂）
  *      duckctl/src/main.rs:2075 "**Acknowledged writes, and that is not a detail.** An ATT Write
  *      Command (WithoutResponse) carries no reply, so a refusal — for insufficient encryption —
  *      is invisible: the request silently never arrives and the client waits out its timeout."。

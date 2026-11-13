@@ -25,7 +25,7 @@
 一句话：**在没有整机的前提下，把 App 的「骨架」——传输抽象 + 常驻会话层——开发并自测到可交付，整机落地后只换 transport 就能跑真机。**
 
 为什么这两个 P0 必须绑在一起做（不是一个接一个）：
-- 会话层（自动重连/重认证/重订阅）是官方 `mobile-app.md` §4 明说的「App 真正的核心复杂度」，但它**只有在能反复断/连的环境里才测得了**——真机现在没有。
+- 会话层（自动重连/重认证/重订阅）是**Pollen 原厂** `mobile-app.md` §4 明说的「App 真正的核心复杂度」，但它**只有在能反复断/连的环境里才测得了**——真机现在没有。
 - 仿真开发模式提供这个环境（`MockTransport` 可任意注入断连、`TcpTransport` 连 `robotd --sim`）。
 - 二者共享同一个前置决策：**`RobotTransport` 接口**。先定接口，会话层只面对接口，仿真后端只是接口的一个实现。
 
@@ -91,7 +91,7 @@ interface RobotTransport {
 
 ### 阶段 B — 会话层 `RobotSession`（P0 核心，用 Mock 驱动开发）
 
-**目标**：把官方 `mobile-app.md` §4 的会话语义实现完整，且每条都能被 Mock 的故障注入测到。
+**目标**：把**Pollen 原厂** `mobile-app.md` §4 的会话语义实现完整，且每条都能被 Mock 的故障注入测到。
 
 **必须先落地的 wire 事实（一手核实，别猜）**：
 
@@ -249,7 +249,7 @@ interface RobotTransport {
   `robotd/src/main.rs`（UnixListener/NDJSON）、`duck-control/src/sim.rs`（sim=TCP RemoteIo）、
   `mediad/src/{main,pipeline}.rs`（control datachannel = robot API pipe）、`docs/design/mobile-app.md`（会话层要求）。
 - **外部**：`craigm26/OpenCastor`（四传输同 JSON-RPC、ssh -L）、`joeynyc/microduck-mcp`（`DuckTransport`=mock/sim/unix/ssh 单接口）、
-  Reachy Mini 官方 sim 文档（`--sim` 同 API、SDK 不改）、Hey Reachy（无机器人 simulator 开发模式）、
+  Reachy Mini（Pollen 另一产品）的 sim 文档（`--sim` 同 API、SDK 不改）、Hey Reachy（无机器人 simulator 开发模式）、
   `pollen-robotics/reachy_mini_mobile_app`（会话/配网 FSM）、`TonyRuan/microduck-android`（驾驶屏 UX）。
 
 ---
@@ -272,7 +272,7 @@ interface RobotTransport {
   `SharedPreferences` 持久化 8 项参数，**mode / host 刻意不持久化**，冷启动强制回 MANUAL 保住手动接管入口。
 
 依据：M3 Navigation bar（3–5 个顶层目的地）、Weston Robot Teleop（dashboard 与 driving view 布局分离）、
-Uni Bonn RoMan 2012 §B.1（全屏相机 + 左右下角双虚拟摇杆）、Android `<activity>` 官方文档
+arXiv:2110.08753（横屏双拇指舒适区实测 ⇒ 全屏取景 + 双摇杆贴两下角）、Android `<activity>` 官方文档
 （`screenOrientation` 为逐 Activity 属性）、Android 官方 immersive 文档（不 hide systemBars，
 改 edge-to-edge + scrim + insets，避免与底部 home 手势冲突）。
 

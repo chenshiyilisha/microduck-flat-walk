@@ -26,7 +26,7 @@ import kotlin.math.hypot
  * 「**Two of the four joints do the aiming — head_pitch and head_yaw** — while neck_pitch
  * is posture the caller chooses and head_roll stays level」；同文件 :310 单测断言
  * `gaze.joints[3] == 0.0`（head_roll stays level）。单摇杆视角恰好就是这两路瞄准关节。
- * 这不是"少实现两路"，而是照官方的凝视语义分工。
+ * 这不是"少实现两路"，而是照 fanhao fork 固件（`kinematics/src/head.rs`）的凝视语义分工。
  *
  * ## 幅度 headRad（R17 live input limits）
  * 一手 `padd/src/input_settings.rs:18` 校验 `![0.5, 1.0, 2.5].contains(&head_rad)` 即报错，

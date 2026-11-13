@@ -9,7 +9,7 @@ package io.microduck.app.core
  *   MockTransport     无后端自测（P0 阶段 A）：内存 canned + 可编程故障注入
  *
  * 之所以能换后端：四者收发的是**同一份 NDJSON JSON-RPC 2.0 行协议**（见 Wire.kt 注释）。
- * 这是官方设计意图（同一套 serde 消息类型复用在 BLE / WebRTC 数据通道上），不是我们臆断。
+ * 这是 **Pollen 原厂**的设计意图（同一套 serde 消息类型复用在 BLE / WebRTC 数据通道上），不是我们臆断。
  *
  * 接口刻意用**同步阻塞式** request/connect（不用 suspend/coroutines）：
  *  - Mock / 会话层是纯内存状态机，无需挂起，纯 kotlinc + JDK17 即可真编译真测（零外部依赖）；

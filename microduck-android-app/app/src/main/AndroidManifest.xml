@@ -63,7 +63,8 @@
           横屏全屏遥控 / 监督视图。
           官方 <activity> 文档：screenOrientation 是逐 Activity 属性；
           sensorLandscape 允许正反两个横屏方向、跟随传感器（比写死 landscape 更适合双手横握）。
-          依据 Uni Bonn RoMan 2012 §B.1：全屏相机画面 + 左右下角双摇杆、双拇指操作。
+          依据 arXiv:2110.08753（横屏双拇指舒适区实测：距左/下边 9.8–19.4mm）
+          + FPV OSD「keep the center frame clean」：全屏取景 + 双摇杆贴两下角、中央留画面。
 
           ⚠️ 边界：Android 16 (API36) 在 sw>=600dp 大屏上会忽略该限制
           （developer.android.com/about/versions/16/behavior-changes-16）。
