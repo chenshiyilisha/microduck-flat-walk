@@ -404,6 +404,8 @@ class RobotSession(
         Method.HELLO, Method.SYSTEM_INFO, Method.ROBOT_HEALTH, Method.ROBOT_STATE,
         Method.ROBOT_POLICIES, Method.ROBOT_MODEL, Method.NET_STATUS, Method.NET_SCAN,
         Method.UPDATE_STATUS, Method.UPDATE_CHECK, Method.SYSTEM_LOGS,
+        // A4：控制者归属只读查询，断链恢复后应可安全重放（replayable）。
+        Method.ROBOT_REMOTE_SESSION_ACTIVE, Method.ROBOT_MODEL_API,
     )
 
     fun close() {

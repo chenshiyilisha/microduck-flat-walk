@@ -88,7 +88,7 @@ fanhao 副本 `5cb5394f864e`，逐行 diff **仅 §7 一行**（`robot.sound` �
 
 | # | 功能 | 依据 | 价值 / 风险 | 建议 |
 |---|---|---|---|---|
-| A1 | **BLE 前台服务 + `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_CONNECTED_DEVICE` / `POST_NOTIFICATIONS` + 运行时权限请求** | ✅ Google `developer.android.com/develop/connectivity/bluetooth/bt-permissions`：API31+ 的 SCAN/CONNECT 是运行时权限、SCAN 可加 `neverForLocation`；API34+ 的 `connectedDevice` FGS 类型需先持有 BLUETOOTH_CONNECT/SCAN/ADVERTISE 之一；API31+ 后台起 FGS 抛 `ForegroundServiceStartNotAllowedException` ⇒ 必须在 Activity 可见时启动。🟡 社区 `Ley-WL/ducklink`：前台服务持 `BluetoothGatt` + 全部 GATT 操作串行 | **代码里确定缺**：Manifest 只有 `BLUETOOTH_SCAN/CONNECT`（已正确加 `neverForLocation`、legacy 限 `maxSdkVersion=30`），**没有 FGS 权限、没有 Service 声明** ⇒ 切后台/锁屏 GATT 会断，真 GATT 上板必踩 | **最高优先**。生命周期可用 `FakeGattLink` 在 JVM 测，不需整机 |
+| A1 | **BLE 前台服务 + `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_CONNECTED_DEVICE` / `POST_NOTIFICATIONS`**（⚠️ 复核修正：运行时权限请求 `BleConnectPanel.requiredPermissions()/requestPermissions()` **已有**，不是缺口） | ✅ Google `developer.android.com/develop/connectivity/bluetooth/bt-permissions`：API31+ 的 SCAN/CONNECT 是运行时权限、SCAN 可加 `neverForLocation`；API34+ 的 `connectedDevice` FGS 类型需先持有 BLUETOOTH_CONNECT/SCAN/ADVERTISE 之一；API31+ 后台起 FGS 抛 `ForegroundServiceStartNotAllowedException` ⇒ 必须在 Activity 可见时启动。🟡 社区 `Ley-WL/ducklink`：前台服务持 `BluetoothGatt` + 全部 GATT 操作串行 | **复核后真实缺口**：Manifest 原先只有 `BLUETOOTH_SCAN/CONNECT`（`neverForLocation`、legacy 限 `maxSdkVersion=30` 均已正确），**没有 FGS 权限、没有 Service 声明**，且 GATT link 只由 `BleConnectPanel` 的 Activity 局部变量持有 ⇒ 切后台/锁屏引用丢失、链路断 | **最高优先**，2026-11-13 已落地 `DuckBleService`；纯策略部分用 JVM 自检，真 GATT 仍待整机 |
 | A2 | **配网 / 救砖（wifi 屏）**：`net.status` / `net.scan` / `net.connect` / `net.forget`，每步错误带 `recoverPhase`、地址徽章、手机→机器人 HTTP 同网探测 | ✅ 原厂 §1.2：「**BLE is the app's channel** … A board arrives somewhere new, the wifi it knows is not there … an app that needed the LAN to change a setting could not fix the setting keeping the robot off the LAN」；`drive` 的地址从 `net.status` 经 BLE 拿。✅ 原厂 `btd/src/route.rs` 把 `NET_CONNECT` / `NET_FORGET` 列为 BLE **允许**的 mutating 调用。🟡 Reachy Mini（Pollen 另一产品）的配网 FSM / address badge / HTTP probe | 原厂 App 的**核心价值**，我们完全没有；无网机器人唯一入口 | **先做，但见 A2'** |
 | A2' | **BLE 应用层加密**（Q3 从待拍板升级为配网前置） | ✅ 原厂 §7 原文：「an app whose job is writing a wifi passphrase **cannot ship over a link that carries it in clear**」；§8.1 三个候选修复中有两个不需要 bonding。🟡 Reachy Mini `x25519-hkdf-sha256-aesgcm` 现成方案 | 与 A2 绑定：**先做配网而不加密 = 明文传 Wi-Fi 密码**。内部自测可接受，对外交付不行 | 与 A2 同批评估；或 A2 先只做「只读 `net.status`」不写密码 |
 | A3 | **系统信息 / 服务 / 日志屏**：`system.info` / `system.services` / `system.logs` / `system.setName` / `system.reboot` | ✅ 原厂 §1「the robot」「logs」屏明列；`lib.rs:823-831` | 台架排障价值高、只读为主、成本低 | 先做只读三项；改名/重启属 mutating，后置 |
@@ -142,7 +142,27 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 
 ---
 
-## 5. 一手来源清单
+## 5. 落地状态（2026-11-13 17:00 更新）
+
+用户「你决定，按照最优的来」⇒ 按 §4 顺序落地 **A1 / A4 / A5**，本轮**真正改了功能代码**，不再是纯盘点。
+
+| 项 | 状态 | 实现 | 证据 |
+|---|---|---|---|
+| A1 | ✅ 已落地 | 新增 `DuckBleService`（`connectedDevice` 前台服务，持 GATT 引用、通知带「断开」action）、Manifest 三项权限 + `<service>` 声明、`BleConnectPanel` 在连接成功回调（Activity 可见）启动 FGS、权限集合统一下沉到 core `BleForegroundPolicy`（JVM 自检与真机共用同一判据） | `selftest.sh` **283/283**；真负对照「把权限名改成 `_BROKEN`」→ **281/2 红**、恢复后 283/0；`assembleDebug` BUILD SUCCESSFUL；真机门禁 59/59 |
+| A4 | ✅ 已落地 | `Wire` 加 `robot.remoteSessionActive` / `robot.modelApi`（一手 `lib.rs:589/587`）、纳入 `RobotSession.isReadOnly`、`SessionHolder.refreshSessionInfo()` null-safe 读回（**Mock 不查**、缺字段保持「未知」）、HUD `signalRow` 显示「遥在场 有/无/未知」 | 门禁输出可见「链路 无 · 状态 — Hz · 遥在场 未知」；自检对方法名与只读归属各带负对照 |
+| A5 | ✅ 已落地（机制本就有，只做显性化） | 断链恢复 READY 时横幅显示「驾驶不自动续动，需重新主动接管」，4s 后由 `tick` 清除；`renderLinkBanner` 改差异更新，避免再次触发 `could not get idle state` | 门禁 59/59；⚠️ **真机断链→恢复场景未复验**（`UNVERIFIED`） |
+| A2 / A2' / A3 / A6 / A7 / A8 | ⏳ 未做 | 配网要写 Wi-Fi 密码，须先拍板 Q3 加密；只读屏与演示入口待后续 | — |
+| A9 / B / C | 维持不做 / 等整机 | 见 §3、§4 | — |
+
+**过程中两个真实踩坑（已修，留档防复发）**
+1. **裸子串扫描假绿**：新增的 Manifest 声明自检原用 `xml.contains(权限名)`；真负对照把权限名改成 `..._BROKEN` 后原串仍是子串，自检 **283/0 假绿**。改为正则提取所有 `android:name` 完整值做集合包含后，负对照正确变红（281/2，exit 1）。
+2. **vivo 安装拦截**：Manifest 新增运行时权限后 `adb install -r` 报 `INSTALL_FAILED_ABORTED: User rejected permissions`（资料：设备端 USB 安装确认 / 新权限确认）。`adb install -r -g`（自动授予运行时权限）成功。
+
+⚠️ 边界：真 GATT 上板、**后台保活的真机行为**、断链恢复提示显示均**未验证**；整机落地前 `ship_verdict=NOT_SHIPPABLE`。
+
+---
+
+## 6. 一手来源清单
 
 **Pollen 原厂（唯一官方）**
 - `pollen-robotics/microduck@main` → `docs/design/mobile-app.md` §1 屏幕×调用表、§1.1/§1.2 两条传输、§4 会话层、§6 版本下限、§7 机器人仍欠 App 的清单、§8 Open

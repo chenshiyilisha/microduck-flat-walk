@@ -44,6 +44,13 @@ object Method {
     const val ROBOT_POLICIES = "robot.policies"
     const val ROBOT_LOAD_POLICY = "robot.loadPolicy"
     const val ROBOT_MODEL = "robot.model"
+    /** 是否有遥在场会话（A4 控制者归属显示）。一手：fanhao 副本 lib.rs:589
+     *  `pub const ROBOT_SESSION_ACTIVE: &str = "robot.remoteSessionActive";`
+     *  路由 `Call::RobotRemoteSessionActive -> (Robot, Prompt)`（lib.rs:1367）。只读。 */
+    const val ROBOT_REMOTE_SESSION_ACTIVE = "robot.remoteSessionActive"
+    /** 该固件实现的 model API 版本；仅供只读展示，不用于硬拒（A9 维持不做）。
+     *  一手：lib.rs:587 `ROBOT_MODEL_API`。 */
+    const val ROBOT_MODEL_API = "robot.modelApi"
     const val NET_STATUS = "net.status"
     const val NET_SCAN = "net.scan"
     const val NET_CONNECT = "net.connect"

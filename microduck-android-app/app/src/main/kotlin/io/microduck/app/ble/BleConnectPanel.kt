@@ -1,6 +1,5 @@
 package io.microduck.app.ble
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
@@ -25,6 +24,7 @@ import com.google.android.material.button.MaterialButton
 import io.microduck.app.ControlMode
 import io.microduck.app.R
 import io.microduck.app.SessionHolder
+import io.microduck.app.core.BleForegroundPolicy
 import io.microduck.app.core.BleTransport
 import io.microduck.app.core.ConnectTarget
 import io.microduck.app.core.Wire
@@ -39,7 +39,7 @@ import java.util.Locale
  * 显示失败，绝不能显示「已连接」。core 侧 `BleTransport` 协议编排已用 FakeGattLink 在 JVM 真测。
  *
  * ── 一手依据 ──
- *  1. Android 官方 Bluetooth permissions：API31+ 的 SCAN/CONNECT 是运行时权限；
+ *  1. Google Android 平台文档 Bluetooth permissions：API31+ 的 SCAN/CONNECT 是运行时权限；
  *     不用扫描结果推位置可加 neverForLocation 并把 FINE_LOCATION 限到 maxSdkVersion=30。
  *  2. **Pollen 原厂** `docs/design/app-path-design.md` §3.3（经 BoBo 本地副本核对）：**不要用 service UUID 硬件过滤**——
  *     bonded peripheral 常以空 service list 广播，过滤后「not reported at all」；
@@ -59,6 +59,8 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
 
     companion object {
         const val REQ_CODE = 4711
+        /** 通知权限单独请求码：刻意与 BLE 权限分开，避免被 onPermissionResult 误判为扫描授权。 */
+        const val REQ_CODE_NOTIF = 4712
         private const val SCAN_MS = 12_000L
         private const val REFRESH_MS = 500L
         private val DUCK_NAME = Regex("duck", RegexOption.IGNORE_CASE)
@@ -80,12 +82,13 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     private var listCol: LinearLayout? = null
     private var scanButton: MaterialButton? = null
 
+    /**
+     * 权限集合**不在这里另写一份**，统一走 core 的 [BleForegroundPolicy]，
+     * 让 JVM 自检与真机消费链共用同一判据（项目铁律：两条链 import 同一函数）。
+     * ⚠️ 刻意不含 POST_NOTIFICATIONS：那只影响通知可见性，不该挡住 BLE 扫描入口。
+     */
     fun requiredPermissions(): Array<String> =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
+        BleForegroundPolicy.bleRuntimePermissions(Build.VERSION.SDK_INT).toTypedArray()
 
     private fun granted(): Boolean = requiredPermissions().all {
         activity.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
@@ -329,19 +332,44 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         setStatus("正在连接 ${c.name.ifEmpty { c.address }} …\n" +
             "⚠ 真 GATT 未上板验收：若握手失败会显示具体原因，不会显示已连接")
         val link = AndroidBleGattLink(activity.applicationContext, c.device)
+        // A1：先交给前台服务持引用，Activity 退后台后 GATT 不会被回收。
+        DuckBleService.attach(link)
         val transport = BleTransport(link)
-        // serial 用广播名（BoBo §8.2：地址会变、serial 不变；当前固件未在广播里给 serial，
-        // 这里以名字作为身份候选并明确标注，绝不把 address 当身份）。
+        // serial 用广播名（原厂 app-path-design.md §8.2：地址会变、serial 不变；当前固件
+        // 未在广播里给 serial，这里以名字作为身份候选并明确标注，绝不把 address 当身份）。
         val serial = c.name.ifEmpty { "UNKNOWN-${c.address}" }
         SessionHolder.connectWith(transport, ConnectTarget.Ble(serial)) { ok ->
             ui.post {
-                setStatus(if (ok) "已连接 BLE · $serial（会话 READY）"
-                else "⚠ BLE 握手失败 · ${SessionHolder.note}。请确认设备是 MicroDuck 固件，" +
-                    "或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED")
+                if (ok) {
+                    var fgsNote = " · 后台保活已启用"
+                    // 🔴 必须在 Activity 可见时启动 FGS（API31+ 后台起会抛
+                    // ForegroundServiceStartNotAllowedException）。回调在主线程、页面在前台。
+                    try {
+                        DuckBleService.start(activity, serial)
+                    } catch (e: Throwable) {
+                        fgsNote = " · ⚠ 保活服务启动失败(${e.javaClass.simpleName})，切后台可能断链"
+                    }
+                    // 通知权限单独按需请求：失败不影响 BLE 链路，只在通知栏看不到常驻通知。
+                    val notif = BleForegroundPolicy.notificationPermission(Build.VERSION.SDK_INT)
+                    if (notif != null && activity.checkSelfPermission(notif) !=
+                        PackageManager.PERMISSION_GRANTED) {
+                        activity.requestPermissions(arrayOf(notif), REQ_CODE_NOTIF)
+                    }
+                    setStatus("已连接 BLE · $serial（会话 READY$fgsNote）")
+                } else {
+                    DuckBleService.detach(link)
+                    link.close()
+                    setStatus("⚠ BLE 握手失败 · ${SessionHolder.note}。请确认设备是 MicroDuck 固件，" +
+                        "或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED")
+                }
                 SessionHolder.selectMode(ControlMode.MANUAL)
             }
         }
     }
 
+    /**
+     * 刻意**不**在这里停前台服务：后台/锁屏保活正是 A1 的设计意图。
+     * 用户可从常驻通知的「断开」action 显式停止（Google FGS 平台文档要求可停止）。
+     */
     fun onDestroy() { stopScan(); ui.removeCallbacksAndMessages(null) }
 }

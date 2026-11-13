@@ -1,5 +1,6 @@
 package io.microduck.app
 
+import io.microduck.app.core.BleForegroundPolicy
 import io.microduck.app.core.ConnectInputParser
 import io.microduck.app.core.ConnectTarget
 import io.microduck.app.core.Disposable
@@ -66,14 +67,28 @@ object SessionHolder {
     @Volatile var connectError: String = ""
 
     /**
-     * 链路状态横幅（A3）。BoBo `mobile-app.md` §4：「Every screen tolerates the link dropping
-     * underneath it and coming back」，§2 又说后台掉线是 *expected, not a fault* ⇒ 文案写
-     * 「正在重连」而不是「错误」。空串 = 正常，不显示横幅。
+     * 链路状态横幅（A3）。**Pollen 原厂** `docs/design/mobile-app.md` §4（经 fanhao / BoBo
+     * 副本核对，原厂当前版同文）：「Every screen tolerates the link dropping underneath it
+     * and coming back」，§2 又说后台掉线是 *expected, not a fault* ⇒ 文案写「正在重连」
+     * 而不是「错误」。空串 = 正常，不显示横幅。
      */
     @Volatile var linkStatus: String = ""
     /** 0=无 / 1=警告(重连中) / 2=错误(失败)。UI 据此选背景色。 */
     @Volatile var linkLevel: Int = 0
     private var eventSub: Disposable? = null
+
+    /**
+     * A4 控制者归属 / 会话活性。**null = 未知**（固件未提供 / 方法不支持 / 未查询），
+     * 绝不默认成 false —— 项目铁律 `UNVERIFIED != PASS`，也符合 Wandelbots NOVA 合规文档
+     * 「It must always be made clear by the UI which device is currently controlling the
+     * robot」(DIN EN ISO 10218-1)：不知道就写不知道。
+     * 一手：`duck-ipc-proto/src/lib.rs:589` `ROBOT_SESSION_ACTIVE = "robot.remoteSessionActive"`。
+     */
+    @Volatile var remoteSessionActive: Boolean? = null
+    /** model API 版本，只读展示用；「—」= 未读到。绝不拿它做硬拒（A9 维持不做）。 */
+    @Volatile var modelApiText: String = "—"
+    /** A5：链路恢复提示的时间戳，0 = 无提示。超时由 [tick] 清掉。 */
+    @Volatile var recoveredAtMs: Long = 0L
 
     @Volatile private var lastSentSnapshot: Int = 0
     @Volatile private var lastSampleMs: Long = 0L
@@ -158,6 +173,8 @@ object SessionHolder {
             sinkLabel = "-"
             // subscribe() 内部同步发请求（真 TCP 是阻塞 I/O），必须在后台线程。
             Thread { subscribe(s, kind) }.start()
+            // A4：连接建立后读一次控制者归属；只在真实链路上查，Mock 夹具不当实机。
+            if (ok) refreshSessionInfo()
             onDone(ok)
         }.start()
     }
@@ -171,7 +188,21 @@ object SessionHolder {
         eventSub = s.onEvent { e ->
             when (e) {
                 is RobotSession.Event.StateChanged -> when (e.to) {
-                    RobotSession.State.READY -> { linkStatus = ""; linkLevel = 0 }
+                    RobotSession.State.READY -> {
+                        // A5：断链恢复后**不自动续动**。一手依据 Wandelbots NOVA 合规文档
+                        // 「Restored communication can't result in machine reboots, actions
+                        //  or movements」+ Pollen 原厂 mobile-app.md §4「Every screen
+                        //  tolerates the link dropping underneath it and coming back」。
+                        // 机制本就已有（松手归零 + 重连后不发意图），这里只把状态说清，
+                        // 不新增运动能力，避免操作员误以为恢复即续动。
+                        val wasDown = linkLevel > 0
+                        linkStatus = if (wasDown)
+                            "✓ 链路已恢复 · 驾驶不自动续动，需重新主动接管" else ""
+                        linkLevel = 0
+                        recoveredAtMs = if (wasDown) System.currentTimeMillis() else 0L
+                        // 重连后重新读回会话活性，绝不沿用断链前的陈旧值。
+                        if (wasDown) refreshSessionInfo()
+                    }
                     RobotSession.State.RECONNECTING -> {
                         linkStatus = "⚠ 链路已断 · 正在重连（驾驶帧已停）"; linkLevel = 1
                     }
@@ -203,6 +234,42 @@ object SessionHolder {
         }
     }
 
+    /**
+     * A4：只读查询 `robot.remoteSessionActive` / `robot.modelApi`（一手 lib.rs:587/589）。
+     *
+     * 🔴 三条纪律：
+     *  1. **Mock 夹具不查**：它不是实机，查出来的任何值都不能当实机读数展示；
+     *     同时避免未知方法请求扰动门禁用的 Mock 会话。
+     *  2. **缺字段/不支持 ⇒ null（未知）**，绝不默认 false。`-32601` 由 RobotSession
+     *     做能力降级（记入 unsupported），此处不报错、不重连。
+     *  3. 响应结构各固件版本可能不同 ⇒ null-safe 多候选键，取不到就保持未知。
+     */
+    fun refreshSessionInfo() {
+        if (session == null || kind == "MOCK") {
+            remoteSessionActive = null; modelApiText = "—"; return
+        }
+        Thread {
+            val o = session?.call(Method.ROBOT_REMOTE_SESSION_ACTIVE)?.getOrNull()
+            remoteSessionActive = o?.let { obj ->
+                val key = listOf("active", "session_active", "remote_session_active", "value")
+                    .firstOrNull { obj.has(it) && obj.get(it).isJsonPrimitive }
+                val prim = key?.let { obj.get(it).takeIf { p -> p.isJsonPrimitive }?.asJsonPrimitive }
+                when {
+                    prim == null -> null
+                    prim.isBoolean -> prim.asBoolean
+                    prim.isNumber -> prim.asInt != 0
+                    else -> null
+                }
+            }
+            val m = session?.call(Method.ROBOT_MODEL_API)?.getOrNull()
+            modelApiText = m?.let { obj ->
+                listOf("api_version", "model_api", "version")
+                    .firstOrNull { obj.has(it) && obj.get(it).isJsonPrimitive }
+                    ?.let { obj.get(it).asJsonPrimitive.asString } ?: "—"
+            } ?: "—"
+        }.start()
+    }
+
     /** robot.health 只读；[onDone] 在后台线程回调。 */
     fun refreshHealth(onDone: (String) -> Unit) {
         Thread {
@@ -230,6 +297,12 @@ object SessionHolder {
     fun tick() {
         val now = System.currentTimeMillis()
         uiTickCount.incrementAndGet()      // 本地活跃度，永远不依赖谁先调
+        // A5：恢复提示到期即清，不能永久占着横幅。放在采样去重之前，
+        // 否则两 Activity 交替调用时第二次会 return、提示可能清不掉。
+        if (recoveredAtMs > 0 && now - recoveredAtMs > BleForegroundPolicy.RECOVERY_NOTICE_MS) {
+            recoveredAtMs = 0
+            if (linkLevel == 0) linkStatus = ""
+        }
         if (now - lastSampleMs < 900) return
         lastSampleMs = now
         val elapsed = now - stateWindowStartMs

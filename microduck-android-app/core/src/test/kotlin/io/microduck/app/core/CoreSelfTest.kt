@@ -1218,10 +1218,70 @@ object CoreSelfTest {
         testHeadSink()
         testStateSnapshot()
         testConnectInputParser()
+        testBleForegroundPolicy()
+        testReadOnlyCapabilityMethods()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
         if (failed > 0) kotlin.system.exitProcess(1)
+    }
+
+    // ---- N. A1 BLE 前台服务策略（纯逻辑 + Manifest 静态核对，带负对照）----
+    private fun testBleForegroundPolicy() {
+        println("\n[N] A1 BLE 前台服务策略 / Manifest 声明")
+        val p31 = BleForegroundPolicy.bleRuntimePermissions(31)
+        check("API31+ 要 SCAN+CONNECT",
+            p31 == listOf("android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT")) { p31.toString() }
+        // 负对照：低版本不能索要系统里不存在的权限（用户铁律：改坏必红）
+        val p30 = BleForegroundPolicy.bleRuntimePermissions(30)
+        check("负对照:API30 不误要 BLUETOOTH_SCAN", "android.permission.BLUETOOTH_SCAN" !in p30) { p30.toString() }
+        check("负对照:API30 要的是 FINE_LOCATION",
+            p30 == listOf("android.permission.ACCESS_FINE_LOCATION")) { p30.toString() }
+        check("FGS 类型 = connectedDevice", BleForegroundPolicy.FGS_TYPE == "connectedDevice")
+        check("负对照:FGS 类型不是 location", BleForegroundPolicy.FGS_TYPE != "location")
+        check("API33 通知权限 = POST_NOTIFICATIONS",
+            BleForegroundPolicy.notificationPermission(33) == "android.permission.POST_NOTIFICATIONS")
+        check("负对照:API32 无通知权限", BleForegroundPolicy.notificationPermission(32) == null)
+        // 自检必须真读 Manifest：声明漏一条时 Service 照样编译，只在运行时崩。
+        // 🔴 用正则取出所有 android:name 的**完整值**做集合包含，不用裸子串 contains：
+        //   真负对照实测过，contains 对 `..._BROKEN` 这种改坏会假绿。
+        val mf = java.io.File("app/src/main/AndroidManifest.xml")
+        check("Manifest 文件可读", mf.isFile) { "cwd=" + System.getProperty("user.dir") }
+        val xml = if (mf.isFile) mf.readText() else ""
+        val declared = Regex("""android:name="([^"]+)"""")
+            .findAll(xml).map { it.groupValues[1] }.toSet()
+        BleForegroundPolicy.REQUIRED_PERMISSION_NAMES.forEach { name ->
+            check("Manifest 声明完整权限名 $name", name in declared) { "declared=$declared" }
+        }
+        check("Manifest service 声明 foregroundServiceType=connectedDevice",
+            xml.contains("android:foregroundServiceType=\"${BleForegroundPolicy.FGS_TYPE}\""))
+        check("负对照:Manifest 不含伪造的 location FGS 类型",
+            !xml.contains("android:foregroundServiceType=\"location\""))
+        // 负对照：拼错 / 加后缀的伪权限名绝不能混进集合 —— 证明判据是「完整值相等」而非子串。
+        val broken = BleForegroundPolicy.REQUIRED_PERMISSION_NAMES.map { "${it}_BROKEN" }
+        check("负对照:改坏的权限名不在声明集合中(子串扫描会假绿)",
+            broken.isNotEmpty() && broken.none { it in declared }) { "declared=$declared" }
+    }
+
+    // ---- N+1. A4 新增只读方法的契约与白名单归属 ----
+    private fun testReadOnlyCapabilityMethods() {
+        println("\n[N+1] A4 控制者归属只读方法")
+        check("remoteSessionActive 方法名照抄一手 lib.rs:589",
+            Method.ROBOT_REMOTE_SESSION_ACTIVE == "robot.remoteSessionActive")
+        check("负对照:不是拼错的 robot.sessionActive",
+            Method.ROBOT_REMOTE_SESSION_ACTIVE != "robot.sessionActive")
+        check("modelApi 方法名照抄一手 lib.rs:587",
+            Method.ROBOT_MODEL_API == "robot.modelApi")
+        // isReadOnly 是 private，用反射拿到真函数而不是复制一份判据（避免「测的是副本」假绿）。
+        val m = RobotSession::class.java.getDeclaredMethod("isReadOnly", String::class.java)
+        m.isAccessible = true
+        val s = RobotSession(MockTransport())
+        check("remoteSessionActive 判为只读(断链可重放)",
+            m.invoke(s, Method.ROBOT_REMOTE_SESSION_ACTIVE) as Boolean)
+        check("modelApi 判为只读", m.invoke(s, Method.ROBOT_MODEL_API) as Boolean)
+        check("负对照:robot.move 不是只读", !(m.invoke(s, Method.ROBOT_MOVE) as Boolean))
+        check("负对照:robot.loadPolicy 不是只读", !(m.invoke(s, Method.ROBOT_LOAD_POLICY) as Boolean))
+        s.close()
     }
 
     private operator fun String.times(n: Int) = repeat(n)

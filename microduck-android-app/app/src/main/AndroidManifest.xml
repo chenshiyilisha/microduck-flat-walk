@@ -2,8 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-      🔴 蓝牙权限按 Android 官方 `developer.android.com/guide/topics/connectivity/bluetooth/permissions`
-      逐条核对（2026-11-13）：
+      🔴 蓝牙权限按 Google Android 平台文档
+      `developer.android.com/guide/topics/connectivity/bluetooth/permissions` 逐条核对（2026-11-13）：
        · API31+ 的 BLUETOOTH_SCAN / BLUETOOTH_CONNECT 是 **runtime permissions**，
          必须在 Activity 里显式请求（旧代码只声明、零 requestPermissions ⇒ 一接 BLE 就 SecurityException）。
        · 本 App 不用扫描结果推导物理位置 ⇒ 官方允许（且建议）给 SCAN 加
@@ -24,6 +24,25 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 摇杆触觉反馈（engaged / 满幅短震）；普通权限，安装即授权，无需运行时请求。 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!--
+      A1：BLE 链路前台服务（2026-11-13 补）。一手依据 Google Android 平台文档
+      `developer.android.com/develop/background-work/services/fgs` 与
+      `.../bt-permissions`：
+       · API34+ 必须在 Manifest 声明 `android:foregroundServiceType`；`connectedDevice`
+         类型要求先持有 BLUETOOTH_CONNECT / SCAN / ADVERTISE 之一（本 App 已声明）。
+       · API31+ 从后台启动 FGS 会抛 ForegroundServiceStartNotAllowedException
+         ⇒ DuckBleService 只在 BleConnectPanel 的连接成功回调（Activity 可见）里启动。
+       · API33+ 通知需 POST_NOTIFICATIONS 运行时权限；未授权时 FGS 仍运行，只是通知栏
+         不可见。该权限**刻意不并入扫描面板的 requiredPermissions()**，避免为了看通知
+         而挡住 BLE 扫描入口；仅在真正连上设备后单独按需请求。
+      社区一手佐证：`Ley-WL/ducklink` 前台服务持 BluetoothGatt，后台/锁屏链路不断。
+      自检：core/BleForegroundPolicy.REQUIRED_MANIFEST_DECLARATIONS 会真读本文件逐条核对，
+      漏声明会让 tools/selftest.sh 变红（编译通过证明不了权限齐全）。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- BLE 只是四个后端之一（Mock/TCP 也能用）⇒ 不是硬性设备要求，运行时判 hasSystemFeature。 -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
@@ -76,5 +95,15 @@
             android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/AppTheme" />
+
+        <!--
+          A1：BLE 链路前台服务。started service（不 bind），持有 AndroidBleGattLink 的
+          引用，使 Activity 退到后台 / 锁屏后 GATT 不被回收、链路不断。
+          exported=false：只由本 App 启动；通知提供「断开」action 让用户随时可停。
+        -->
+        <service
+            android:name=".ble.DuckBleService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

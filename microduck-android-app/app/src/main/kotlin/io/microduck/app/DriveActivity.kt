@@ -460,7 +460,9 @@ class DriveActivity : AppCompatActivity() {
         else SessionHolder.linkStatus
         if (msg.isEmpty()) { linkBanner.visibility = View.GONE; lastLinkLevel = SessionHolder.linkLevel; return }
         linkBanner.visibility = View.VISIBLE
-        linkBanner.text = msg
+        // 差异更新：A5 的恢复提示会持续数秒，若每 1.5s 无条件 setText 会持续发射
+        // TYPE_VIEW_TEXT_CHANGED，重新触发 uiautomator "could not get idle state" 死锁。
+        setTextIfChanged(linkBanner, msg)
         val level = if (inputError.isNotEmpty()) 2 else SessionHolder.linkLevel
         // 户外可读性：深底 + 同色描边，强光下仍清晰（ColorSift 技巧#4）。
         linkBanner.background = borderedCard(
@@ -616,7 +618,18 @@ class DriveActivity : AppCompatActivity() {
             else -> "强"
         }
         val hz = if (SessionHolder.stateFrameCount == 0) "—" else "%.0f".format(SessionHolder.stateHz)
-        val signalText = "链路 $quality · 状态 $hz Hz"
+        // A4 控制者归属（Wandelbots NOVA 合规文档 / DIN EN ISO 10218-1：
+        // 「It must always be made clear by the UI which device is currently controlling
+        //  the robot」）。只展示 `robot.remoteSessionActive` 的真实读回值；
+        // null 一律写「未知」，绝不把「没读到」画成「无遥在场」（UNVERIFIED != PASS）。
+        // 合并进已有 signalRow 而不新增 View：零布局变化，避免把下方内容挤出
+        // uiautomator 视口（门禁工具自身第 5 坑）。
+        val telepresence = when (SessionHolder.remoteSessionActive) {
+            true -> "有遥在场"
+            false -> "无遥在场"
+            null -> "未知"
+        }
+        val signalText = "链路 $quality · 状态 $hz Hz · 遥在场 $telepresence"
         setTextIfChanged(signalRow, signalText)
         signalRow.setTextColor(when {
             lvl >= 2 -> c(R.color.md_bad)
