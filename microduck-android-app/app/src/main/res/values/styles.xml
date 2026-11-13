@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Material 3 **固定深色**控制台主题。
+
+      🔴 为什么不用 Theme.Material3.DayNight.NoActionBar：
+      解包 material-1.12.0.aar/res/values/values.xml 实证，
+      `Theme.Material3.DayNight.NoActionBar` 的 parent 是 `Theme.Material3.Light.NoActionBar`
+      ——在浅色模式的手机上是**浅色**主题，系统默认文字会变黑，与本页深色底 #0B1B30
+      直接冲突（用户反馈的"界面丑"里有一半来自这种不可控漂移）。
+      `Theme.Material3.Dark.NoActionBar` → Base.Theme.Material3.Dark → Base.V14.Theme.Material3.Dark
+      → Theme.MaterialComponents（→ AppCompat 后代），固定深色，且不依赖 DayNight delegate。
+      Material 组件（MaterialCardView / MaterialButton）要求 theme 是 MaterialComponents 后代，
+      这条链满足，故 Activity 用 AppCompatActivity 时不会抛 ThemeEnforcement 异常。
+
+      🔴 targetSdk=35 在 Android 15+ **强制 edge-to-edge**（官方文档
+      developer.android.com/develop/ui/views/layout/edge-to-edge 与
+      about/versions/15/behavior-changes-15）：状态栏/导航栏变透明、top offset 被禁用，
+      内容默认画到状态栏下 ⇒ 用户反馈的"屏幕顶部遮住了"。
+      修法按官方 View 方案：ViewCompat.setOnApplyWindowInsetsListener + systemBars() insets
+      给根布局加 padding，而不是退回 windowOptOutEdgeToEdgeEnforcement。
+    -->
+    <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/md_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="colorPrimary">@color/md_accent</item>
+        <item name="colorSecondary">@color/md_warn</item>
+    </style>
+
+    <color name="md_bg">#0B1B30</color>
+    <color name="md_card">#132B47</color>
+    <color name="md_card_alt">#19365A</color>
+    <color name="md_accent">#4FD1FF</color>
+    <color name="md_warn">#FFB020</color>
+    <color name="md_text">#EAF4FF</color>
+    <color name="md_text_dim">#8FA9C4</color>
+    <color name="md_ok">#4ADE80</color>
+    <color name="md_bad">#FF6B6B</color>
+</resources>

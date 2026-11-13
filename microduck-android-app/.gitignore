@@ -1,0 +1,11 @@
+.gradle/
+local.properties
+**/build/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# 会话截图与 Python 缓存（非源码，仅本机查看用）
+shot_*.png
+tools/shot_*.png
+tools/__pycache__/
+

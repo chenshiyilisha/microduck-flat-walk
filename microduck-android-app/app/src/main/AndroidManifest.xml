@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      🔴 蓝牙权限按 Android 官方 `developer.android.com/guide/topics/connectivity/bluetooth/permissions`
+      逐条核对（2026-11-13）：
+       · API31+ 的 BLUETOOTH_SCAN / BLUETOOTH_CONNECT 是 **runtime permissions**，
+         必须在 Activity 里显式请求（旧代码只声明、零 requestPermissions ⇒ 一接 BLE 就 SecurityException）。
+       · 本 App 不用扫描结果推导物理位置 ⇒ 官方允许（且建议）给 SCAN 加
+         `usesPermissionFlags="neverForLocation"`，并把 ACCESS_FINE_LOCATION 限制在 maxSdkVersion=30。
+       · minSdk=26，Android 11 及以下做 BLE 扫描仍需位置权限与 legacy BLUETOOTH/ADMIN，
+         按官方片段用 maxSdkVersion=30 保留兼容，不让 API31+ 多要一个不该要的权限。
+       · 不做广播 ⇒ 不声明 BLUETOOTH_ADVERTISE。
+      社区独立佐证：`Ley-WL/ducklink` README「Android 12+ 允许附近设备权限；
+      Android 8–11 按系统要求允许定位权限并开启定位开关，App 不读取位置」。
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.INTERNET" /> <!-- P1/P2：TCP relay / WebRTC -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- BLE 只是四个后端之一（Mock/TCP 也能用）⇒ 不是硬性设备要求，运行时判 hasSystemFeature。 -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!--
+      🔴 只有遥控页锁横屏、主页锁竖屏，App **整体并不要求**某一种方向。
+      官方 <uses-feature> 文档：只要任一 activity 声明了 screenOrientation，
+      Google Play 就会推断 App 需要该方向并做设备过滤。这里显式 required="false"
+      关掉过滤（手机两种方向都支持，没必要把 App 从任一设备类型里剔掉）。
+    -->
+    <uses-feature android:name="android.hardware.screen.landscape" android:required="false" />
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:label="MicroDuck"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!--
+          竖屏控制台：连接 / 模式选择 / 状态·健康·设置三页。
+          依据 M3 Navigation bar（3–5 destinations）+ Weston Robot Teleop
+          「driving view ... kept separately from the dashboard's」。
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          横屏全屏遥控 / 监督视图。
+          官方 <activity> 文档：screenOrientation 是逐 Activity 属性；
+          sensorLandscape 允许正反两个横屏方向、跟随传感器（比写死 landscape 更适合双手横握）。
+          依据 Uni Bonn RoMan 2012 §B.1：全屏相机画面 + 左右下角双摇杆、双拇指操作。
+
+          ⚠️ 边界：Android 16 (API36) 在 sw>=600dp 大屏上会忽略该限制
+          （developer.android.com/about/versions/16/behavior-changes-16）。
+          本项目 targetSdk=35、目标设备为手机（sw<600dp）暂不受影响；
+          未来上大屏或升 targetSdk 36 必须改成响应式布局，不能靠锁方向。
+        -->
+        <activity
+            android:name=".DriveActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/AppTheme" />
+    </application>
+</manifest>
