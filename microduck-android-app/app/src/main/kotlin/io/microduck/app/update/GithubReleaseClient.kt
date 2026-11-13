@@ -1,5 +1,6 @@
 package io.microduck.app.update
 
+import io.microduck.app.core.Hex
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -50,7 +51,6 @@ class GithubReleaseClient(private val userAgent: String) {
         const val REPO_OWNER = "chenshiyilisha"
         const val REPO_NAME = "microduck-flat-walk"
         const val API_BASE = "https://api.github.com"
-        private const val HEX_CHARS = "0123456789abcdef"
     }
 
     fun latestRelease(apiBase: String): Response =
@@ -134,7 +134,7 @@ class GithubReleaseClient(private val userAgent: String) {
                     dest.delete()
                     return DownloadResult.Failure("大小不符：期望 $expectedSize，实得 $written")
                 }
-                return DownloadResult.Success(digest.digest().toHex(), written)
+                return DownloadResult.Success(Hex.encode(digest.digest()), written)
             } finally {
                 conn.disconnect()
             }
@@ -156,13 +156,6 @@ class GithubReleaseClient(private val userAgent: String) {
             if (total > limit) throw IllegalStateException("响应超过 $limit B 上限")
             out.write(buf, 0, n)
         }
-        return out.toString("UTF-8")
-    }
-
-    private fun ByteArray.toHex(): String = buildString(size * 2) {
-        for (b in this@toHex) {
-            val v = b.toInt() and 0xFF
-            append(HEX_CHARS[v ushr 4]); append(HEX_CHARS[v and 0x0F])
+            return out.toString("UTF-8")
         }
-    }
 }

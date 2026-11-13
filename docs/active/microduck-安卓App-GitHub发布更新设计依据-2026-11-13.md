@@ -21,6 +21,11 @@
 不是「已是最新」，更不是造一个假版本。这条已真机复验（见 §6）。
 发布脚本不擅自创建 Release；要让功能真正可用，必须由用户按 §5 发布一次。
 
+> ⚠️ 上表是 2026-11-13 **设计当日**的观测快照，不是当前态。发布准备已完成：
+> 版本升到 `versionCode=2` / `versionName="0.2.0"`、固定签名证书已建立（§5），
+> 首个 Release 创建后 releases/tags 不再是 0、`releases/latest` 不再是 404。
+> 发布与回读结果见 §6；用户 2026-11-13 晚授权「可以发布到 github 了」并开始执行。
+
 ---
 
 ## 1. 多开源项目一手对照（全部经 GitHub REST API 定位 + raw 源码逐行核验）
@@ -117,14 +122,26 @@ GitHub Releases ──GET latest──> GithubReleaseClient (app, HttpURLConnect
 
 ## 5. 发布 SOP（让「依赖 GitHub 发布」这条链真正闭合）
 
-### 前置（一次性）
-1. **固定签名密钥**：所有发布的 APK 必须用同一证书签名，否则用户端覆盖安装会被系统
-   当成新应用（Google《为应用签名》）。当前 `assembleDebug` 用的是本机 debug keystore，
-   换机器签名就会不一致。正式发布前必须改用固定 keystore 并保管好，密钥**不入库**。
-2. 发布前核对：`apksigner verify --print-certs <apk>` 的证书指纹与上一版一致。
-3. `versionCode` 每次发布**严格递增**（当前 =1）；`versionName` 建议换成正式 semver
-   （现在 `0.1.0-p0-skeleton` 带预发布后缀）。
-4. tag 约定 `v<versionName>`，例如 `v0.2.0`；`App 侧 validate` 会逐字核对。
+### 前置（一次性，2026-11-13 已落实）
+1. ✅ **固定签名密钥已建立**（用户拍板选「先建项目专用正式 keystore」）：
+   - keystore：`C:/Users/hejih/.microduck/microduck-release.jks`（项目外，alias `microduck`，
+     RSA 2048，PKCS12）；**keystore 与密码都不入库**，密码只放在本机
+     `microduck-android-app/local.properties` 的 `microduck.*` 键（`git check-ignore` 已确认被忽略）。
+   - 证书 SHA-256 指纹：`bd1e5c2907189c0bc0525ac9f4e9aba4502cf56eefa259501928fe6da95268d6`；
+     该值同时登记为 `tools/publish_release.py` 的 `EXPECTED_SIGNER_SHA256`。
+   - `app/build.gradle.kts`：debug / release 两条构建类型共用 `signingConfigs.fixed`；
+     缺配置时回退 AGP 默认 debug 证书并打印 WARN，由发布门禁兜底拦截。
+   - 换机器/换证书时**必须**带着同一个 keystore，并同步更新指纹常量，否则已装用户无法覆盖安装。
+2. ✅ **发布脚本真做签名门禁**：`publish_release.py` 用 `apksigner verify --print-certs`
+   实读 APK 证书指纹，与 `EXPECTED_SIGNER_SHA256` 不符（或找不到 apksigner / 解析不出指纹）
+   一律 `rc=2` 拒发，**dry-run 也查**，不静默放行。负对照：拿旧默认 debug 证书签的 APK 跑
+   dry-run，实得旧默认 debug 证书指纹
+   `cb001753706c74cf48e0e6d65bfd38daf356e77b6c128319a1d58478f983553d`，被拒（见 §6）。
+3. ✅ `versionCode` 本次 `1 → 2`（严格递增），`versionName` 从预发布后缀
+   `0.1.0-p0-skeleton` 改为正式 semver `0.2.0`；测试机先装同证书的 `0.1.0 (1)` 基线包，
+   发布后才会真正提示「发现新版本」。
+4. ✅ tag 约定 `v<versionName>` ⇒ 本次 `v0.2.0`；`UpdatePolicy.validate` 会逐字核对。
+   ⚠️ 因证书更换，测试机上原来的默认 debug 签名包**必须先卸载**再装基线包（已完成）。
 
 ### 操作
 ```bash
@@ -134,9 +151,11 @@ python tools/publish_release.py --tag v0.2.0 --dry-run
 # 2) 确认计划无误后，用有 Contents: write 权限的 token 真发布
 GITHUB_TOKEN=xxx python tools/publish_release.py --tag v0.2.0 --apk <signed.apk> --abi arm64-v8a
 ```
-脚本会：解析 build.gradle 版本 → 校验 tag 一致 → 算 APK sha256 → 生成 `update.json`
-→ 查同 tag 已存在则拒发 → 创建 release → 用 `upload_url` 上传 APK 与 `update.json`
-→ 回读 assets 校验。token 只从环境变量读，不落日志、不写文件。
+脚本会：解析 build.gradle 版本 → 校验 tag 一致 → **apksigner 实读证书指纹并比对** →
+算 APK sha256 → 生成 `update.json` → 查同 tag 已存在则拒发 → 创建 release →
+用 `upload_url` 上传 APK 与 `update.json` → 回读 assets 校验。
+token 只从环境变量读，不落日志、不写文件；本机真实执行用 `gh auth token`（GitHub CLI 登录态，
+scopes `repo`）临时注入，不写进仓库。
 
 ⚠️ `--prerelease` 的发布会被 `releases/latest` 跳过，App 不会提示更新（GitHub Docs 原文）。
 ⚠️ `draft` 同样不会被 App 读到。
@@ -162,6 +181,24 @@ tag 与 versionName 一致、下载地址域在白名单内。
 | SHA-256 负对照 | 故意把清单 sha256 改坏 →「SHA-256 校验不符，已删除下载文件（不安装）」，**没有**触发任何安装弹窗 |
 | 权限负对照 | 未授权时点「下载并安装」→ 先提示「需要开启安装权限」并给入口，不白下载 |
 
+### 发布前加固复验（2026-11-13 晚，用户授权发布后执行）
+
+| 项 | 结果 |
+|---|---|
+| hex 编码收敛 | `core/Hex.kt` 成为单一真源，下载哈希与签名指纹两条消费链共用；实现**不写字符表字面量**（按 ASCII 码推算），杜绝抄错表 |
+| 自检新增 | `Hex.encode` 与 JDK17 `java.util.HexFormat`（独立算法）逐位互算；固定真值 `ab cd ef` → `abcdef`；故意错表负对照被 `verifySha256` 拒绝；跨文件静态核对两链都 import 同一函数（含负对照） |
+| `tools/selftest.sh` | **340 passed / 0 failed**（327 → +13） |
+| `:app:assembleDebug` / `:app:lintDebug` | rc=0；**0 errors / 38 warnings**，本轮 0 新增 |
+| 真机 59 条门禁 | **59/59**（卸载旧默认 debug 签名包 → 装固定签名 `0.1.0 (1)` 基线包后跑） |
+| 两包实读 | 基线 `versionCode=1 / 0.1.0`、发布候选 `versionCode=2 / 0.2.0`；`apksigner --print-certs` 两者指纹同为 `bd1e5c29…68d6` |
+| 签名门禁正对照 | `--tag v0.2.0 --dry-run` → `DRY-RUN OK`，打印 sha256 与 signer |
+| 签名门禁负对照 | 旧默认 debug 签名 APK → `FAIL 签名证书指纹与 EXPECTED_SIGNER_SHA256 不符`，**rc=2**，未创建任何 release |
+
+> 🔴 本轮一次**误判留档**：曾把正确的 `"0123456789abcdef"` 读成错表，并用同一串当判据，
+> 得到 `OK=True` 假绿。实际两处原实现都是对的（`ord` 逐字核验 + 与 JDK `HexFormat` 互算）。
+> 教训：**判据必须独立于被测值**；因此新增自检用 JDK17 标准库作独立实现，而不是手抄期望串。
+> 这轮改动是「消除重复实现 + 补真值/负对照自检」的防复发加固，**不是修 bug**。
+
 ### 本轮真机抓到并修掉的真 bug
 1. **`FLAG_IMMUTABLE` 导致 `commit()` 抛 `IllegalArgumentException`**：
    Android `PackageInstaller.Session` 文档明确 targetSdk≥35 时 statusReceiver 必须来自
@@ -175,10 +212,11 @@ tag 与 versionName 一致、下载地址域在白名单内。
 
 ## 7. 仍未验证 / 已知限制（不得写成 PASS）
 
-- 🔴 **真实 GitHub Release 端到端仍 UNVERIFIED**：仓库至今 0 release / 0 tag；
-  端到端验证用的是 PC 本地模拟 Release。须用户按 §5 发布首个正式版本后复验。
-- 🔴 **固定签名密钥未建立**：当前 debug keystore 换机器就不一致，正式发布前必须解决，
-  否则覆盖安装会失败。这是发布流程的前置条件，不是代码缺陷。
+- 🟡 **真实 GitHub Release 端到端**：发布前仍 UNVERIFIED（此前端到端用 PC 本地模拟 Release）；
+  本次创建首个正式版本后按 §6 补真机复验结果，未复验完成前不写 PASS。
+- ✅ **固定签名密钥已建立**（§5）：项目专用 keystore（项目外、不入库）+ debug/release 共用
+  `signingConfigs.fixed` + 发布脚本 `apksigner` 指纹门禁与负对照。
+  剩余约束：换机器/重装系统必须携带同一 keystore，否则新包无法覆盖安装。
 - ⚠️ **vivo「超级守护」备案拦截**：真机安装时出现「此应用存在未核准（备案）问题…
   若信任该应用，您可点击授权本次安装」系统弹窗；本次在已授权 appops 的情况下仍完成安装，
   但普通用户可能需要手动点「授权本次安装」。属设备侧策略，App 无法绕过也不应绕过。
@@ -200,3 +238,12 @@ tag 与 versionName 一致、下载地址域在白名单内。
 `res/xml/network_security_config.xml` 与 `src/debug/res/xml/` 同名覆盖（新增）
 **工具**：`tools/publish_release.py`（新增，dry-run 发布脚本）
 **文档**：本文件
+
+### 发布前加固（2026-11-13 晚，用户授权发布后）
+**core**：`Hex.kt`（新增，十六进制编码单一真源）、`CoreSelfTest.kt`（+13 条）
+**app**：`GithubReleaseClient.kt` / `UpdateInstaller.kt`（删各自私有 `toHex`，改调 `Hex.encode`）；
+`app/build.gradle.kts`（固定签名 `signingConfigs.fixed` + `versionCode=2` / `versionName=0.2.0`）
+**工具**：`tools/publish_release.py`（`apksigner` 证书指纹门禁，dry-run 也查）
+**文档**：本文件（§0 快照注记 / §5 前置 / §6 复验 / §7 状态 / §8）
+**刻意不入库**：`local.properties`（密码）、`C:/Users/hejih/.microduck/microduck-release.jks`（密钥）、
+`build/baseline-fixed-signed-v1.apk` 与 `build/negctrl-old-debug-signed.apk`（本机临时产物）。

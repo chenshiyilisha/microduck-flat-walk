@@ -1,6 +1,26 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+/**
+ * 固定签名：所有对外发布的 APK 必须用同一证书（Google《为应用签名》——
+ * 不同证书签名的新版本无法覆盖安装）。密钥与密码只从本机 local.properties 读取，
+ * 该文件已被 .gitignore 忽略，绝不入库；缺配置时回退 AGP 默认 debug 证书，
+ * 并由 tools/publish_release.py 的证书指纹门禁拒绝发布（不静默放行）。
+ */
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.isFile) f.inputStream().use { load(it) }
+}
+val fixedKeystore = localProperties.getProperty("microduck.keystore")?.let { file(it) }
+val fixedSigningReady = fixedKeystore?.isFile == true &&
+    listOf("microduck.storePassword", "microduck.keyAlias", "microduck.keyPassword")
+        .all { !localProperties.getProperty(it).isNullOrBlank() }
+if (!fixedSigningReady) {
+    println("WARN: 未配置 microduck.* 固定签名，本包用 AGP 默认 debug 证书；publish_release.py 会拒发")
 }
 
 // Kotlin 2.4.0：kotlinOptions DSL 已废弃（jvmTarget: String 直接报 error，非 warning），
@@ -20,13 +40,31 @@ android {
         applicationId = "io.microduck.app"
         minSdk = 26        // BLE 需 Android 8+（BluetoothGatt 稳定）
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-p0-skeleton"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // 两条构建类型共用同一个固定证书：debug 包就是可发布的包，避免「测试机装 debug、
+    // 发布用 release」两套证书导致覆盖安装失败。缺配置时不创建该 signingConfig。
+    val fixedConfig = if (fixedSigningReady) {
+        signingConfigs.create("fixed") {
+            storeFile = fixedKeystore
+            storePassword = localProperties.getProperty("microduck.storePassword")
+            keyAlias = localProperties.getProperty("microduck.keyAlias")
+            keyPassword = localProperties.getProperty("microduck.keyPassword")
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    } else null
+
+    buildTypes {
+        getByName("debug") { if (fixedConfig != null) signingConfig = fixedConfig }
+        getByName("release") { if (fixedConfig != null) signingConfig = fixedConfig }
     }
 }
 

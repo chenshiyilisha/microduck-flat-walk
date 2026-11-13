@@ -15,9 +15,11 @@
       必带 Content-Length / Content-Type，原始二进制作 body，查询参数 name。
   · GitHub Docs「Troubleshooting / User agent required」：所有请求必须带有效 User-Agent。
   · Google Android《对应用进行版本控制》：versionCode 必须单调递增；
-    《为应用签名》：覆盖安装要求同一签名证书。
+    《为应用签名》：覆盖安装要求同一签名证书 ⇒ 本脚本用 apksigner 实读 APK 证书指纹，
+    与 EXPECTED_SIGNER_SHA256 不符一律拒发（含 --dry-run，不静默放行）。
   · core/UpdatePolicy.kt：App 侧对 update.json / tag / sha256 的校验规则，
-    本脚本生成的清单必须与之一致（单一真源：字段与 schema 常量对齐）。
+    本脚本生成的清单必须与之一致（单一真源：字段与 schema 常量对齐）；
+    core/Hex.kt 是摘要十六进制编码的单一真源，两条消费链共用。
 
 用法：
   python tools/publish_release.py --tag v0.2.0 --dry-run
@@ -31,6 +33,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -43,6 +46,66 @@ DEFAULT_APK = BASE / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.
 MANIFEST_ASSET = "update.json"
 MANIFEST_SCHEMA = 1
 USER_AGENT = "io.microduck.app-publish-release"
+# 项目专用固定签名证书的 SHA-256 指纹（C:/Users/hejih/.microduck/microduck-release.jks，
+# alias=microduck；keystore 与密码都放在本机 local.properties，绝不入库）。
+# 换证书必须同步改这里，否则所有已装用户无法覆盖安装（Google《为应用签名》）。
+EXPECTED_SIGNER_SHA256 = "bd1e5c2907189c0bc0525ac9f4e9aba4502cf56eefa259501928fe6da95268d6"
+
+
+def android_sdk_dir() -> Path | None:
+    for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        v = os.environ.get(key)
+        if v and Path(v).is_dir():
+            return Path(v)
+    lp = BASE / "local.properties"
+    if lp.is_file():
+        for line in lp.read_text(encoding="utf-8").splitlines():
+            if line.startswith("sdk.dir="):
+                raw = line.split("=", 1)[1].replace("\\:", ":").replace("\\\\", "\\")
+                p = Path(raw)
+                if p.is_dir():
+                    return p
+    return None
+
+
+def find_apksigner() -> Path | None:
+    sdk = android_sdk_dir()
+    if sdk is None:
+        return None
+    bt = sdk / "build-tools"
+    if not bt.is_dir():
+        return None
+    for d in sorted(bt.iterdir(), reverse=True):
+        if not d.is_dir():
+            continue
+        for name in ("apksigner.bat", "apksigner"):
+            exe = d / name
+            if exe.is_file():
+                return exe
+    return None
+
+
+def verify_signer(apk: Path) -> tuple[bool, str]:
+    """实读 APK 签名证书指纹；拿不到工具/解析不出指纹一律判失败，不静默放行。"""
+    exe = find_apksigner()
+    if exe is None:
+        return False, "找不到 apksigner（ANDROID_HOME / local.properties 的 sdk.dir），拒绝发布"
+    try:
+        r = subprocess.run([str(exe), "verify", "--print-certs", str(apk)],
+                           capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"apksigner 执行失败：{e}"
+    text = r.stdout.decode("utf-8", "replace") + r.stderr.decode("utf-8", "replace")
+    if r.returncode != 0:
+        return False, f"apksigner verify 返回 {r.returncode}：{text.strip()[:200]}"
+    fps = [m.group(1).replace(":", "").lower()
+           for m in re.finditer(r"SHA-256 digest:\s*([0-9a-fA-F:]+)", text)]
+    if not fps:
+        return False, "apksigner 输出里没有证书 SHA-256 指纹，拒绝发布"
+    if any(fp != EXPECTED_SIGNER_SHA256 for fp in fps):
+        return False, ("签名证书指纹与 EXPECTED_SIGNER_SHA256 不符：实得 "
+                       + ", ".join(fps) + "（可能误用了默认 debug 证书或换了 keystore）")
+    return True, ", ".join(fps)
 
 
 def read_gradle_versions() -> tuple[str, int, int]:
@@ -119,6 +182,10 @@ def main() -> int:
         problems.append(f"APK 不存在：{args.apk}")
     if not re.fullmatch(r"v[0-9A-Za-z.\-+]+", args.tag):
         problems.append(f"tag 格式不合法：{args.tag}")
+    if args.apk.is_file():
+        signer_ok, signer_detail = verify_signer(args.apk)
+        if not signer_ok:
+            problems.append(signer_detail)
     if problems:
         for p in problems:
             print("  FAIL  " + p)
@@ -140,10 +207,10 @@ def main() -> int:
     print(f"  minSdk      : {min_sdk}")
     print(f"  APK         : {args.apk}  ({args.apk.stat().st_size} B)")
     print(f"  sha256      : {digest}")
+    print(f"  signer      : {EXPECTED_SIGNER_SHA256}  (apksigner 实读已核对)")
     print(f"  prerelease  : {args.prerelease}")
-    print("  ⚠️ 签名一致性：该 APK 必须与用户设备上已安装版本使用同一签名证书，")
-    print("     否则 Android 会把更新当成新应用（Google《为应用签名》）。")
-    print("     建议发布前执行：apksigner verify --print-certs <apk>，核对证书指纹。")
+    print("  ✓ 签名门禁：本 APK 证书指纹已与 EXPECTED_SIGNER_SHA256 实读比对通过；")
+    print("     不一致会在 dry-run 阶段就拒发（Google《为应用签名》：不同证书无法覆盖安装）。")
     print("  --- update.json ---")
     print(manifest_bytes.decode("utf-8").rstrip())
 

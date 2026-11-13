@@ -1221,6 +1221,7 @@ object CoreSelfTest {
         testBleForegroundPolicy()
         testReadOnlyCapabilityMethods()
         testUpdatePolicy()
+        testHexEncoding()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
@@ -1345,6 +1346,54 @@ object CoreSelfTest {
         currentName: String = "0.1.0-p0-skeleton",
     ) = UpdatePolicy.decide(currentCode, currentName, code, remaining, reset, release, manifest)
 
+    /**
+     * hex 编码收敛到 core 后的行为自检。判据刻意不手抄期望值：
+     * 用 JDK17 java.util.HexFormat 作独立算法互算，再用故意写错的表做负对照。
+     * （2026-11-13 曾把正确的 "0123456789abcdef" 误读成错表，且判据用的还是同一串，
+     *  于是 "OK=True" 假绿 —— 这正是「判据必须独立于被测值」的反面教材。）
+     */
+    private fun testHexEncoding() {
+        println("\n[hex] 十六进制编码单一真源")
+        val probe = ByteArray(256) { it.toByte() }
+        val independent = java.util.HexFormat.of().formatHex(probe)
+        check("Hex.encode 与 JDK17 HexFormat 逐位一致",
+            Hex.encode(probe) == independent) { "got=${Hex.encode(probe).take(32)}" }
+        check("输出长度恰为输入 2 倍", Hex.encode(probe).length == probe.size * 2)
+        check("高低半字节都覆盖 a-f",
+            Hex.encode(byteArrayOf(0xab.toByte(), 0xcd.toByte(), 0xef.toByte())) == "abcdef")
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest("abc".toByteArray())
+        check("SHA-256 摘要编码与 JDK 独立实现一致",
+            Hex.encode(digest) == java.util.HexFormat.of().formatHex(digest))
+
+        // 负对照：故意用错表（0/8/9/6... 非 0..9）编码，确认防线真的会红。
+        val badTable = charArrayOf('0', '8', '9', '6', '8', '0', '3', '6', '9', '3',
+            'a', 'b', 'c', 'd', 'e', 'f')
+        fun badEncode(bytes: ByteArray): String = buildString(bytes.size * 2) {
+            for (b in bytes) {
+                val v = b.toInt() and 0xFF
+                append(badTable[v ushr 4]); append(badTable[v and 0x0F])
+            }
+        }
+        check("负对照:错表编码与标准编码不同", badEncode(digest) != Hex.encode(digest))
+        check("负对照:错表编码会被 SHA-256 校验拒绝",
+            !UpdatePolicy.verifySha256(Hex.encode(digest), badEncode(digest)))
+
+        // 跨文件静态核对：两条消费链必须 import 同一个函数，不许各自复制实现。
+        val client = java.io.File("app/src/main/kotlin/io/microduck/app/update/GithubReleaseClient.kt")
+        val installer = java.io.File("app/src/main/kotlin/io/microduck/app/update/UpdateInstaller.kt")
+        val clientSrc = if (client.isFile) client.readText() else ""
+        val installerSrc = if (installer.isFile) installer.readText() else ""
+        check("下载链 import core Hex", clientSrc.contains("import io.microduck.app.core.Hex"))
+        check("签名链 import core Hex", installerSrc.contains("import io.microduck.app.core.Hex"))
+        check("两链都调用 Hex.encode",
+            clientSrc.contains("Hex.encode(") && installerSrc.contains("Hex.encode("))
+        check("两链都不再私有实现 toHex/HEX_CHARS",
+            !clientSrc.contains("HEX_CHARS") && !installerSrc.contains("HEX_CHARS") &&
+                !clientSrc.contains("ByteArray.toHex") && !installerSrc.contains("ByteArray.toHex"))
+        check("负对照:私自复制实现的假源码会被上面这条核对判红",
+            "import io.microduck.app.core.Hex\nprivate const val HEX_CHARS = \"x\"".contains("HEX_CHARS"))
+    }
+
     private fun testUpdatePolicy() {
         println("\n[N+2] GitHub Releases 自更新决策层（夹具 + 负对照）")
         // --- 解析：正向 + 负对照 ---
@@ -1453,6 +1502,11 @@ object CoreSelfTest {
         check("发布脚本清单名与 core 单一真源一致",
             py.contains("MANIFEST_ASSET = \"${UpdatePolicy.MANIFEST_ASSET}\""))
         check("负对照:脚本不含错误 schema=99", !py.contains("MANIFEST_SCHEMA = 99"))
+        check("发布脚本签名门禁真的比对指纹（非仅打印）",
+            py.contains("EXPECTED_SIGNER_SHA256") && py.contains("verify_signer(args.apk)") &&
+                py.contains("fp != EXPECTED_SIGNER_SHA256"))
+        check("负对照:只打印不比对的假脚本会被上面这条判红",
+            !"EXPECTED_SIGNER_SHA256 = \"x\"\nprint(signer)".contains("fp != EXPECTED_SIGNER_SHA256"))
     }
 
     private operator fun String.times(n: Int) = repeat(n)

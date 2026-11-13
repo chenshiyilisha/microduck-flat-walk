@@ -14,6 +14,7 @@ import android.provider.Settings
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import io.microduck.app.core.Hex
 import java.io.File
 import java.security.MessageDigest
 
@@ -52,7 +53,6 @@ class UpdateInstaller(private val activity: AppCompatActivity) {
     companion object {
         private const val ACTION_INSTALL_RESULT = "io.microduck.app.UPDATE_INSTALL_RESULT"
         private const val RESULT_REQ_CODE = 4701
-        private const val HEX_CHARS = "0123456789abcdef"
     }
 
     private var receiver: BroadcastReceiver? = null
@@ -112,7 +112,7 @@ class UpdateInstaller(private val activity: AppCompatActivity) {
             @Suppress("DEPRECATION") info.signatures ?: emptyArray()
         }
         return sigs.map { sig ->
-            MessageDigest.getInstance("SHA-256").digest(sig.toByteArray()).toHex()
+            Hex.encode(MessageDigest.getInstance("SHA-256").digest(sig.toByteArray()))
         }.toSet()
     }
 
@@ -200,12 +200,5 @@ class UpdateInstaller(private val activity: AppCompatActivity) {
             try { activity.unregisterReceiver(it) } catch (_: IllegalArgumentException) { }
         }
         receiver = null
-    }
-
-    private fun ByteArray.toHex(): String = buildString(size * 2) {
-        for (b in this@toHex) {
-            val v = b.toInt() and 0xFF
-            append(HEX_CHARS[v ushr 4]); append(HEX_CHARS[v and 0x0F])
-        }
     }
 }
