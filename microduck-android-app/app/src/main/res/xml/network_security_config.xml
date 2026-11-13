@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  生产默认网络安全配置：显式写出与平台默认一致的全禁明文。
+
+  一手依据：Google Android《网络安全配置》
+  developer.android.google.cn/privacy-and-security/security-config
+   · 「从 Android 9（API 级别 28）开始，系统默认情况下已停用明文支持。」
+   · 「以 Android 9（API 级别 28）及更高版本为目标平台的应用的默认配置：
+      <base-config cleartextTrafficPermitted="false">
+        <trust-anchors><certificates src="system" /></trust-anchors>
+      </base-config>」
+   · `android:networkSecurityConfig="@xml/network_security_config"` 挂在 <application>。
+
+  🔴 debug 构建会用 app/src/debug/res/xml/ 下的同名资源覆盖本文件，
+     仅放行 127.0.0.1 的明文（供 PC 本地服务做端到端验证）；
+     发布包不含该覆盖，App 检查更新只走 HTTPS 的 api.github.com。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

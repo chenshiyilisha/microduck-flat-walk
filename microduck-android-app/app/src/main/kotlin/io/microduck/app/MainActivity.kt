@@ -1,6 +1,7 @@
 package io.microduck.app
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -27,6 +28,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.Insets
+import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.button.MaterialButton
@@ -35,6 +37,9 @@ import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputLayout
 import io.microduck.app.ble.BleConnectPanel
 import io.microduck.app.core.StateSnapshot
+import io.microduck.app.update.GithubReleaseClient
+import io.microduck.app.update.UpdateController
+import io.microduck.app.update.UpdatePanel
 
 /**
  * 竖屏控制台首页 —— 用户 2026-11-12「一个界面放不下这么多内容，应该合理的拆分界面，
@@ -90,6 +95,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var topScrim: View
     private lateinit var linkBanner: TextView
     private lateinit var blePanel: BleConnectPanel
+    private lateinit var updateController: UpdateController
+    private lateinit var updatePanel: UpdatePanel
     private lateinit var statePage: View
     private lateinit var healthPage: View
     private lateinit var settingsPage: View
@@ -109,6 +116,19 @@ class MainActivity : AppCompatActivity() {
         // 取自 ROS_Robot_Controller / ohho.apk 的 persistent preferences；mode 与 host 刻意不持久化。
         SettingsStore.load(applicationContext)
         blePanel = BleConnectPanel(this)
+        // 更新源默认固定 GitHub REST API（api.github.com）。仅 debuggable 包允许通过显式
+        // Intent extra 指向 PC 本地服务，用于真机端到端验证下载/安装链路；不暴露在 UI 上，
+        // 生产包（FLAG_DEBUGGABLE=0）完全忽略该 extra。项目已有同型先例：
+        // core/src/test 的 LocalRelayServer 用 PC 本地服务做真机 C2 联调。
+        val overrideBase = if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            intent.getStringExtra(EXTRA_UPDATE_API_BASE)
+        } else {
+            null
+        }
+        val extraHosts = overrideBase?.let { setOfNotNull(it.toUri().host?.lowercase()) }
+            ?: emptySet()
+        updateController = UpdateController(this, overrideBase ?: GithubReleaseClient.API_BASE, extraHosts)
+        updatePanel = UpdatePanel(this, updateController)
         val root = FrameLayout(this).apply { setBackgroundColor(c(R.color.md_bg)) }
         // 视觉节奏按 M1「Metrics & keylines」一手数值：8dp 基线网格、移动端左右 16dp
         // 边距、内容组之间 8dp。旧版 10dp 边距 / 6dp 组距不在网格上，截图显得散。
@@ -583,6 +603,12 @@ class MainActivity : AppCompatActivity() {
         col.addView(blePanel.buildView(), LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.topMargin = dp(16)
         })
+        // GitHub Releases 自更新面板放**最末尾**：uiautomator 只 dump 视口内节点，
+        // 往上插会把「方向摇杆死区」推出首屏（门禁 59 条实测踩过）；门禁的
+        // scroll_until("扫描附近 BLE 设备") 在到达这里之前就停，也不受新增节点影响。
+        col.addView(updatePanel.view, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(16)
+        })
         scroll.addView(col)
         addView(scroll, FrameLayout.LayoutParams(MATCH, MATCH))
     }
@@ -853,14 +879,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 从「安装未知应用」系统设置返回后复查权限：返回动作本身不等于已授权。
+        if (::updatePanel.isInitialized) updatePanel.onResume()
+    }
+
     override fun onDestroy() {
         ui.removeCallbacks(tick)
         blePanel.onDestroy()
+        updateController.release()
         // 🔴 不 close session：SessionHolder 拥有它，DriveActivity 返回后仍要复用。
         super.onDestroy()
     }
 
     private companion object {
+        /** 仅 debug 端到端验证用：adb shell am start -e update_api_base http://127.0.0.1:PORT */
+        const val EXTRA_UPDATE_API_BASE = "update_api_base"
         const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
         const val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 

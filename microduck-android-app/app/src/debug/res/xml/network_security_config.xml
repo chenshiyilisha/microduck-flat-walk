@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅 debug 构建可见（AGP 源集优先级：debug 覆盖 main 的同名资源）。
+  只为「PC 本地服务 + adb reverse」的端到端验证放行回环地址明文，
+  其它域名仍继承 main 的全禁配置。
+
+  一手依据：Google Android《网络安全配置》
+   · <domain-config cleartextTrafficPermitted="true"><domain>HOST</domain></domain-config>
+     按域放行；未设置的值从 base-config 继承，不会被整体放宽。
+   · 「如果有多个 domain-config 元素涵盖某个目标，将使用匹配网域规则最具体的配置」。
+   · 官方「配置用于调试的 CA」一节说明 debug 专用替换是常规做法
+     （debug-overrides 只管信任锚；明文放行用 domain-config）。
+
+  ⚠️ 发布包（release）不含本文件 ⇒ 生产绝不放行任何明文。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

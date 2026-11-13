@@ -1220,6 +1220,7 @@ object CoreSelfTest {
         testConnectInputParser()
         testBleForegroundPolicy()
         testReadOnlyCapabilityMethods()
+        testUpdatePolicy()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
@@ -1282,6 +1283,176 @@ object CoreSelfTest {
         check("负对照:robot.move 不是只读", !(m.invoke(s, Method.ROBOT_MOVE) as Boolean))
         check("负对照:robot.loadPolicy 不是只读", !(m.invoke(s, Method.ROBOT_LOAD_POLICY) as Boolean))
         s.close()
+    }
+
+    // ---- N+2. GitHub Releases 自更新决策层（固定 JSON 夹具 + 逐条负对照）----
+    // 夹具做法照 javiersantos/AppUpdater 的 app/update*.json / androidTest/files/*.json：
+    // 用固定 JSON 分别模拟「有更新 / 无更新 / 数据坏掉」，而不是拼运行时随机值。
+    private val updateShaOk = "a".repeat(64)
+    private val updateAssets = listOf(
+        "update.json" to "https://github.com/chenshiyilisha/microduck-flat-walk/releases/download/v0.2.0/update.json",
+        "microduck-0.2.0.apk" to "https://github.com/chenshiyilisha/microduck-flat-walk/releases/download/v0.2.0/microduck-0.2.0.apk",
+    )
+
+    private fun releaseJson(
+        tag: String = "v0.2.0",
+        assets: List<Pair<String, String>> = updateAssets,
+        prerelease: Boolean = false,
+        draft: Boolean = false,
+    ): String {
+        val arr = com.google.gson.JsonArray()
+        assets.forEach { (name, url) ->
+            arr.add(JsonObject().apply {
+                addProperty("name", name)
+                addProperty("browser_download_url", url)
+                addProperty("size", 1024L)
+            })
+        }
+        return JsonObject().apply {
+            addProperty("tag_name", tag)
+            addProperty("name", tag)
+            addProperty("html_url", "https://github.com/chenshiyilisha/microduck-flat-walk/releases/tag/$tag")
+            addProperty("published_at", "2026-11-13T00:00:00Z")
+            addProperty("prerelease", prerelease)
+            addProperty("draft", draft)
+            add("assets", arr)
+        }.toString()
+    }
+
+    private fun manifestJson(
+        versionName: String = "0.2.0",
+        versionCode: Int = 2,
+        apkAsset: String = "microduck-0.2.0.apk",
+        sha256: String = updateShaOk,
+        schema: Int = UpdatePolicy.MANIFEST_SCHEMA,
+    ): String = JsonObject().apply {
+        addProperty("schema", schema)
+        addProperty("versionName", versionName)
+        addProperty("versionCode", versionCode)
+        addProperty("apkAsset", apkAsset)
+        addProperty("sha256", sha256)
+        addProperty("minSdk", 26)
+        addProperty("abi", "arm64-v8a")
+    }.toString()
+
+    private fun decide(
+        release: String = releaseJson(),
+        manifest: String = manifestJson(),
+        code: Int = 200,
+        remaining: Int? = 59,
+        reset: Long? = 1_700_000_000L,
+        currentCode: Int = 1,
+        currentName: String = "0.1.0-p0-skeleton",
+    ) = UpdatePolicy.decide(currentCode, currentName, code, remaining, reset, release, manifest)
+
+    private fun testUpdatePolicy() {
+        println("\n[N+2] GitHub Releases 自更新决策层（夹具 + 负对照）")
+        // --- 解析：正向 + 负对照 ---
+        val r = UpdatePolicy.parseRelease(releaseJson())
+        check("release 解析出 tag / 2 个 asset", r?.tagName == "v0.2.0" && r.assets.size == 2) { "$r" }
+        check("负对照:畸形 release JSON 返回 null 而不抛", UpdatePolicy.parseRelease("{oops") == null)
+        val m = UpdatePolicy.parseManifest(manifestJson())
+        check("manifest 解析出 versionCode=2", m?.versionCode == 2 && m.versionName == "0.2.0") { "$m" }
+        check("负对照:manifest 缺字段返回 null 而不抛", UpdatePolicy.parseManifest("{\"schema\":1}") == null)
+        check("负对照:坏 sha256 被 validate 拒",
+            UpdatePolicy.validate(UpdatePolicy.parseManifest(manifestJson(sha256 = "xyz"))!!, "v0.2.0") != null)
+        check("负对照:63 位 sha256 也被拒",
+            !UpdatePolicy.isSha256Hex("a".repeat(63)))
+
+        // --- 正常路径 ---
+        val ok = decide()
+        check("versionCode 2 > 1 ⇒ Available", ok is UpdatePolicy.Decision.Available) { "$ok" }
+        check("Available 带对 APK asset", (ok as? UpdatePolicy.Decision.Available)?.asset?.name == "microduck-0.2.0.apk")
+        check("Available 带完整 sha256", (ok as? UpdatePolicy.Decision.Available)?.manifest?.sha256 == updateShaOk)
+
+        // --- 负对照：任一坏输入都必须变红，绝不静默当成功 ---
+        check("负对照:404 → NoRelease（本项目当前真实状态）",
+            decide(code = 404) is UpdatePolicy.Decision.NoRelease)
+        check("负对照:403+remaining=0 → RateLimited 带 reset",
+            (decide(code = 403, remaining = 0) as? UpdatePolicy.Decision.RateLimited)?.resetAtEpochSec == 1_700_000_000L)
+        check("负对照:403+remaining=5 不编造 reset",
+            (decide(code = 403, remaining = 5) as? UpdatePolicy.Decision.RateLimited)?.resetAtEpochSec == null)
+        check("负对照:HTTP 500 → Failed", decide(code = 500) is UpdatePolicy.Decision.Failed)
+        check("负对照:release JSON 坏 → Failed", decide(release = "{oops") is UpdatePolicy.Decision.Failed)
+        check("负对照:缺 update.json asset → Failed",
+            decide(release = releaseJson(assets = listOf(updateAssets[1]))) is UpdatePolicy.Decision.Failed)
+        check("负对照:manifest 缺失 → Failed",
+            UpdatePolicy.decide(1, "0.1.0-p0-skeleton", 200, 59, null, releaseJson(), null)
+                is UpdatePolicy.Decision.Failed)
+        check("负对照:tag 与 versionName 不一致 → Failed",
+            decide(release = releaseJson(tag = "v0.9.9")) is UpdatePolicy.Decision.Failed)
+        check("负对照:apkAsset 指向不存在的 asset → Failed",
+            decide(manifest = manifestJson(apkAsset = "ghost.apk")) is UpdatePolicy.Decision.Failed)
+        check("负对照:apkAsset 不是 .apk → Failed",
+            decide(manifest = manifestJson(apkAsset = "update.json")) is UpdatePolicy.Decision.Failed)
+        check("负对照:非 GitHub 域下载地址 → Failed",
+            decide(release = releaseJson(assets = listOf(
+                "update.json" to updateAssets[0].second,
+                "microduck-0.2.0.apk" to "https://evil.example/microduck.apk")))
+                is UpdatePolicy.Decision.Failed)
+        check("负对照:schema 不符 → Failed", decide(manifest = manifestJson(schema = 99)) is UpdatePolicy.Decision.Failed)
+        check("负对照:versionCode<=0 → Failed", decide(manifest = manifestJson(versionCode = 0)) is UpdatePolicy.Decision.Failed)
+        check("负对照:prerelease 不算正式发布 → Failed",
+            decide(release = releaseJson(prerelease = true)) is UpdatePolicy.Decision.Failed)
+        check("负对照:draft 不算正式发布 → Failed",
+            decide(release = releaseJson(draft = true)) is UpdatePolicy.Decision.Failed)
+        check("负对照:versionName 变但 versionCode 没涨 → Failed",
+            decide(manifest = manifestJson(versionCode = 1)) is UpdatePolicy.Decision.Failed)
+
+        // --- 幂等 / 防降级 ---
+        // tag 约定 v<versionName>，所以「同版本」夹具的 tag 也必须同步，否则命中的是
+        // tag/versionName 不一致校验而不是 UpToDate 本身（夹具必须只改想测的那一个量）。
+        check("versionCode 相同且 versionName 相同 → UpToDate",
+            decide(release = releaseJson(tag = "v0.1.0-p0-skeleton"),
+                manifest = manifestJson(versionName = "0.1.0-p0-skeleton", versionCode = 1),
+                currentName = "0.1.0-p0-skeleton") is UpdatePolicy.Decision.UpToDate)
+        check("负对照:更旧但合法的 release 不触发更新（防降级）",
+            decide(release = releaseJson(tag = "v0.1.0-p0-skeleton"),
+                manifest = manifestJson(versionName = "0.1.0-p0-skeleton", versionCode = 1),
+                currentCode = 2, currentName = "0.1.0-p0-skeleton")
+                is UpdatePolicy.Decision.UpToDate)
+
+        // --- 版本比较：解析失败必须返回 null（FFUpdater 兜底思想的反向约束）---
+        check("版本比较 0.1.0-p0-skeleton < v0.2.0",
+            UpdatePolicy.compareVersionName("0.1.0-p0-skeleton", "v0.2.0")?.let { it < 0 } == true)
+        check("版本比较相等 → 0", UpdatePolicy.compareVersionName("v1.2.3", "1.2.3") == 0)
+        check("负对照:预发布后缀更旧", UpdatePolicy.compareVersionName("0.2.0-rc1", "0.2.0")?.let { it < 0 } == true)
+        check("负对照:无法解析版本返回 null，不假装最新",
+            UpdatePolicy.compareVersionName("abc", "0.2.0") == null)
+        check("负对照:段数不同按补 0 比较", UpdatePolicy.compareVersionName("1.2", "1.2.0") == 0)
+
+        // --- 下载完整性 ---
+        check("sha256 大小写/trim 归一比对", UpdatePolicy.verifySha256(updateShaOk, "  " + updateShaOk.uppercase() + "  "))
+        check("负对照:空校验值不被接受", !UpdatePolicy.verifySha256("", "whatever"))
+        check("负对照:错哈希不被接受", !UpdatePolicy.verifySha256(updateShaOk, "b".repeat(64)))
+        check("URL 白名单只放 GitHub 域",
+            UpdatePolicy.isAllowedAssetUrl(updateAssets[1].second) && !UpdatePolicy.isAllowedAssetUrl("https://evil.example/a.apk"))
+        check("debug 额外域名只放行显式登记的 host",
+            UpdatePolicy.isAllowedAssetUrl("http://127.0.0.1:8899/a.apk", setOf("127.0.0.1")))
+        check("负对照:额外域名不会连带放行任意域",
+            !UpdatePolicy.isAllowedAssetUrl("https://evil.example/a.apk", setOf("127.0.0.1")))
+        check("负对照:生产默认参数不放行本地服务",
+            !UpdatePolicy.isAllowedAssetUrl("http://127.0.0.1:8899/a.apk"))
+
+        // --- 跨文件静态核对：Manifest 声明 + 发布脚本常量与 core 单一真源 ---
+        // 判据沿用 testBleForegroundPolicy：正则取 android:name 的**完整值**做集合包含，
+        // 裸子串 contains 会对 `..._BROKEN` 假绿（本项目实测踩过）。
+        val mf = java.io.File("app/src/main/AndroidManifest.xml")
+        val xml = if (mf.isFile) mf.readText() else ""
+        val declared = Regex("""android:name="([^"]+)"""")
+            .findAll(xml).map { it.groupValues[1] }.toSet()
+        check("Manifest 真声明 REQUEST_INSTALL_PACKAGES 完整名",
+            UpdatePolicy.REQUIRED_MANIFEST_PERMISSION in declared) { "declared=$declared" }
+        check("负对照:拼错的权限名不在声明集合(子串扫描会假绿)",
+            (UpdatePolicy.REQUIRED_MANIFEST_PERMISSION + "_BROKEN") !in declared)
+        // 发布脚本与 App 是两条消费链：schema / 清单名漂移会让 App 判「清单缺失」。
+        val script = java.io.File("tools/publish_release.py")
+        val py = if (script.isFile) script.readText() else ""
+        check("发布脚本 schema 与 core 单一真源一致",
+            py.contains("MANIFEST_SCHEMA = ${UpdatePolicy.MANIFEST_SCHEMA}"))
+        check("发布脚本清单名与 core 单一真源一致",
+            py.contains("MANIFEST_ASSET = \"${UpdatePolicy.MANIFEST_ASSET}\""))
+        check("负对照:脚本不含错误 schema=99", !py.contains("MANIFEST_SCHEMA = 99"))
     }
 
     private operator fun String.times(n: Int) = repeat(n)

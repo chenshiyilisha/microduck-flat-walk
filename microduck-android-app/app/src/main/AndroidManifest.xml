@@ -44,6 +44,26 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      GitHub Releases 自更新：应用内下载 APK 并提交安装会话（2026-11-13 补）。
+      一手依据：
+       · Android Intent reference / AOSP Intent.java：ACTION_INSTALL_PACKAGE 已在 API 29
+         deprecated，官方要求「use PackageInstaller instead」⇒ 本项目用
+         PackageInstaller.Session（MODE_FULL_INSTALL），**不需要 FileProvider**，
+         APK 从应用私有 cacheDir 直接写入会话，不暴露 content Uri。
+       · Google Android《Publish your app / User opt-in for unknown apps and sources》：
+         API 26+ 需用户按来源在「Install unknown apps」里授权，App 每次调用前用
+         PackageManager.canRequestPackageInstalls() 复查；这是特殊权限，
+         不能用 requestPermissions() 动态申请，只能引导到
+         Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES。
+       · Intent reference ACTION_INSTALL_PACKAGE 原文注记：targeting API > 25 的 App
+         要启动安装器必须持有 Manifest.permission.REQUEST_INSTALL_PACKAGES。
+       · Google Android《为应用签名》：「系统会比较新版本和现有版本中的证书」，
+         不同证书会被当成新应用 ⇒ UpdateInstaller 在提交会话前比对签名证书指纹。
+      自检：core 侧核对本权限的完整声明名（正则取 android:name 全值，不用裸子串）。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- BLE 只是四个后端之一（Mock/TCP 也能用）⇒ 不是硬性设备要求，运行时判 hasSystemFeature。 -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <!--
@@ -61,6 +81,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/AppTheme">
 
         <!--
