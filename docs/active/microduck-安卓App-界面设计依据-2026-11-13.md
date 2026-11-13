@@ -118,6 +118,8 @@
 |---|---|---|
 | 方向/头部死区可调并持久化 | ble-rc-controller：Settings 的 dead zone；ROS_Robot_Controller「Persistent user preferences」 | 🟡 ble-rc-controller / ROS_Robot_Controller（开源借鉴） |
 | 模式（MANUAL/AUTO）每次冷启动强制回 MANUAL | 安全：避免「上次停在自动」导致下次打开即零驾驶帧且误以为在自治；与 OpenBot DISCLAIMERS 随时停车要求一致 | 🟡 安全原则 + 自验负对照 |
+| 设置页两个下拉换成 M3 exposed dropdown menu（非编辑、浮动 label、分层弹窗） | MDC `docs/components/Menu.md` + `DropdownMenuEndIconDelegate.java` 一手源码；平台 Spinner 弹窗真机实测为纯黑直角、不吃主题色 | ✅ MDC 官方 + 真机截图 |
+| 视觉现代化（色板语义角色 / 细描边 / 圆角 token / tnum）与代码规范、lint 记录 | 见《microduck-安卓App-现代化科技感视觉设计依据-2026-11-13.md》 | ✅ 专项文档 |
 
 ---
 

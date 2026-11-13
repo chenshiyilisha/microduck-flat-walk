@@ -15,9 +15,8 @@ import android.text.style.AbsoluteSizeSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -25,7 +24,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
-import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.Insets
@@ -33,6 +31,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
+import com.google.android.material.textfield.TextInputLayout
 import io.microduck.app.ble.BleConnectPanel
 import io.microduck.app.core.StateSnapshot
 
@@ -74,8 +74,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var healthText: TextView
     private lateinit var healthSourceText: TextView
     private lateinit var autoRefreshBox: CheckBox
-    private lateinit var channelSpinner: Spinner
-    private lateinit var headRadSpinner: Spinner
+    // M3 exposed dropdown menu：不再是 android.widget.Spinner（平台老式弹窗）。
+    // 持有 MaterialAutoCompleteTextView 以便 restoreSettingsUi() 用 setText(text, false) 回写选中值。
+    private lateinit var channelDropdown: MaterialAutoCompleteTextView
+    private lateinit var headRadDropdown: MaterialAutoCompleteTextView
     private lateinit var invertBox: CheckBox
     private lateinit var vxBar: SeekBar
     private lateinit var yawBar: SeekBar
@@ -161,7 +163,7 @@ class MainActivity : AppCompatActivity() {
     private fun buildAppBar() = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        background = roundedCard(c(R.color.md_card), 16)
+        background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
         setPadding(dp(12), dp(10), dp(12), dp(10))
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
@@ -169,18 +171,24 @@ class MainActivity : AppCompatActivity() {
                 text = "MicroDuck  控制台"
                 textSize = 16f; setTextColor(c(R.color.md_text))
                 setTypeface(null, Typeface.BOLD)
+                // 标题微字距（项目约定 0.08f）：参照 HUD 设计参考里「小标签加字距」的方向。
+                // ⚠️ 具体 0.05–0.1em 数值未能从该页逐字核验，故只作项目取值，不声称规范值。
+                // 纯视觉，不改文本，门禁零影响。
+                letterSpacing = TRACKING_TITLE
             })
             statusText = TextView(this@MainActivity).apply {
                 // 🔴 真机截图实测：状态串一长就折成两行、把 appBar 撑歪。
                 // 单行 + 末尾省略；完整信息分流到上面的来源标签和下面的遥测卡。
                 textSize = 11f; setTextColor(c(R.color.md_text_dim))
                 setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
+                // 等宽数字（tabular figures）：帧数/Hz 逐秒刷新时数字宽度不跳动。
+                fontFeatureSettings = TABULAR_FIGURES
             }
             addView(statusText)
         }, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(12) })
         sourceChip = TextView(this@MainActivity).apply {
             text = "● 演示会话"; textSize = 11f; setTextColor(c(R.color.md_warn))
-            background = roundedCard(c(R.color.md_card_alt), 10)
+            background = roundedCard(c(R.color.md_card_alt), CORNER_LARGE_DP)
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
         addView(sourceChip)
@@ -222,7 +230,8 @@ class MainActivity : AppCompatActivity() {
         linkBanner.setBackgroundColor(if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn))
         linkBanner.setTextColor(c(R.color.md_bg))
         linkBanner.background = roundedCard(
-            if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn), 12)
+            if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn), CORNER_LARGE_DP,
+            stroked = false)   // 告警是纯状态色块，不再叠低对比描边（Color is purely functional）
     }
 
     private fun buildConnectionRow() = LinearLayout(this).apply {
@@ -235,20 +244,22 @@ class MainActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             textSize = 13f; minimumHeight = dp(48)
             setTextColor(c(R.color.md_text)); setHintTextColor(c(R.color.md_text_dim))
-            background = roundedCard(c(R.color.md_card), 12)
+            background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
             setPadding(dp(12), dp(10), dp(12), dp(10))
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
         }
         addView(hostEdit)
         addView(MaterialButton(this@MainActivity).apply {
             text = "连接"; textSize = 12f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_LARGE_DP)      // 项目圆角 token（见 companion / 设计依据文档）
             setOnClickListener { connectFromUi() }
         }, LinearLayout.LayoutParams(WRAP, WRAP).also { it.marginStart = dp(8) })
     }
 
     /** 模式选择：NIST UTAP 的 manual / supervisory 两档，当前档显著标注。 */
     private fun buildModeRow() = MaterialCardView(this).apply {
-        radius = dp(16).toFloat(); cardElevation = 0f; strokeWidth = 0
+        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
+        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
         setCardBackgroundColor(c(R.color.md_card))
         setContentPadding(dp(16), dp(12), dp(16), dp(12))
         val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
@@ -262,11 +273,13 @@ class MainActivity : AppCompatActivity() {
         }
         modeManual = MaterialButton(this@MainActivity).apply {
             text = "手动模式"; textSize = 12f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_LARGE_DP)
             contentDescription = "手动模式"
             setOnClickListener { switchMode(ControlMode.MANUAL) }
         }
         modeAuto = MaterialButton(this@MainActivity).apply {
             text = "自动模式"; textSize = 12f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_LARGE_DP)
             contentDescription = "自动模式"
             setOnClickListener { switchMode(ControlMode.AUTO) }
         }
@@ -287,6 +300,7 @@ class MainActivity : AppCompatActivity() {
         orientation = LinearLayout.VERTICAL
         launchButton = MaterialButton(this@MainActivity).apply {
             textSize = 14f; minimumHeight = dp(52)
+            cornerRadius = dp(CORNER_LARGE_DP)
             // 主 CTA 亮底必须配深字；主题默认 colorOnPrimary 偏暗紫，真机截图对比度不足。
             setTextColor(c(R.color.md_bg))
             contentDescription = "进入遥控界面"
@@ -300,11 +314,12 @@ class MainActivity : AppCompatActivity() {
         orientation = LinearLayout.HORIZONTAL
         // M3 navigation bar 三个目的地应共用一个容器；旧版只有选中项有底，
         // 截图里「状态」像独立胶囊、另两个像裸文字，视觉重心失衡。
-        background = roundedCard(c(R.color.md_card), 12)
+        background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
         setPadding(dp(4), dp(4), dp(4), dp(4))
         listOf("状态", "健康", "设置").forEachIndexed { i, label ->
             val b = MaterialButton(this@MainActivity).apply {
                 text = label; textSize = 12f; minimumHeight = dp(48)
+                cornerRadius = dp(CORNER_NAV_DP)
                 contentDescription = "标签页$label"
                 setOnClickListener { showPage(i) }
             }
@@ -317,7 +332,8 @@ class MainActivity : AppCompatActivity() {
 
     /** 状态页：实机 robot.state 8 项 + App 本地遥测 6 项，标题写死数据来源。 */
     private fun buildStatePage() = MaterialCardView(this).apply {
-        radius = dp(16).toFloat(); cardElevation = 0f; strokeWidth = 0
+        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
+        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
         setCardBackgroundColor(c(R.color.md_card))
         setContentPadding(dp(16), dp(12), dp(16), dp(12))
         contentDescription = "监测数据卡：实机状态帧与App本地遥测"
@@ -326,6 +342,8 @@ class MainActivity : AppCompatActivity() {
         stateSourceText = TextView(this@MainActivity).apply {
             textSize = 12f; setTextColor(c(R.color.md_accent))
             setTypeface(null, Typeface.BOLD)
+            letterSpacing = TRACKING_LABEL     // HUD 微排版：小标签字距
+            fontFeatureSettings = TABULAR_FIGURES
             maxLines = 2; ellipsize = TextUtils.TruncateAt.END
             setLineSpacing(0f, 1.2f)
         }
@@ -356,10 +374,23 @@ class MainActivity : AppCompatActivity() {
     private fun metricCell(label: String, value: String) = TextView(this).apply {
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = dp(40)          // 4 列紧凑栅格：单屏容下全部 15 项
-        background = roundedCard(c(R.color.md_card_alt), 8)
+        background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP)
         setPadding(dp(8), dp(4), dp(8), dp(4))
         setLineSpacing(0f, 1.1f)
         maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+        // 🔑 等宽数字（tabular figures）：状态帧/帧率/计数每秒刷新，比例数字会让
+        // 「9 → 10」时宽度跳动、整格左右晃动。一手依据：
+        //  · Android 平台 TextView.setFontFeatureSettings / android:fontFeatureSettings
+        //    支持 `tnum` OpenType 特性；
+        //  · AndroidX `LayoutElementBuilders.FontSetting.tabularNum()` 官方 API 文档 +
+        //    cs.android.com 一手源码原文：「all numeral characters will have the same width.
+        //    This corresponds to tnum OpenType feature.」
+        // ⚠️ 2026-11-13 纠偏：上一版这里挂了「Falcon 控制站排版文献」并附一句引文，
+        //    复核 falcon.so/resources/design-basics/real-time-design 原文**没有**该句
+        //    （该文献讲「make loss visible immediately / frozen value」，用于 DriveActivity
+        //    的状态停滞告警，不是数字排版）⇒ 删除张冠李戴的引文，只留可逐字核验的源码。
+        // 只影响字形宽度，不改文本 ⇒ 真机门禁 59/59 断言文本零改动。
+        fontFeatureSettings = TABULAR_FIGURES
         setMetric(this, label, value)
     }
 
@@ -400,14 +431,16 @@ class MainActivity : AppCompatActivity() {
         }
 
     private fun divider() = View(this).apply {
-        setBackgroundColor(Color.argb(50, 0x8F, 0xA9, 0xC4))
-        layoutParams = LinearLayout.LayoutParams(MATCH, dp(1)).also {
+        // M3 `outlineVariant` = borders & dividers 的语义角色（不再用临时拼的半透明色）。
+        setBackgroundColor(c(R.color.md_outline_variant))
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(STROKE_HAIRLINE_DP)).also {
             it.topMargin = dp(16); it.bottomMargin = dp(12)
         }
     }
 
     private fun buildHealthPage() = MaterialCardView(this).apply {
-        radius = dp(14).toFloat(); cardElevation = 0f
+        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
+        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
         setCardBackgroundColor(c(R.color.md_card))
         setContentPadding(dp(10), dp(8), dp(10), dp(8))
         val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
@@ -445,7 +478,8 @@ class MainActivity : AppCompatActivity() {
 
     /** 设置页：所有参数写 SessionHolder，DriveActivity 启动时读取，避免「改了没生效」。 */
     private fun buildSettingsPage() = MaterialCardView(this).apply {
-        radius = dp(14).toFloat(); cardElevation = 0f
+        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
+        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
         setCardBackgroundColor(c(R.color.md_card))
         setContentPadding(dp(10), dp(8), dp(10), dp(8))
         val scroll = ScrollView(this@MainActivity)
@@ -453,45 +487,38 @@ class MainActivity : AppCompatActivity() {
         col.addView(TextView(this@MainActivity).apply {
             text = "遥控参数（进入横屏遥控页时生效 · 已本地持久化）"
             textSize = 12f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+            letterSpacing = TRACKING_LABEL
         })
+        // 完整依据：取自 ROS_Robot_Controller / ohho.apk 的 persistent preferences；
+        // 控制模式与连接地址刻意不持久化 —— 每次冷启动回手动，保留手动接管入口
+        // （安全原则见《首页界面设计依据》§10 与《功能缺口清单》）。
+        // 🔴 这里压成单行：真机 uiautomator 只 dump 视口内节点，两行说明会把下方
+        // 「方向摇杆死区」标签推出设置页首屏（门禁 59 条实测 FAIL），依据不丢只是移到注释。
         col.addView(TextView(this@MainActivity).apply {
-            text = "取自 ROS_Robot_Controller / ohho.apk 的 persistent preferences；" +
-                "控制模式与连接地址刻意不持久化（每次冷启动回手动，保留手动接管入口）"
+            text = "取自 ROS_Robot_Controller / ohho.apk；模式与地址不持久化"
             textSize = 10f; setTextColor(c(R.color.md_text_dim))
+            setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
             setPadding(0, 0, 0, dp(6))
         })
-        channelSpinner = Spinner(this@MainActivity).apply {
-            minimumHeight = dp(48)
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_item,
-                listOf("JSON-RPC（TCP/仿真）", "UDP netpad（真机 :4210）")).also {
-                it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        val (channelView, channelInput) =
+            buildDropdown(col, "驾驶通道", CHANNEL_ITEMS, SessionHolder.channelIndex) { pos ->
+                SessionHolder.channelIndex = pos
+                persist()
             }
-            setSelection(SessionHolder.channelIndex)
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                    SessionHolder.channelIndex = pos
-                    persist()
-                }
-                override fun onNothingSelected(p: AdapterView<*>?) {}
-            }
+        channelDropdown = channelInput
+        col.addView(channelView, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(4)
+        })
+
+        val (headRadView, headRadInput) = buildDropdown(col, "头部幅度", HEAD_RAD_ITEMS,
+            SessionHolder.headRadIndex) { pos ->
+            SessionHolder.headRadIndex = pos
+            persist()
         }
-        col.addView(channelSpinner, LinearLayout.LayoutParams(MATCH, WRAP))
-        headRadSpinner = Spinner(this@MainActivity).apply {
-            minimumHeight = dp(48)
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_item,
-                listOf("头部幅度 0.5 rad", "头部幅度 1.0 rad", "头部幅度 2.5 rad")).also {
-                it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-            }
-            setSelection(SessionHolder.headRadIndex)
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                    SessionHolder.headRadIndex = pos
-                    persist()
-                }
-                override fun onNothingSelected(p: AdapterView<*>?) {}
-            }
-        }
-        col.addView(headRadSpinner, LinearLayout.LayoutParams(MATCH, WRAP))
+        headRadDropdown = headRadInput
+        col.addView(headRadView, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(4)
+        })
         invertBox = CheckBox(this@MainActivity).apply {
             text = "反转前后（真机 R17 映射决定，客户端不硬编码）"
             textSize = 11f; minimumHeight = dp(48)
@@ -542,6 +569,7 @@ class MainActivity : AppCompatActivity() {
         updateSettingLabels()
         col.addView(MaterialButton(this@MainActivity).apply {
             text = "恢复默认设置"; textSize = 12f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_LARGE_DP)
             contentDescription = "恢复默认设置"
             setOnClickListener {
                 SettingsStore.reset(applicationContext)
@@ -559,10 +587,69 @@ class MainActivity : AppCompatActivity() {
         addView(scroll, FrameLayout.LayoutParams(MATCH, MATCH))
     }
 
+    /**
+     * M3「Exposed dropdown menu」—— 替换 `android.widget.Spinner` 的现代化选择控件。
+     *
+     * 一手依据（material-components-android 仓库 `docs/components/Menu.md`，2026-11-13
+     * 经 raw.githubusercontent.com 逐字核验；本地 javap 对 material-1.12.0.aar 实证 API）：
+     *  · 「The exposed dropdown menu is implemented through the TextInputLayout.」⇒ 用
+     *    `Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu` 样式，
+     *    而不是平台 `Spinner`（后者弹窗是纯黑直角矩形、无圆角/无选中标记、不吃 M3 主题色，
+     *    见本次改造前的真机截图 `_settings_popup.png`）。
+     *  · 「For a non-editable menu, disable the user input ... android:inputType="none"」
+     *    ⇒ **仅** XML 设 `none`；不再自行禁 focusable / keyListener，也不自定义 showDropDown，
+     *    弹窗开关完全交给 MDC 的 DropdownMenuEndIconDelegate（一手依据见函数内注释）。
+     *    官方文档「Non editable variation」整节也只有这一条要求。
+     *  · 「call setText(CharSequence text, boolean filter) ... with the filter set to false」
+     *    ⇒ 预选值与回写值都用 `setText(text, false)`；`filter=true` 会触发自动补全过滤导致
+     *    默认值显示不出来，且不会触发 onItemClick，不会误写 SessionHolder / 误触发 persist。
+     *  · `setSimpleItems(String[])`、`setDropDownBackgroundTint`、`simpleItemSelectedColor`、
+     *    `popupElevation=3dp` 让弹窗吃 M3 `colorSurfaceContainer*` 分层表面（深蓝而非纯黑）。
+     *
+     * ⚠️ 门禁约束：`uiautomator` 只 dump 视口内节点，故下拉高度受控（label 浮在描边线上，
+     * 不额外占一行）；下方「反转前后」CheckBox 仍需留在首屏视口内，真机 59/59 已复验。
+     */
+    private fun buildDropdown(
+        parent: LinearLayout,
+        label: String,
+        items: List<String>,
+        selected: Int,
+        onPick: (Int) -> Unit,
+    ): Pair<TextInputLayout, MaterialAutoCompleteTextView> {
+        // 🔴 Android lint InflateParams：inflate 必须给非 null parent + attachToRoot=false，
+        // 否则根元素的 layout_width/height 无法解析成对应类型的 LayoutParams。
+        val root = LayoutInflater.from(this)
+            .inflate(R.layout.widget_exposed_dropdown, parent, false) as TextInputLayout
+        val input = root.findViewById<MaterialAutoCompleteTextView>(R.id.dropdown_input)
+        root.hint = label
+        input.setSimpleItems(items.toTypedArray())
+        // 官方「Setting a default value」：setText(text, filter=false)。filter=true 会触发
+        // 自动补全过滤，预选值显示不出来，且不会误触发 onItemClick / persist。
+        input.setText(items[selected.coerceIn(items.indices)], false)
+        // 🔴 非编辑态**只**靠 XML 的 android:inputType="none"，不要额外写
+        // keyListener=null / isFocusable=false / 自定义 OnClickListener(showDropDown)。
+        // 一手依据：material-components-android `DropdownMenuEndIconDelegate.java`
+        // （2026-11-13 经 raw.githubusercontent.com 抓取逐行核验）：
+        //  · setUpDropdownShowHideBehavior() 已给 AutoCompleteTextView 注册 OnTouchListener，
+        //    ACTION_UP 时调 showHideDropdown() —— 整个输入框可点，且是「开/关切换」；
+        //  · onIconClickListener 复用同一个 showHideDropdown()；
+        //  · showHideDropdown() 内部 autoCompleteTextView.requestFocus() + showDropDown()：
+        //    若把 isFocusable 设成 false，焦点态（editTextHasFocus / endIcon activated /
+        //    无障碍 TYPE_VIEW_CLICKED 路径）会被破坏；再挂一个「只弹不关」的 OnClickListener
+        //    还会与框架的 toggle 语义打架（一次点击两条路径）。
+        //  · onInitializeAccessibilityNodeInfo() 把非编辑下拉伪装成 Spinner 供 TalkBack 识别，
+        //    也是框架职责，不需要 App 侧补。
+        // 结论：App 只负责业务回调（选中项 → SessionHolder），交互一律交给 MDC。
+        input.setOnItemClickListener { _, _, pos, _ -> onPick(pos) }
+        return root to input
+    }
+
     /** 把 SessionHolder 的当前值写回设置页控件（load / reset 后用）。 */
     private fun restoreSettingsUi() {
-        channelSpinner.setSelection(SessionHolder.channelIndex)
-        headRadSpinner.setSelection(SessionHolder.headRadIndex)
+        channelDropdown.setText(
+            CHANNEL_ITEMS[SessionHolder.channelIndex.coerceIn(CHANNEL_ITEMS.indices)], false)
+        headRadDropdown.setText(
+            HEAD_RAD_ITEMS[SessionHolder.headRadIndex.coerceIn(HEAD_RAD_ITEMS.indices)], false)
         invertBox.isChecked = SessionHolder.invertY
         autoRefreshBox.isChecked = SessionHolder.autoRefreshHealth
         vxBar.progress = (SessionHolder.maxVx * 100).toInt()
@@ -581,14 +668,37 @@ class MainActivity : AppCompatActivity() {
     private fun buildBottomStatus() = TextView(this).apply {
         bottomStatus = this
         textSize = 11f; setTextColor(c(R.color.md_text_dim))
-        background = roundedCard(c(R.color.md_card), 10)
+        background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
         setPadding(dp(10), dp(6), dp(10), dp(6))
         setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
+        fontFeatureSettings = TABULAR_FIGURES   // 帧数逐秒变化时数字不抖动
     }
 
-    private fun roundedCard(fill: Int, radiusDp: Int) = GradientDrawable().apply {
-        setColor(fill); cornerRadius = dp(radiusDp).toFloat()
-    }
+    /**
+     * 统一表面容器：细描边 + 项目圆角 token。
+     *
+     * 一手依据：
+     *  · 形状量级：解包 material-1.12.0.aar/res/values/values.xml 实证组件大圆角
+     *    `m3_navigation_drawer_layout_corner_size=16dp`、
+     *    `m3_carousel_small_item_default_corner_size=28dp`；本项目取 20dp 落在同一量级。
+     *    ⚠️ 2026-11-13 纠偏：此前注释写「M3 Expressive 官方 Large token = 20dp」并附引文，
+     *    但 m3.material.io Shape 页为 JS 渲染抓不到原文、本地 AAR 也无 20dp 通用 shape
+     *    token ⇒ 不再声称官方数值，降级为**本项目约定值**，见设计依据文档。
+     *  · Google Material Design 3「Color roles」：`outline` / `outlineVariant` 用于
+     *    「Borders, dividers」；配合本项目采用的 HUD 设计参考（Chris Lemke, Sci-Fi Interface）
+     *    「**Borders Over Fills** — Thin luminous borders define panels and create the skeletal
+     *    structure of the HUD」「Hierarchy Through Luminance」⇒ 卡片用 1dp 低对比描边取代
+     *    纯色块堆叠，层级靠亮度而非色相。
+     *  · ⚠️ 该 HUD 参考同时建议扫描线 / 雷达动画，本项目**不采纳**：M3「Don't compromise
+     *    clarity for the sake of visual design」+ 真机门禁 `uiautomator` 要求 1000ms 静默窗
+     *    （持续动画会触发无障碍事件导致 dump 死锁），详见设计依据文档「负向决策」章节。
+     */
+    private fun roundedCard(fill: Int, radiusDp: Int, stroked: Boolean = true) =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(radiusDp).toFloat()
+            if (stroked) setStroke(dp(STROKE_HAIRLINE_DP), c(R.color.md_outline_variant))
+        }
 
     /** 每次改动立刻落盘；不依赖 onStop，避免进程被杀丢设置。 */
     private fun persist() = SettingsStore.save(applicationContext)
@@ -753,9 +863,32 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
         const val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+
+        // ── 视觉 token（2026-11-13 现代化改造）──
+        // 视觉 token 具名化（项目约定值，非官方 token 数值）：
+        //  · 20dp 圆角量级参照 MDC 1.12.0 AAR 实测组件圆角 16dp / 28dp（见 roundedCard KDoc）；
+        //  · 1dp 细描边对应 M3「Color roles」的 outline = borders/dividers 语义。
+        // 🔴 不再把 20 / 1 / "tnum" 等字面量散落在十几个调用点：token 必须具名，
+        //    改一处即可全局生效。XML 侧的 @dimen/m3_corner_large 与这里同源，
+        //    数值改动须两处同步（见设计依据文档「token 单一真源」条目）。
+        const val CORNER_LARGE_DP = 20        // 主容器 / 按钮 / 输入框
+        const val CORNER_NAV_DP = 16          // 导航栏内层按钮
+        const val CORNER_CELL_DP = 12         // 遥测单元格
+        const val STROKE_HAIRLINE_DP = 1      // 细描边（Borders Over Fills）
+        const val TABULAR_FIGURES = "tnum"    // OpenType tabular figures
+        const val TRACKING_TITLE = 0.08f      // 标题字距（HUD machine-stamped）
+        const val TRACKING_LABEL = 0.05f      // 小标签字距
+
         val STATE_LABELS = listOf("策略", "控制环", "命令→实际", "限幅",
             "安全", "头部", "电流", "航向·时间")
         val TELEMETRY_LABELS = listOf("会话状态", "驱动通道", "驾驶帧 / 心跳",
             "头部帧", "状态帧 / 帧率", "最后输入", "本地刷新")
+
+        /** 下拉候选项：文案一字不改（真机门禁与用户既有认知依赖这些子串）。
+         *  🔴 用不可变 List 而非 arrayOf：Kotlin 官方命名约定要求持有 mutable data
+         *  的属性用 camelCase，全大写只给 deeply immutable 常量；Array 是可变的。 */
+        val CHANNEL_ITEMS = listOf("JSON-RPC（TCP/仿真）", "UDP netpad（真机 :4210）")
+        val HEAD_RAD_ITEMS = listOf("头部幅度 0.5 rad", "头部幅度 1.0 rad",
+            "头部幅度 2.5 rad")
     }
 }

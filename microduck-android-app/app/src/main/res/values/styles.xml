@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Material 3 **固定深色**控制台主题。
+      Material 3 **固定深色**控制台主题（2026-11-13 现代化改造）。
 
       🔴 为什么不用 Theme.Material3.DayNight.NoActionBar：
       解包 material-1.12.0.aar/res/values/values.xml 实证，
@@ -10,25 +10,77 @@
       直接冲突（用户反馈的"界面丑"里有一半来自这种不可控漂移）。
       `Theme.Material3.Dark.NoActionBar` → Base.Theme.Material3.Dark → Base.V14.Theme.Material3.Dark
       → Theme.MaterialComponents（→ AppCompat 后代），固定深色，且不依赖 DayNight delegate。
-      Material 组件（MaterialCardView / MaterialButton）要求 theme 是 MaterialComponents 后代，
-      这条链满足，故 Activity 用 AppCompatActivity 时不会抛 ThemeEnforcement 异常。
+      Material 组件（MaterialCardView / MaterialButton / TextInputLayout）要求 theme 是
+      MaterialComponents 后代，这条链满足，故 Activity 用 AppCompatActivity 时不会抛
+      ThemeEnforcement 异常。
 
-      🔴 targetSdk=35 在 Android 15+ **强制 edge-to-edge**（官方文档
+      🔴 targetSdk=35 在 Android 15+ **强制 edge-to-edge**（Android 平台文档
       developer.android.com/develop/ui/views/layout/edge-to-edge 与
       about/versions/15/behavior-changes-15）：状态栏/导航栏变透明、top offset 被禁用，
       内容默认画到状态栏下 ⇒ 用户反馈的"屏幕顶部遮住了"。
-      修法按官方 View 方案：ViewCompat.setOnApplyWindowInsetsListener + systemBars() insets
+      修法按平台 View 方案：ViewCompat.setOnApplyWindowInsetsListener + systemBars() insets
       给根布局加 padding，而不是退回 windowOptOutEdgeToEdgeEnforcement。
+
+      ── 2026-11-13 现代化改造：色板升级为 M3 语义角色（color roles），不再散落硬编码 hex ──
+      一手依据：
+       · Google Material Design 3「Color system / Color roles」(m3.material.io/styles/color/system)：
+         组件只用语义角色（surface / surfaceContainer* / outline / onSurface*），
+         「Never hardcode color hex values in components」；每个前景必须配对应的 on-* 角色。
+       · Google Material Design「Dark theme」(material.io/design/color/dark-theme.html)：
+         「Use dark grey – rather than black – to express elevation and space」、
+         「Higher elevation, lighter surface」（0dp→0%、1dp→5% … 24dp→16% 白色叠加）、
+         「Apply limited color accents in dark theme UIs」、
+         「desaturated so they pass WCAG AA of at least 4.5:1」。
+       · Google Material「Learn About Tone-based Surfaces in Material 3」
+         (m3.material.io/blog/tone-based-surface-color-m3/)：2026-11-13 抓取只得到页面标题，
+         正文为 JS 渲染**未能逐字核验** ⇒ 不引用其原文（此前注释里的转述已删除）。
+       · 五级 surface container 角色改以**本地一手源码**实证：解包 material-1.12.0.aar
+         /res/values/values.xml 逐个 grep，colorSurfaceContainerLowest / Low / Container /
+         High / Highest 五个 attr 均存在。⇒ 本文件的 5 级 surface 是逐级提亮的 tonal 层级
+         （md_bg → md_card → md_card_alt → md_surface_high → md_surface_highest），
+         不是纯黑 + 一层白；文字始终用近白 on-surface。
+       · Sci-Fi HUD 设计参考（Chris Lemke, "Sci-Fi Interface – Design Aesthetic Reference",
+         chrislemke.github.io/website_designs/examples/Sci_Fi_Interface.html，2026-11-13 一手核验）：
+         「Color is purely functional: cyan for nominal, amber for caution, red for critical,
+         green for confirmed」、「Luminance Over Hue」、「Borders Over Fills — thin luminous
+         borders define panels」。本项目既有 md_accent(青)/md_warn(琥珀)/md_bad(红)/md_ok(绿)
+         恰好与这套状态语义一一对应，故保留色值、只补齐语义角色与细描边 token。
+       ⚠️ 该参考里的扫描线 / 雷达扫描 / 呼吸动画**一律不采纳**：见设计依据文档的「负向决策」章节
+         （Motion sensitivity 警告 + uiautomator waitForIdle 门禁硬约束 + 不伪造数据铁律）。
     -->
     <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@color/md_bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
+
+        <!-- 品牌主色 / 状态语义色（cyan nominal / amber caution / red critical / green confirmed） -->
         <item name="colorPrimary">@color/md_accent</item>
+        <item name="colorOnPrimary">@color/md_bg</item>
+        <item name="colorPrimaryContainer">@color/md_accent_container</item>
+        <item name="colorOnPrimaryContainer">@color/md_text</item>
         <item name="colorSecondary">@color/md_warn</item>
+        <item name="colorTertiary">@color/md_ok</item>
+        <item name="colorError">@color/md_bad</item>
+        <item name="colorOnError">@color/md_bg</item>
+
+        <!-- 五级 tonal surface container：让 MDC 组件（下拉弹窗 / 卡片 / 输入框）自动吃同一套色板 -->
+        <item name="colorSurface">@color/md_surface</item>
+        <item name="colorSurfaceVariant">@color/md_card_alt</item>
+        <item name="colorSurfaceContainerLowest">@color/md_bg</item>
+        <item name="colorSurfaceContainerLow">@color/md_card</item>
+        <item name="colorSurfaceContainer">@color/md_card_alt</item>
+        <item name="colorSurfaceContainerHigh">@color/md_surface_high</item>
+        <item name="colorSurfaceContainerHighest">@color/md_surface_highest</item>
+        <item name="colorOnSurface">@color/md_text</item>
+        <item name="colorOnSurfaceVariant">@color/md_text_dim</item>
+
+        <!-- outline / outlineVariant 是 M3 的 borders & dividers 角色：细发光描边的语义来源 -->
+        <item name="colorOutline">@color/md_outline</item>
+        <item name="colorOutlineVariant">@color/md_outline_variant</item>
     </style>
 
+    <!-- 原有 8 色保持色值不变：真机 59/59 门禁与对比度已验证，不动它们最安全 -->
     <color name="md_bg">#0B1B30</color>
     <color name="md_card">#132B47</color>
     <color name="md_card_alt">#19365A</color>
@@ -38,4 +90,14 @@
     <color name="md_text_dim">#8FA9C4</color>
     <color name="md_ok">#4ADE80</color>
     <color name="md_bad">#FF6B6B</color>
+
+    <!-- 新增：M3 tone-based surface 五级中的高两级 + 语义描边 + 低饱和 accent 容器。
+         亮度递进符合 Material dark theme「higher elevation → lighter surface」，
+         且都不是纯黑（Dark grey rather than black）。 -->
+    <color name="md_surface">#0E2138</color>
+    <color name="md_surface_high">#244970</color>
+    <color name="md_surface_highest">#315C88</color>
+    <color name="md_outline">#4A7093</color>
+    <color name="md_outline_variant">#274560</color>
+    <color name="md_accent_container">#123E58</color>
 </resources>

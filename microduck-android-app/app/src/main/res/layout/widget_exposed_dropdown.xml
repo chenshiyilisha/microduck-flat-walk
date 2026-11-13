@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M3「Exposed dropdown menu」—— 替换 android.widget.Spinner 的现代化下拉。
+
+  一手依据：material-components/material-components-android 仓库 `docs/components/Menu.md`
+  （2026-11-13 经 raw.githubusercontent.com 抓取逐字核验）：
+   · 「The exposed dropdown menu is implemented through the TextInputLayout.」
+   · 样式族 `Widget.Material3.TextInputLayout.{Filled|Outlined}Box[.Dense].ExposedDropdownMenu`；
+     这里选 OutlinedBox.**Dense**：MDC 的 Dense 变体专为紧凑表单减少垂直占用
+     （本地解包 values.xml 实证该样式存在，且同样带 endIconMode=dropdown_menu）。
+     🔴 真机硬约束：uiautomator 只 dump 视口内节点，设置页 ScrollView 可视区
+     [1590,2594]。标准 OutlinedBox 两个下拉各 168px，会把下方「方向摇杆死区」标签
+     推出视口 → 门禁 59 条里的「设置页含持久化说明与可调死区」断言 FAIL。
+     label 仍由 Kotlin 侧 setHint() 注入，浮动在描边线上，不额外占一行。
+   · 「For a non-editable menu, disable the user input in the AutoCompleteTextView by
+     setting android:inputType="none"」⇒ 下方 android:inputType="none"。
+   · 「call setText(CharSequence text, boolean filter) ... with the filter set to false」
+     ⇒ Kotlin 侧 setText(items[index], false) 设默认值，且不会触发过滤/选中回调。
+   · `app:simpleItems` / `setSimpleItems(String[])`：M3 提供的简易候选项 API
+     （本文件不解耦 XML 选项，因为两个下拉的选项不同，由 Kotlin 侧注入）。
+   · `app:dropDownBackgroundTint` 默认 `colorSurfaceContainer`、
+     `android:popupElevation` 默认 3dp、
+     `app:simpleItemSelectedColor` 默认 `?attr/colorSurfaceContainerHighest`
+     ⇒ 弹窗不再是平台 Spinner 的纯黑直角矩形，而是跟随 M3 主题的分层表面 + 圆角 + 选中高亮。
+
+  ⚠️ 这里显式写全限定类名 com.google.android.material.textfield.MaterialAutoCompleteTextView，
+  不依赖 MaterialComponentsViewInflater 的自动替换，避免 theme overlay 差异导致样式漂移。
+  本地 javap 实证 material-1.12.0.aar 内 setSimpleItems / setDropDownBackgroundTint /
+  setSimpleItemSelectedColor / TextInputLayout.END_ICON_DROPDOWN_MENU 等 API 全部存在。
+-->
+<com.google.android.material.textfield.TextInputLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/dropdown_root"
+    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    app:boxBackgroundColor="@color/md_card"
+    app:boxStrokeColor="@color/md_outline"
+    app:boxStrokeWidth="@dimen/m3_stroke_hairline"
+    app:boxStrokeWidthFocused="@dimen/m3_stroke_hairline"
+    app:boxCornerRadiusTopStart="@dimen/m3_corner_large"
+    app:boxCornerRadiusTopEnd="@dimen/m3_corner_large"
+    app:boxCornerRadiusBottomStart="@dimen/m3_corner_large"
+    app:boxCornerRadiusBottomEnd="@dimen/m3_corner_large"
+    app:hintTextColor="@color/md_text_dim"
+    app:endIconTint="@color/md_accent">
+
+    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+        android:id="@+id/dropdown_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="none"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="@color/md_text"
+        android:textColorHint="@color/md_text_dim"
+        android:textSize="13sp"
+        android:fontFeatureSettings="tnum"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        app:dropDownBackgroundTint="@color/md_card_alt"
+        app:simpleItemSelectedColor="@color/md_surface_high" />
+
+</com.google.android.material.textfield.TextInputLayout>

@@ -369,8 +369,11 @@ class DriveActivity : AppCompatActivity() {
         setSingleLine(true)
         ellipsize = TextUtils.TruncateAt.END
         setLineSpacing(0f, 1.0f)
+        // HUD 微排版：小标签字距 + 等宽数字（遥控页数值高频刷新，比例数字会左右抖动）。
+        // 依据同 MainActivity.metricCell（Android tnum OpenType / 控制站排版一手资料）。
+        letterSpacing = TRACKING_HUD
+        fontFeatureSettings = TABULAR_FIGURES
         setPadding(dp(2), dp(1), dp(2), dp(1))
-        // 🔴 用户要求「不需要背景」：去掉单元格的内层表面色卡片，改用文字投影在画面上浮现。
         paint.setShadowLayer(2f, 1f, 1f, Color.argb(180, 0, 0, 0))
         setHudMetric(this, label, value)
     }
@@ -744,6 +747,9 @@ class DriveActivity : AppCompatActivity() {
     private companion object {
         const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
         const val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+        // 视觉 token：与 MainActivity 的同名常量同值、同一手依据（见其 companion 注释）。
+        const val TRACKING_HUD = 0.04f
+        const val TABULAR_FIGURES = "tnum"
         // 6 格 = 2 行 × 3 列；「模式 / 连接」「实际速度」是真机门禁的固定断言文本，勿改。
         val HUD_LABELS = listOf("模式 / 连接", "状态帧 / 帧率", "实际速度",
             "电池", "命令→实际", "头部 °")

@@ -130,6 +130,10 @@
 | 反转前后开关 | 真机 R17 映射决定、客户端不硬编码（避免把映射写死） | 🟡 架构原则 |
 | 模式/连接地址**刻意不持久化**（冷启动回手动） | 安全：避免「上次停在自动」导致下次打开即零驾驶帧且误以为在自治（与 OpenBot DISCLAIMERS 随时停车一致） | 🟡 安全原则 |
 | BLE 面板放设置页最末尾 | A1：运行时权限 + unfiltered 扫描 + 真 BleTransport 入口；放末尾避免把反转/滑杆挤出可见区（门禁靠 UI dump 定位） | 🟡 A1 设计决策 |
+| 通道/头部幅度下拉由平台 `Spinner` 换成 M3 exposed dropdown menu | MDC `docs/components/Menu.md`；改造前真机弹窗为纯黑直角、无圆角/阴影/选中标记、不吃 M3 主题色。`Spinner` **不是** API deprecated，过时的是视觉与交互 | ✅ MDC 官方 + 真机截图 |
+| 非编辑态只设 `android:inputType="none"`，不写 `focusable=false` / 自定义 `showDropDown()` | MDC `DropdownMenuEndIconDelegate.java` 一手源码：框架已注册 `OnTouchListener` + endIcon 共用 `showHideDropdown()`，且内部会 `requestFocus()` | ✅ 一手源码 |
+| 下拉用 Dense + 4dp 内边距、顶部说明压成单行 | 真机 `uiautomator` 只 dump 视口内节点；标准 OutlinedBox（各 168px）把「方向摇杆死区」推出可视区 → 门禁 58/59，压缩后 59/59 | ✅ 真机负对照 |
+| 本页现代化 / 科技感改造的逐元素依据 | 见《microduck-安卓App-现代化科技感视觉设计依据-2026-11-13.md》（色板语义角色、细描边、圆角 token、tnum、代码规范与 lint 记录） | ✅ 专项文档 |
 
 ---
 

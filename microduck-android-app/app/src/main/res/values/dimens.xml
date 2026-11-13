@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M3 视觉 token（XML 侧），2026-11-13 现代化改造。
+
+  一手依据：
+   · 20dp 是**本项目约定的大圆角值**：参照 MDC 1.12.0 AAR 实测组件圆角
+     `m3_navigation_drawer_layout_corner_size=16dp` /
+     `m3_carousel_small_item_default_corner_size=28dp`，取同一量级。
+     ⚠️ m3.material.io Shape 页为 JS 渲染抓不到原文、AAR 内也无 20dp 通用 shape token，
+     故不声称官方 shape token 数值；`m3_` 前缀只表示风格取向，非官方资源名。
+   · Google Material 3「Color roles」：outline / outlineVariant 用于 borders & dividers
+     ⇒ 1dp hairline 描边（配合 HUD 参考的「Borders Over Fills」）。
+
+  ⚠️ 与 Kotlin 侧 MainActivity 的 CORNER_LARGE_DP / STROKE_HAIRLINE_DP 同源同值：
+     Kotlin 要的是「dp 整数」再乘 density，XML 要的是带单位的 <dimen>，两种资源类型
+     无法直接共用一份定义。改动时务必两处一起改，否则 Kotlin 与 XML 的圆角会不一致
+     （见《microduck-安卓App-现代化科技感视觉设计依据》「token 单一真源」条目）。
+-->
+<resources>
+    <dimen name="m3_corner_large">20dp</dimen>
+    <dimen name="m3_stroke_hairline">1dp</dimen>
+</resources>
