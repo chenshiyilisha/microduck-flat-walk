@@ -46,12 +46,14 @@ import io.microduck.app.core.StateSnapshot
  *    **distinct pages** and tabs for related content within a page」「Don't use a navigation bar
  *    for fewer than three destinations」。⇒ 状态 / 健康 / 设置 三个独立页，
  *    而全屏沉浸的遥控页不放导航栏，改由独立 Activity 承载。
- *  - Weston Robot Teleop 文档：「The driving view has **its own arrangement** — a primary feed
- *    filling the screen ... **kept separately from the dashboard's**」；速度/死区等参数属于 settings。
- *  - Uni Bonn RoMan 2012 §A：「The user's selection in this list defines the content of the
- *    control view」⇒ 模式/页面选择与控制视图分离。
- *  - NIST UTAP 3.2.19：manual control = 人的连续输入；supervisory/fully automatic = 计算机产生
- *    运动。本页的「自动模式」按**监督视图**实现：App 零驾驶帧、只监测，详见 SessionHolder 注释。
+ *  - Weston Robot Teleop 文档（docs.westonrobot.com/.../robot-teleoperation，2026-11-13 一手核验
+ *    原文「The driving view has **its own arrangement** — a primary feed filling the screen ...
+ *    **kept separately from the dashboard's**」）：驾驶视图与仪表盘分离；速度/死区等参数属于 settings。
+ *  - NIST UTAP 3.2.19（NIST 工作草案 ws680.nist.gov，2026-11-13 一手核验原文：telerobotics
+ *    methods ... manual control, supervisory control, and fully automatic control；manual =
+ *    人的连续输入，supervisory = 人或计算机均可产生运动）：本页「自动模式」按**监督视图**实现 ——
+ *    App 零驾驶帧、只监测，详见 SessionHolder 注释。
+ *  - 用户 2026-11-12「一个界面放不下这么多内容，应该合理的拆分界面」——拆页的直接产品需求。
  *
  * ## 数据来源不许串源（项目铁律 UNVERIFIED != PASS）
  * 「实机状态帧」只读 `robot.state` 订阅帧；Mock 不推帧 ⇒ 保持「— 未读到」，绝不拿本地计数填。
@@ -185,9 +187,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 链路状态横幅（A3）。BoBo `mobile-app.md` §4：「Every screen tolerates the link dropping
-     * underneath it and coming back」——断链/重连是**安全信息**，必须两个页面都看得见。
-     * 默认 GONE，正常态不占视觉空间；异常时整条着色，不靠小字暗示。
+     * 链路状态横幅（A3）。断链/重连是 teleop **安全信息**，须在任何页面都可见
+     * （断链停车 / 失败第一态是 field-robot 安全共识，OpenBot DISCLAIMERS 亦要求随时可感知
+     * 连接状态）；本横幅默认 GONE，正常态不占视觉空间，异常时整条着色，不靠小字暗示。
      */
     private fun buildLinkBanner() = TextView(this).apply {
         contentDescription = "链路状态横幅"
@@ -327,8 +329,8 @@ class MainActivity : AppCompatActivity() {
         // 不吐，与 OEM 无关，是 uiautomator 固有行为）。状态页若用 2 列(8 行 ≈ 480dp)
         // 会超出 ~370dp 的可用高度，遥测区被推到折叠线以下 ⇒ 门禁读不到「本地刷新」。
         // 改 4 列(4 行 ≈ 240dp)让全部内容单屏可见；每格仍保留独立表面色 + label/value
-        // 分色分层（A4 的层级表达保留），只是更紧凑 —— 这是车载/手表/ IoT 仪表盘的标准
-        // 紧凑栅格做法，不是退回旧版挤成一团。
+        // 分色分层（A4 的层级表达保留），只是更紧凑 —— 这是窄屏单屏容纳全部监测指标的
+        // 通用高密度做法（Material 3 compact window < 600dp + 信息密度权衡），并非退回旧版挤成一团。
         col.addView(metricGrid(4, STATE_LABELS, stateValues),
             LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) })
         col.addView(divider())
