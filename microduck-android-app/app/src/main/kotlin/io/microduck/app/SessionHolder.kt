@@ -52,6 +52,9 @@ object SessionHolder {
     @Volatile var stateWindowFrames: Int = 0
     @Volatile var stateWindowStartMs: Long = System.currentTimeMillis()
     @Volatile var stateHz: Double = 0.0
+    /** 最后一帧状态到达的墙钟时间 —— 供 UI 判断「冻结节是否仍在显示」(Falcon/TechnoLynx:
+     *  最危险的是看起来仍实时的陈旧值)。无帧时恒 0。 */
+    @Volatile var lastStateMs: Long = 0
     @Volatile var batteryText: String = "— 未读到"
     @Volatile var lastInput: String = "— 无输入"
     @Volatile var heartbeatRunning: Boolean = false
@@ -149,6 +152,7 @@ object SessionHolder {
             stateWindowFrames = 0
             stateWindowStartMs = System.currentTimeMillis()
             stateHz = 0.0
+            lastStateMs = 0
             lastState = null
             batteryText = "— 未读到"
             sinkLabel = "-"
@@ -194,6 +198,7 @@ object SessionHolder {
             lastState = StateSnapshot.from(o)
             stateFrameCount++
             stateWindowFrames++
+            lastStateMs = System.currentTimeMillis()
             kind = k
         }
     }
@@ -239,6 +244,16 @@ object SessionHolder {
     }
 
     fun markInput(s: String) { lastInput = s }
+
+    /**
+     * 状态帧年龄(ms) —— 链路看似正常但很久没新帧时返回 >0，UI 据此打「状态停滞」告警。
+     * 无帧 / 未订阅返回 -1。依据 Falcon「make loss visible immediately … a frozen value that
+     * still looks live is the worst outcome」与 TechnoLynx 操作员控制台读序第 3 位
+     * 「frame age / freeze flag / link quality — Can I trust what I am seeing?」。
+     */
+    fun stateAgeMs(): Long =
+        if (stateFrameCount == 0 || lastStateMs == 0L) -1
+        else System.currentTimeMillis() - lastStateMs
 
     /**
      * 模式切换：自动模式绝不允许残留心跳帧。

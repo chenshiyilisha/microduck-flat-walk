@@ -22,6 +22,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.INTERNET" /> <!-- P1/P2：TCP relay / WebRTC -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 摇杆触觉反馈（engaged / 满幅短震）；普通权限，安装即授权，无需运行时请求。 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- BLE 只是四个后端之一（Mock/TCP 也能用）⇒ 不是硬性设备要求，运行时判 hasSystemFeature。 -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />

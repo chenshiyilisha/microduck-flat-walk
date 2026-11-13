@@ -15,7 +15,8 @@ P1+ 多页 / 横屏 / 双模式 真机活体门禁 —— vivo V2338A / Android 
    逐 Activity 属性 ⇒ 主页竖屏、DriveActivity 横屏可分别用 uiautomator 的 hierarchy rotation 验。
  - NIST UTAP 3.2.19 / Weston Robot Teleop：手动 = 人的连续输入；退出遥控页必须停车；
    自动（监督）视图下 App 零驾驶帧。
- - Uni Bonn RoMan 2012 §B.1：全屏画面 + 左右下角双摇杆、双拇指操作。
+ - arXiv:2110.08753（一手核验）：横屏持机时双拇指舒适区距屏幕左/下边 9.8–19.4 mm，摇杆
+   贴两下角、双拇指操作 ⇒ 本页双摇杆落位依据（非引用未核验的 RoMan 2012 章节）。
 
 ⚠️ 只对自己的包 io.microduck.app 做 force-stop/start，不碰其它应用、不卸载、不清除数据。
 """

@@ -7,6 +7,8 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Rect
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -57,6 +59,14 @@ class JoystickView @JvmOverloads constructor(
         set(value) { field = value; invalidate() }
 
     /**
+     * 死区可视化比例（0~1，相对摇杆半径）。参考 simplified.media / Godot 摇杆文档：
+     * 把「中心死区」画出来，用户才看得到「推到多小算没动」。由 DriveActivity 从
+     * SessionHolder.driveDeadzone / headDeadzone 注入，默认 0.08。
+     */
+    var deadzoneFraction: Float = 0.08f
+        set(value) { field = value; invalidate() }
+
+    /**
      * 🔴 方向反转开关：`firmware/docs/robot/udp-pad.md` 明确「若推前杆却倒退，
      * 客户端加 `--invert-y`」——真机速度方向的最终解释权在板上 R17 映射，
      * **不得在客户端硬编码**。此开关只影响送出的归一化 y，不碰 core 的映射逻辑。
@@ -73,6 +83,16 @@ class JoystickView @JvmOverloads constructor(
     private var knobY = 0f
     private val density = resources.displayMetrics.density
 
+    /** 触觉反馈：engaged（首触）与满幅（magnitude≥0.95）各震一次（Unity/CSDN 摇杆文档）。 */
+    private val vibrator by lazy { context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator }
+    private var hapticEngaged = false
+    private var hapticMax = false
+    /** 触控中：画一圈外发光环，给操作员明确的「已握持 / 已激活」视觉确认（触觉之外的冗余通道）。 */
+    private var engaged = false
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 6f * density
+    }
+
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 3f * density
@@ -83,6 +103,11 @@ class JoystickView @JvmOverloads constructor(
     }
     private val crossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 1.5f * density
+    }
+    /** 死区边界：虚线小环，标示「推到多小算没动」（simplified.media / Godot 摇杆文档）。 */
+    private val deadzonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.5f * density
+        pathEffect = DashPathEffect(floatArrayOf(3f * density, 4f * density), 0f)
     }
     private val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val knobGlossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -100,8 +125,11 @@ class JoystickView @JvmOverloads constructor(
         ringPaint.color = Color.argb(190, Color.red(a), Color.green(a), Color.blue(a))
         dashPaint.color = Color.argb(110, Color.red(a), Color.green(a), Color.blue(a))
         crossPaint.color = Color.argb(70, 0x8F, 0xA9, 0xC4)
+        deadzonePaint.color = Color.argb(110, 0x8F, 0xA9, 0xC4)
         knobPaint.color = a
         labelPaint.color = Color.rgb(0x8F, 0xA9, 0xC4)
+        // 户外/亮画面可读性：摇杆标签加投影（FPV OSD / sunlight-readability 文献：高对比+描边）。
+        labelPaint.setShadowLayer(2f * density, 1f, 1f, Color.argb(180, 0, 0, 0))
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -124,6 +152,10 @@ class JoystickView @JvmOverloads constructor(
         // ⇒ 只排除摇杆圆形外接矩形（不整块浮层）；底部 home 手势官方明确「Apps can't opt
         //    out」，故不碰底部，改由 Activity 的 systemBars bottom padding 让开。
         // View 处于 GONE（健康页）时不在视图树中，排除区自然失效，符合「仅必要时」。
+        // 🔴 2026-11-13 实测排除：曾怀疑 onSizeChanged 内调用会触发 layout 重派 → 永不 idle
+        // （uiautomator dump 报 could not get idle state）。经对照实验（注释掉仍 13/8 失败）
+        // 已证伪该假设；idle 真因是 DriveActivity 每秒改写 TextView 发射无障碍事件（见
+        // DriveActivity.tick 节流说明）。排除区不发射无障碍事件、不触发重绘循环，故恢复。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val pad = (radius + 6f * density).toInt()
             ViewCompat.setSystemGestureExclusionRects(
@@ -159,11 +191,18 @@ class JoystickView @JvmOverloads constructor(
                 val rawY = if (invertY) -out.y else out.y
                 knobX = cx + (out.x * radius).toFloat()
                 knobY = cy - (rawY * radius).toFloat()
+                // 触觉：首触一次 + 满幅一次（magnitude≥0.95）
+                if (!hapticEngaged) { buzz(VibrationEffect.EFFECT_TICK); hapticEngaged = true }
+                val mag = kotlin.math.hypot(out.x, out.y)
+                if (mag >= 0.95 && !hapticMax) { buzz(VibrationEffect.EFFECT_CLICK); hapticMax = true }
                 onMove?.invoke(out.x, out.y)
+                engaged = true
                 invalidate()
             }
             StickOutput.Release -> {
                 resetKnob()
+                engaged = false
+                hapticEngaged = false; hapticMax = false
                 onRelease?.invoke()
             }
             StickOutput.Noop -> Unit   // 已是松开态，不重复发零帧
@@ -190,8 +229,27 @@ class JoystickView @JvmOverloads constructor(
         canvas.drawCircle(knobX, knobY, radius * 0.24f, knobPaint)
         canvas.drawCircle(knobX - radius * 0.07f, knobY - radius * 0.07f,
             radius * 0.09f, knobGlossPaint)
+        // 死区边界环：标示「推到多小算没动」，半径 = 摇杆半径 × 死区比例
+        if (deadzoneFraction > 0f && deadzoneFraction < 1f) {
+            canvas.drawCircle(cx, cy, radius * deadzoneFraction, deadzonePaint)
+        }
+        // 握持发光环：触控中亮起，明确「已激活」——户外/强光下比仅靠 knob 位移更易察觉。
+        if (engaged) {
+            glowPaint.color = Color.argb(95, Color.red(accent), Color.green(accent), Color.blue(accent))
+            canvas.drawCircle(cx, cy, radius + 5f * density, glowPaint)
+        }
         if (label.isNotEmpty()) {
             canvas.drawText(label, cx, cy + radius + 18f * density, labelPaint)
+        }
+    }
+
+    /** 短促触觉：API29+ 用预定义效果，API26–28 退化成单次短震（minSdk=26）。 */
+    private fun buzz(effectId: Int) {
+        val v = vibrator ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            v.vibrate(VibrationEffect.createPredefined(effectId))
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            v.vibrate(VibrationEffect.createOneShot(12, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 }
