@@ -25,6 +25,8 @@
 > 版本升到 `versionCode=2` / `versionName="0.2.0"`、固定签名证书已建立（§5），
 > 首个 Release 创建后 releases/tags 不再是 0、`releases/latest` 不再是 404。
 > 发布与回读结果见 §6；用户 2026-11-13 晚授权「可以发布到 github 了」并开始执行。
+> ✅ 首个 Release `v0.2.0` 已发布、回读并**真机端到端复验通过**（§6 最后一段），
+> 因此本表的「0 release / 404」自 2026-11-13 23:00 起已是历史值。
 
 ---
 
@@ -199,6 +201,24 @@ tag 与 versionName 一致、下载地址域在白名单内。
 > 教训：**判据必须独立于被测值**；因此新增自检用 JDK17 标准库作独立实现，而不是手抄期望串。
 > 这轮改动是「消除重复实现 + 补真值/负对照自检」的防复发加固，**不是修 bug**。
 
+### 首个真实 GitHub Release 端到端复验（2026-11-13 23:00，直连生产）
+
+| 步 | 真实结果 |
+|---|---|
+| 创建 Release | `v0.2.0`，`draft=false` / `prerelease=false`；`https://github.com/chenshiyilisha/microduck-flat-walk/releases/tag/v0.2.0` |
+| 回读 | `releases/latest` 返回 `v0.2.0`；assets = `app-debug.apk` (6,082,987 B) + `update.json` (213 B)；`GET /tags` 仅 `v0.2.0`；未认证 curl 读回的 `update.json` 与发布计划逐字一致 |
+| token | 本机 `gh auth token`（GitHub CLI 登录态，scopes `repo`）临时注入环境变量，未落盘、未入库 |
+| 真机检查（不带 override，直连 `api.github.com`） | 冷启动 → 设置页 →「检查更新」→ **「发现新版本 0.2.0 (2) · APK 5.8 MB · 当前 0.1.0 (1)」** |
+| 下载 → 校验 → 安装 | 点「下载并安装」→ 状态 **「安装完成」**；`dumpsys package` 读回 `versionCode=2 / versionName=0.2.0`、`lastUpdateTime=2026-11-13 23:00:03`，进程存活 |
+| 安装后复查 | 再点「检查更新」→ **「已是最新版本 0.2.0 (2)」**（`UpToDate` 分支，不重复提示） |
+| 设备侧前置 | 卸载旧默认 debug 签名包 → 装同一固定证书的 `0.1.0 (1)` 基线包；`REQUEST_INSTALL_PACKAGES` 由系统 appops 授权（App 内权限引导另有负对照验证） |
+
+> ⚠️ 轮询第一次就取到终态「安装完成」，中间的「下载完成，正在校验签名证书…」等瞬态
+> **未逐帧抓到**，故不写成「逐帧观测」。结论依据是状态机单一出口：`安装完成` 只在
+> SHA-256 通过 + 签名 `Match` + 安装会话成功后下发，且 `dumpsys` 证明真实落盘；
+> 而 SHA-256 坏值 / 权限未开的拒绝安装负对照见本文件前表（PC 本地模拟 Release）。
+> 另：`uiautomator` 只 dump 视口内节点，「下载并安装」按钮需再小步滚动才可见（实测踩过）。
+
 ### 本轮真机抓到并修掉的真 bug
 1. **`FLAG_IMMUTABLE` 导致 `commit()` 抛 `IllegalArgumentException`**：
    Android `PackageInstaller.Session` 文档明确 targetSdk≥35 时 statusReceiver 必须来自
@@ -212,8 +232,9 @@ tag 与 versionName 一致、下载地址域在白名单内。
 
 ## 7. 仍未验证 / 已知限制（不得写成 PASS）
 
-- 🟡 **真实 GitHub Release 端到端**：发布前仍 UNVERIFIED（此前端到端用 PC 本地模拟 Release）；
-  本次创建首个正式版本后按 §6 补真机复验结果，未复验完成前不写 PASS。
+- ✅ **真实 GitHub Release 端到端已复验**（§6 最后一段）：`v0.2.0` 已发布并回读；
+  真机直连生产完成「发现新版本 → 下载 → 安装落盘 → 已是最新」。
+  仍属未逐帧观测的瞬态与未做的负对照已在 §6 明确标注，不写成 PASS。
 - ✅ **固定签名密钥已建立**（§5）：项目专用 keystore（项目外、不入库）+ debug/release 共用
   `signingConfigs.fixed` + 发布脚本 `apksigner` 指纹门禁与负对照。
   剩余约束：换机器/重装系统必须携带同一 keystore，否则新包无法覆盖安装。
@@ -247,3 +268,7 @@ tag 与 versionName 一致、下载地址域在白名单内。
 **文档**：本文件（§0 快照注记 / §5 前置 / §6 复验 / §7 状态 / §8）
 **刻意不入库**：`local.properties`（密码）、`C:/Users/hejih/.microduck/microduck-release.jks`（密钥）、
 `build/baseline-fixed-signed-v1.apk` 与 `build/negctrl-old-debug-signed.apk`（本机临时产物）。
+
+**远端发布产物**：GitHub Release `v0.2.0`（tag 指向 commit `65a808b`），
+assets `app-debug.apk` (sha256 `51ef71f6…a76b`) 与 `update.json`；证书指纹 `bd1e5c29…68d6`。
+发布后真机复验结果见 §6 最后一段。
