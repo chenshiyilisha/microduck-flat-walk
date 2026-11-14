@@ -127,6 +127,15 @@ _2026-11-12。用户已下单 Radxa Zero 3W 1GB（SSOT 订正⑫）+ 整机物�
 > - ✅ **最终全量验证（开发规范 §6.2）**：`pytest tests/ -q` **319 passed / rc=0**；`run_all_gates.py --check` **ALL_PASS 51/51、NOT_PASS 0、coverage gap 0**；新工具已在门禁 `--list`（第 21 行 `hd1910/check_v112_image_baseline.py`）。过程中两次全量分别红 6 项 / 7 项，均按真因补登记修复（未删断言、未放宽判据）。
 > - **状态口径仍不变**：`live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE`、`COLLECTED != PASS`、A2 闭合数 0。未改镜像、未动 1.2/1.3 判据、未动采购 SSOT/contract/xlsx、未下单。
 
+> 📌 **1.0g 手机侧实机观测 + 热点密码口径终裁（2026-11-14 晚间，纯新增指针）**
+> - ✅ **热点密码终裁**：用户实机输入并连上的那 8 位串即正确值；`od` / `base64` / Python `ord()` 三条字节级通道显示一手文档、本执行单、操作卡、SOP、审查报告、`MEMORY.md` 的**磁盘字节完全一致、从未写错**。前几轮把明文渲染层的替换显示值当成真值去「订正」，**方向反了且是空操作**，已整体订正。今后不复写明文，只指向一手源。详见 `microduck-主板到货-手机侧实机观测与密码口径终裁-2026-11-14.md` §1。
+> - ✅ **首个独立第三方观测者**：手机 `adb` 侧 `Supplicant state: COMPLETED`、WPA2-PSK、BSSID `cc:**:**:**:f2:1a`、ch11 / RSSI −39，DHCP 得 `10.42.0.254/24`、`default via 10.42.0.1` ⇒ AP + DHCP + L3 全链路存活，强于 PC 侧扫 beacon。
+> - ✅ **重新上电后（20:20）**：PC `WlanScan` 3/3 与手机 `cmd wifi start-scan` 后 `list-scan-results` **均无该 AP**；但 `ping microduck.local` 3/3 通（3–4 ms）、`Get-NetNeighbor` 在 WLAN `Reachable`、MAC `CC-C8-37-E3-F2-1A`（按 RFC 4291 App.A 与热点 BSSID 同源）、`SSH 22 OPEN` + banner `SSH-2.0-OpenSSH_10.0p2 Debian-7`，负对照 `9999 CLOSED`。镜像 `portal.py` 第 721–730 行证明 SSH **只在首次配网成功后才启用**（静态镜像里 ssh 未 enable、root/radxa 均 `!` 锁定）⇒ 板子已完成配网、连上家里 WiFi、**按设计关闭首启 AP**。
+> - 🔴 **新增坑（SOP 28/29）**：① 手机连无互联网热点后自动回落家用 WiFi，两次 curl timeout 属 `INVALID_MEASUREMENT`，不是「配网页挂了」；② 「扫不到热点」≠ 板子坏了，要换 mDNS/ICMP/SSH/DHCP 观测面。现场只读工具 `.upstream/downloads/probe_v112_phone.sh` 已真跑负对照（`PRECONDITION_FAIL` `rc=2`、零 HTTP）。
+> - ⚠️ **仍 `UNVERIFIED`**：`10.42.0.1:8088` 首启配网页（当前网络状态下不通是设计预期，非故障）、受控断电负对照、板子背面丝印版本、正式 1.2 判据（已裁 `N/A_BY_DESIGN` 待拍板）。
+> - **下一步（价值最高且不改板子）**：用首次配网自设的系统口令 SSH 登录 `microduck.local`，只读执行 `cat /proc/cmdline`、`systemctl status serial-getty@ttyS2`、`robotctl --version` ⇒ 可闭合 1.2 三条替代验活路径之一并回读 `BA-X-1`。**凭据只在用户手里，不代劳、不猜测、未尝试认证。**
+> - **状态口径仍不变**：`live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE`、`COLLECTED != PASS`、A2 闭合数 0。SSH 开着 ≠ 整机验收、≠ 可 ship。未改镜像、未动 1.2/1.3 判据、未动采购 SSOT/contract/xlsx、未下单。
+
 | 步 | 动作 | 命令 / 工具 | PASS 判据 | 证据落位 | FAIL 回退 |
 |---|---|---|---|---|---|
 | 1.1 | 做卡（PC 侧，不执行 dd） | `reproducible_card.py --check --verify-sources .upstream --flags "--overlay i2c4-m0"` | rc=0；`--no-camera`/`--no-tof` 必被拒(rc=1) | 成品卡 sha 记入 §7 | 先核 R1 sha(P0-1)；做坏只重刷 TF，无 A/B 回滚 |

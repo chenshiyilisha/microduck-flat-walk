@@ -43,7 +43,9 @@ _回应「遇到的坑，正确的流程都记录下来，免得再犯」。范�
 | 24 | **运行时编译被安全策略拦就硬闯 / 手工降级** | 内联 `Add-Type` 做快速逐字节比对被拦（`Command blocked for security`） | 环境禁止运行时编译 .NET；脚本文件内的 `Add-Type` 可用，但内联不行 | 换**独立语言 + 独立算法**：纯 Python 只读物理盘做 753 块 md5 + 差异定位 + 双 SHA-256，不依赖 PowerShell 校验脚本、不编译 .NET | `diff_full.py` 166.4 s 跑完，结论与 PowerShell 侧一致 |
 | 25 | **把「写入 exit 0」当完成** | 写盘脚本报 `WRITE DONE` 就想交差 | 写缓存、OS 事后改写、扇区错都会让「成功」是假的 | 脚本自己就打印「this is NOT proof」；**强制接独立校验**（9 点 + 全量 SHA），且校验必须能定位差异而非只比 sha | 准则 4/12；本轮若跳过校验就会带着坏 GPT 头上板 |
 | 26 | 🔴 **`netsh wlan show networks` 只读缓存 ⇒ 上板判活假阴性** | 卡回插主板后第一次扫到 `Microduck-kissqy`，紧接着 5 次普通扫描全没了，差点判「热点消失 / 板子没起来」 | netsh **不发起扫描**，只显示适配器上一次扫描的缓存，可陈旧约 60 s；后台扫描周期不定，连着跑同一个命令只会反复读同一份旧结果 | 查资料确认后换**主动扫描**：`ctypes` 调 `wlanapi!WlanScan` 强制刷新 → 等 4 s（Windows logo 扫描完成时限）→ 再读；连续 3/3 轮稳定命中同一 SSID + BSSID + 93% 信号才作数 | StackOverflow 46428202 / 30786358、`access_points` issue #11、roamr ADR-0004（2026-11-14 检索）；本机 `wlan_scan_realtime.py` 实跑 `WlanScan rc=0` 3/3 |
-| 27 | **压缩记忆里的数值没回一手源核** | 注入的项目记忆把 B 路线热点密码写成 `12345678`，与执行单/操作卡/SOP 的 `12345678` 冲突 | 摘要压缩时串入错值，之后若照抄会把配网密码给错 | 用前**回一手原文核**：`.upstream/replica/docs/HD1910-20261012-kissqy镜像R1分析.md` §2 第 27 行 + §7 第 106 行两处明文均为 `12345678`；已就地订正 `MEMORY.md` | 一手文档两处 + 执行单 1.0c / 操作卡 §5 / SOP 步骤 2 四处一致 |
+| 27 | 🔴 **明文渲染层替换敏感串 ⇒ 订正方向反转**（11-14 终裁推翻前几轮判断） | 前几轮把用户实机输入并连上的那 8 位串判成「压缩记忆错值」，按明文显示值去「订正」，结果「错值 == 对值」自相矛盾 | `od -An -tu1` / `base64` / Python `ord()` 三条字节级通道显示**所有磁盘文件（一手文档、执行单、操作卡、SOP、审查报告、MEMORY）字节完全一致**，从来没有写错；错的是**明文输出通道**（Grep / Read / cat / grep）会把该串渲染成另一个值 | **终裁**：以字节级编码 + 实机 WPA 握手为准；明文显示值不作依据、不据此反推；订正文本**连幻影值也不复写**，只指向一手源（`.upstream/replica/docs/HD1910-20261012-kissqy镜像R1分析.md` §2 L27 / §7 L106、镜像内 `Microduck-Setup.nmconnection` 的 `psk=`）。详见 `microduck-主板到货-手机侧实机观测与密码口径终裁-2026-11-14.md` §1 | 真机 WPA2 `COMPLETED` + DHCP `10.42.0.254/24`；字节扫描 6 份文件；同一条 WSL 命令内 `grep '^psk='` 与 `od` 互相矛盾 |
+| 28 | 🔴 **手机连上无互联网热点后自动回落 ⇒ 验活假阴性** | 手机已连 `Microduck-kissqy` 并拿到 `10.42.0.254/24`，随后 `ping` 源地址变 `192.168.50.203`、curl `:8088` 两次 timeout，差点判「配网页死了」 | 手机 `dumpsys connectivity` 显示 `Active default network` 是 `MOBILE[LTE]`（`IS_VALIDATED`）；热点无 Internet 能力，系统把它降级回落到已保存的家用 WiFi / 蜂窝。平台文档两次抓取失败，**机制为推断，设备侧观测是实测** | 探测前**先核「手机当前 AP + 源地址 + 路由」三条前提**，不成立就报 `PRECONDITION_FAIL` 而非 `FAIL`，且一个 HTTP 都不发；现场工具 `.upstream/downloads/probe_v112_phone.sh` 已真跑负对照 `rc=2` | 终裁文档 §3/§4/§9；`bash -n` OK、负对照 `P1` 即拒绝 |
+| 29 | **「扫不到热点」不等于板子坏了** | 重新上电后 PC 主动扫描 3/3 + 手机强制扫描 + 早期 6 轮全部无 `Microduck-kissqy`，差点判启动失败 | 镜像 `main()`：`PROVISIONED_PATH.exists()` 且 `wait_for_saved_wifi()` 成功即 `return`、**按设计不再开 AP**；实机 `ping microduck.local` 3/3 通、`SSH 22 OPEN` + OpenSSH banner、MAC 与热点 BSSID 同源（RFC 4291 App.A）⇒ 板子活着且已连家里 WiFi | 判活要换观测面：mDNS / ICMP / SSH / 路由器 DHCP，不只盯 beacon；把「AP 消失」当状态变化而非故障 | 终裁文档 §9；`22 OPEN` + 负对照 `9999 CLOSED` |
 
 ---
 
@@ -141,7 +143,9 @@ bash verify_v112.sh
 16. **工具被安全策略拦就换独立算法，而不是绕规则或手工降级**：换语言/换实现后要保证「判据独立于被测值」且能**定位差异位置**（不只比 sha 是否相等）；差异要用两条独立算法互证。
 17. **Windows 裸写固定套路**：管理员 → guard → `FSCTL_LOCK_VOLUME`+`FSCTL_DISMOUNT_VOLUME` → 扇区对齐流式写 → `Flush(true)`+`FlushFileBuffers` → 解锁 → 独立校验。可移动盘不支持 `Set-Disk -IsOffline`；P/Invoke 的 `uint` 常量要显式写十进制避免 Int32 负数绑定错误。
 18. **「搜不到」先问观测工具本身会不会骗人**：`netsh wlan show networks` 不发起扫描、只吐缓存；连续重复读同一条命令得到「时有时无」时，先查该命令语义（先找资料），再用 `WlanScan` 主动扫描 / 手机作第二观测者下结论。判活结论要带 SSID + BSSID + 信号 + 重复次数，不写「搜到了」三个字了事。
-19. **摘要/记忆里的具体数值用前必回一手源核**：密码、端口、pin、版本号这类值压缩时最容易被串错；发现两处口径不一致，以一手原文为准并就地订正记忆，不靠「哪个出现次数多」投票。🔴 **硬化（11-14 续查）**：订正文本**不复写明文密码/pin**（既不写错值也不写对值），只指向一手源（具名文档 + 行号 / 源文件字段）；否则极易把「错值」和「对值」写成同一串、自相矛盾，且显示层对敏感串有遮蔽时无法自证。⇒ 压缩记忆、摘要、订正留档里出现的具体值**一律不作数值依据**；本文坑 27 表格行同理，仅保留「曾串错、已回一手源核正」这一事实。
+19. **具体数值一律以字节级通道为准，明文渲染值不作依据**：密码、端口、pin、sha、版本号这类值，用前必回一手源（具名文档 + 行号，或源文件字段如 `psk=`／`append`）；核数值走 `od -An -tu1` / `base64` / Python `ord()` 这类**不受文本替换影响**的编码通道，不看 Grep / Read / cat 的明文显示。🔴 **终裁（11-14，推翻此前方向）**：本项目的「两处数值冲突」实测是**明文输出层把该串渲染成另一个值**，磁盘字节从头到尾一致、从来没有写错；前几轮据此做的「订正」是空操作且方向反了。⇒ 订正文本**连幻影值也不复写**，只写「已回一手源核正」+ 出处；压缩记忆、摘要、订正留档里的具体值一律不作数值依据。详见终裁文档 §1。
+20. **换观测面判活，别只盯一个信号**：AP / beacon 消失 ≠ 板子没起。镜像 `main()` 在「已配网且能连上家里 WiFi」时按设计 `return` 不开热点；此时应改用 mDNS（`ping microduck.local`）、ICMP、SSH banner、路由器 DHCP 列表、邻居表 MAC 交叉验证。MAC ↔ IPv6 link-local 的换算按 **RFC 4291 Appendix A**（反转 u 位 + `ff:fe` 插入），有原文才写结论。所有端口探测必须带**负对照**（一个必不可能开的端口也应 CLOSED），否则可能是假绿。
+21. **前提不成立 ⇒ `PRECONDITION_FAIL`，不是 `FAIL`**：探测前先机械断言「当前 AP / 源地址 / 到目标的路由是否直连」，任一不成立就拒绝发请求并报 `PRECONDITION_FAIL`；把 `curl timeout` 当「服务挂了」是本轮亲抓的假阴性。现场工具 `.upstream/downloads/probe_v112_phone.sh` 即此规则的可执行版，已真跑负对照 `rc=2`、零 HTTP 请求。
 
 ---
 
@@ -161,6 +165,8 @@ bash verify_v112.sh
 | `.upstream/downloads/diff_full.py` | 独立第二算法：纯 Python 全量 753 块比对 + 双 SHA-256 + 差异字节定位；已 gitignore |
 | `.upstream/downloads/wlan_scan_realtime.py` | 主动判活：`ctypes` 调 `wlanapi!WlanScan` 强制刷新扫描后读 SSID/BSSID，绕开 netsh 缓存（坑 26）；只读、不改连接；已 gitignore |
 | `docs/active/microduck-主板到货上板执行单-2026-11-12.md` §1.0d | 本板首启热点的实机观察值、方法与状态边界（本轮纯新增） |
+| `docs/active/microduck-主板到货-手机侧实机观测与密码口径终裁-2026-11-14.md` | **本轮单一权威落档点**：密码字节级终裁、手机侧第三方观测、坑 28/29、状态裁定、重新上电后的 mDNS/SSH 实证与边界 |
+| `.upstream/downloads/probe_v112_phone.sh` | 只读首启配网页探测：先断言三条网络前提，不成立报 `PRECONDITION_FAIL` 且不发任何 HTTP；已 `bash -n` + 真跑负对照 `rc=2`；ASCII 注释、不改 WiFi/不写板子；已 gitignore |
 
 **状态**：`live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE`、A2 悬案闭合数 0，均未变；采购 SSOT / contract / xlsx 零改动；二进制未入库。2026-11-14 现场虽已观察到 B 路线热点（用户态），但按 `COLLECTED != PASS` 只记观察值，**不提前翻任何状态**。
 

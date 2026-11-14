@@ -162,7 +162,22 @@ powershell -ExecutionPolicy Bypass -File .\verify_burned_card.ps1 -Mode Full  # 
 | 未闭合 | 断电负对照未做（不能 100% 排除同名 AP）；`10.42.0.1:8088` 配网页未访问；串口 1500000n8 未接；板子背面丝印版本未确认 |
 
 > 📌 **状态不翻**：`live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE`、`COLLECTED != PASS`。热点只证明「已到用户态」，不是里程碑 ① 的 1.2 PASS。
-> **下一步**：手机关移动数据连 `Microduck-kissqy` / `12345678` → 开 `http://10.42.0.1:8088`；断电 5 s 前后各做一次主动扫描做负对照；再接串口走正式判据。
+> 🔴 **本节密码口径已终裁（2026-11-14 晚间）**：上条「下一步」里写死的明文**不复写、不作依据**——实测所有磁盘字节一致，明文渲染层会把该串显示成另一个值；用户实机输入并连上的那 8 位串即正确值。今后只指向一手源（`HD1910-20261012-kissqy镜像R1分析.md` §2 L27 / §7 L106、镜像内 `psk=` 字段），核数值走 `od` / `base64` / `ord()`。详见 `microduck-主板到货-手机侧实机观测与密码口径终裁-2026-11-14.md` §1。
+> **下一步已更新**：见 §5.2 与终裁文档 §9.3；板子当前已完成配网、AP 按设计关闭，直接连热点开 8088 这条路径**在当前状态下不适用**。
+
+### 5.2 更新：手机侧第三方观测 + 重新上电后（2026-11-14 晚间）
+
+| 项 | 实读值 |
+|---|---|
+| 热点首次实机连上 | 手机 `adb shell`：WPA2-PSK `COMPLETED`、ch11 / RSSI −39、DHCP `10.42.0.254/24`、`default via 10.42.0.1` ⇒ **AP + DHCP + L3 全通**，强于 PC 扫 beacon |
+| 两次 `:8088` timeout 的正确判读 | 手机已自动回落到「我家的WiFi」(`192.168.50.203/24`) / 蜂窝，前提不成立 ⇒ `INVALID_MEASUREMENT`，**不是配网页故障** |
+| 重新上电后（20:20） | PC `WlanScan` 3/3 与手机强制扫描均**无该 AP**；但 `ping microduck.local` 3/3 通（3–4 ms）、WLAN 邻居 `Reachable` MAC `CC-C8-37-E3-F2-1A`（RFC 4291 App.A 与热点 BSSID 同源）、`SSH 22 OPEN` + `OpenSSH_10.0p2 Debian-7`、负对照 `9999 CLOSED` |
+| 机制 | 镜像 `portal.py` 721–730 行：SSH 只在首次配网成功后启用（静态镜像 ssh 未 enable、账号 `!` 锁定）；`main()` 在已配网且连上家里 WiFi 时 `return` 不开 AP ⇒ **板子活着且按设计关了首启热点** |
+| 现场工具 | `.upstream/downloads/probe_v112_phone.sh`：先断言三条网络前提，不成立报 `PRECONDITION_FAIL` 且零 HTTP；已 `bash -n` + 真跑负对照 `rc=2` |
+| 副作用已核实 | `cmd wifi connect-network` 确在手机留下 saved network id 17 `Microduck-kissqy`；不需要可在手机 WiFi 设置删除，本轮未擅自删除 |
+
+> 📌 **状态仍不翻**：`live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE`、`COLLECTED != PASS`、A2 闭合数 0。SSH 开着 ≠ 整机验收。
+> **现在最该做**：用首次配网自设的系统口令 SSH 登录 `microduck.local`，只读 `cat /proc/cmdline` / `systemctl status serial-getty@ttyS2` / `robotctl --version`（凭据只在用户手里，不代劳、未尝试认证）。受控断电负对照、板子丝印版本仍欠账。
 
 ---
 
