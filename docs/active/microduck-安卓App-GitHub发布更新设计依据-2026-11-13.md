@@ -147,12 +147,18 @@ GitHub Releases ──GET latest──> GithubReleaseClient (app, HttpURLConnect
 
 ### 操作
 ```bash
+# 0) 构建 release 变体（R8 代码/资源缩减，发布物 = app-release.apk）
+export JAVA_HOME="E:/软件工具/OpenJdk17"
+./gradlew :app:assembleRelease
+
 # 1) 只打印计划与 update.json，不写任何远端状态（默认安全）
 python tools/publish_release.py --tag v0.2.0 --dry-run
 
 # 2) 确认计划无误后，用有 Contents: write 权限的 token 真发布
 GITHUB_TOKEN=xxx python tools/publish_release.py --tag v0.2.0 --apk <signed.apk> --abi arm64-v8a
 ```
+脚本默认从 `app/build/outputs/apk/release/app-release.apk` 取包（`DEFAULT_APK`），
+不再用 debug 变体（2026-11-14 起，见 §6「发布构建改用 release 变体 + R8」）。
 脚本会：解析 build.gradle 版本 → 校验 tag 一致 → **apksigner 实读证书指纹并比对** →
 算 APK sha256 → 生成 `update.json` → 查同 tag 已存在则拒发 → 创建 release →
 用 `upload_url` 上传 APK 与 `update.json` → 回读 assets 校验。
@@ -227,6 +233,51 @@ tag 与 versionName 一致、下载地址域在白名单内。
 2. **明文 HTTP 被 Android 9+ 默认策略拒绝**：`Cleartext HTTP traffic to 127.0.0.1 not permitted`。
    用 main/debug 双份 `network_security_config.xml`，只对 debug 放行回环地址。
 3. lint 新增 5 条（ObsoleteSdkInt / UseKtx ×3 / toUri）→ 逐条真修，43 → 38。
+
+### 发布构建改用 release 变体 + R8（2026-11-14，用户指出「发布的名称为什么叫 debug」）
+
+**问题**：v0.2.0 发布用的是 **debug 变体**产物（`app-debug.apk`），命名像测试包，且未开
+R8 代码/资源缩减，包体偏大。
+
+**依据（一手）**：
+- Google Android《Enable app optimization with R8》：发布构建建议开 `isMinifyEnabled` +
+  `isShrinkResources`。
+- 《Keep rule use cases and examples》/《Use R8 in full mode》：Gson 等反射库的 keep 规则；
+  **Gson 2.10.1 自带的 consumer rules 不完整，官方明确要求用户按自身类补充**。
+- Gson 官方 `META-INF/proguard/gson.pro`（android.googlesource.com）：`-keepattributes
+  Signature` / `RuntimeVisibleAnnotations` / TypeToken 等通用规则。
+
+**项目 Gson 现状（逐处核对源码后）**：所有 `gson.toJson(...)` 的参数均为
+`Map<String, Any?>` 或 `JsonObject`（Map 的 key 是运行时字符串，不受字段混淆影响）；
+`UpdatePolicy` 用 `JsonParser.parseString(...).asJsonObject` + 手动取值，不经 typed 反序列化。
+⇒ **没有业务数据类的字段名经 Gson 反射**，故只需 Gson 通用 keep 规则，不给业务类加包范围
+keep（官方不推荐长期维持包范围 keep）。
+
+**改动**：
+- `app/build.gradle.kts`：release 变体加 `isMinifyEnabled = true` + `isShrinkResources = true`
+  + `proguardFiles(proguard-android-optimize.txt, proguard-rules.pro)`；debug 变体不动；
+  签名仍共用 `signingConfigs.fixed`。
+- `app/proguard-rules.pro`（新增）：Gson 通用 keep（Signature / 注解 / TypeToken）+
+  Kotlin `Metadata` 防御性保留；附项目 Gson 现状说明与未来加 `@SerializedName` 的条件规则模板。
+- `tools/publish_release.py`：`DEFAULT_APK` 从 `.../debug/app-debug.apk` 改为
+  `.../release/app-release.apk`。全项目无 `app-debug` 硬编码残留；App 侧 `UpdatePolicy`
+  只校验 `.apk` 后缀，改名对 App 侧零改动。
+
+**验证（全部真跑）**：
+
+| 项 | 结果 |
+|---|---|
+| `:app:assembleRelease` | rc=0，产出 `app-release.apk` |
+| R8 生效（独立判据：包体对比） | debug 6,178,557 B → **release 1,785,819 B，缩减 71%** |
+| 签名不变 | release 包 `apksigner` 指纹同为 `bd1e5c29…68d6`（fixed 证书） |
+| 版本 | `versionCode=2 / versionName=0.2.0` |
+| `:app:lintDebug` | **0 errors / 38 warnings**，0 新增 |
+| `tools/selftest.sh` | **346 passed / 0 failed** |
+| 真机 59 条门禁（装 release 包） | **59/59**；其中「全生命周期无崩溃/资源缺失 `fatal_lines=0`」证明 R8 混淆未破坏任何类 |
+
+> ⚠️ v0.2.0 的 `app-debug.apk` 是历史事实（已发布、已回读），不追溯修改；
+> **从 v0.3.0 起**发布物为 `app-release.apk`（带 R8）。后续发布记住：`versionCode > 2`、
+> `tag = v<versionName>`、证书指纹不变、用 `assembleRelease` 构建。
 
 ---
 

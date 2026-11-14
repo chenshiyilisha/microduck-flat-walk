@@ -64,7 +64,19 @@ android {
 
     buildTypes {
         getByName("debug") { if (fixedConfig != null) signingConfig = fixedConfig }
-        getByName("release") { if (fixedConfig != null) signingConfig = fixedConfig }
+        getByName("release") {
+            if (fixedConfig != null) signingConfig = fixedConfig
+            // R8 代码缩减 + 资源缩减（Google 官方《Enable app optimization with R8》建议发布构建开启）。
+            // 依据：developer.android.com keep-rule-examples / full-mode。
+            // 项目 Gson 仅序列化 Map/JsonObject（无 typed 数据类反射，见 proguard-rules.pro 注释），
+            // 故只需 Gson 通用 keep 规则，无需给业务类加包范围 keep。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
     }
 }
 

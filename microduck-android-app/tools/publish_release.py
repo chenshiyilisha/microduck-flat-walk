@@ -42,7 +42,7 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parents[1]
 BUILD_GRADLE = BASE / "app" / "build.gradle.kts"
-DEFAULT_APK = BASE / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+DEFAULT_APK = BASE / "app" / "build" / "outputs" / "apk" / "release" / "app-release.apk"
 MANIFEST_ASSET = "update.json"
 MANIFEST_SCHEMA = 1
 USER_AGENT = "io.microduck.app-publish-release"
