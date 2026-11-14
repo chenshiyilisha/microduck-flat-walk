@@ -182,8 +182,11 @@ class MainActivity : AppCompatActivity() {
             val types = WindowInsetsCompat.Type.systemBars() or
                 WindowInsetsCompat.Type.displayCutout()
             val b = insets.getInsets(types)
-            val p = dp(16)       // M1 官方：mobile screen edge margins 16dp
-            v.setPadding(p + b.left, p + b.top, p + b.right, p + b.bottom)
+            val p = dp(16)       // M1 官方：mobile screen edge margins 16dp（左/右/底）
+            // 顶部：状态栏 scrim（topScrim）已是天然分隔线，其下只需小留白，
+            // 不再套 16dp 全向边距，否则状态栏到 AppBar 会空出 24dp（用户反馈 2026-11-14）。
+            val top = dp(8)
+            v.setPadding(p + b.left, top + b.top, p + b.right, p + b.bottom)
             topScrim.layoutParams = FrameLayout.LayoutParams(MATCH, b.top, Gravity.TOP)
             WindowInsetsCompat.Builder(insets).setInsets(types, Insets.NONE).build()
         }
