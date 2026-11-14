@@ -70,6 +70,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var sourceChip: TextView
     private lateinit var hostEdit: EditText
+    // 连接行渐进式披露：已连接时折叠输入、显示摘要行（点「修改」展开）
+    private lateinit var connectionSummary: LinearLayout
+    private lateinit var connectionSummaryText: TextView
+    private lateinit var connectionInputRow: LinearLayout
+    private var connectionExpanded = false
     private lateinit var modeManual: MaterialButton
     private lateinit var modeAuto: MaterialButton
     private lateinit var modeHint: TextView
@@ -139,9 +144,7 @@ class MainActivity : AppCompatActivity() {
         linkBanner = buildLinkBanner()
         section(linkBanner, 8)
         section(buildConnectionRow())
-        section(buildModeRow())
-        section(buildLaunchRow())
-        section(buildTabRow())
+        section(buildControlCard())
 
         val pages = FrameLayout(this)
         statePage = buildStatePage()
@@ -156,6 +159,9 @@ class MainActivity : AppCompatActivity() {
         content.addView(buildBottomStatus(), LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.topMargin = dp(8)
         })
+        // M3 navigation bar 规范：容器固定在窗口底部、目的地位置不滚动。
+        // 下沉到底部后页面区（pages）获得更多高度，缓解首屏内容拥挤。
+        section(buildTabRow())
         root.addView(content, FrameLayout.LayoutParams(MATCH, MATCH))
 
         topScrim = View(this).apply { setBackgroundColor(Color.argb(190, 0x06, 0x12, 0x22)) }
@@ -254,30 +260,84 @@ class MainActivity : AppCompatActivity() {
             stroked = false)   // 告警是纯状态色块，不再叠低对比描边（Color is purely functional）
     }
 
+    /**
+     * 连接行 —— **渐进式披露**：未连接时展开显示 host 输入 + 连接按钮；
+     * 已连接时折叠为一行摘要（类型 + 「修改」），点「修改」重新展开。
+     *
+     * 依据：渐进式披露（NNG 2006 / Apple HIG / Material expansion panel 同型）——
+     * 低频/高级选项按需展开，不常驻首屏。host:port 是低频配置，已连接后不必常驻。
+     *
+     * 门禁约束：home 页断言只查模式按钮 / 三目的地 / 状态页文本，不查本行文案，
+     * 故折叠/展开不影响 59 条门禁；hostEdit 始终保留为字段，connectFromUi 仍可读取。
+     */
     private fun buildConnectionRow() = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(0, 0, 0, 0)
-        hostEdit = EditText(this@MainActivity).apply {
-            hint = "host:port（留空 = Mock 演示）"
-            setSingleLine(true)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            textSize = 13f; minimumHeight = dp(48)
-            setTextColor(c(R.color.md_text)); setHintTextColor(c(R.color.md_text_dim))
-            background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+        orientation = LinearLayout.VERTICAL
+        // ① 输入行（未连接 / 展开时可见）
+        connectionInputRow = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 0)
+            hostEdit = EditText(this@MainActivity).apply {
+                hint = "host:port（留空 = Mock 演示）"
+                setSingleLine(true)
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                textSize = 13f; minimumHeight = dp(48)
+                setTextColor(c(R.color.md_text)); setHintTextColor(c(R.color.md_text_dim))
+                background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+            }
+            addView(hostEdit)
+            addView(MaterialButton(this@MainActivity).apply {
+                text = "连接"; textSize = 12f; minimumHeight = dp(48)
+                cornerRadius = dp(CORNER_LARGE_DP)
+                setOnClickListener { connectFromUi() }
+            }, LinearLayout.LayoutParams(WRAP, WRAP).also { it.marginStart = dp(8) })
         }
-        addView(hostEdit)
-        addView(MaterialButton(this@MainActivity).apply {
-            text = "连接"; textSize = 12f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_LARGE_DP)      // 项目圆角 token（见 companion / 设计依据文档）
-            setOnClickListener { connectFromUi() }
-        }, LinearLayout.LayoutParams(WRAP, WRAP).also { it.marginStart = dp(8) })
+        addView(connectionInputRow)
+        // ② 摘要行（已连接且未展开时可见）：类型 + 修改入口
+        connectionSummary = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
+            setPadding(dp(12), dp(8), dp(8), dp(8))
+            minimumHeight = dp(44)
+            visibility = View.GONE
+            connectionSummaryText = TextView(this@MainActivity).apply {
+                textSize = 13f; setTextColor(c(R.color.md_text))
+                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+            }
+            addView(connectionSummaryText)
+            addView(MaterialButton(this@MainActivity).apply {
+                text = "修改"; textSize = 12f; minimumHeight = dp(36)
+                cornerRadius = dp(CORNER_LARGE_DP)
+                setOnClickListener { connectionExpanded = true; renderConnectionRow() }
+            })
+        }
+        addView(connectionSummary)
+        renderConnectionRow()
     }
 
-    /** 模式选择：NIST UTAP 的 manual / supervisory 两档，当前档显著标注。 */
-    private fun buildModeRow() = MaterialCardView(this).apply {
+    /** 按连接状态 + 展开标志切换输入行 / 摘要行的可见性。 */
+    private fun renderConnectionRow() {
+        val connected = SessionHolder.kind.isNotEmpty() && SessionHolder.connectError.isEmpty()
+        val showInput = connectionExpanded || !connected
+        connectionInputRow.visibility = if (showInput) View.VISIBLE else View.GONE
+        connectionSummary.visibility = if (showInput) View.GONE else View.VISIBLE
+        if (!showInput) {
+            connectionSummaryText.text = "已连接 · ${SessionHolder.kind}"
+        }
+    }
+
+    /**
+     * 控制卡片 —— 把「控制模式」与「进入遥控」合并为一张紧凑卡片，减少首屏独立区块数。
+     *
+     * 依据：M3 Expressive *connected button group* 用于单选切换（替代 segmented button）。
+     * ⚠️ 如实标注：本项目用 MDC **1.12.0（baseline）**，不含 Expressive 组件，**不能**直接用
+     * 官方 button group，这里借鉴其「单选按钮紧凑并排」的思路，用现有 MaterialButton 实现，
+     * 不声称用了官方组件。模式按钮保留门禁断言文本「手动模式 / 自动模式」。
+     */
+    private fun buildControlCard() = MaterialCardView(this).apply {
         radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
         strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
         setCardBackgroundColor(c(R.color.md_card))
@@ -313,20 +373,18 @@ class MainActivity : AppCompatActivity() {
             setLineSpacing(0f, 1.2f)
         }
         col.addView(modeHint)
-        addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
-    }
-
-    private fun buildLaunchRow() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
+        // 进入遥控按钮并入同一张卡片（原独立启动行），减少一个区块。
         launchButton = MaterialButton(this@MainActivity).apply {
             textSize = 14f; minimumHeight = dp(52)
             cornerRadius = dp(CORNER_LARGE_DP)
             // 主 CTA 亮底必须配深字；主题默认 colorOnPrimary 偏暗紫，真机截图对比度不足。
             setTextColor(c(R.color.md_bg))
             contentDescription = "进入遥控界面"
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) }
             setOnClickListener { startActivity(Intent(this@MainActivity, DriveActivity::class.java)) }
         }
-        addView(launchButton, LinearLayout.LayoutParams(MATCH, WRAP))
+        col.addView(launchButton)
+        addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
     }
 
     /** 三个顶层目的地（M3 3–5 destinations），固定位置、不滚动。 */
@@ -780,6 +838,7 @@ class MainActivity : AppCompatActivity() {
                 sourceChip.setTextColor(
                     if (ok) c(R.color.md_ok) else c(R.color.md_bad))
                 refreshModeUi()
+                renderConnectionRow()
                 renderAll()
             }
         }
@@ -852,6 +911,7 @@ class MainActivity : AppCompatActivity() {
         renderState(SessionHolder.lastState)
         renderTelemetry()
         renderLinkBanner()
+        renderConnectionRow()
         // 单行状态串：完整信息在来源标签 / 状态卡里，不再让 appBar 折成两行。
         statusText.text = if (SessionHolder.connectError.isNotEmpty())
             "地址无效 · 会话=${SessionHolder.sessionState()}"
