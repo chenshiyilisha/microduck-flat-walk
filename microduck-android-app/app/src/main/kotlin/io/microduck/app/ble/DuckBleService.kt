@@ -15,6 +15,7 @@ import io.microduck.app.MainActivity
 import io.microduck.app.R
 import io.microduck.app.SessionHolder
 import io.microduck.app.core.BleForegroundPolicy
+import io.microduck.app.core.GattLink
 
 /**
  * A1：BLE 链路前台服务 —— 真机 GATT 上板的**硬前置**。
@@ -44,10 +45,10 @@ class DuckBleService : Service() {
 
     companion object {
         /** 服务持有 GATT link 的强引用；attach/detach 按实例比对，避免误关新连接。 */
-        @Volatile private var heldLink: AndroidBleGattLink? = null
+        @Volatile private var heldLink: GattLink? = null
 
-        fun attach(link: AndroidBleGattLink) { heldLink = link }
-        fun detach(link: AndroidBleGattLink) {
+        fun attach(link: GattLink) { heldLink = link }
+        fun detach(link: GattLink) {
             if (heldLink === link) heldLink = null
         }
 

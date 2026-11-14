@@ -27,6 +27,7 @@ import io.microduck.app.SessionHolder
 import io.microduck.app.core.BleForegroundPolicy
 import io.microduck.app.core.BleTransport
 import io.microduck.app.core.ConnectTarget
+import io.microduck.app.core.SerialGattLink
 import io.microduck.app.core.Wire
 import java.util.Locale
 
@@ -331,7 +332,9 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         }
         setStatus("正在连接 ${c.name.ifEmpty { c.address }} …\n" +
             "⚠ 真 GATT 未上板验收：若握手失败会显示具体原因，不会显示已连接")
-        val link = AndroidBleGattLink(activity.applicationContext, c.device)
+        val rawLink = AndroidBleGattLink(activity.applicationContext, c.device)
+        // P0 ⑤：用 core 的 SerialGattLink 包装，强制 GATT 操作串行（等前一条回调再发下一条）。
+        val link = SerialGattLink(rawLink)
         // A1：先交给前台服务持引用，Activity 退后台后 GATT 不会被回收。
         DuckBleService.attach(link)
         val transport = BleTransport(link)

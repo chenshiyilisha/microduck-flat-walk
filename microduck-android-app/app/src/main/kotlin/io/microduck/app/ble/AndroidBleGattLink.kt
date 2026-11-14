@@ -15,6 +15,7 @@ import io.microduck.app.core.Wire
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -61,6 +62,16 @@ class AndroidBleGattLink(
     @Volatile private var negotiatedMtu = BleChunkCodec.FLOOR_MTU
     @Volatile private var chunkHandler: ((ByteArray) -> Unit)? = null
     @Volatile private var disconnectCb: (() -> Unit)? = null
+
+    /**
+     * 入站通知的独立处理线程：与出站串行队列（core 的 SerialGattLink）分离，
+     * 避免入站重组/分发被出站写操作阻塞。GATT 回调跑在 Binder 线程，这里只投递、
+     * 不做重活，立即返回（依据：ZOOZ《Making Android BLE work — part 3》「GATT 调用应
+     * 尽快离开 Binder 线程，阻塞会卡住后续所有回调」）。
+     */
+    private val notifyExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "microduck-ble-notify").apply { isDaemon = true }
+    }
 
     /** 串行化所有 GATT 操作：一个 latch 代表「当前操作的回调」，回调到达才放行下一个。 */
     private val opLock = Any()
@@ -124,12 +135,15 @@ class AndroidBleGattLink(
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-            if (characteristic.uuid == rpcUuid) chunkHandler?.invoke(value)   // 一个 notification = 一个 chunk
+            if (characteristic.uuid == rpcUuid) dispatchInbound(value)   // 一个 notification = 一个 chunk
         }
 
         @Deprecated("API 33 以下兼容回调")
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            if (characteristic.uuid == rpcUuid) chunkHandler?.invoke(characteristic.value ?: ByteArray(0))
+            if (characteristic.uuid == rpcUuid) {
+                // 🔴 characteristic.value 是平台缓存数组，回调后会被复用 ⇒ 必须立即拷贝（ZOOZ/PunchThrough）
+                dispatchInbound(characteristic.value?.copyOf() ?: ByteArray(0))
+            }
         }
     }
 
@@ -282,12 +296,27 @@ class AndroidBleGattLink(
         synchronized(opLock) { opLatch?.countDown() }
     }
 
+    /**
+     * 入站通知投递：**不直接在 Binder 线程做重活**。GATT 回调跑在 Binder 线程，若在这里
+     * 执行重组/分发（可能触发订阅者重逻辑），会阻塞后续所有 GATT 回调。这里只投递，
+     * 把 [ByteArray] 交给独立的 [notifyExecutor] 处理，Binder 线程立即返回。
+     */
+    private fun dispatchInbound(value: ByteArray) {
+        val h = chunkHandler ?: return
+        try {
+            notifyExecutor.execute { h(value) }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // 执行器已关闭（与 close 竞态），丢弃该通知，不崩溃。
+        }
+    }
+
     override fun mtu(): Int = if (connected) negotiatedMtu else 0
     override fun onDisconnected(cb: () -> Unit) { disconnectCb = cb }
     override fun close() {
         connected = false
         chunkHandler = null
         disconnectCb = null
+        notifyExecutor.shutdownNow()
         gatt?.close()
         gatt = null
     }

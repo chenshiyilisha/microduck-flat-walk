@@ -1222,6 +1222,7 @@ object CoreSelfTest {
         testReadOnlyCapabilityMethods()
         testUpdatePolicy()
         testHexEncoding()
+        testSerialGattLink()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
@@ -1392,6 +1393,97 @@ object CoreSelfTest {
                 !clientSrc.contains("ByteArray.toHex") && !installerSrc.contains("ByteArray.toHex"))
         check("负对照:私自复制实现的假源码会被上面这条核对判红",
             "import io.microduck.app.core.Hex\nprivate const val HEX_CHARS = \"x\"".contains("HEX_CHARS"))
+    }
+
+    // ---- N+3. SerialGattLink：GATT 操作串行执行（并发调用必须被串行化，负对照无包装时确实重叠）----
+    // 依据：AOSP bta_gatt_queue.h + Android BluetoothGatt 一次只允许一个 outstanding 操作；
+    // 本测试证明「串行纪律」在 core 层生效，且探针确实能区分串行/重叠（负对照不空转）。
+    private fun testSerialGattLink() {
+        println("\n[N+3] SerialGattLink GATT 操作串行化")
+
+        // ① 串行性：8 线程并发调 writeChunk，实际对 delegate 的操作必须串行（在飞峰值恒为 1）
+        val probe = OverlapProbe(delayMs = 15)
+        val serial = SerialGattLink(probe)
+        val writers = (1..8).map { Thread { serial.writeChunk(ByteArray(20)) } }
+        writers.forEach { it.start() }
+        writers.forEach { it.join() }
+        check("并发 8 次 writeChunk 实际串行(maxInFlight==1)", probe.maxInFlight() == 1) {
+            "maxInFlight=${probe.maxInFlight()}"
+        }
+        check("8 次写全部执行(无丢失)", probe.countOf("writeChunk") == 8) { "n=${probe.countOf("writeChunk")}" }
+        serial.close()
+
+        // ② 顺序：同一线程顺序提交，执行顺序与提交顺序一致（单线程 FIFO 队列）
+        val probe2 = OverlapProbe(delayMs = 1)
+        val serial2 = SerialGattLink(probe2)
+        serial2.writeChunk(ByteArray(1))
+        serial2.readApiVersion()
+        serial2.writeChunk(ByteArray(2))
+        check("顺序提交执行顺序一致(FIFO)",
+            probe2.order() == listOf("writeChunk", "readApiVersion", "writeChunk")) {
+            "order=${probe2.order()}"
+        }
+        check("负对照:3 次操作全部执行(非只跑第一个)",
+            probe2.countOf("writeChunk") == 2 && probe2.countOf("readApiVersion") == 1) {
+            "w=${probe2.countOf("writeChunk")} r=${probe2.countOf("readApiVersion")}"
+        }
+        serial2.close()
+
+        // ③ 负对照：不加 SerialGattLink，直接并发调探针，必须检测到重叠
+        //   （证明探针有效、上面的串行断言不是空转——无包装时峰值必须 > 1）
+        val probe3 = OverlapProbe(delayMs = 30)
+        val raw = (1..8).map { Thread { probe3.writeChunk(ByteArray(20)) } }
+        raw.forEach { it.start() }
+        raw.forEach { it.join() }
+        check("负对照:无串行包装时并发写确实重叠(maxInFlight>1)", probe3.maxInFlight() > 1) {
+            "maxInFlight=${probe3.maxInFlight()}"
+        }
+
+        // ④ close 后拒绝：不再接受新操作
+        val probe4 = OverlapProbe()
+        val serial4 = SerialGattLink(probe4)
+        serial4.close()
+        val r = serial4.writeChunk(ByteArray(1))
+        check("close 后拒绝操作(failure)", r.isFailure) { "$r" }
+    }
+
+    /**
+     * 检测 GATT 操作是否**重叠并发**的探针：记录任意时刻在飞（in-flight）的操作数峰值。
+     * 串行执行时峰值恒为 1；被并发调用时峰值 > 1。用于给 [SerialGattLink] 的串行性做
+     * 正/负对照——负对照直接并发调探针，证明「重叠确实能被检测到」，正向断言才不是空转。
+     */
+    private class OverlapProbe(private val delayMs: Long = 0) : GattLink {
+        private val inFlight = java.util.concurrent.atomic.AtomicInteger(0)
+        private val maxInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+        private val order = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        private val counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+        private fun <T> enter(name: String, block: () -> Result<T>): Result<T> {
+            val cur = inFlight.incrementAndGet()
+            maxInFlight.accumulateAndGet(cur) { a, b -> if (a > b) a else b }
+            order.add(name)
+            counts[name] = (counts[name] ?: 0) + 1
+            try {
+                if (delayMs > 0) Thread.sleep(delayMs)
+                return block()
+            } finally {
+                inFlight.decrementAndGet()
+            }
+        }
+
+        override fun connect(): Result<Int> = enter("connect") { Result.success(20) }
+        override fun readApiVersion(): Result<Int> = enter("readApiVersion") { Result.success(40) }
+        override fun setNotificationHandler(onChunk: (ByteArray) -> Unit): Result<Unit> =
+            enter("setNotificationHandler") { Result.success(Unit) }
+        override fun writeChunk(chunk: ByteArray): Result<Unit> = enter("writeChunk") { Result.success(Unit) }
+        override fun mtu(): Int = 20
+        override fun onDisconnected(cb: () -> Unit) { }
+        override fun close() { }
+        override fun isConnected(): Boolean = true
+
+        fun maxInFlight(): Int = maxInFlight.get()
+        fun order(): List<String> = order.toList()
+        fun countOf(name: String): Int = counts[name] ?: 0
     }
 
     private fun testUpdatePolicy() {
