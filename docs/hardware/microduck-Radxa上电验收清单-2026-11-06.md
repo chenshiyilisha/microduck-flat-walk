@@ -49,6 +49,15 @@ _本清单是**拿到硬件后**的逐项验收，每条都有明确的 **PASS /
 
 > 先接 **USB-C 供电**（不走电机电池），串口/SSH 进 Radxa。
 
+> 🔌 **用哪个 USB-C 口（2026-11-14 补，主板到货实测丝印核对）**：ZERO 3W 有两个 Type-C 口，丝印分别标 **USB 3.0 / HOST** 与 **USB 2.0 / OTG**。
+> **供电只能插 OTG 那个**（瑞莎硬件接口说明称其为 `USB-C 1`：「共有两个 USB Type-C 口：USB-C 1（USB 2.0 OTG，支持供电与 OTG）和 USB-C 2（USB 3.0 HOST）。其中供电使用 USB-C 1 接口」；同页「仅支持 5V 输入，建议使用 5V/2A 及以上电源适配器」）。
+> `USB 3.0 HOST` 口是**对外输出**的下行口，Radxa ZERO 3W Product Brief rev1.11 §6.2 写明其下行限流 500 mA，接 U 盘/键鼠/摄像头用，**接充电器不能启动板子**。
+> ⚠️ **别按编号认口**：瑞莎产品页示意图的标注是「1 = USB 3.0 HOST / 2 = USB 2.0 OTG」，与硬件文档的 `USB-C 1/2` 命名**正好相反**。按板上功能字样（OTG / 3.0）认，不按数字认。
+> **来源与证据强度（2026-11-14）**：
+> - ✅ **页面实访**：瑞莎 `docs.radxa.com/zero/zero3/hardware-design/hardware-interface`（中/英两版，「电源接口」「USB C 口」两节原文逐字核对）、`radxa.com/products/zeros/zero3w/` 产品页（USB 口标注原文）。供电口结论由这两条**直接**支撑。
+> - 🟡 **厂商 PDF 检索摘录（未逐页实访）**：`dl.radxa.com` ZERO 3W Product Brief rev1.11 §6.2、TELEC User Manual §5.1/§6.2（500 mA 下行限流、5V/1A OTG 供电、GPIO Pin 2/4 供电）。两处直连均因本机 TLS 吊销检查离线（`CRYPT_E_REVOCATION_OFFLINE`）失败，引文来自厂商 PDF 的检索文本摘录，**仅作旁证、不单独作判据**。
+> - ⚠️ 术语：本节「官方」一词不用于瑞莎；按项目术语约定，唯一「官方」指 Pollen Robotics 原厂。
+
 | # | 操作 | 命令 | PASS 判据 |
 |---|---|---|---|
 | 3.1 | 确认启动 | 串口看 U-Boot → Linux 内核启动日志 | 无 panic，进 login |

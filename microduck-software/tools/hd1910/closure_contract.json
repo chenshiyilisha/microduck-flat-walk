@@ -208,6 +208,50 @@
       ],
       "signoff": "待真机按 E3 同协议实测；当前无人可签字",
       "evidence": []
+    },
+    {
+      "id": "INCONCLUSIVE_LIVE_STATE_STREAM",
+      "status": "UNVERIFIED",
+      "summary": "安卓 App 与整机之间的真 50Hz robot.state 通知流 / BLE GATT 时序 / 传感器与视频真流尚未上板验收；C2+ 只在 MuJoCo 台架仿真固件 + body_server 这一层消掉『通知流不可达』，不等于真机",
+      "why_open": "App README 三处一手原文把该标记写成『仿真状态流这层已消、真机 50Hz/传感器/GATT 仍 UNVERIFIED』；当前只有台架 PC + URT-2 + 单舵机、无整机，真机 bonding/CCCD/onCharacteristicWrite 时序、真 50Hz 帧、netpad :4210 上板方向均未实测。该标记自 2026-11-13 起出现在 docs 扫描根内却一直未登记，2026-11-14 全量门禁按『docs 出现未登记标记必红』抓出，此处按工具设计意图补登记而非改判",
+      "evidence_kind": [
+        "真机 BLE GATT 抓包/日志（bonding、CCCD、onCharacteristicWrite 时序）",
+        "真机 robot.state 50Hz 帧结构与帧计数原始记录",
+        "上板 netpad :4210 UDP 驾驶方向与 250ms timeout 原始记录"
+      ],
+      "verification_boundary": "只认 Android 真机 + 整机板卡对接的一手日志；robotd --sim、Windows MuJoCo body_server :7801、Mock 后端一律不算上板证据",
+      "local_verified": [
+        "C2 真固件 11/11（B 代 API16）",
+        "C2+ 仿真状态流 24/24、连跑 3 次无偶发（真 robot.state 通知流到 App，但服务端是 Windows MuJoCo 台架仿真体）",
+        "P1 驾驶 28/28、真机 UI 门禁 59/59（UI 层，不含 GATT 上板）"
+      ],
+      "board_acceptance_required": [
+        "Android 真机 + 整机板卡完成 BLE 配对，实测 bonding / CCCD / onCharacteristicWrite 时序（含 hci0 上电约 73s 才出现的等待与重试）",
+        "订阅 robot.state 回读真 50Hz 帧结构与帧计数，断链后验证重连重订阅",
+        "板上 service.sh netpad on 后实测 UDP 驾驶方向与 250ms timeout",
+        "负对照：不订阅时零帧、断链不重订阅时零帧"
+      ],
+      "still_owed": [
+        "真机 GATT 上板验收（当前 UNVERIFIED）",
+        "真机 50Hz robot.state 与传感器真流回读",
+        "netpad :4210 服务端在镜像侧是否存在及上板方向确认",
+        "WebRtc P2 视频（App 侧尚未实现，镜像侧 mediad :8080 / :8443 已就绪属镜像超前、App 无场景）"
+      ],
+      "negative_control": "把 C2+ 的 24/24 仿真状态流、body_server :7801 台架帧或 Mock 后端全绿当作『真机通知流已验收』，检查必须红；把该条标成 CLOSED/PASS 而 evidence 仍为空也必须红。反向：把仿真层已消写成整个标记完全开放同样不准确，须按层区分且真机侧保持 UNVERIFIED（UNVERIFIED != PASS）",
+      "blocked_actions": [
+        "宣布真机 BLE GATT / 真 50Hz 状态流已验收",
+        "把 Windows MuJoCo 台架仿真体当真机证据",
+        "把 C2+ 24/24 写成真机 PASS"
+      ],
+      "source_refs": [
+        "microduck-android-app/README.md 第 48 / 565 / 572 行",
+        "docs/active/microduck-安卓App-P0开发计划-会话层与仿真开发模式-2026-11-12.md 第 139 / 144 行",
+        "docs/active/microduck-项目资料支撑复盘审计-2026-11-13.md 第 45 行",
+        "docs/active/microduck-安卓App-整机落地验收清单-2026-11-13.md",
+        "docs/active/microduck-V112镜像-按开发规范审查与优化候选-2026-11-14.md（App 适配维度）"
+      ],
+      "signoff": "待整机 + Android 真机上板联调；当前无人可签字",
+      "evidence": []
     }
   ]
 }

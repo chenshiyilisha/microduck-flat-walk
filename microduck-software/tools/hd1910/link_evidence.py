@@ -4,7 +4,7 @@
 Why this exists (2026-11-11)
 ----------------------------
 ``board_acceptance.py --record`` writes an observation with the evidence file's
-sha256 and marks it ``COLLECTED``. ``closure_contract.json`` keeps seven open
+sha256 and marks it ``COLLECTED``. ``closure_contract.json`` keeps the open
 markers with ``evidence: []`` and a human ``signoff``. Nothing connected the
 two: an engineer standing at the robot could collect a stack of evidence files
 and still have no way to see, per open question, what was measured, what is

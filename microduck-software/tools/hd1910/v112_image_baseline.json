@@ -1,0 +1,352 @@
+{
+  "schema_version": 1,
+  "owner": "v112_image_baseline.json 是 V112 镜像 rootfs『相对 recorded_at 时点是否被静默改动』的唯一机器主人。它只登记期望值（镜像 sha256 / 关键文件 sha256+size / 语义锚点），不存镜像本体、不写入镜像、不改 rootfs、不代替任何上板验收。与采购域 procurement_baseline.json 正交：那个管未跟踪的 xlsx 工作副本，这个管已 sha-pin 的 3.0 GB 镜像内容。",
+  "rule": "本契约是『内容基线』而非『正确性证明』：BASELINE_MATCH 只说明登记文件相对该时点字节未变、且关键语义锚点仍成立，不说明配置最优、不说明能上板启动、不说明硬件活着。判据（契约里的期望值）独立于被测值（实测文件），锚点用正向断言/集合包含/字段解析，禁止裸子串扫描（准则 8）；具体密码类数值不在契约里复写明文，只断言键存在且非空（准则 13）。任何改动镜像的动作都必须显式 --rebaseline --confirm --reason 并留 history。",
+  "scope": {
+    "live_hardware_accessed": false,
+    "ship_verdict": "NOT_SHIPPABLE",
+    "proves": "① 镜像本体 sha256/size 与 pin 一致；② 登记的 rootfs 关键文件相对 baseline.recorded_at 时点 hash+size 未变；③ 从文件实解析出的关键语义锚点仍成立（cmdline / fstab 选项 / AP profile / 服务集合 / mask / 端口绑定等）",
+    "not_proof_of": [
+      "过去从未被改过（首次基线只能锁定时点，不追溯历史）",
+      "镜像配置正确或最优（fstab 双逗号、commit=120、固定 PSK、root 跑配网服务等已知可疑项仍按现状登记，不因 MATCH 而变成 PASS）",
+      "镜像能在 Radxa ZERO 3W 上启动、能发热点、能连 App、能驾驶",
+      "任何上板验收项：串口日志 / 配网页 / SSH / BLE GATT / netpad:4210 / BA-X-1 版本回读",
+      "整机签收、A2 配网加密悬案闭合、策略可上真机",
+      "安卓 App 与镜像的实际互适配（只登记静态事实，联调仍 UNVERIFIED）"
+    ],
+    "note": "镜像与只读挂载点是本机/WSL2 专属资源，CI 干净 checkout 上没有 ⇒ --check 遇缺失必须报 UNVERIFIED，绝不 PASS。只有 --selftest（注入合成 rootfs fixture）进 lean CI。"
+  },
+  "baseline": {
+    "recorded_at": "2026-11-14T17:30:00+08:00",
+    "recorded_by": "用户 2026-11-14『继续，按照最优的来』授权；候选 9（镜像内容基线清单）落地。基线值由两条独立算法互证：WSL2 内核 ext4 只读挂载(offset=16777216) + 用户态 debugfs 直读同一 ext4，7/7 哈希一致。",
+    "captured_case": "microduck-zero3w-0.15.1-R1-V112.img 写入 TF 卡并回插主板后的磁盘态；该镜像由 kissqy Public Image R1 换瑞莎 u-boot-rk2410 引导产出，尚未实机全量验收。",
+    "rebaseline_policy": "必须显式 --rebaseline --confirm --reason；旧 hash 进 history；工具只写本契约，永不写镜像或 rootfs",
+    "history": []
+  },
+  "image": {
+    "path_in_repo": "microduck-software/.upstream/downloads/microduck-zero3w-0.15.1-R1-V112.img",
+    "sha256": "d8207edea3a3abf8234cb16cf18c859c94292ca492e5f2eff3a981e2fbd24f41",
+    "size_bytes": 3157262336,
+    "rootfs_offset_bytes": 16777216,
+    "why_pinned": "写盘后 Quick 9/9 + 全量 SHA-256 与卡一致（操作卡 §4.6）；Windows 改写 GPT 头 LBA1 的 12 字节已由 fix_lba1.ps1 修回。改 rootfs 会破坏此 pin 与 image_pairing_contract.json / card_build_contract.json 的可复现链。"
+  },
+  "scope_semantics": {
+    "BASELINE_MATCH": "镜像 pin 一致（或未提供镜像则标注未验）、全部登记文件 hash+size 匹配、全部语义锚点成立 → 相对该时点未变",
+    "DRIFT_UNCONFIRMED": "字节 hash/size 变了但语义锚点全在 → 不算绿，需人工 diff + 显式 re-baseline；镜像场景下一律视为可复现链被破坏",
+    "COVERAGE_SUSPECT": "语义锚点破裂（cmdline 多了 ttyS2、AP 参数变了、服务集合缺项、mask 被拆、端口改了等）或镜像 pin 不符 → 判红",
+    "UNVERIFIED": "登记文件/挂载点/镜像缺失（CI 干净 checkout、未挂载）→ 不算 PASS，也不算漂移；如实报缺失"
+  },
+  "files": [
+    {
+      "id": "FSTAB",
+      "path": "etc/fstab",
+      "kind": "mount_table",
+      "sha256": "385984316dbb8cc3037f70552cc3e83312edf677ef1ba623be40261b67391b30",
+      "size_bytes": 129,
+      "why_protected": "审查候选 1：根挂载第 4 字段 defaults,,commit=120,errors=remount-ro（双逗号 + 120s 提交间隔），最硬的优化发现；改它即破坏 pin"
+    },
+    {
+      "id": "EXTLINUX",
+      "path": "boot/extlinux/extlinux.conf",
+      "kind": "boot_cmdline",
+      "sha256": "037e81763a87f3905e1eacff583e8919aabc25e5ad8c6b9fe3ebce444f97ab78",
+      "size_bytes": 648,
+      "why_protected": "1.2/1.3 判据冲突核心：console=tty1 且无 console=ttyS2；fdtoverlays 六个 dtbo 含 uart2-m0/i2c4-m0；cma=256M"
+    },
+    {
+      "id": "AP_PROFILE",
+      "path": "etc/NetworkManager/system-connections/Microduck-Setup.nmconnection",
+      "kind": "nm_keyfile",
+      "sha256": "612bf8fd4c03f0612b95bbe33918b6cc3e4711532f09d559ef6435c78129e6ec",
+      "size_bytes": 319,
+      "why_protected": "B 路线首启热点契约：mode=ap / ssid / band=bg / 10.42.0.1/24 / autoconnect=false；密码值按准则 13 不复写"
+    },
+    {
+      "id": "SETUP_UNIT",
+      "path": "etc/systemd/system/microduck-setup.service",
+      "kind": "systemd_unit",
+      "sha256": "e2cadfc9c0fd6bcdc35376efa301ce46677b141ec6415e0f4a199cf3b02e223a",
+      "size_bytes": 340,
+      "why_protected": "独立配网服务：ExecStart 指向 portal.py --serve wlan0；Restart=on-failure / NoNewPrivileges=no（审查候选 3/5）"
+    },
+    {
+      "id": "PORTAL",
+      "path": "usr/local/libexec/microduck-setup-portal.py",
+      "kind": "python_source",
+      "sha256": "17aff218e0aaa4141a337b625c867d7dec3ef84935d65924ff6c8e8621cebf2f",
+      "size_bytes": 83991,
+      "why_protected": "配网页实现：PORT=8088 / SETUP_IP / 只绑 AP 地址 / chpasswd 走 stdin / 配网失败回退热点（审查候选 4/5）"
+    },
+    {
+      "id": "JOURNALD_MAIN",
+      "path": "etc/systemd/journald.conf",
+      "kind": "config",
+      "sha256": "434b2abbf219c4c7224aedcd15de8dba52f4ba7e520525dae72117ae78fc57b6",
+      "size_bytes": 1431,
+      "why_protected": "主配置全注释（无生效项）；生效上限在 10-robot.conf。上一轮候选 6 曾写『无显式上限』，本轮实读订正"
+    },
+    {
+      "id": "JOURNALD_DROPIN",
+      "path": "etc/systemd/journald.conf.d/10-robot.conf",
+      "kind": "config",
+      "sha256": "ea98c12f0c07cf715afbf2c7c4e88a0a75c54c04ea2790eba59fb6d0a9bb6600",
+      "size_bytes": 2389,
+      "why_protected": "实读生效项：Storage=persistent / SystemMaxUse=200M / MaxRetentionSec=3month ⇒ 审查候选 6『journald 无显式上限』表述不准确"
+    },
+    {
+      "id": "BTD_UNIT",
+      "path": "etc/systemd/system/btd.service",
+      "kind": "systemd_unit",
+      "sha256": "fb64b20f44596d4c997db0ba81e69d180959d20c8d6847d32a26c56ed54058e9",
+      "size_bytes": 3899,
+      "why_protected": "BLE front door；保持 UNPRIVILEGED；注释明写 hci0 上电约 73s 才出现（App 适配硬时序约束）"
+    },
+    {
+      "id": "PADD_UNIT",
+      "path": "etc/systemd/system/padd.service",
+      "kind": "systemd_unit",
+      "sha256": "be69d564451cedafeb97f9303703448a6d9517c32c63322ef5dc37d162c0a0ae",
+      "size_bytes": 5543,
+      "why_protected": "独立二次印证 73s；padd 是蓝牙手柄 intent client，不是 netpad 服务端"
+    },
+    {
+      "id": "MEDIAD_UNIT",
+      "path": "etc/systemd/system/mediad.service",
+      "kind": "systemd_unit",
+      "sha256": "a0509a087e17500706d310189df22f67d8195706a3a79e2c91b6b138f166f4f8",
+      "size_bytes": 8531,
+      "why_protected": "mediad :8080 console / :8443 signalling；裸板无摄像头时崩溃重启属已知预期（审查候选 2）"
+    },
+    {
+      "id": "ROBOTD_TOML",
+      "path": "etc/robot/feetech-ft5/robotd.toml",
+      "kind": "toml",
+      "sha256": "5047bce84de3fce54758518fe694d868ff7cd8267afb63f3ea0854ace160d5c8",
+      "size_bytes": 2241,
+      "why_protected": "robotd port=/dev/ttyS2 / hz=50；与 1.3『UART2 留给舵机总线』直接相关"
+    },
+    {
+      "id": "ROBOTD_DROPIN",
+      "path": "etc/systemd/system/robotd.service.d/zzzz-r17-0151.conf",
+      "kind": "systemd_dropin",
+      "sha256": "4e937bde56eebe271deffb6e914d69546b8b0a9364fdbe7cddfe6c23baa64108",
+      "size_bytes": 770,
+      "why_protected": "ExecStart 带 --port /dev/ttyS2 --commissioning；DeviceAllow=/dev/ttyS2 rw；Restart=always"
+    },
+    {
+      "id": "ROBOTD_UNIT",
+      "path": "etc/systemd/system/robotd.service",
+      "kind": "systemd_unit",
+      "sha256": "6a27fe4da782adf0ba677d7605aa79b440500beffde8cbf76ee80d4f3eb0b737",
+      "size_bytes": 4425,
+      "why_protected": "主服务单元；与 drop-in 共同决定 robotd 行为"
+    },
+    {
+      "id": "TOFD_UNIT",
+      "path": "etc/systemd/system/tofd.service",
+      "kind": "systemd_unit",
+      "sha256": "17082237e9394e64d0b79f3d6f97d84a2c0f2300bccd014c25d0e25b5f93b718",
+      "size_bytes": 1999,
+      "why_protected": "ToF 服务；订正㉑ 相机/ToF 必需不可砍"
+    },
+    {
+      "id": "BOOTCHECK_UNIT",
+      "path": "etc/systemd/system/robot-boot-check.service",
+      "kind": "systemd_unit",
+      "sha256": "5ba93ddf5be20823681863eb375d6cceb0b466e44443869d5ca88c6504a042c9",
+      "size_bytes": 1715,
+      "why_protected": "开机自检单元"
+    },
+    {
+      "id": "IMAGE_MARKER",
+      "path": "etc/microduck-v112-image.txt",
+      "kind": "provenance_marker",
+      "sha256": "e43c722cae58f6a1cfdbb5c3ac04ce22d6d50e559df4943b0b2b79af14ea9b91",
+      "size_bytes": 460,
+      "why_protected": "换引导产物自述：原包 sha256、瑞莎 u-boot 版本、overlays 列表、no-camera=0 no-tof=0、『换引导后改 overlay 要改 extlinux.conf』"
+    }
+  ],
+  "semantic_anchors": [
+    {
+      "id": "A_FSTAB_ROOT_OPTIONS",
+      "file": "FSTAB",
+      "kind": "field_options",
+      "field_index": 3,
+      "expected": ["defaults", "", "commit=120", "errors=remount-ro"],
+      "why": "第 4 字段按逗号拆成完整选项列表；空元素即双逗号。用字段解析而非裸子串（准则 8），且期望值来自审查报告 §2 实读 + fstab(5) 一手手册。登记现状不等于认可它正确。"
+    },
+    {
+      "id": "A_FSTAB_TMPFS",
+      "file": "FSTAB",
+      "kind": "regex_lines",
+      "patterns": ["^tmpfs\\s+/tmp\\s+tmpfs\\s+defaults,nosuid\\s+0\\s+0\\s*$"],
+      "why": "/tmp 走 tmpfs 是 SD 卡寿命相关既有配置"
+    },
+    {
+      "id": "A_CMDLINE_TOKENS",
+      "file": "EXTLINUX",
+      "kind": "line_tokens",
+      "line_prefix": "append",
+      "expected_subset": ["rootwait", "rw", "console=tty1", "consoleblank=0", "cma=256M"],
+      "why": "cmdline 完整 token 集合包含项；判据独立于被测文件（准则 4）"
+    },
+    {
+      "id": "A_CMDLINE_NO_TTYS2",
+      "file": "EXTLINUX",
+      "kind": "line_tokens_absent",
+      "line_prefix": "append",
+      "forbidden": ["console=ttyS2", "console=ttyS0"],
+      "why": "1.3 判据：UART2 留给舵机总线，不得加串口 console。1.2 串口日志判据因此设计上不可达（见 1.2 适用性裁定）"
+    },
+    {
+      "id": "A_OVERLAYS",
+      "file": "EXTLINUX",
+      "kind": "line_tokens",
+      "line_prefix": "fdtoverlays",
+      "basename_only": true,
+      "expected_subset": ["rk3568-uart2-m0.dtbo", "rk3568-i2c3-pihat.dtbo", "rk3568-aic3104-i2c3.dtbo", "rk3568-radxa-zero3-rpi-camera-v2.dtbo", "rk3568-npu-enable.dtbo", "rk3568-i2c4-m0.dtbo"],
+      "why": "六个 overlay 集合包含；marker 自述换引导后 overlay 只认 extlinux.conf"
+    },
+    {
+      "id": "A_AP_KEYFILE",
+      "file": "AP_PROFILE",
+      "kind": "kv_equals",
+      "expected": {"mode": "ap", "ssid": "Microduck-kissqy", "band": "bg", "key-mgmt": "wpa-psk", "address1": "10.42.0.1/24", "autoconnect": "false", "interface-name": "wlan0", "type": "wifi"},
+      "why": "B 路线首启热点参数；与实机 WlanScan 3/3 命中的 SSID 一致。刻意避开 ipv4/ipv6 同名的 method 键以免 dict 覆盖误判"
+    },
+    {
+      "id": "A_AP_PSK_PRESENT",
+      "file": "AP_PROFILE",
+      "kind": "kv_present",
+      "keys": ["psk"],
+      "why": "只断言 psk 键存在且非空，不复写密码明文（准则 13：压缩记忆/订正留档的具体数值不作依据）；权威值在一手文档 §2 第 27 行 / §7 第 106 行"
+    },
+    {
+      "id": "A_SETUP_UNIT",
+      "file": "SETUP_UNIT",
+      "kind": "kv_equals",
+      "expected": {"Type": "simple", "Restart": "on-failure", "RestartSec": "8", "NoNewPrivileges": "no", "WantedBy": "multi-user.target"},
+      "why": "配网服务的重启/降权现状；NoNewPrivileges=no 是审查候选 3 的事实基础"
+    },
+    {
+      "id": "A_SETUP_EXEC",
+      "file": "SETUP_UNIT",
+      "kind": "regex_lines",
+      "patterns": ["^ExecStart=.*microduck-setup-portal\\.py\\s+--serve\\s+wlan0\\s*$"],
+      "why": "ExecStart 必须指向配网页且带 --serve wlan0"
+    },
+    {
+      "id": "A_PORTAL_BIND",
+      "file": "PORTAL",
+      "kind": "kv_equals",
+      "expected": {"SETUP_IP": "10.42.0.1", "PORT": "8088", "CAPTIVE_HTTP_PORT": "80"},
+      "why": "配网页端口与只绑 AP 地址；前轮 grep 4210 命中的是摄像头 IQ 系数假阳性，此处用赋值解析正向断言"
+    },
+    {
+      "id": "A_PORTAL_SERVER_CALL",
+      "file": "PORTAL",
+      "kind": "regex_lines",
+      "patterns": ["ThreadingHTTPServer\\(\\(SETUP_IP,\\s*PORT\\)"],
+      "why": "证明服务绑定用的是 SETUP_IP 常量而非 0.0.0.0（只绑热点侧）"
+    },
+    {
+      "id": "A_JOURNAL_DROPIN",
+      "file": "JOURNALD_DROPIN",
+      "kind": "kv_equals",
+      "expected": {"Storage": "persistent", "SystemMaxUse": "200M", "SystemMaxFileSize": "20M", "SystemMaxFiles": "10", "MaxRetentionSec": "3month", "Compress": "yes", "ForwardToSyslog": "no"},
+      "why": "🔴 本轮实读订正：journald 已有显式上限，审查报告候选 6『无显式上限』表述不准确。基线如实登记现状"
+    },
+    {
+      "id": "A_JOURNAL_MAIN_COMMENTED",
+      "file": "JOURNALD_MAIN",
+      "kind": "no_active_kv",
+      "why": "主配置应全为注释/空行，无生效键值；生效项只在 drop-in，避免两处配置打架"
+    },
+    {
+      "id": "A_ROBOTD_DROPIN",
+      "file": "ROBOTD_DROPIN",
+      "kind": "kv_equals",
+      "expected": {"Restart": "always", "RestartSec": "2s", "TimeoutStartSec": "30s", "PrivateDevices": "no"},
+      "why": "robotd 重启与设备访问口径"
+    },
+    {
+      "id": "A_ROBOTD_TTYS2",
+      "file": "ROBOTD_DROPIN",
+      "kind": "regex_lines",
+      "patterns": ["^ExecStart=.*--port\\s+/dev/ttyS2\\s+--commissioning", "^DeviceAllow=/dev/ttyS2\\s+rw\\s*$"],
+      "why": "UART2 归 robotd 舵机总线，与 1.3 口径一致"
+    },
+    {
+      "id": "A_ROBOTD_TOML",
+      "file": "ROBOTD_TOML",
+      "kind": "kv_equals",
+      "expected": {"port": "/dev/ttyS2", "hz": "50"},
+      "why": "TOML 键带引号，解析器会 strip；port/hz 是部署链契约关键值"
+    },
+    {
+      "id": "A_BTD_UNPRIVILEGED",
+      "file": "BTD_UNIT",
+      "kind": "regex_lines",
+      "patterns": ["UNPRIVILEGED"],
+      "why": "解析无线范围任意字节的进程保持非特权，是同项目最佳实践"
+    },
+    {
+      "id": "A_BTD_HCI_DELAY",
+      "file": "BTD_UNIT",
+      "kind": "terms_in_same_line",
+      "terms": ["hci0", "73s"],
+      "why": "上电约 73s 才有 hci0；两词必须在同一行，避免裸子串命中注释里无关的 73（准则 8）"
+    },
+    {
+      "id": "A_PADD_HCI_DELAY",
+      "file": "PADD_UNIT",
+      "kind": "terms_in_same_line",
+      "terms": ["hci0", "73 seconds"],
+      "why": "第二条独立 unit 注释互证同一 73s（准则 3 两条独立算法）"
+    },
+    {
+      "id": "A_SERVICE_SET",
+      "file": "ROBOTD_UNIT",
+      "kind": "service_set",
+      "dir": "etc/systemd/system",
+      "expected_subset": ["robotd.service", "mediad.service", "tofd.service", "configd.service", "updaterd.service", "padd.service", "btd.service", "aic3104-init.service", "gamesir-xboxd.service", "microduck-setup.service", "robot-boot-check.service", "dbus-org.bluez.service", "serial-getty@ttyS2.service"],
+      "why": "服务清单集合包含（正向断言）；缺任一即镜像内容已变"
+    },
+    {
+      "id": "A_SERIAL_MASK",
+      "file": "ROBOTD_UNIT",
+      "kind": "symlink_target",
+      "path": "etc/systemd/system/serial-getty@ttyS2.service",
+      "expected": "/dev/null",
+      "why": "serial-getty@ttyS2 已 mask ⇒ 串口不会有 login prompt，1.2 判据设计上不可达"
+    },
+    {
+      "id": "A_JOURNAL_DIR_ABSENT",
+      "file": "ROBOTD_UNIT",
+      "kind": "absent_path",
+      "path": "var/log/journal",
+      "why": "镜像里该目录不存在；按 journald.conf(5) 此时 System* 上限不生效，只有 Runtime* 生效（但 drop-in 强制 Storage=persistent，二者关系待上板观察）"
+    },
+    {
+      "id": "A_MARKER_PROVENANCE",
+      "file": "IMAGE_MARKER",
+      "kind": "regex_lines",
+      "patterns": ["no-camera=0 no-tof=0", "overlays=", "armbianEnv\\.txt 不再生效"],
+      "why": "换引导产物自述；与订正㉑『相机/ToF 必需不可砍』及 overlay 改法一致"
+    }
+  ],
+  "negative_controls": [
+    "改 fstab 任一字节且锚点仍在 → DRIFT_UNCONFIRMED（非 MATCH）",
+    "把 fstab 的 commit=120 改成 commit=5 并同步更新 hash → A_FSTAB_ROOT_OPTIONS 破 → COVERAGE_SUSPECT（证明纯 hash 不足）",
+    "在 append 行加 console=ttyS2 → A_CMDLINE_NO_TTYS2 破 → COVERAGE_SUSPECT",
+    "删掉一个 fdtoverlay → A_OVERLAYS 破 → COVERAGE_SUSPECT",
+    "把 AP profile 的 psk 置空 → A_AP_PSK_PRESENT 破 → COVERAGE_SUSPECT（且不泄露明文）",
+    "把 serial-getty@ttyS2.service 从 symlink 换成普通文件 → A_SERIAL_MASK 破 → COVERAGE_SUSPECT",
+    "创建 var/log/journal 目录 → A_JOURNAL_DIR_ABSENT 破 → COVERAGE_SUSPECT",
+    "删掉 btd.service → A_SERVICE_SET 破 → COVERAGE_SUSPECT",
+    "登记文件缺失 / 未挂载 / 干净 checkout → UNVERIFIED，退出码非 0，CI 不会误绿",
+    "镜像 sha256 与 pin 不符 → COVERAGE_SUSPECT",
+    "契约里删掉全部语义锚点 / 改 ship_verdict / sha 非 hex / 路径越界 / 锚点引用不存在的 file → validate 必红",
+    "把 4210 之类裸子串当端口配置（前轮 IQ 系数假阳性）→ 本契约全部锚点用字段解析/集合包含，不复现该误判"
+  ]
+}

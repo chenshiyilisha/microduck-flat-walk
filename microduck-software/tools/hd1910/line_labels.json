@@ -381,6 +381,12 @@
       "line": "META_GUARD",
       "risk_tokens": [],
       "evidence": "E2 新增：采购域未跟踪工作副本（两份手改 xlsx / 两份 build.py / p25.tmp / 价格 SSOT）相对 baseline 时点的字节+语义一致性门禁，把『采购域零改动』从 stat 人工声明升级为机器断言。与 A2（INCONCLUSIVE 悬案）、D1（主动决议）正交：本契约管工作副本是否被静默改动。四态 verdict：BASELINE_MATCH / DRIFT_UNCONFIRMED（字节变但锚点在=疑似合法手改，不冒绿）/ COVERAGE_SUSPECT（语义锚点破=疑似 build.py 覆盖事故，判红）/ UNVERIFIED（文件缺失=CI 干净 checkout，不 PASS）。两层判据：sha256+size + 从 xlsx 用纯 stdlib(zipfile+xml.etree, 全 inlineStr)实抽的语义锚点（19 物料行/手删 3 项未作为独立物料复活/订正㉕ SKU/预算/5 sheet/SSOT 订正表）。🔴 准则10 实证：手删『转接线』复活判据用『D 列物料主体以禁词开头』而非整行裸子串——真实表第17行合法『扬声器+配套转接线』不得误红，旧裸子串规则负对照必误红。工具永不写采购文件，只在本机显式 --rebaseline --confirm --reason 时更新契约 JSON 且旧值进 history；CI 上 --check 因文件缺失报 UNVERIFIED（不误绿），--selftest（注入临时 xlsx + 11 条负对照）随 B3 派生名单进 lean CI。仅证明相对 recorded_at 时点未变、不追溯历史、不验硬件、ship_verdict 恒 NOT_SHIPPABLE"
+    },
+    {
+      "path": "tools/hd1910/check_v112_image_baseline.py",
+      "line": "META_GUARD",
+      "risk_tokens": [],
+      "evidence": "候选 9 新增（2026-11-14）：V112 镜像 rootfs 内容基线，只读比对 16 个关键配置文件 sha256+size 与 23 条语义锚点，把审查报告里的人工笔记升级为机器断言。沿用 E2 采购域 baseline 的四态 verdict（BASELINE_MATCH / DRIFT_UNCONFIRMED / COVERAGE_SUSPECT / UNVERIFIED），判据在外部契约 v112_image_baseline.json 且镜像 pin 另有源码内 EXPECTED_IMAGE_SHA256 独立锚，不从被测量派生；锚点用字段解析/集合包含/整行正则，禁裸子串；不复写热点密码明文。--selftest 用语义等价但文本不同的合成 rootfs + 12 条注入式负对照（含『同步重登记 hash 仍被语义锚点判红』）；真机/挂载缺失一律 UNVERIFIED 不冒绿；--rebaseline 须 --confirm --reason 且旧值进 history。与 A2 悬案 / D1 决议 / E2 采购域正交：本契约只管镜像内容相对 recorded_at 时点是否变更，不证明配置正确、不证明能启动、不消任何 UNVERIFIED_hardware、ship_verdict 恒 NOT_SHIPPABLE。纯 stdlib、不写镜像不写 rootfs，随 B3 派生名单进 lean CI"
     }
   ],
   "known_gaps": [

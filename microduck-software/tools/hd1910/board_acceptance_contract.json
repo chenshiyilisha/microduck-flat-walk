@@ -15,7 +15,7 @@
     "BA-0-1", "BA-0-2", "BA-1-5", "BA-2-2", "BA-2-4", "BA-2-5",
     "BA-3-2", "BA-3-4", "BA-4-1", "BA-4-2", "BA-4-3", "BA-4-4",
     "BA-5-1", "BA-5-2", "BA-6-1", "BA-6-2", "BA-6-3", "BA-7-1",
-    "BA-7-2", "BA-8-1", "BA-9-1", "BA-X-1", "BA-X-2", "BA-X-3", "BA-X-4"
+    "BA-7-2", "BA-8-1", "BA-9-1", "BA-X-1", "BA-X-2", "BA-X-3", "BA-X-4", "BA-X-5"
   ],
   "required_check_ids_note": "显式登记集合：删任意一条、或新增一条未登记的判据，都会让 --check 变红。借 open-microduck check_book.py 的 expected == actual 集合相等断言；新增判据必须同步登记，避免清单被悄悄裁掉。",
   "authority_legend": {
@@ -330,6 +330,18 @@
       "superseded_by": [],
       "evidence_kind": ["真机命令注入检查（命令唯一值数 / 注入 ok）", "本体速度原始时间序列", "逐周期 nRMSE / lag_explains / meas-cmd 表", "period-0 冻结与策略未加载的负对照输出"],
       "closure_refs": ["INCONCLUSIVE_LIVE_TRACKING"]
+    },
+    {
+      "id": "BA-X-5",
+      "section": "§9+",
+      "title": "安卓 App 真机 BLE GATT 与 50Hz 状态流联调",
+      "pass_criterion": "Android 真机 + 整机板卡完成 BLE 配对，实测 bonding / CCCD / onCharacteristicWrite 时序（含 hci0 上电约 73s 才出现的等待与重试）；订阅后回读真 50Hz robot.state 帧结构与帧计数并验证断链重连重订阅；板上 service.sh netpad on 后实测 UDP 驾驶方向与 250ms timeout。负对照：不订阅时零帧、断链不重订阅时零帧。robotd --sim / body_server :7801 / Mock 后端一律不算上板证据。",
+      "command": "Android 真机 GATT 抓包 + robot.state 帧计数日志 + netpad :4210 UDP 驾驶方向原始记录（见整机落地验收清单）",
+      "authority": "CURRENT",
+      "authority_note": "2026-11-14 补登记：C2 真固件 11/11、C2+ 仿真状态流 24/24、P1 驾驶 28/28、真机 UI 门禁 59/59 均为台架或 UI 层证据，服务端是 Windows MuJoCo 仿真体，真机 GATT 与 50Hz 真流从未上板。该标记自 11-13 起出现在 docs 扫描根内却未进悬案契约，本轮全量门禁按集合相等判红后补登记，并按 coverage_rule 在此给出唯一 B1 闭合路径。判据强度不降低：UNVERIFIED != PASS。",
+      "superseded_by": [],
+      "evidence_kind": ["真机 BLE GATT 抓包或日志（bonding、CCCD、onCharacteristicWrite 时序）", "真机 robot.state 50Hz 帧结构与帧计数原始记录", "上板 netpad :4210 UDP 驾驶方向与 250ms timeout 原始记录", "断链与不订阅的负对照输出"],
+      "closure_refs": ["INCONCLUSIVE_LIVE_STATE_STREAM"]
     }
   ],
   "coverage_rule": "closure_contract.json 里每个 status=UNVERIFIED 的悬案，必须至少被一条 check 的 closure_refs 引用；引用了不存在的 id 或漏掉任一悬案都判结构 FAIL。借 open-microduck check_book.py 的集合相等断言。",
@@ -344,7 +356,8 @@
       "control.43 / p8head_2999 / 手柄 mapping 已完成",
       "相机与 ToF 在真机上已出数",
       "轮滑 roller 策略已在 R17 V167 加载或切换",
-      "真机已按 E3 协议验证时变命令跟随（仿真侧 PATH_3 不代替真机实测）"
+      "真机已按 E3 协议验证时变命令跟随（仿真侧 PATH_3 不代替真机实测）",
+      "安卓 App 真机 BLE GATT 与 50Hz 状态流已验收（C2+ 仿真 24/24 不代替真机）"
     ],
     "known_gaps": [
       "清单 §0 的 2GB、kissqy HAT、§5 的板载 I2C、§6.2 的 B 代键名、§7 的 publish 链均已标 SUPERSEDED / LINE_MISMATCH，但原文保留作史料，未改原文档",
@@ -359,7 +372,7 @@
     "required": [
       "所有 authority=CURRENT 的判据逐条有证据",
       "SUPERSEDED / LINE_MISMATCH 条目按现行 SSOT 改写后重跑",
-      "closure_contract.json 的 7 个 UNVERIFIED 悬案全部闭合（C1 追加 INCONCLUSIVE_ROLLER_POLICY，E3 追加 INCONCLUSIVE_LIVE_TRACKING）",
+      "closure_contract.json 的全部 UNVERIFIED 悬案都闭合（数量由该契约实算派生，此处不写死；历史追加：C1 ROLLER_POLICY、E3 LIVE_TRACKING、2026-11-14 LIVE_STATE_STREAM）",
       "人工签署（B1 不自动升级 PASS）"
     ]
   }
