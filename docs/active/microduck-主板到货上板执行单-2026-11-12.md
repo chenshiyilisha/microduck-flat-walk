@@ -136,6 +136,15 @@ _2026-11-12。用户已下单 Radxa Zero 3W 1GB（SSOT 订正⑫）+ 整机物�
 > - **下一步（价值最高且不改板子）**：用首次配网自设的系统口令 SSH 登录 `microduck.local`，只读执行 `cat /proc/cmdline`、`systemctl status serial-getty@ttyS2`、`robotctl --version` ⇒ 可闭合 1.2 三条替代验活路径之一并回读 `BA-X-1`。**凭据只在用户手里，不代劳、不猜测、未尝试认证。**
 > - **状态口径仍不变**：`live_hardware_accessed=false`、`ship_verdict=NOT_SHIPPABLE`、`COLLECTED != PASS`、A2 闭合数 0。SSH 开着 ≠ 整机验收、≠ 可 ship。未改镜像、未动 1.2/1.3 判据、未动采购 SSOT/contract/xlsx、未下单。
 
+> 📌 **1.0h SSH 只读实机验收 + App 适配（2026-11-14 21:00–21:20，纯新增指针）**
+> - ✅ **首次只读 SSH 登录真板成功**：用用户提供的首次配网系统口令登录 `radxa@192.168.50.216`；主机公钥指纹由 IPv4 / IPv6 双通道 `ssh-keyscan` 一致得到并硬编码为独立锚，不匹配即断开、零命令执行。凭据仅进程内存、未落盘、未入库、未回显（全项目字节级扫描 0 命中）。现场工具 `.upstream/downloads/probe_v112_ssh_readonly.py`：只读白名单 + 8 条写命令注入负对照，`--selftest` **12/12**，`--group all` 真跑 `rc=0`。
+> - ✅ **1.2 替代验活路径②实跑完成**：`/proc/cmdline` = `console=tty1 … cma=256M`、**无 `console=ttyS2`**；`serial-getty@ttyS2` = `masked` / `inactive`；`ssh` enabled+active ⇒ 1.2 `N/A_BY_DESIGN` 由镜像静态推断**升级为活体证据**；**判据原文一字不改、仍 `UNVERIFIED_hardware`**。
+> - 🔴 **里程碑 ① 仍不 PASS**：1.3 判据的第二半「robotd 能 open(`BA-3-4`)」实机 **FAIL** —— `robotctl health` 报 15 个舵机 ID 全缺、`imu not ready`、`robotd is read-only`。证据变强 ≠ 里程碑闭合。
+> - ✅ **App 适配实机化**：`robotd speaks API v40` 对齐 App `API_VERSION=40`；PC 侧独立 BLE 只读扫描命中 `CC:C8:37:E3:7C:90 / duck-6a07 / UUID 6f5d2a10-…`（另 5 设备负对照）⇒ BLE 广播真实可见；**真机 GATT 上板仍 UNVERIFIED**。BlueZ 一手文档订正了本轮中途「`Discoverable:no` ⇒ App 连不上」的过度推断。
+> - 🔴 **新增候选 10**：镜像内 `robotctl`(v37) 与 `robotd`(v40) 版本错配、两路径 sha 相同 ⇒ 非残留副本；**只登记不改镜像**。另订正 `updaterd` 为镜像故意 `disabled` + manual，非故障；`padd`/`gamesir-xboxd` failed 根因是 `startup_gate.py --max-head 2.5` 码 78（无整机）。
+> - **状态口径仍不变**：`live_hardware_accessed=false`（该字段指整机；本轮只登 SBC 主板）、`ship_verdict=NOT_SHIPPABLE`、`COLLECTED != PASS`、A2 闭合数 0。未改镜像 / 1.2·1.3 判据 / 采购 SSOT / contract / xlsx、未下单、**未对板子做任何写操作**。
+> - 📄 全量一手读数、降级说明与仍欠账项见 `docs/active/microduck-主板到货-SSH只读实机验收与App适配-2026-11-14.md`（本轮单一权威）。§1.0g 的「下一步：SSH 登录」**已执行完毕**。
+
 | 步 | 动作 | 命令 / 工具 | PASS 判据 | 证据落位 | FAIL 回退 |
 |---|---|---|---|---|---|
 | 1.1 | 做卡（PC 侧，不执行 dd） | `reproducible_card.py --check --verify-sources .upstream --flags "--overlay i2c4-m0"` | rc=0；`--no-camera`/`--no-tof` 必被拒(rc=1) | 成品卡 sha 记入 §7 | 先核 R1 sha(P0-1)；做坏只重刷 TF，无 A/B 回滚 |

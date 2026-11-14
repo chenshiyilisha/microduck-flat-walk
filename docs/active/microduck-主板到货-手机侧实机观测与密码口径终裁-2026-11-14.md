@@ -267,4 +267,17 @@ PROVISIONED_PATH.write_text('configured\n', ...)
 
 ---
 
+## 10. 补记：用户授权「全自动」后的 SSH 只读实机验收（21:00–21:20）
+
+用户说「继续，你来操作，全自动」并随后提供首次配网自设的系统口令 ⇒ **首次只读 SSH 登录真板成功**。本节只挂指针，不复制事实；单一权威 = `docs/active/microduck-主板到货-SSH只读实机验收与App适配-2026-11-14.md`。
+
+- 身份与网络**六通道互证** `192.168.50.216` / `CC:C8:37:E3:F2:1A`：PC ARP、mDNS EUI-64（RFC 4291 App.A）、手机 DHCP、SSH banner 双栈、板上 `ip -4 addr`、板上 `robotctl net status`（自报 `ssid 我家的WiFi (82%)`）⇒ §9「板子活着、已连家里 WiFi、按设计关掉 AP」得到**板上自述**确认。
+- `/proc/device-tree/model = Radxa ZERO 3`（板型号活体证据，⚠️ **≠ 丝印版本**）；`/etc/microduck-v112-image.txt` 板上原文确认 V112 换引导 + overlays。
+- **1.2 替代验活路径②（SSH 读 `cmdline`）已完成**；原判据 `N/A_BY_DESIGN` 不变、仍 `UNVERIFIED_hardware`。但里程碑 ① **仍不 PASS**：1.3 的「robotd 能 open」实机 FAIL（15 舵机 ID 全缺、`robotd is read-only`）。
+- **App 适配**：`API v40` 对齐 App 契约；PC 侧独立 BLE 只读扫描命中 `duck-6a07` ⇒ 广播真实可见，**真机 GATT 上板仍 UNVERIFIED**（扫描 ≠ 连接）。
+- 凭据未落盘 / 未入库 / 未回显（全项目字节级扫描 0 命中）；未改镜像、未改 1.2/1.3 判据、未动采购 SSOT / contract / xlsx、未下单、未对板子做任何写操作。
+- **状态口径一个字没翻**：`live_hardware_accessed=false`（指整机，本轮只登 SBC 主板）、`ship_verdict=NOT_SHIPPABLE`、`COLLECTED != PASS`、A2 闭合数 0。§9.3 里「下一步：SSH 登录」**已执行完毕**；剩余待办见新文档 §9。
+
+---
+
 _本文纯新增。未改镜像、未改 1.2/1.3 判据、未动采购 SSOT / contract / xlsx、未下单、未翻任何状态。_
