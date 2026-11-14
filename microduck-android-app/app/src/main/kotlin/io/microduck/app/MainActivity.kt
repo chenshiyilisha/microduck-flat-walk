@@ -67,8 +67,17 @@ import io.microduck.app.update.UpdatePanel
  */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var statusText: TextView
-    private lateinit var sourceChip: TextView
+    /** 每个目的地页面的全局状态显示控件（AppBar 状态串 / 来源标签 / 链路横幅）。
+     *  三个目的地各持一套，切换页面时整体跟随 —— 符合 M3 navigation bar
+     *  「Use navigation for distinct pages」语义：每个目的地是完整页面，
+     *  全局状态（连接/模式/链路）在每个页面都可见。 */
+    private class PageChrome(
+        val statusText: TextView,
+        val sourceChip: TextView,
+        val linkBanner: TextView,
+    )
+    private val pageChromes = mutableListOf<PageChrome>()
+
     private lateinit var hostEdit: EditText
     // 连接行渐进式披露：已连接时折叠输入、显示摘要行（点「修改」展开）
     private lateinit var connectionSummary: LinearLayout
@@ -98,7 +107,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var driveDzLabel: TextView
     private lateinit var headDzLabel: TextView
     private lateinit var topScrim: View
-    private lateinit var linkBanner: TextView
     private lateinit var blePanel: BleConnectPanel
     private lateinit var updateController: UpdateController
     private lateinit var updatePanel: UpdatePanel
@@ -140,27 +148,27 @@ class MainActivity : AppCompatActivity() {
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun section(v: View, topGap: Int = 8) = content.addView(
             v, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(topGap) })
-        section(buildAppBar(), 0)
-        linkBanner = buildLinkBanner()
-        section(linkBanner, 8)
-        section(buildConnectionRow())
-        section(buildControlCard())
-
+        // M3 navigation bar：「Use navigation for distinct pages」—— 每个目的地是完整页面，
+        // 切换时上方整个区域（AppBar + 链路横幅 + 页面内容）整体跟随，只有导航栏与全局
+        // 状态条常驻。三个目的地分工明确、边界清晰、无功能重叠：
+        //  · 状态 = 运动控制实时监测（连接 + 控制模式 + 实机状态帧/本地遥测）
+        //  · 健康 = 机器人健康诊断（robot.health 字段）
+        //  · 设置 = 配置（遥控参数 + BLE + 更新）
         val pages = FrameLayout(this)
-        statePage = buildStatePage()
-        healthPage = buildHealthPage()
-        settingsPage = buildSettingsPage()
+        statePage = buildPage(0)
+        healthPage = buildPage(1)
+        settingsPage = buildPage(2)
         pages.addView(statePage, FrameLayout.LayoutParams(MATCH, MATCH))
         pages.addView(healthPage, FrameLayout.LayoutParams(MATCH, MATCH))
         pages.addView(settingsPage, FrameLayout.LayoutParams(MATCH, MATCH))
         content.addView(pages, LinearLayout.LayoutParams(MATCH, 0, 1f).also {
             it.topMargin = dp(8)
         })
+        // 全局遥测状态条：通道/发帧数等会话级信息，属框架层，常驻不随目的地切换。
         content.addView(buildBottomStatus(), LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.topMargin = dp(8)
         })
         // M3 navigation bar 规范：容器固定在窗口底部、目的地位置不滚动。
-        // 下沉到底部后页面区（pages）获得更多高度，缓解首屏内容拥挤。
         section(buildTabRow())
         root.addView(content, FrameLayout.LayoutParams(MATCH, MATCH))
 
@@ -186,7 +194,65 @@ class MainActivity : AppCompatActivity() {
         ui.post(tick)
     }
 
-    private fun buildAppBar() = LinearLayout(this).apply {
+    /**
+     * 构建一个目的地页面 —— AppBar + 链路横幅 + 该页专属内容，整体随导航切换。
+     *
+     * 依据：M3 navigation bar「Use navigation for **distinct pages**」—— 每个目的地是
+     * 完整页面，切换时上方整块（含 AppBar 与链路横幅）整体跟随，只有底部导航栏与全局
+     * 状态条常驻。三个目的地分工：
+     *  · 状态 = 运动控制实时监测（连接行 + 控制卡片 + 实机状态帧/本地遥测）
+     *  · 健康 = 机器人健康诊断（robot.health）
+     *  · 设置 = 配置（遥控参数 + BLE + 更新）
+     *
+     * 全局状态控件（状态串 / 来源标签 / 链路横幅）每个页面各持一套（PageChrome），
+     * renderAll() 统一刷新，保证任何目的地下连接/模式/链路信息都可见。
+     */
+    private fun buildPage(index: Int): View {
+        val chrome = PageChrome(
+            statusText = TextView(this).apply {
+                // 🔴 真机截图实测：状态串一长就折成两行、把 appBar 撑歪。
+                // 单行 + 末尾省略；完整信息分流到来源标签和监测卡。
+                textSize = 11f; setTextColor(c(R.color.md_text_dim))
+                setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
+                fontFeatureSettings = TABULAR_FIGURES
+            },
+            sourceChip = TextView(this).apply {
+                text = "● 演示会话"; textSize = 11f; setTextColor(c(R.color.md_warn))
+                background = roundedCard(c(R.color.md_card_alt), CORNER_LARGE_DP)
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+            },
+            linkBanner = buildLinkBanner(),
+        )
+        pageChromes.add(chrome)
+
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        page.addView(buildAppBar(chrome), LinearLayout.LayoutParams(MATCH, WRAP))
+        page.addView(chrome.linkBanner, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(8)
+        })
+        when (index) {
+            0 -> {
+                page.addView(buildConnectionRow(), LinearLayout.LayoutParams(MATCH, WRAP).also {
+                    it.topMargin = dp(8)
+                })
+                page.addView(buildControlCard(), LinearLayout.LayoutParams(MATCH, WRAP).also {
+                    it.topMargin = dp(8)
+                })
+                page.addView(buildStatePage(), LinearLayout.LayoutParams(MATCH, 0, 1f).also {
+                    it.topMargin = dp(8)
+                })
+            }
+            1 -> page.addView(buildHealthPage(), LinearLayout.LayoutParams(MATCH, MATCH).also {
+                it.topMargin = dp(8)
+            })
+            2 -> page.addView(buildSettingsPage(), LinearLayout.LayoutParams(MATCH, MATCH).also {
+                it.topMargin = dp(8)
+            })
+        }
+        return page
+    }
+
+    private fun buildAppBar(chrome: PageChrome) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
@@ -202,22 +268,9 @@ class MainActivity : AppCompatActivity() {
                 // 纯视觉，不改文本，门禁零影响。
                 letterSpacing = TRACKING_TITLE
             })
-            statusText = TextView(this@MainActivity).apply {
-                // 🔴 真机截图实测：状态串一长就折成两行、把 appBar 撑歪。
-                // 单行 + 末尾省略；完整信息分流到上面的来源标签和下面的遥测卡。
-                textSize = 11f; setTextColor(c(R.color.md_text_dim))
-                setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
-                // 等宽数字（tabular figures）：帧数/Hz 逐秒刷新时数字宽度不跳动。
-                fontFeatureSettings = TABULAR_FIGURES
-            }
-            addView(statusText)
+            addView(chrome.statusText)
         }, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(12) })
-        sourceChip = TextView(this@MainActivity).apply {
-            text = "● 演示会话"; textSize = 11f; setTextColor(c(R.color.md_warn))
-            background = roundedCard(c(R.color.md_card_alt), CORNER_LARGE_DP)
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-        }
-        addView(sourceChip)
+        addView(chrome.sourceChip)
     }
 
     /**
@@ -245,19 +298,22 @@ class MainActivity : AppCompatActivity() {
         val inputError = SessionHolder.connectError
         val link = SessionHolder.linkStatus
         val msg = if (inputError.isNotEmpty()) "⚠ 地址无效 · $inputError" else link
-        if (msg.isEmpty()) {
-            linkBanner.visibility = View.GONE
-            return
+        // 三个目的地各持一套链路横幅，统一刷新，保证任何页面下断链信息都可见。
+        pageChromes.forEach { chrome ->
+            if (msg.isEmpty()) {
+                chrome.linkBanner.visibility = View.GONE
+                return@forEach
+            }
+            chrome.linkBanner.visibility = View.VISIBLE
+            chrome.linkBanner.text = msg
+            val level = if (inputError.isNotEmpty()) 2 else SessionHolder.linkLevel
+            // 亮底配深字：MaterialButton 那个「只换背景不换字色」的坑不能在这里重演。
+            chrome.linkBanner.setBackgroundColor(if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn))
+            chrome.linkBanner.setTextColor(c(R.color.md_bg))
+            chrome.linkBanner.background = roundedCard(
+                if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn), CORNER_LARGE_DP,
+                stroked = false)   // 告警是纯状态色块，不再叠低对比描边（Color is purely functional）
         }
-        linkBanner.visibility = View.VISIBLE
-        linkBanner.text = msg
-        val level = if (inputError.isNotEmpty()) 2 else SessionHolder.linkLevel
-        // 亮底配深字：MaterialButton 那个「只换背景不换字色」的坑不能在这里重演。
-        linkBanner.setBackgroundColor(if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn))
-        linkBanner.setTextColor(c(R.color.md_bg))
-        linkBanner.background = roundedCard(
-            if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn), CORNER_LARGE_DP,
-            stroked = false)   // 告警是纯状态色块，不再叠低对比描边（Color is purely functional）
     }
 
     /**
@@ -830,13 +886,17 @@ class MainActivity : AppCompatActivity() {
         val raw = hostEdit.text?.toString()?.trim().orEmpty()
         SessionHolder.connect(raw) { ok ->
             runOnUiThread {
-                sourceChip.text = when {
+                val chipText = when {
                     ok -> "● ${SessionHolder.kind}"
                     SessionHolder.connectError.isNotEmpty() -> "● 地址无效"
                     else -> "● 未连接"
                 }
-                sourceChip.setTextColor(
-                    if (ok) c(R.color.md_ok) else c(R.color.md_bad))
+                val chipColor = if (ok) c(R.color.md_ok) else c(R.color.md_bad)
+                // 三个目的地各持一套来源标签，统一刷新。
+                pageChromes.forEach { chrome ->
+                    chrome.sourceChip.text = chipText
+                    chrome.sourceChip.setTextColor(chipColor)
+                }
                 refreshModeUi()
                 renderConnectionRow()
                 renderAll()
@@ -913,7 +973,8 @@ class MainActivity : AppCompatActivity() {
         renderLinkBanner()
         renderConnectionRow()
         // 单行状态串：完整信息在来源标签 / 状态卡里，不再让 appBar 折成两行。
-        statusText.text = if (SessionHolder.connectError.isNotEmpty())
+        // 三个目的地各持一套状态串，统一刷新，保证任何页面下连接/模式/帧数都可见。
+        val statusText = if (SessionHolder.connectError.isNotEmpty())
             "地址无效 · 会话=${SessionHolder.sessionState()}"
         else buildString {
             if (SessionHolder.note.isNotEmpty() && SessionHolder.note != "地址无效")
@@ -922,6 +983,7 @@ class MainActivity : AppCompatActivity() {
             append(" · ").append(SessionHolder.sessionState())
             append(" · ").append(SessionHolder.stateFrameCount).append(" 帧")
         }
+        pageChromes.forEach { chrome -> chrome.statusText.text = statusText }
         bottomStatus.text = buildString {
             append("通道=").append(SessionHolder.sinkLabel)
             append(" · 已发 ").append(SessionHolder.sentCount.get()).append(" 帧")

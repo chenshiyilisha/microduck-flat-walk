@@ -475,8 +475,13 @@ def main():
               after_cb is not None and after_cb != before_cb,
               "%s → %s" % (before_cb, after_cb))
         t_auto = texts(dump_nodes()[0])
+        # 🔴 2026-11-14 首页重构：控制卡片（含随模式变化的「进入监测视图」按钮）
+        # 移入「状态」目的地，设置页不再持有它，旧读数点在此页失效。
+        # 模式现统一呈现于**每个目的地各自的 AppBar 状态串**（PageChrome 逐页刷新、
+        # 任意页可见），故读数点改为状态串的「· 自动 ·」。
+        # 断言意图（冷启动前处于自动模式）与强度不变：手动时该串为「· 手动 ·」照样变红。
         check("🔑 冷启动前确实处于自动模式(前置条件)",
-              "进入监测视图" in t_auto, t_auto[:160])
+              "· 自动 ·" in t_auto, t_auto[:160])
 
         shell("am", "force-stop", PKG)
         shell("am", "start", "-S", "-W", "-n", MAIN_ACT)
