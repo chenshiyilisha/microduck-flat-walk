@@ -31,11 +31,16 @@ ROOT = BASE.parent                                      # 仓库根
 CORE = BASE / "core/src/main/kotlin/io/microduck/app/core"
 APP = BASE / "app/src/main/kotlin/io/microduck/app"
 TESTS = BASE / "core/src/test/kotlin/io/microduck/app/core"
+# 🔴 真机网格两份产物：core/resources 供 JVM 自检，app/assets 供 Android AssetManager。
+# 两者一旦字节漂移，就会出现「core 自检全绿、真机静默降级」的假绿（11-15 实测踩过）。
+CORE_MESH = BASE / "core/src/main/resources/duck_mesh.bin"
+APP_MESH = BASE / "app/src/main/assets/duck_mesh.bin"
 
 FILES = {
     "monitor": CORE / "HardwareMonitor.kt",
     "parts": CORE / "RobotParts.kt",
     "geometry": CORE / "DuckModelGeometry.kt",
+    "mesh": CORE / "DuckMesh.kt",
     "health": CORE / "HealthSnapshot.kt",
     "policy": CORE / "AiDebugPolicy.kt",
     "view": APP / "monitor/DuckModelView.kt",
@@ -86,6 +91,16 @@ def load_all() -> dict:
     return out
 
 
+def mesh_artifacts(app_override: bytes | None = None) -> tuple[bytes, bytes]:
+    """读两份网格产物；app_override 仅供负对照注入「漂移读数」，绝不写盘。"""
+    core = CORE_MESH.read_bytes() if CORE_MESH.is_file() else b""
+    if app_override is not None:
+        app = app_override
+    else:
+        app = APP_MESH.read_bytes() if APP_MESH.is_file() else b""
+    return core, app
+
+
 def const_values(kotlin: str) -> dict:
     return {m.group(1): float(m.group(2))
             for m in re.finditer(r"const val (\w+)\s*=\s*(\d+(?:\.\d+)?)", kotlin)}
@@ -97,6 +112,13 @@ def called_names(kotlin: str) -> set[str]:
     for m in re.finditer(r"\b(?:[A-Za-z_]\w*\.)?(\w+)\s*\(", kotlin):
         names.add(m.group(1))
     return names
+
+
+def code_only(kotlin: str) -> str:
+    """剥掉块注释/行注释，只留代码 —— 判据若扫裸子串会被注释里的示例代码反噬。
+    项目踩过：类注释写「旧版 `DuckMesh.load()` 用 classpath」被当成真调用判红。"""
+    s = re.sub(r"/\*.*?\*/", "", kotlin, flags=re.S)
+    return re.sub(r"//[^\n]*", "", s)
 
 
 def kotlin_string_list(kotlin: str, var: str) -> list[str]:
@@ -131,7 +153,7 @@ def enum_names(kotlin: str, enum: str) -> list[str]:
     return re.findall(r"\b([A-Z][A-Z0-9_]*)\b", body)
 
 
-def evaluate(src: dict) -> tuple[str, list[str]]:
+def evaluate(src: dict, app_mesh_override: bytes | None = None) -> tuple[str, list[str]]:
     errs: list[str] = []
 
     def need(cond: bool, msg: str) -> None:
@@ -148,6 +170,15 @@ def evaluate(src: dict) -> tuple[str, list[str]]:
                      ("main", "MainActivity.kt"), ("selftest", "CoreSelfTest.kt"),
                      ("doc", "单一权威文档")):
         need(bool(read(src, k)), f"{label} 缺失或为空")
+
+    # ⓪ 产物级判据：两份真实网格必须都存在且字节完全一致。
+    # 这是「core JVM 自检绿但真机降级」假绿的唯一产物层防线（源码判据看不到漂移）。
+    core_mesh, app_mesh = mesh_artifacts(app_mesh_override)
+    need(len(core_mesh) > 0, "core/src/main/resources/duck_mesh.bin 缺失或为空")
+    need(len(app_mesh) > 0,
+         "app/src/main/assets/duck_mesh.bin 缺失或为空（真机走 AssetManager，缺了必降级）")
+    need(core_mesh == app_mesh,
+         "duck_mesh.bin 两份字节漂移：JVM 自检与真机看到的不是同一个模型")
 
     # ① 阈值：值必须与独立锚一致，且源码里必须带一手依据注释
     vals = const_values(m)
@@ -230,7 +261,23 @@ def evaluate(src: dict) -> tuple[str, list[str]]:
     need('"robot.health 真字段：' in main, "健康页顶部断言文本被挤掉（真机 59/59 会红）")
     need("Mock 演示夹具" in main, "健康页 Mock 来源标注被删（真机 59/59 会红）")
     need("severityArgb" in v, "3D 视图没用 core 的语义色单一真源")
-    need("示意几何" in v, "3D 视图缺「示意几何、非运动学解算」声明")
+    need("非运动学解算" in v, "3D 视图缺「非运动学解算」声明")
+    # 🔴 资源可达性（2026-11-15 真因固化）：core/src/main/resources 是 Java resource，
+    # 打进 APK 根目录后 ART ClassLoader 读不到；真机必须走 assets + AssetManager.open。
+    # 上一轮 core 自检 476/476 全绿却真机降级线框，就是因为缺这条判据。
+    viewCode = code_only(v)
+    need("assets.open(MESH_ASSET)" in viewCode and "DuckMesh.loadFromBytes" in viewCode,
+         "真机网格未走 assets + loadFromBytes（classpath 在 Android 读不到，会静默降级）")
+    need("DuckMesh.load()" not in viewCode,
+         "3D 视图仍在用 classpath DuckMesh.load()，Android 上必然返回 null")
+    need("contentDescription" in viewCode and "已加载" in viewCode,
+         "网格加载状态不可观测（contentDescription 必须写明已加载/未加载）")
+    need(re.search(r"\b\w+\.drawText\(", viewCode) is None,
+         "模型 Canvas 内仍在 drawText，会压在模型上遮挡（声明/图例应移到卡片外 TextView）")
+    need("fun shadeColor(" in read(src, "mesh"),
+         "网格缺 Lambert 光照（半透明+无光照会把模型画成碎片）")
+    need("(0xFF shl 24)" in read(src, "mesh"),
+         "网格填充 alpha 未强制不透明（无 z-buffer 时半透明叠色会画成碎片）")
 
     # ⑧ 三条消费链调同一个函数（UI / AI 通道 / 报告）
     need("fun monitorReport(" in holder, "SessionHolder 缺统一报告入口")
@@ -256,10 +303,10 @@ def selftest(src: dict) -> list[tuple[str, bool]]:
     def variant(**kw) -> dict:
         return {**src, **kw}
 
-    m, g, p, main, holder, policy, st, doc = (
+    m, g, p, main, holder, policy, st, doc, v, mesh = (
         read(src, "monitor"), read(src, "geometry"), read(src, "parts"),
         read(src, "main"), read(src, "holder"), read(src, "policy"),
-        read(src, "selftest"), read(src, "doc"),
+        read(src, "selftest"), read(src, "doc"), read(src, "view"), read(src, "mesh"),
     )
     cases: list[tuple[str, dict]] = [
         ("阈值 70→90 必红", variant(monitor=m.replace("SERVO_CRITICAL_C = 70.0", "SERVO_CRITICAL_C = 90.0"))),
@@ -289,6 +336,20 @@ def selftest(src: dict) -> list[tuple[str, bool]]:
         ("文档删掉 UNVERIFIED 边界必红",
          variant(doc=doc.replace("UNVERIFIED", "已验证"))),
         ("产物缺失必红", variant(monitor="")),
+        # 🔴 2026-11-15 真因负对照：删掉 assets 读取 / 恢复 classpath / 恢复 canvas 文字
+        # / 删掉光照 —— 任一改坏都必须判红，否则这道判据是摆设。
+        ("真机网格改回 classpath 必红",
+         variant(view=v.replace("assets.open(MESH_ASSET)", "DuckMesh::class.java.getResourceAsStream"))),
+        ("删掉 loadFromBytes 必红",
+         variant(view=v.replace("DuckMesh.loadFromBytes", "SomeOtherLoader.parse"))),
+        ("恢复 DuckMesh.load() 必红",
+         variant(view=v + "\nprivate val broken = DuckMesh.load()\n")),
+        ("模型内恢复 canvas.drawText 必红",
+         variant(view=v + "\nprivate fun brokenDraw(c: android.graphics.Canvas, p: android.graphics.Paint) { c.drawText(\"x\", 0f, 0f, p) }\n")),
+        ("删掉 Lambert 光照必红",
+         variant(mesh=mesh.replace("fun shadeColor", "fun unusedShade"))),
+        ("删掉不透明 alpha 必红",
+         variant(mesh=mesh.replace("(0xFF shl 24)", "(0x80 shl 24)"))),
     ]
     out = []
     for label, evidence in cases:
@@ -297,6 +358,11 @@ def selftest(src: dict) -> list[tuple[str, bool]]:
             out.append((label, verdict == "UNVERIFIED_ARTIFACTS_ABSENT"))
         else:
             out.append((label, verdict != "OK" and len(errs) > 0))
+    # 🔴 产物级负对照（源码注入覆盖不到）：直接注入一份「漂移的 assets 读数」，
+    # 检查器必须判红 —— 只见过绿色的字节判据不是证据。
+    drift_verdict, drift_errs = evaluate(src, app_mesh_override=b"DRIFTED_MESH_BYTES")
+    out.append(("网格两份产物字节漂移必红",
+                drift_verdict != "OK" and len(drift_errs) > 0))
     base_verdict, base_errs = evaluate(src)
     out.append(("正对照:未改动源码零错误", base_verdict == "OK" and not base_errs))
     return out

@@ -9,3 +9,7 @@ shot_*.png
 tools/shot_*.png
 tools/__pycache__/
 
+# JVM C2 编译器偶发崩溃转储（本机 Windows JDK17，非项目产物、非源码）
+hs_err_pid*.log
+replay_pid*.log
+

@@ -129,6 +129,9 @@ object SessionHolder {
     fun monitorReport(nowMs: Long = System.currentTimeMillis()): MonitorReport =
         HardwareMonitor.evaluate(lastHealthSnapshot, monitorSource(), linkState, nowMs, lastHealthOkMs)
 
+    /** 最近一次 robot.health 成功快照（只读展示用；null = 未读到）。供健康页结构化卡片取数值。 */
+    fun healthSnapshot(): HealthSnapshot? = lastHealthSnapshot
+
     /** A5：链路恢复提示的时间戳，0 = 无提示。超时由 [tick] 清掉。 */
     @Volatile var recoveredAtMs: Long = 0L
 

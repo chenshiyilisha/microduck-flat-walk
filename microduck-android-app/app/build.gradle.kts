@@ -89,6 +89,13 @@ dependencies {
     // 显式声明而非依赖 material 的传递：MainActivity 直接用 AppCompatActivity /
     // ViewCompat / WindowInsetsCompat，传递依赖版本由 material 的 POM 决定会随升级漂移。
     implementation("androidx.appcompat:appcompat:1.6.1")
+    // 主板 SSH 通道：mwiede JSch 分支（原版 0.1.55 仅支持已废弃的 DH-sha1 KEX，连不上
+    // 现代 OpenSSH；此分支补了 group14-sha256 / group-exchange-sha256 / curve25519）。
+    // 一手核验：aliyun central + mavenCentral 均 200（com.github.mwiede:jsch:0.2.19）。
+    implementation("com.github.mwiede:jsch:0.2.19")
+    // SSH 凭据安全存储：EncryptedSharedPreferences 底层用 Android Keystore 主密钥，
+    // 绝不落明文（项目铁律：凭据不写文件/日志/git）。1.0.0 在 aliyun google 源 200。
+    implementation("androidx.security:security-crypto:1.0.0")
     // ViewCompat / WindowInsetsCompat 由 material + appcompat 传递依赖提供（Maven POM
     // compile scope ⇒ 对 compileClasspath 可见）。⚠️ 别显式写 androidx.core:core:1.13.1：
     // 新坐标会强制 Gradle 去 dl.google.com 校验元数据，国内超时导致整包构建失败；

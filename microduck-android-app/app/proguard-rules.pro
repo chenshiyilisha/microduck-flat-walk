@@ -29,3 +29,17 @@
 # ---- 若未来给数据类加 @SerializedName 或改用 typed 反序列化，按官方条件规则补充 ----
 # -if class * { @com.google.gson.annotations.SerializedName <fields>; }
 # -keep,allowobfuscation class { @com.google.gson.annotations.SerializedName <fields>; (<init>); }
+
+# ---- androidx.security:security-crypto:1.0.0 → Tink 的注解缺类（R8 full mode）----
+# 一手依据（本机真跑产物，非推测）：
+#   app/build/outputs/mapping/release/missing_rules.txt 由 AGP 在
+#   :app:minifyReleaseWithR8 失败时自动生成，内容逐字为：
+#     -dontwarn javax.annotation.concurrent.GuardedBy
+#   报错原文：Missing class javax.annotation.concurrent.GuardedBy
+#     (referenced from: com.google.crypto.tink.proto.Keyset$Builder ... and 3 other contexts)
+# 说明：androidx.security:security-crypto 经 Tink 引用了 jsr305 / errorprone 的编译期注解，
+# 这些类不在 Android runtime，也不参与反射，仅注解元数据 ⇒ -dontwarn 是正确处置，
+# 不是「放宽业务判据」；不写 -keep（keep 会保留无用类，反而与 shrink 目标冲突）。
+# 只按 AGP 实际生成的规则落地，不预先写宽泛的 javax.annotation.** 兜底：
+# 若后续 release 再报新的缺类，按新的 missing_rules.txt 逐条补，避免掩盖真实问题。
+-dontwarn javax.annotation.concurrent.GuardedBy

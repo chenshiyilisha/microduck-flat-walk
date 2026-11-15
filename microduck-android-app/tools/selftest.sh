@@ -103,11 +103,18 @@ echo "compile_rc=$rc"
 K2_STDLIB="${K2_STDLIB:-$(find /c/Users/hejih/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin \
                     -path '*2.4.0*' -name 'kotlin-stdlib-2.4.0.jar' 2>/dev/null | head -1)}"
 
-echo "=== 2) 组装 fat 目录（selftest 类 + gson + stdlib，绕开 classpath 分隔符）==="
+echo "=== 2) 组装 fat 目录（selftest 类 + gson + stdlib + duck_mesh.bin，绕开 classpath 分隔符）==="
 rm -rf build/fat && mkdir -p build/fat
 cp -r build/classes/. build/fat/
 (cd build/fat && "$JAR" xf "$GSON")
 [ -n "$K2_STDLIB" ] && (cd build/fat && "$JAR" xf "$(cygpath -w "$K2_STDLIB")")
+# 🔴 duck_mesh.bin 是 core classpath 资源，裸 kotlinc 不会自动带上 resources，
+# 必须手动拷进 fat 根目录，否则 DuckMesh.load() 在自检里找不到资源。
+if [ -f core/src/main/resources/duck_mesh.bin ]; then
+  cp core/src/main/resources/duck_mesh.bin build/fat/duck_mesh.bin
+else
+  echo "WARN: core/src/main/resources/duck_mesh.bin 不存在 —— DuckMesh 自检会因缺资源失败"
+fi
 [ -f build/fat/com/google/gson/Gson.class ] || { echo "FAIL: fat 目录缺 gson"; exit 2; }
 [ -f build/fat/io/microduck/app/core/CoreSelfTest.class ] || { echo "FAIL: fat 目录缺主类"; exit 2; }
 [ -f build/fat/kotlin/Unit.class ] || { echo "FAIL: fat 目录缺 kotlin stdlib"; exit 2; }

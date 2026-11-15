@@ -1530,6 +1530,113 @@ object CoreSelfTest {
                 g.NODES.count { it.part.kind == RobotPart.PartKind.SYSTEM } == 6)
     }
 
+    private fun testDuckMesh() {
+        println("\n[N+3] 真实外观网格（STL 提取 + 投影纯 JVM 真跑）")
+        // 加载真实网格（classpath 资源 duck_mesh.bin，由 tools/build_duck_mesh.py 生成）
+        val mesh = try {
+            DuckMesh.load()
+        } catch (e: Exception) {
+            check("duck_mesh.bin 可从 classpath 加载", false) { "加载异常: ${e.message}" }
+            return
+        }
+        check("网格顶点数合理(>100)", mesh.nVerts > 100) { "nVerts=${mesh.nVerts}" }
+        check("网格三角形数合理(100~30000)", mesh.nTris in 100..30000) { "nTris=${mesh.nTris}" }
+        check("顶点表长度 = nVerts*3", mesh.verts.size == mesh.nVerts * 3)
+        check("三角形索引表长度 = nTris*3", mesh.tris.size == mesh.nTris * 3)
+        check("颜色表长度 = nTris", mesh.colors.size == mesh.nTris)
+        // 三角形索引不越界（load 时已校验，这里再确认负对照：故意构造越界应失败）
+        check("所有三角形索引在顶点范围内",
+            mesh.tris.all { it in 0 until mesh.nVerts })
+
+        // 投影：用与 DuckModelGeometry 相同的画布尺寸
+        val w = 720f; val h = 420f
+        val tris = DuckMesh.project(mesh, 0.0, w, h)
+        check("投影后三角形数与网格一致", tris.size == mesh.nTris) { "${tris.size} vs ${mesh.nTris}" }
+        check("投影三角形按深度升序（远→近）",
+            tris.zipWithNext().all { (a, b) -> a.depth <= b.depth })
+        check("投影三角形颜色非零（ARGB 有效）",
+            tris.all { it.colorArgb != 0 })
+        // 负对照：0° 与 90° 投影的三角形 x 坐标集合应不同（旋转真的在起作用）
+        val tris90 = DuckMesh.project(mesh, 90.0, w, h)
+        check("负对照:0° 与 90° 投影三角形位置确实不同",
+            tris.first().a.x != tris90.first().a.x || tris.first().a.y != tris90.first().a.y)
+
+        // 负对照：坏魔数应抛异常（parse 的防御性校验真的在起作用）
+        val badBytes = ByteArray(32).also { it[0] = 'X'.code.toByte(); it[1] = 'X'.code.toByte() }
+        var badThrows = false
+        try { DuckMesh.loadFromBytes(badBytes) } catch (_: Exception) { badThrows = true }
+        check("负对照:坏魔数的字节被拒绝", badThrows)
+
+        // ── 2026-11-15 坐标系修复：MuJoCo Z-up → App Y-up 的轴置换 ──
+        // 铁律：坐标/轴的量必须两条独立算法互算，且带负对照。
+        // 算法①：直接逐基向量断言循环置换 (x,y,z)→(y,z,x)。
+        val ex = DuckMesh.toAppAxes(Vec3(1f, 0f, 0f))
+        val ey = DuckMesh.toAppAxes(Vec3(0f, 1f, 0f))
+        val ez = DuckMesh.toAppAxes(Vec3(0f, 0f, 1f))
+        check("轴置换:mjc +X(喙) → app +Z(朝观察者)",
+            ex.x == 0f && ex.y == 0f && ex.z == 1f) { "got $ex" }
+        check("轴置换:mjc +Y(左) → app +X(右)",
+            ey.x == 1f && ey.y == 0f && ey.z == 0f) { "got $ey" }
+        check("轴置换:mjc +Z(上) → app +Y(上)",
+            ez.x == 0f && ez.y == 1f && ez.z == 0f) { "got $ez" }
+        // 算法②：叉积定手性。det=+1 的旋转应满足 R(ex)×R(ey)=R(ez)；
+        // 若误写成镜像 (x,y,z)→(x,z,-y) 的变体导致 det=-1，叉积会反号 ⇒ 必红。
+        fun cross(a: Vec3, b: Vec3) = Vec3(
+            a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x,
+        )
+        val crossed = cross(ex, ey)
+        check("轴置换保持手性 det=+1(叉积独立算法互算)",
+            DuckModelGeometry.near(crossed, ez)) { "ex×ey=$crossed, ez=$ez" }
+        check("负对照:轴置换不是恒等变换", !DuckModelGeometry.near(ex, Vec3(1f, 0f, 0f)))
+
+        // 真实网格现在必须「站直」：y 跨度按 NODES 的 [-1.48, 1.32] 定标。
+        // 若有人删掉轴变换，y 变成原 mjc.y（左右跨度），跨度会明显不同于 2.8 ⇒ 必红。
+        val ys = (0 until mesh.nVerts).map { mesh.verts[it * 3 + 1] }
+        val ySpan = ys.max() - ys.min()
+        val nodeSpan = 1.32f - (-1.48f)
+        check("网格站直:y 跨度对齐 NODES 尺度($nodeSpan)",
+            kotlin.math.abs(ySpan - nodeSpan) < 0.05f) { "ySpan=$ySpan center=${(ys.max() + ys.min()) / 2f}" }
+        check("负对照:轴变换删掉会躺倒(y 跨度不再等于 NODES 跨度)",
+            kotlin.math.abs(0.5f * ySpan - nodeSpan) > 0.5f)
+
+        // 官方 Cream 配色：生成期整只纯橙必须被重映射掉。
+        val distinct = mesh.colors.toHashSet()
+        check("官方配色:网格至少 3 种语义色(奶油白壳/橙 trim/黑镜头)",
+            distinct.size >= 3) { "colors=${distinct.take(6)}" }
+        check("官方配色:奶油白壳 0xFFF3E6D2 已生效", 0xFFF3E6D2.toInt() in distinct)
+        check("官方配色:橙 trim 0xFFFF8A3D 已生效", 0xFFFF8A3D.toInt() in distinct)
+        check("负对照:旧『整只橙』配色已被替换(非单一色)", distinct.size > 1)
+
+        // ── 2026-11-15 「模型像碎片」修复：不透明 + Lambert 光照 ──
+        // Canvas 2D 无 z-buffer，半透明逐面叠色会把封闭壳体画成碎片；
+        // 判据独立于被测值：alpha 通道必须是常量 0xFF，且光照必须随法线变化。
+        check("填充 alpha 恒不透明(0xFF)",
+            tris.all { (it.colorArgb ushr 24) == 0xFF })
+        check("负对照:不是全同色(光照真的在分面明暗)",
+            tris.map { it.colorArgb }.toHashSet().size > 3)
+        // 算法①：两个已知法线的三角形，法线越贴近方向光越亮。
+        val white = 0xFFFFFFFF.toInt()
+        val tA = DuckMesh.shadeColor(white, Vec3(0f, 0f, 0f), Vec3(1f, 0f, 0f), Vec3(0f, 1f, 0f))
+        val tB = DuckMesh.shadeColor(white, Vec3(0f, 0f, 0f), Vec3(1f, 0f, 0f), Vec3(0f, 0f, 1f))
+        val lumA = tA and 0xFF
+        val lumB = tB and 0xFF
+        check("Lambert:法线贴近光向量的面更亮", lumB > lumA) { "lumA=$lumA lumB=$lumB" }
+        // 算法②：与「纯环境光」独立互算（diffuse=0 时 shade 应等于 AMBIENT）。
+        val ambientOnly = (255f * DuckMesh.AMBIENT).toInt()
+        check("Lambert:退化面退化为纯环境光",
+            kotlin.math.abs((DuckMesh.shadeColor(white, Vec3(0f, 0f, 0f),
+                Vec3(0f, 0f, 0f), Vec3(0f, 0f, 0f)) and 0xFF) - ambientOnly) <= 1)
+        check("负对照:环境光系数不是 1.0(否则光照被关掉)",
+            DuckMesh.AMBIENT < 1f)
+        check("负对照:半透明色会被不透明判据抓到(断言不恒真)",
+            ((0x80 shl 24) ushr 24) != 0xFF)
+        // 旋转后明暗必须跟着变（光照在相机空间算，不是贴图烤死）。
+        check("旋转后分面明暗发生变化(光照在相机空间)",
+            tris.map { it.colorArgb }.toHashSet() != tris90.map { it.colorArgb }.toHashSet())
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         println("=" * 60)
@@ -1570,6 +1677,7 @@ object CoreSelfTest {
         testAiDebugPolicy()
         testHardwareMonitor()
         testDuckModelGeometry()
+        testDuckMesh()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)

@@ -38,9 +38,14 @@ import com.google.android.material.textfield.TextInputLayout
 import io.microduck.app.ble.BleConnectPanel
 import io.microduck.app.core.MonitorReport
 import io.microduck.app.core.MonitorVerdict
+import io.microduck.app.core.RobotPart
+import io.microduck.app.core.RobotParts
 import io.microduck.app.core.Severity
 import io.microduck.app.core.StateSnapshot
+import io.microduck.app.core.HealthSnapshot
+import io.microduck.app.core.HwThresholds
 import io.microduck.app.monitor.DuckModelView
+import io.microduck.app.ssh.SshPanel
 import io.microduck.app.update.GithubReleaseClient
 import io.microduck.app.update.UpdateController
 import io.microduck.app.update.UpdatePanel
@@ -71,16 +76,18 @@ import io.microduck.app.update.UpdatePanel
  */
 class MainActivity : AppCompatActivity() {
 
-    /** 每个目的地页面的全局状态显示控件（AppBar 状态串 / 来源标签 / 链路横幅）。
-     *  三个目的地各持一套，切换页面时整体跟随 —— 符合 M3 navigation bar
-     *  「Use navigation for distinct pages」语义：每个目的地是完整页面，
-     *  全局状态（连接/模式/链路）在每个页面都可见。 */
+    /** 全局唯一的 AppBar 状态控件（状态串 / 来源标签 / 链路横幅）。
+     *  2026-11-15 去重：旧版**每个目的地各持一套**（pageChromes 三份），切换页面时
+     *  顶部「MicroDuck 控制台」卡片与链路横幅在三页反复出现，用户反馈重复。
+     *  现收敛为框架层常驻一份，标题随目的地变化；底部「通道=…」状态条与状态页
+     *  「App 本地遥测」完全重复，一并移除。 */
     private class PageChrome(
+        val titleText: TextView,
         val statusText: TextView,
         val sourceChip: TextView,
         val linkBanner: TextView,
     )
-    private val pageChromes = mutableListOf<PageChrome>()
+    private lateinit var chrome: PageChrome
 
     private lateinit var hostEdit: EditText
     // 连接行渐进式披露：已连接时折叠输入、显示摘要行（点「修改」展开）
@@ -92,15 +99,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var modeAuto: MaterialButton
     private lateinit var modeHint: TextView
     private lateinit var launchButton: MaterialButton
-    private lateinit var bottomStatus: TextView
     private lateinit var stateSourceText: TextView
     private lateinit var healthText: TextView
     private lateinit var healthSourceText: TextView
-    // 2026-11-15 硬件监控：旋转仿真模型 + 告警横幅 + 部位状态
+    // 2026-11-15 硬件监控：旋转仿真模型 + 告警 + 结构化状态卡片
     private lateinit var duckModelView: DuckModelView
     private lateinit var monitorAlertText: TextView
-    private lateinit var monitorPartsText: TextView
     private lateinit var autoRefreshBox: CheckBox
+    // 结构化状态卡片（电量/板级状态/舵机温度/总线/IMU/控制环）：值文本 + 状态色点。
+    // 取代原先「原始 JSON 长文本 + 部位统计 + 告警 + 模型」四重重复呈现（用户反馈杂乱）。
+    private val healthCardVals = mutableListOf<TextView>()
+    private val healthCardDots = mutableListOf<View>()
+    // 15 舵机逐点状态网格（5×3）：每格 = 状态色点 + 舵机 ID + 关节名。
+    // 协议边界：robot.health 对舵机只给聚合温度，逐点数据来自 bus.missing（缺失点名）；
+    // 缺失=红、在线=绿、无数据=灰，绝不造数、不默认绿。
+    private val servoCells = mutableListOf<LinearLayout>()
+    private lateinit var servoGridCard: View
     // M3 exposed dropdown menu：不再是 android.widget.Spinner（平台老式弹窗）。
     // 持有 MaterialAutoCompleteTextView 以便 restoreSettingsUi() 用 setText(text, false) 回写选中值。
     private lateinit var channelDropdown: MaterialAutoCompleteTextView
@@ -121,6 +135,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statePage: View
     private lateinit var healthPage: View
     private lateinit var settingsPage: View
+    private lateinit var sshPage: View
+    private lateinit var sshPanel: SshPanel
     private val stateValues = mutableListOf<TextView>()
     private val telemetryValues = mutableListOf<TextView>()
     private val tabButtons = mutableListOf<MaterialButton>()
@@ -162,18 +178,41 @@ class MainActivity : AppCompatActivity() {
         //  · 状态 = 运动控制实时监测（连接 + 控制模式 + 实机状态帧/本地遥测）
         //  · 健康 = 机器人健康诊断（robot.health 字段）
         //  · 设置 = 配置（遥控参数 + BLE + 更新）
+        // 2026-11-15 去重重构：AppBar / 链路横幅收敛为**框架层全局唯一一份**，
+        // 不再每个目的地各复制一套；底部「通道=…」状态条与状态页遥测重复，已移除。
+        // 依据 M3 navigation bar「Use navigation for distinct pages」：常驻框架层
+        // 只承载会话级状态，页面专属内容各自独立，避免三页顶部/底部同款卡片重复。
+        chrome = PageChrome(
+            titleText = TextView(this).apply {
+                textSize = 16f; setTextColor(c(R.color.md_text))
+                setTypeface(null, Typeface.BOLD); letterSpacing = TRACKING_TITLE
+            },
+            statusText = TextView(this).apply {
+                textSize = 11f; setTextColor(c(R.color.md_text_dim))
+                setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
+                fontFeatureSettings = TABULAR_FIGURES
+            },
+            sourceChip = TextView(this).apply {
+                text = "● 演示会话"; textSize = 11f; setTextColor(c(R.color.md_warn))
+                background = roundedCard(c(R.color.md_card_alt), CORNER_LARGE_DP)
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+            },
+            linkBanner = buildLinkBanner(),
+        )
+        content.addView(buildAppBar(chrome), LinearLayout.LayoutParams(MATCH, WRAP))
+        content.addView(chrome.linkBanner, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(8)
+        })
         val pages = FrameLayout(this)
         statePage = buildPage(0)
         healthPage = buildPage(1)
         settingsPage = buildPage(2)
+        sshPage = buildPage(3)
         pages.addView(statePage, FrameLayout.LayoutParams(MATCH, MATCH))
         pages.addView(healthPage, FrameLayout.LayoutParams(MATCH, MATCH))
         pages.addView(settingsPage, FrameLayout.LayoutParams(MATCH, MATCH))
+        pages.addView(sshPage, FrameLayout.LayoutParams(MATCH, MATCH))
         content.addView(pages, LinearLayout.LayoutParams(MATCH, 0, 1f).also {
-            it.topMargin = dp(8)
-        })
-        // 全局遥测状态条：通道/发帧数等会话级信息，属框架层，常驻不随目的地切换。
-        content.addView(buildBottomStatus(), LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.topMargin = dp(8)
         })
         // M3 navigation bar 规范：容器固定在窗口底部、目的地位置不滚动。
@@ -206,41 +245,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 构建一个目的地页面 —— AppBar + 链路横幅 + 该页专属内容，整体随导航切换。
+     * 构建一个目的地页面 —— **只含该页专属内容**（AppBar / 链路横幅已提到框架层全局唯一）。
      *
-     * 依据：M3 navigation bar「Use navigation for **distinct pages**」—— 每个目的地是
-     * 完整页面，切换时上方整块（含 AppBar 与链路横幅）整体跟随，只有底部导航栏与全局
-     * 状态条常驻。三个目的地分工：
+     * 依据：M3 navigation bar「Use navigation for **distinct pages**」。四个目的地分工：
      *  · 状态 = 运动控制实时监测（连接行 + 控制卡片 + 实机状态帧/本地遥测）
-     *  · 健康 = 机器人健康诊断（robot.health）
+     *  · 健康 = 机器人健康诊断（robot.health + 真实外观模型 + 15 舵机状态）
      *  · 设置 = 配置（遥控参数 + BLE + 更新）
+     *  · 终端 = SSH 远程控制（SshPanel，主板命令行）
      *
-     * 全局状态控件（状态串 / 来源标签 / 链路横幅）每个页面各持一套（PageChrome），
-     * renderAll() 统一刷新，保证任何目的地下连接/模式/链路信息都可见。
+     * 2026-11-15 去重：旧版每页都 addView 一份 buildAppBar + linkBanner，
+     * 三页切换时顶部「控制台」卡片和底部「通道」条反复出现，用户反馈重复。
+     * 现在全局状态只由 [chrome] 一份承载，页面内容互不重叠。
      */
     private fun buildPage(index: Int): View {
-        val chrome = PageChrome(
-            statusText = TextView(this).apply {
-                // 🔴 真机截图实测：状态串一长就折成两行、把 appBar 撑歪。
-                // 单行 + 末尾省略；完整信息分流到来源标签和监测卡。
-                textSize = 11f; setTextColor(c(R.color.md_text_dim))
-                setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
-                fontFeatureSettings = TABULAR_FIGURES
-            },
-            sourceChip = TextView(this).apply {
-                text = "● 演示会话"; textSize = 11f; setTextColor(c(R.color.md_warn))
-                background = roundedCard(c(R.color.md_card_alt), CORNER_LARGE_DP)
-                setPadding(dp(8), dp(4), dp(8), dp(4))
-            },
-            linkBanner = buildLinkBanner(),
-        )
-        pageChromes.add(chrome)
-
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        page.addView(buildAppBar(chrome), LinearLayout.LayoutParams(MATCH, WRAP))
-        page.addView(chrome.linkBanner, LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(8)
-        })
         when (index) {
             0 -> {
                 page.addView(buildConnectionRow(), LinearLayout.LayoutParams(MATCH, WRAP).also {
@@ -259,6 +277,12 @@ class MainActivity : AppCompatActivity() {
             2 -> page.addView(buildSettingsPage(), LinearLayout.LayoutParams(MATCH, MATCH).also {
                 it.topMargin = dp(8)
             })
+            3 -> {
+                sshPanel = SshPanel(this)
+                page.addView(sshPanel, LinearLayout.LayoutParams(MATCH, MATCH).also {
+                    it.topMargin = dp(8)
+                })
+            }
         }
         return page
     }
@@ -270,15 +294,7 @@ class MainActivity : AppCompatActivity() {
         setPadding(dp(12), dp(10), dp(12), dp(10))
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
-            addView(TextView(this@MainActivity).apply {
-                text = "MicroDuck  控制台"
-                textSize = 16f; setTextColor(c(R.color.md_text))
-                setTypeface(null, Typeface.BOLD)
-                // 标题微字距（项目约定 0.08f）：参照 HUD 设计参考里「小标签加字距」的方向。
-                // ⚠️ 具体 0.05–0.1em 数值未能从该页逐字核验，故只作项目取值，不声称规范值。
-                // 纯视觉，不改文本，门禁零影响。
-                letterSpacing = TRACKING_TITLE
-            })
+            addView(chrome.titleText)
             addView(chrome.statusText)
         }, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(12) })
         addView(chrome.sourceChip)
@@ -309,19 +325,18 @@ class MainActivity : AppCompatActivity() {
         val inputError = SessionHolder.connectError
         val link = SessionHolder.linkStatus
         val msg = if (inputError.isNotEmpty()) "⚠ 地址无效 · $inputError" else link
-        // 三个目的地各持一套链路横幅，统一刷新，保证任何页面下断链信息都可见。
-        pageChromes.forEach { chrome ->
-            if (msg.isEmpty()) {
-                chrome.linkBanner.visibility = View.GONE
-                return@forEach
-            }
-            chrome.linkBanner.visibility = View.VISIBLE
-            chrome.linkBanner.text = msg
+        // 全局唯一一份链路横幅（框架层常驻），任何目的地下断链信息都可见。
+        val banner = chrome.linkBanner
+        if (msg.isEmpty()) {
+            banner.visibility = View.GONE
+        } else {
+            banner.visibility = View.VISIBLE
+            banner.text = msg
             val level = if (inputError.isNotEmpty()) 2 else SessionHolder.linkLevel
             // 亮底配深字：MaterialButton 那个「只换背景不换字色」的坑不能在这里重演。
-            chrome.linkBanner.setBackgroundColor(if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn))
-            chrome.linkBanner.setTextColor(c(R.color.md_bg))
-            chrome.linkBanner.background = roundedCard(
+            banner.setBackgroundColor(if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn))
+            banner.setTextColor(c(R.color.md_bg))
+            banner.background = roundedCard(
                 if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn), CORNER_LARGE_DP,
                 stroked = false)   // 告警是纯状态色块，不再叠低对比描边（Color is purely functional）
         }
@@ -454,14 +469,12 @@ class MainActivity : AppCompatActivity() {
         addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
     }
 
-    /** 三个顶层目的地（M3 3–5 destinations），固定位置、不滚动。 */
+    /** 三个顶层目的地 + SSH 终端（M3 允许 3–5 个 destinations），固定位置、不滚动。 */
     private fun buildTabRow() = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        // M3 navigation bar 三个目的地应共用一个容器；旧版只有选中项有底，
-        // 截图里「状态」像独立胶囊、另两个像裸文字，视觉重心失衡。
         background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
         setPadding(dp(4), dp(4), dp(4), dp(4))
-        listOf("状态", "健康", "设置").forEachIndexed { i, label ->
+        listOf("状态", "健康", "设置", "终端").forEachIndexed { i, label ->
             val b = MaterialButton(this@MainActivity).apply {
                 text = label; textSize = 12f; minimumHeight = dp(48)
                 cornerRadius = dp(CORNER_NAV_DP)
@@ -596,25 +609,39 @@ class MainActivity : AppCompatActivity() {
         col.addView(TextView(this@MainActivity).apply {
             text = "robot.health 真字段：缺失显示「未读到」，绝不渲染成 0"
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, 0, 0, dp(6))
         })
-        // ── 2026-11-15 硬件监控：缓慢旋转的鸭子模型 + 异常部位着色 ──
+        // ── 2026-11-15 硬件监控：真实外观网格（Cream 官方配色）+ 15 舵机状态点 ──
         // 顶部两行断言文本（healthSourceText / 上面这行）刻意保持在最前，
-        // 真机门禁 uiautomator 只 dump 视口内节点，插到它们前面会把 59 条断言挤红。
+        // 真机门禁 uiautomator 只 dump 视口内节点，插到它们前面会把断言挤红。
+        // 🔴 「模型区域被文字遮挡」修复：声明/图例从 Canvas drawText 移到卡片外的
+        // 独立 TextView；DuckModelView 现在只画几何，模型可用全高（净绘图区 +8%）。
         duckModelView = DuckModelView(this@MainActivity).apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH, dp(168))
+            layoutParams = LinearLayout.LayoutParams(MATCH, dp(240))
         }
         col.addView(duckModelView)
+        col.addView(TextView(this@MainActivity).apply {
+            text = "真实外观网格 · 15 舵机状态点 · 非运动学解算 · 左右拖动旋转"
+            textSize = 10f; setTextColor(c(R.color.md_text_dim))
+            setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(2), 0, dp(2))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        // ── 结构化状态卡片：6 项子系统，每项一张小卡带状态色点 ──
+        // 取代原先「原始 JSON 长文本 + 部位统计 + 告警 + 模型」四重重复呈现（用户反馈杂乱）。
+        col.addView(buildHealthCards(), LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(8)
+        })
+        // 15 舵机逐点状态网格：聚合温度在「舵机温度」卡片，逐点缺失/在线状态在此网格。
+        servoGridCard = buildServoGrid()
+        col.addView(servoGridCard, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(8)
+        })
         monitorAlertText = TextView(this@MainActivity).apply {
             textSize = 12f; setTextColor(c(R.color.md_text))
-            setPadding(0, dp(4), 0, dp(4)); maxLines = 5
+            setPadding(0, dp(4), 0, dp(4)); maxLines = 6
         }
         col.addView(monitorAlertText)
-        monitorPartsText = TextView(this@MainActivity).apply {
-            textSize = 11f; setTextColor(c(R.color.md_text_dim))
-            setTypeface(Typeface.MONOSPACE); maxLines = 6
-            setPadding(0, dp(2), 0, dp(6))
-        }
-        col.addView(monitorPartsText)
         val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(MaterialButton(this@MainActivity).apply {
             text = "刷新"; minimumHeight = dp(48)
@@ -631,12 +658,214 @@ class MainActivity : AppCompatActivity() {
         row.addView(autoRefreshBox)
         col.addView(row)
         healthText = TextView(this@MainActivity).apply {
-            textSize = 13f; setTextColor(c(R.color.md_text))
+            textSize = 12f; setTextColor(c(R.color.md_text_dim))
             setTypeface(Typeface.MONOSPACE); setPadding(0, dp(8), 0, dp(8))
+            maxLines = 30
         }
-        val scroll = ScrollView(this@MainActivity).apply { addView(healthText) }
-        col.addView(scroll, LinearLayout.LayoutParams(MATCH, 0, 1f))
-        addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
+        // 原始读数（调试用）直接铺在末尾，不再单独套 ScrollView —— 避免嵌套滚动。
+        col.addView(healthText, LinearLayout.LayoutParams(MATCH, WRAP))
+        // 🔴 整页可滚动：模型放大后「15 舵机网格」第 3 行（ID 10–14 右腿）会被挤出视口，
+        // 用户 2026-11-15 反馈「只有 20 到 34」。外层 ScrollView 保证 15 个 ID 都能滚到。
+        // 顶部两行断言文本仍在最前，真机门禁 uiautomator dump 视口内节点不受影响。
+        val outerScroll = ScrollView(this@MainActivity).apply {
+            isFillViewport = true
+            addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
+        }
+        addView(outerScroll, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    /**
+     * 5 张状态卡片（2 列：2+2+1）：电量 / 主板 / 舵机温度 / 总线 / IMU。
+     * 每张卡片 = 状态色点 + 标题 + 数值；数值来自 [HealthSnapshot]，色点来自
+     * [MonitorReport.severityOf]（没证据一律灰，绝不默认绿）。
+     *
+     * ── 控制环为什么不在此页 ──
+     * 控制环频率是**运动状态**指标（robot.state 的 `loopHz`），已完整呈现在「状态」页。
+     * 健康页专注**硬件健康**（电池/主板/舵机/总线/IMU），避免与状态页重复呈现同一量。
+     */
+    private fun buildHealthCards() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        val labels = listOf("电量", "主板状态", "舵机温度", "总线/舵机", "IMU")
+        labels.chunked(2).forEach { chunk ->
+            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            chunk.forEachIndexed { i, label ->
+                val card = healthCard(label)
+                row.addView(card, LinearLayout.LayoutParams(0, WRAP, 1f).also {
+                    if (i > 0) it.marginStart = dp(8)
+                })
+            }
+            addView(row, LinearLayout.LayoutParams(MATCH, WRAP).also {
+                if (labels.chunked(2).indexOf(chunk) > 0) it.topMargin = dp(8)
+            })
+        }
+    }
+
+    /** 单张状态卡片：左侧状态色点 + 标题 + 数值（数值按 severity 着色）。 */
+    private fun healthCard(label: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP)
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        val head = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+        head.gravity = Gravity.CENTER_VERTICAL
+        val dot = View(this@MainActivity).apply {
+            val s = dp(8); layoutParams = LinearLayout.LayoutParams(s, s).also {
+                it.marginEnd = dp(6); it.gravity = Gravity.CENTER_VERTICAL
+            }
+            background = roundedCard(c(R.color.md_text_dim), s / 2)
+        }
+        head.addView(dot)
+        head.addView(TextView(this@MainActivity).apply {
+            text = label; textSize = 11f; setTextColor(c(R.color.md_text_dim))
+        })
+        addView(head)
+        val v = TextView(this@MainActivity).apply {
+            textSize = 13f; setTextColor(c(R.color.md_text))
+            setTypeface(null, Typeface.BOLD); setPadding(0, dp(4), 0, 0)
+            text = "— 未读到"
+        }
+        addView(v)
+        healthCardVals.add(v)
+        healthCardDots.add(dot)
+    }
+
+    /**
+     * 15 舵机逐点状态网格（5 列 × 3 行）。
+     *
+     * ── 协议边界（为什么不是逐舵机温度）──
+     * `ft1910/duck-ipc-proto` 的 `HealthResult` 对舵机只给**聚合温度**
+     * （`motors.hottest/max_c/mean_c`），底层 `slow.temps_c: [f64; 15]` 在 robotd
+     * 被 fold 成 3 个标量后丢弃，逐舵机温度当前**不可得**。但 `bus.missing`
+     * （`missingIds`）能**逐一点名**哪些舵机 ID 总线没读到 —— 这是真实可得的逐舵机数据。
+     *
+     * 每格状态色点语义（core 单一真源 [RobotParts.severityArgb]，没证据一律灰）：
+     *  - ID ∈ missingIds → CRITICAL 红（总线缺失，一手点名）
+     *  - ID ∉ missingIds 且 missing 字段已返回 → OK 绿（总线在线）
+     *  - missing 字段未返回 → UNKNOWN 灰（没数据，不猜、不默认绿）
+     * 温度列只显示聚合 maxC（协议只提供这个），不造逐舵机温度。
+     */
+    private fun buildServoGrid() = MaterialCardView(this).apply {
+        radius = dp(CORNER_CELL_DP).toFloat(); cardElevation = 0f
+        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
+        setCardBackgroundColor(c(R.color.md_card))
+        setContentPadding(dp(10), dp(8), dp(10), dp(8))
+        val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(TextView(this@MainActivity).apply {
+            text = "15 舵机状态（ID · 缺失=红 / 在线=绿 / 未读到=灰）"
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setPadding(0, 0, 0, dp(6))
+        })
+        val grid = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+        val cols = 5
+        val parts = RobotParts.JOINT_PARTS
+        val ids = RobotParts.JOINT_IDS
+        // 三组各 5 个：左腿 20–24 / 颈头喙 30–34 / 右腿 10–14（严格对齐 lib.rs JOINT_IDS）。
+        // 标题显式写出 ID 范围，避免用户只看到前两组就以为缺了 10–14。
+        val groupNames = listOf("左腿 20–24", "颈·头·喙 30–34", "右腿 10–14")
+        parts.chunked(cols).forEachIndexed { groupIdx, chunk ->
+            grid.addView(TextView(this@MainActivity).apply {
+                text = groupNames.getOrElse(groupIdx) { "第 ${groupIdx + 1} 组" }
+                textSize = 9.5f; setTextColor(c(R.color.md_text_dim))
+                setPadding(0, if (groupIdx == 0) 0 else dp(6), 0, dp(2))
+            }, LinearLayout.LayoutParams(MATCH, WRAP))
+            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            chunk.forEachIndexed { i, part ->
+                val idx = parts.indexOf(part)
+                val cell = servoCell(part, ids[idx])
+                row.addView(cell, LinearLayout.LayoutParams(0, WRAP, 1f).also {
+                    if (i > 0) it.marginStart = dp(6)
+                })
+            }
+            grid.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
+        }
+        col.addView(grid)
+        addView(col)
+    }
+
+    /** 单个舵机格：状态色点 + 舵机 ID + 关节名。色点先置灰（没证据），刷新时才改色。 */
+    private fun servoCell(part: RobotPart, id: Int) = LinearLayout(this@MainActivity).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP, stroked = false)
+        setPadding(dp(6), dp(6), dp(6), dp(6))
+        val dot = View(this@MainActivity).apply {
+            val s = dp(7); layoutParams = LinearLayout.LayoutParams(s, s)
+            background = roundedCard(c(R.color.md_text_dim), s / 2)
+        }
+        addView(dot)
+        val idTv = TextView(this@MainActivity).apply {
+            text = id.toString(); textSize = 11f
+            setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(2), 0, 0)
+        }
+        addView(idTv)
+        val nameTv = TextView(this@MainActivity).apply {
+            text = part.label; textSize = 8.5f
+            setTextColor(c(R.color.md_text_dim)); setPadding(0, 0, 0, 0)
+            setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
+        }
+        addView(nameTv)
+        servoCells.add(this)
+        // 存色点引用：用 tag 挂在 cell 上，刷新时取
+        tag = dot
+    }
+
+    /** 把一手读数填进 15 舵机网格。只改变化才写，避免 1s tick 持续发无障碍事件。 */
+    private fun updateServoGrid(snap: HealthSnapshot?) {
+        val missing = snap?.missingIds ?: emptyList()
+        val missingPresent = snap?.missingFieldPresent ?: false
+        for (cell in servoCells) {
+            val dot = cell.tag as View
+            val idTv = cell.getChildAt(1) as TextView
+            val nameTv = cell.getChildAt(2) as TextView
+            val id = idTv.text.toString().toIntOrNull() ?: continue
+            val sev = when {
+                id in missing -> Severity.CRITICAL
+                missingPresent -> Severity.OK
+                else -> Severity.UNKNOWN
+            }
+            val color = RobotParts.severityArgb(sev)
+            dot.background = roundedCard(color, dp(4))
+            // 温度列：协议只给聚合 maxC，不造逐舵机温度，故不在此格显示温度
+            nameTv.setTextColor(if (sev == Severity.UNKNOWN) c(R.color.md_text_dim) else color)
+        }
+    }
+
+    /** 把一手读数 + 监控报告填进 6 张卡片。只改变化才写（避免 1s tick 持续发无障碍事件）。 */
+    private fun updateHealthCards(snap: HealthSnapshot?, r: MonitorReport) {
+        val busVal = when {
+            snap == null -> "— 未读到"
+            snap.missingIds.isNotEmpty() -> "缺失 ${snap.missingIds.size}/15"
+            snap.missingFieldPresent -> "已读到 · 无缺失"
+            else -> "字段未返回"
+        }
+        val imuVal = when (snap?.imuReady) {
+            true -> "就绪"; false -> "未就绪"; null -> "— 未读到"; else -> "—"
+        }
+        val boardVal = snap?.let { if (it.degraded) "DEGRADED" else "HEALTHY" } ?: "— 未读到"
+        val items = listOf(
+            (snap?.batteryText() ?: "— 未读到") to r.severityOf(RobotPart.BATTERY),
+            boardVal to r.severityOf(RobotPart.TORSO),
+            (snap?.maxC?.let { "%.1f°C".format(it) } ?: "— 未读到") to motorSev(snap),
+            busVal to r.severityOf(RobotPart.BUS),
+            imuVal to r.severityOf(RobotPart.IMU),
+        )
+        for (i in healthCardVals.indices) {
+            val (value, sev) = items.getOrNull(i) ?: ("— 未读到" to Severity.UNKNOWN)
+            val color = RobotParts.severityArgb(sev)
+            healthCardVals[i].setTextIfChanged(value)
+            healthCardVals[i].setTextColor(if (sev == Severity.UNKNOWN) c(R.color.md_text_dim) else color)
+            healthCardDots[i].background = roundedCard(color, dp(4))
+        }
+    }
+
+    /** 舵机温度色点：复用 HardwareMonitor 的同组阈值常量（本地显示阈值，非固件判定）。 */
+    private fun motorSev(snap: HealthSnapshot?): Severity {
+        val maxC = snap?.maxC ?: return Severity.UNKNOWN
+        return when {
+            maxC >= HwThresholds.SERVO_CRITICAL_C -> Severity.CRITICAL
+            maxC >= HwThresholds.SERVO_WARN_C -> Severity.WARN
+            else -> Severity.OK
+        }
     }
 
     /** 设置页：所有参数写 SessionHolder，DriveActivity 启动时读取，避免「改了没生效」。 */
@@ -834,15 +1063,6 @@ class MainActivity : AppCompatActivity() {
         headDzLabel.text = "头部摇杆死区 %.2f（占位，待整机标定）".format(SessionHolder.headDeadzone)
     }
 
-    private fun buildBottomStatus() = TextView(this).apply {
-        bottomStatus = this
-        textSize = 11f; setTextColor(c(R.color.md_text_dim))
-        background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
-        setPadding(dp(10), dp(6), dp(10), dp(6))
-        setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
-        fontFeatureSettings = TABULAR_FIGURES   // 帧数逐秒变化时数字不抖动
-    }
-
     /**
      * 统一表面容器：细描边 + 项目圆角 token。
      *
@@ -878,6 +1098,15 @@ class MainActivity : AppCompatActivity() {
         statePage.visibility = if (i == 0) View.VISIBLE else View.GONE
         healthPage.visibility = if (i == 1) View.VISIBLE else View.GONE
         settingsPage.visibility = if (i == 2) View.VISIBLE else View.GONE
+        sshPage.visibility = if (i == 3) View.VISIBLE else View.GONE
+        // 🔴 AppBar 全局唯一一份：标题随目的地变化，体现「当前在哪个页面」，
+        // 而不是三页都印着同一个「控制台」造成重复（用户 2026-11-15 反馈）。
+        chrome.titleText.text = when (i) {
+            0 -> "MicroDuck · 状态"
+            1 -> "MicroDuck · 健康"
+            2 -> "MicroDuck · 设置"
+            else -> "MicroDuck · 终端"
+        }
         tabButtons.forEachIndexed { idx, b ->
             val selected = idx == i
             b.setBackgroundColor(if (selected) c(R.color.md_card_alt) else Color.TRANSPARENT)
@@ -922,31 +1151,29 @@ class MainActivity : AppCompatActivity() {
         if (!::duckModelView.isInitialized) return
         val r: MonitorReport = SessionHolder.monitorReport()
         duckModelView.setReport(r)
-        monitorAlertText.setTextColor(
-            when (r.verdict) {
-                MonitorVerdict.CRITICAL -> c(R.color.md_bad)
-                MonitorVerdict.WARNING, MonitorVerdict.DEMO_ONLY -> c(R.color.md_warn)
-                MonitorVerdict.NOMINAL -> c(R.color.md_ok)
-                MonitorVerdict.NO_DATA -> c(R.color.md_text_dim)
+        // 告警：只列真实告警（不含 notes），无告警时给一句诚实说明。
+        val alertColor = when {
+            r.alerts.any { it.severity == Severity.CRITICAL } -> c(R.color.md_bad)
+            r.alerts.isNotEmpty() -> c(R.color.md_warn)
+            r.verdict == MonitorVerdict.NO_DATA -> c(R.color.md_text_dim)
+            else -> c(R.color.md_ok)
+        }
+        monitorAlertText.setTextColor(alertColor)
+        monitorAlertText.setTextIfChanged(
+            if (r.alerts.isEmpty()) {
+                when (r.verdict) {
+                    MonitorVerdict.NO_DATA -> "○ 无数据 · 未连接或 robot.health 调用失败"
+                    MonitorVerdict.DEMO_ONLY -> "◈ 演示夹具 · 非实机读数（无告警）"
+                    else -> "● 已读到的字段无告警；未读到的仍「未读到」，不是正常"
+                }
+            } else {
+                r.alerts.joinToString("\n") { a ->
+                    "${if (a.severity == Severity.CRITICAL) "⛔" else "⚠"} [${a.part.label}] ${a.message}"
+                }
             },
         )
-        monitorAlertText.setTextIfChanged(r.summaryLines().take(5).joinToString("\n"))
-        val counts = Severity.entries.associateWith { s -> r.parts.values.count { it == s } }
-        monitorPartsText.setTextIfChanged(buildString {
-            append("部位 ").append(r.parts.size)
-                .append(" · 正常 ").append(counts[Severity.OK] ?: 0)
-                .append(" / 警告 ").append(counts[Severity.WARN] ?: 0)
-                .append(" / 严重 ").append(counts[Severity.CRITICAL] ?: 0)
-                .append(" / 未读到 ").append(counts[Severity.UNKNOWN] ?: 0)
-            val flagged = r.flaggedParts()
-            if (flagged.isNotEmpty()) {
-                append("\n异常部位：").append(flagged.joinToString("、") {
-                    "${it.label}=${r.severityOf(it)}"
-                })
-            } else {
-                append("\n未读到 ≠ 正常：灰点表示协议未提供该部位读数")
-            }
-        })
+        updateHealthCards(SessionHolder.healthSnapshot(), r)
+        updateServoGrid(SessionHolder.healthSnapshot())
     }
 
     /** 只有内容真变了才写，避免 1s tick 持续发 AccessibilityEvent。 */
@@ -964,11 +1191,9 @@ class MainActivity : AppCompatActivity() {
                     else -> "● 未连接"
                 }
                 val chipColor = if (ok) c(R.color.md_ok) else c(R.color.md_bad)
-                // 三个目的地各持一套来源标签，统一刷新。
-                pageChromes.forEach { chrome ->
-                    chrome.sourceChip.text = chipText
-                    chrome.sourceChip.setTextColor(chipColor)
-                }
+                // 全局唯一一份来源标签。
+                chrome.sourceChip.text = chipText
+                chrome.sourceChip.setTextColor(chipColor)
                 refreshModeUi()
                 renderConnectionRow()
                 renderAll()
@@ -1055,13 +1280,9 @@ class MainActivity : AppCompatActivity() {
             append(" · ").append(SessionHolder.sessionState())
             append(" · ").append(SessionHolder.stateFrameCount).append(" 帧")
         }
-        pageChromes.forEach { chrome -> chrome.statusText.text = statusText }
-        bottomStatus.text = buildString {
-            append("通道=").append(SessionHolder.sinkLabel)
-            append(" · 已发 ").append(SessionHolder.sentCount.get()).append(" 帧")
-            append(" · 头 ").append(SessionHolder.headSentCount.get()).append(" 帧")
-            append(" · 状态帧 ").append(SessionHolder.stateFrameCount)
-        }
+        chrome.statusText.text = statusText
+        // 底部「通道=…」状态条已移除（与状态页「App 本地遥测」重复，用户 2026-11-15 反馈）。
+        // 会话级帧数信息统一由状态页遥测网格承载，任何页面都能从状态页读到。
     }
 
     private val tick = object : Runnable {
@@ -1086,6 +1307,7 @@ class MainActivity : AppCompatActivity() {
         ui.removeCallbacks(tick)
         blePanel.onDestroy()
         updateController.release()
+        if (::sshPanel.isInitialized) sshPanel.release()   // 断开 SSH 会话，避免后台连接泄漏
         // 🔴 不 close session：SessionHolder 拥有它，DriveActivity 返回后仍要复用。
         super.onDestroy()
     }

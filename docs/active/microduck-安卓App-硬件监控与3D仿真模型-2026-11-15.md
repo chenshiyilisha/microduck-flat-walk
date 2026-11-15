@@ -227,3 +227,202 @@ python tools/ai_debug_bridge.py --precheck
 python tools/ai_debug_bridge.py --cmd monitor          # 结构化读回 verdict / parts / alerts
 python tools/device_ui_check.py                        # 复跑 59/59 真机门禁
 ```
+
+## §8 2026-11-15 下午修订：双模型 / 配色 / 页面去重 / SSH 界面
+
+用户连续反馈 5 条，逐条落在一手依据上，不靠猜：
+
+### 8.1 「两个模型，一横一竖，横着的缺少舵机模型」
+**根因（读源码坐实，非推测）**：`duck_mesh.bin` 存的是 **MuJoCo 世界坐标 Z-up**
+（依据：MuJoCo 平台文档「default world orientation is Z-up，option.gravity 默认
+`0 0 -9.81`」；本项目 `robot_walk.xml` 的 `trunk_base pos="0 0 0.12"` 表明 Z 是高度、
+`neck`/`lens` 在 +X 即喙方向、`hip_l` 在 +Y 即左）。
+而 `DuckModelGeometry` 约定 **Y-up**（y 向上、+z 朝观察者）。
+`build_duck_mesh.py` 只做居中归一化、**从未做轴变换**，注释却误写成「y 向上」。
+结果 `DuckModelView.onDraw` 同时画真实 STL 网格（躺倒 = 横着）与程序化椭球/火柴人
+（竖立），且 15 个舵机状态圆点只画在竖着那套上 ⇒ 「横着的缺少舵机模型」。
+
+**修复**：`DuckMesh` 加载时做循环置换 `(x,y,z)_mjc → (y,z,x)_app`
+（app.y=mjc.z 上、app.z=mjc.x 喙、app.x=mjc.y 左→右）。这是 3-cycle 偶置换
+**det=+1 保持手性**；与 mjswan / mujoco_wasm 的 `(x,y,z)→(x,z,-y)`（绕 X −90°）
+同族，仅再绕 Y −90° 令喙正对观察者。变换后按 `NODES` 的 y 范围 `[-1.48, 1.32]`
+做**均匀**缩放+居中，让网格与 15 个关节锚点同坐标系同尺度。
+`DuckModelView` 改为**单一模型**：只画真实三角形 + 把 15 个 JOINT 状态点叠上去；
+程序化 hull/bones/surfaces/bodyEllipse 只在网格加载失败时降级绘制。
+
+**别人怎么做（查证）**：ROCOS HMI「从控制器加载 URDF 及网格，随关节状态更新模型」、
+Lucy Control Panel「3D viewer 消费 `/joint_states`」、Reachy Mini dashboard
+「MuJoCo + Three.js 实时镜像实体姿态」—— 都是**一个真实网格 + 关节状态叠加**，
+不存在两套几何并列。⇒ 本项目改为单模型是有依据的通行做法，不是自创。
+
+**自检证据**（`bash tools/selftest.sh`）：476/476 PASS。轴置换用两条独立算法互算
+（逐基向量断言 + 叉积定手性），并带「不是恒等变换」「删掉轴变换会躺倒」负对照；
+另验证 y 跨度对齐 NODES 尺度 2.8、官方配色已生效。
+
+### 8.2 「别人模型用什么颜色也参考一下」
+一手依据：ROBOTIS 产品页「REAL MICRODUCK COLORWAYS」与 Economic Times 规格文：
+Cream = 奶油白壳 + 橙 trim/喙；Graphite = 石墨灰壳 + 黄；Lavender = 薰衣草紫 + 黄；
+Sky = 天蓝 + 橙；镜头/眼恒黑。
+旧 `PART_COLORS` 把整只画成纯橙，不还原。现按首发 **Cream** 款重映射：
+主橙语义色 → 奶油白壳 `0xFFF3E6D2`、深橙 → 橙 trim/喙 `0xFFFF8A3D`、黑 → 镜头黑。
+重映射放在 core 加载层（纯视觉，不参与判据），`build_duck_mesh.py` 写入的仍是
+生成期语义色，避免两处配色表漂移。
+
+### 8.3 「模型要能左右滑动 / 模型展示可以大一点」
+触摸拖动旋转保留；新增 `ZOOM=1.32` 屏幕空间缩放（同时作用于网格与状态点，
+不会错位），健康页 View 高度 168→220dp。
+
+### 8.4 「舵机展示只有 20 到 34」
+`JOINT_IDS` 一手为 20–24 / 30–34 / 10–14 三组，代码本就建 15 格；
+真机只见前两组是**模型放大后「15 舵机网格」第 3 行（10–14 右腿）被挤出视口**：
+旧健康页 `col` 直接 addView 到 MaterialCardView，只有底部 `healthText` 有独立
+ScrollView（嵌套滚动），整页不可滚。
+修复：健康页整体套一层 `ScrollView(isFillViewport)`，`healthText` 去掉独立
+ScrollView 避免嵌套；网格按三组各加显式标题「左腿 20–24」「颈·头·喙 30–34」
+「右腿 10–14」，让 10–14 的归属一眼可见。
+
+### 8.5 「三个界面都有顶部控制台卡片和底部通道卡片，重复了，还缺少 SSH 远程控制界面」
+旧 `buildPage()` 每页各 `addView` 一套 AppBar + linkBanner（`pageChromes` 三份），
+且全局另有 `buildBottomStatus()` 一条「通道=… 已发 N 帧」，与状态页
+「App 本地遥测」的驱动通道/驾驶帧/状态帧**完全重复**。
+修复（M3 navigation bar「3–5 destinations」「distinct pages」）：
+- AppBar + 链路横幅收敛为**框架层全局唯一一份** `chrome`，标题随目的地变化
+  （MicroDuck · 状态/健康/设置/终端），来源标签与状态串只此一份；
+- 移除底部「通道=…」状态条（信息由状态页遥测网格承载）；
+- 新增第 4 个目的地「终端」= `SshPanel`，复用已编译通过的
+  `SshClient` / `SshCredentialStore` / `TerminalEmulator`。
+
+`SshPanel` 安全边界：凭据默认**不落盘**（仅用户勾选「记住凭据」才写
+EncryptedSharedPreferences 密文）；连接后显示主机指纹供肉眼核对；
+快捷命令只用 `robotctl health --json`（一手实机依据）与 Linux 平台通用只读命令
+`uptime` / `df -h`，**不编造未核实的控制命令**；网络操作全在后台线程、
+UI 更新 `post` 回主线程；`onDestroy` 断开会话。
+交互式 PTY shell 与 `TerminalEmulator` 已就绪但本页先用一次性 `exec`
+（每条命令才刷一次 UI，避免 uiautomator idle 死锁）⇒ 交互式终端状态
+**UNVERIFIED**，不声称已实现。
+
+### 8.6 验证状态
+| 项 | 结果 |
+|---|---|
+| `bash tools/selftest.sh`（含轴变换/配色自检） | 476/476 PASS |
+| `python tools/check_hardware_monitor.py` | 0 errors, VERDICT=OK |
+| `./gradlew :app:assembleDebug --offline` | BUILD SUCCESSFUL |
+| 真机 `device_ui_check.py` | ⏳ 设备 CM_PROB_PHANTOM 假掉线，需重新插线复跑 |
+
+⚠️ 真机门禁未复跑的原因：PnP 有 `Android Composite ADB Interface`（VID_2D95）
+记录但 `adb devices` 空 = 物理已断的假掉线；按 SOP `kill-server`/`start-server`/
+`adb reconnect` 均无效，必须重新插 USB 线。本轮所有**不依赖设备**的门禁已全绿。
+
+---
+
+## 9. 第 4 轮（同日 19:40–20:45）：R8 断点、门禁契约修正、**模型碎片真因根治**
+
+§8.6 的验证状态表是当时的快照，以本节为最新单一权威。
+
+### 9.1 release R8 缺类（构建断点）
+`:app:minifyReleaseWithR8` 报 `Missing class javax.annotation.concurrent.GuardedBy`
+（来自 `androidx.security:security-crypto:1.0.0` → Tink）。AGP 自动生成
+`app/build/outputs/mapping/release/missing_rules.txt`，逐字为
+`-dontwarn javax.annotation.concurrent.GuardedBy`。已按**产物原文**写入
+`app/proguard-rules.pro`，只落地这一条：不预先写宽泛的 `javax.annotation.**`
+兜底，否则会掩盖后续真实缺类。修后
+`./gradlew :app:assembleDebug :app:lintDebug :app:assembleRelease --offline`
+→ `BUILD SUCCESSFUL`、`GRADLE_RC=0`、lint `0 errors, 48 warnings`；
+debug / release APK 均含 `assets/duck_mesh.bin`。
+
+### 9.2 「pip 装上了」是假的：管道 rc 污染
+`python -m pip install mujoco 2>&1 | tail -8` 后台报 `exit code 0` —— 但管道 rc 来自
+`tail`。去掉管道真跑：`PIP_RC=1`、`ERROR: Could not find a version that satisfies the
+requirement mujoco (from versions: none)`（系统 Python 3.13 + 清华源）。
+按「先穷尽现成环境」查到项目自带
+`microduck-software/.venv-mjlab/Scripts/python.exe`（Python 3.12.13 / mujoco 3.7.0 /
+numpy 2.5.4 / trimesh 5.1.1），统一门禁改用该解释器即全绿。
+⇒ **解释器契约**：`check_all_app_gates.py` / `build_duck_mesh.py` 必须用
+`.venv-mjlab`；系统 Python 3.13 没有 mujoco，如实标环境缺口，不放宽判据。
+
+### 9.3 门禁契约：结论行 + 真实计数 + 产物级负对照
+- `build_duck_mesh.py --selftest` 旧版只打印 `SELFTEST: ... — PASS`，不匹配
+  `check_all_app_gates.py` 的结论行正则 ⇒ 被判「无结论行(静默成功不算绿)」误红。
+  改为统一输出 `RESULT: N passed, M failed`，N/M 取真实 checks 计数，不写死数字。
+- 新增判据：二进制 header 第二条独立 `struct` 解析、两份产物字节一致、
+  坏魔数 / 截断 / 一字节漂移 / 散落碎片负对照。
+- `check_hardware_monitor.py` 补**产物级**字节一致判据（源码注入覆盖不到产物漂移），
+  负对照 22/22 → **23/23**。真在磁盘上翻转 assets 末字节 → `RESULT: 1 errors` /
+  rc=1；恢复后 sha256 与备份逐字节一致、门禁转绿。
+- 统一门禁 `VERDICT = ALL_PASS`：bridge 19/19、mesh 18/18、静态 11/11、
+  APK 隔离 12/12、证据链 12/12、硬件监控 23/23、core JVM 483/483、runner 夹具 10/10。
+
+### 9.4 🔴 模型「还是不行」的**真正**根因：stride 抽样只留 2% 的面
+前几轮都在改渲染层（轴变换、配色、不透明、Lambert、文字移出），但用户反复反馈
+「模型做的还是不行」。本轮新增 `tools/render_mesh_preview.sh` + `tools/MeshPreview.java`，
+**调用与真机完全相同的** `DuckMesh.project()` 把一帧画成 PNG（手机拔线也能目视），
+第一次真正「看见」结果：上下两团细碎线状碎片 + 中间一列灰点，而不是实心鸭子。
+
+一手数据量出真因：
+
+| 量 | 旧 stride 抽样 | 顶点聚类后 |
+|---|---|---|
+| 原始外观面数 | 334880（25 个 geom 实例） | 同左 |
+| 输出三角形 | 7500（每隔 N 面取一个，互不相邻） | 11972（连通表面） |
+| 顶点数 | 113508（绝大多数未被任何面引用） | 3137 |
+| 共享边比例 | 0.254 | **1.000** |
+| 退化面占比 | 20.9% | **0.0%** |
+| 中位三角形面积 | 5.5e-6 | **5.4e-4** |
+| 文件体积 | 1.45 MB | 229 KB |
+
+⇒ 每隔 N 个面取一个是**散点抽样**，把闭合壳体打碎；加光照 / 不透明都救不回几何本身。
+修法（`tools/build_duck_mesh.py`）：全量读 334880 面 → **顶点聚类**（量化到 cell、
+相邻三角形共享簇顶点、丢塌陷面、簇内取均值）→ 二分搜索最细 cell 使输出
+`<= TARGET_TRIS=12000`。零新增 Gradle 依赖；生成侧只需 `.venv-mjlab` 的 mujoco + numpy
+（曾试 `trimesh` + `fast-simplification` 的 quadric decimation，在该薄壳网格上会卡在
+~3700 面/部件，故选更可控的聚类）。输出仍为 `DMSH` v1，**Kotlin 侧零改动**。
+
+离线 PNG 目视复验（0/30/60/90 度四帧）：**单一、站立、可辨的鸭子** —— 奶油白圆头 +
+黑镜头眼 + 橙色喙/下巴 + 奶油白躯干 + 两条腿 + 两只橙脚；无文字遮挡、无线框碎片。
+`CoreSelfTest` **483/483** 含「网格站直 y 跨度对齐 NODES 2.8」「官方配色」「Lambert」
+判据，新网格全部通过。debug / release APK 内 `assets/duck_mesh.bin` 与源文件 sha256
+一致 `e3a715a8…b412`。
+
+⚠️ 该 PNG **只证明 core 几何 / 配色 / 光照正确**，不证明 Android assets 加载成功、
+不证明 `onDraw` 真的画出来 —— 那几项仍需真机 `contentDescription` 与截图。
+`UNVERIFIED != PASS`。
+
+### 9.5 SSH 终端：updaterd 开启按钮（代码已落地，未在真板执行）
+一手依据：`microduck-主板到货-SSH只读实机验收与App适配-2026-11-14.md` §4.3、
+`microduck-V112镜像-按开发规范审查与优化候选-2026-11-14.md` §8.3 —— 实机
+`updaterd` = `inactive`/`disabled`，drop-in `zzzz-r17-manual.conf` 是**镜像故意手动**，
+非故障；`updaterd.service` 有一手 `[Install] WantedBy=multi-user.target`。
+- `SshPanel` 新增只读「更新服务状态」按钮（前后对照）与唯一写操作
+  「启动 updaterd（默认关闭 · 需确认）」，`AlertDialog` 二次确认，不自动执行。
+- 命令 `sudo -S -p '' systemctl start updaterd`：sudo 官方手册 `-S` 从 stdin 读密码；
+  `SshClient.exec(..., stdin)` 把当前登录密码在内存里送一次，不拼命令行、不回显、
+  不写日志、不落盘；`-p ''` 去掉提示串。
+- 同时修 `SshClient.exec` 静默 bug：旧版 `channel.setErrStream(channel.outputStream)`
+  把 stderr 接到**远端 stdin**（JSch outputStream 是写给远端的），会污染密码通道；
+  改为独立 `ByteArrayOutputStream` 收集，末尾 `[stderr]` 合并。
+- 只用 `start` 不用 `enable --now`：`start` 管当下、`enable` 管开机自启，不改镜像策略。
+- 修正 `SshPanel` 类注释里遗留的 `sudo -n` 旧方案（与实现不一致）。
+- 🔴 真板上**从未点过该按钮**：服务是否已启动、`/run/updaterd.sock` 是否存在，
+  一律 `UNVERIFIED`。
+
+### 9.6 本轮踩的坑
+- 管道 `| tail` 让失败命令显示 exit 0（mujoco 安装、早前 gradle 组合命令同理）⇒
+  一律 `set -o pipefail` 或重定向到文件后取 `$?`。
+- `javac` 在中文 Windows 默认 GBK，UTF-8 源文件报「不可映射字符」⇒ `-encoding UTF-8`。
+- Gradle daemon 一次 `EXCEPTION_ACCESS_VIOLATION`（`jvm.dll` C2 CompilerThread 编译
+  IntelliJ `AnnotationUtil`）导致 `daemon disappeared unexpectedly`；`hs_err_pid15340.log`
+  是环境崩溃非代码错误。`./gradlew --stop` 后重跑即 `BUILD SUCCESSFUL`。
+  资料：OpenJDK JDK-8393350 同类 Windows C2 问题，列出的缓解项含
+  `-XX:TieredStopAtLevel=1`。崩溃转储已加进 `.gitignore`。
+- docstring 里写死「7500 个三角形」随网格重建漂移 ⇒ 全部改成不写死数量。
+
+### 9.7 当前状态与边界
+- ✅ 离线全绿：三构建 `BUILD SUCCESSFUL`、lint 0 errors、统一门禁 `ALL_PASS`、
+  core 483/483、静态 23/23、mesh 18/18、离线 PNG 目视可辨鸭子。
+- 🔴 手机已拔：PnP `Android Composite ADB Interface` = `CM_PROB_PHANTOM`（Code 45），
+  `adb devices` 空 ⇒ 物理已断，adb 层任何操作无效，**必须重新插 USB 线**。
+- 因此以下全部 `UNVERIFIED`：`adb install -r -g` 装新包、`device_ui_check.py` 59/59
+  复跑、真机截图确认模型、`contentDescription` 是否显示「真实外观网格已加载」、
+  终端页 / updaterd 按钮真机可定位、SSH 连真板执行 `start updaterd` 前后对照。
+- `BA-X-5` / `live_hardware_accessed` / `ship_verdict` 一个都没翻，
+  `ship_verdict` 仍 `NOT_SHIPPABLE`。
