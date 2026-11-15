@@ -426,3 +426,79 @@ numpy 2.5.4 / trimesh 5.1.1），统一门禁改用该解释器即全绿。
   终端页 / updaterd 按钮真机可定位、SSH 连真板执行 `start updaterd` 前后对照。
 - `BA-X-5` / `live_hardware_accessed` / `ship_verdict` 一个都没翻，
   `ship_verdict` 仍 `NOT_SHIPPABLE`。
+
+## 10. 第 5 轮（同日 21:0x）：订正 §9.4 —— 模型「悬空分离」的第二层真因
+
+> 🔴 **本节订正 §9.4 的过度结论**。§9.4 把「模型还是不行」**全部**归因于 stride
+> 抽样，并写下「新 PNG 目视：单一站立鸭子」。本轮真的把 PNG 打开逐帧看，发现
+> 碎片是修好了，但**头、躯干、腿、脚仍是几块悬空分离的壳**，并不是一只鸭子。
+> 即：stride 抽样只是第一层，第二层（几何取舍）当时没查出来。
+> **教训：结论必须由「真的看见」支撑，不能由门禁全绿或摘要措辞支撑。**
+
+### 10.1 一手事实：官方根本没有「内部件」这个分类
+
+`robot_walk.xml` 由 **onshape-to-robot** 生成。本机用 `.venv-mjlab` 的 mujoco 真跑枚举：
+
+| 项 | 读数 |
+|---|---|
+| `ngeom` | 75（全部是 `type=mesh`，`class="visual"` ⇒ `group=2`；`group=3` 是 `self_collision_only`） |
+| `nmesh` | 38 种 |
+| `group=2`（MuJoCo 默认可见） | **70 个 geom / 38 种 mesh** |
+| `group=3`（默认不渲染） | 5 个 geom（`leg`/`sole_left`/`sole_right`/`power_support` 等） |
+| 旧 `VISUAL_MESHES` 白名单 | 只命中 21 个 `group=2` geom（18 种），**却多画了 4 个 `group=3` 自碰撞体** |
+| 被漏掉的 `group=2` geom | **49 个 / 20 种 mesh** |
+| `geom_rgba`（CAD 材质色） | 全部是占位灰 `(0.5,0.5,0.5,1)` ⇒ 不能拿它当配色，语义色表仍必要 |
+
+被漏掉的 49 个里恰好是**全部连接骨架**：
+`upper_leg_left/right`(各 12250 面, z≈0.068–0.116)、`ankle_left/right`(z≈0.022–0.048)、
+`yaw_roll_motion`(z≈0.227–0.249)、`yaw2roll`、`xl330`(15 个实例, z≈0.029–0.250)、
+`seeed_bearing*`、`bearing_roll`、`motor_support`、`upper_leg_rigidity_plate`。
+⇒ 只画外壳就必然「壳与壳之间断开」。旧注释写的「跳过内部机械件」是我们**按 mesh 名字
+自己拍的分类**，不是 MJCF 的官方语义。
+
+### 10.2 为什么 §9 的全套门禁没抓到
+
+`surface_metrics()` 量的是「三角形之间共享顶点」，每块壳**自身**都是闭合表面，
+所以旧网格 `shared=1.000 / degenerate=0.000` 照样全绿。
+**「面连通」不等于「部件之间有连接几何」**——判据覆盖不到视觉问题本身。
+离线 PNG 当时存在，但没有人真的逐帧看，只引用了生成时的印象。
+
+### 10.3 修法：以官方 `group` 为唯一权威，不再按名字挑
+
+- `extract()` 的过滤条件改为 `geom_group[i] == VISUAL_GROUP(=2)`；
+  `VISUAL_MESHES` 名字白名单整体删除。
+- `PART_COLORS` 退化为**只管颜色**的语义色表；未登记的结构件走
+  `DEFAULT_STRUCT_COLOR = 0xFF2B2B2B`；3D 打印连杆（`WHITE_LINKS`）用主橙语义色，
+  由 core `officialColor()` 重映射成 Cream 奶油白，舵机/轴承保持深色。
+- 覆盖率读数从 MJCF 派生（`visual_mesh_kinds` / `used_mesh_kinds` / `visual_geom_count`），
+  **不写死 18/25/38**，MJCF 换版自动跟着变。
+- 新增产物级判据 `vertical_coverage()`：用每个三角形的 z 区间做差分覆盖（O(面数)），
+  量「竖直方向每个高度有没有实体表面」；配 `gapped_fixture()` 挖掉中段三角形做负对照。
+
+| 产物 | 最长连续断开 | 未覆盖箱总量 |
+|---|---|---|
+| 旧白名单网格（§9 产物） | `0.039` | `0.109` |
+| 本轮 `group=2` 全外观网格 | `0.000` | `0.000` |
+
+### 10.4 本轮真跑与目视
+
+- `build_duck_mesh.py --selftest`：**`RESULT: 22 passed, 0 failed`**，`rc=0`；
+  含「官方 visual mesh 全覆盖(38/38 种, 70 个 geom)」「竖直连续覆盖 0.000」
+  「负对照:挖掉中段三角形必被拒绝」。
+- 产物：`3067` 顶点 / `12000` 三角形 / **38 个部件** /
+  `sha256=be05fcf37eec244cbc7ff9856100659d65417069ec1c6fa9890f550cf3a10a6c`；
+  `core/resources` 与 `app/assets` 字节一致；门禁重跑后 sha 不变（确定性成立）。
+- 统一门禁 `VERDICT = ALL_PASS`（8/8，`GATES_RC=0`），core JVM `483 passed, 0 failed`，
+  静态门禁 `23/23`。
+- `:app:assembleDebug :app:assembleRelease --offline` → `BUILD SUCCESSFUL`，
+  两个 APK 内 `assets/duck_mesh.bin` 与源文件 sha 全一致。
+- 离线 PNG `final3` 四帧（0/30/60/90°）目视：**单一、连通、左右对称的站立鸭子**，
+  白壳 + 黑镜头眼 + 橙喙 + 颈连杆 + 白躯干 + 双腿 + 橙脚，无碎片、无悬空部件、无文字遮挡。
+
+### 10.5 状态边界（依旧一个都没翻）
+
+- 本节所有结论都是**离线 core 几何 + 构建产物**层面的；`离线 PNG 只证明 core 几何`，
+  不证明 Android 真机 `AssetManager.open()` 成功、不证明 `onDraw` 画出来。
+- 手机 PnP 仍 `CM_PROB_PHANTOM`、`adb devices` 空 ⇒ 装包 / 59/59 真机门禁 /
+  真机截图 / `contentDescription` / 终端页 / 真板 `start updaterd` 全部 `UNVERIFIED`。
+- `BA-X-5`、`live_hardware_accessed`、`ship_verdict=NOT_SHIPPABLE` 不变。

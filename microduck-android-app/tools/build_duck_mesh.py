@@ -9,15 +9,24 @@
 输出世界坐标三角形，供 core 模块用纯 JVM Canvas 2D 渲染。
 
 设计要点：
-  · 只提取**外观部件**（壳/脚/脸/颈/腿等），跳过内部机械件（PCB/轴承/电机支架）。
+  · 🔴 外观集合**以 MJCF 官方分组为准，不按 mesh 名字挑**（2026-11-15 第 5 轮真因）。
+    本 MJCF 由 onshape-to-robot 生成，所有外观 geom 都标 class="visual" ⇒ group=2；
+    MuJoCo 默认只渲染 group 0–2，group=3 是 self_collision_only（不可见）。
+    旧版用「按名字挑 18 种」的白名单，把 group=2 中几十个**连接骨架**
+    （upper_leg_*/ankle_*/yaw2roll/yaw_roll_motion/xl330/seeed_bearing* 等）全丢了，
+    又多画了 group=3 自碰撞体 ⇒ 头、躯干、腿、脚在画面上悬空分离。
+    离线 PNG 目视实证：修好 stride 抽样后仍是「悬空的几块壳」，不是一只鸭子。
   · 应用 geom_xpos/geom_xmat 世界变换，输出绝对坐标，Kotlin 侧只做旋转+投影。
   · 🔴 简化**必须保连通**：用「顶点聚类」而不是「每隔 N 个面取一个」的 stride 抽样。
-    25 个外观 geom 共 334880 面；旧版 stride 抽样只留 ~2% 且三角形彼此不相邻，
-    ⇒ Canvas 上是一堆散落碎片（2026-11-15 离线 PNG 目视实证），加不透明/Lambert
-    光照也救不回来。顶点聚类让相邻三角形共享簇顶点 ⇒ 连成闭合表面，肉眼可辨鸭子。
+    stride 抽样只留 ~2% 且三角形彼此不相邻 ⇒ Canvas 上是一堆散落碎片
+    （2026-11-15 离线 PNG 目视实证），加不透明/Lambert 光照也救不回来。
+    顶点聚类让相邻三角形共享簇顶点 ⇒ 连成闭合表面。
     二分搜索 cell 尺寸把三角形数压到 [TARGET_TRIS] 预算内，MJCF 换版也不会爆量。
   · 输出二进制格式：顶点表 + 三角形索引 + 每三角形颜色，core 模块纯 JVM 解析。
-  · 连通性判据（共享边比例 / 退化面比例）写进 selftest，防止退回 stride 抽样。
+  · 两类产物级判据（都直接读产物字节，不复用生成器的自报数字）：
+      surface_metrics  —— 表面连通（共享边 / 退化面 / 中位面积），防退回碎片；
+      vertical_coverage —— 竖直方向三角形覆盖，防「只留外壳、丢掉连杆」的悬空分离。
+    每条都带负对照（改坏必红）。
 
 依赖（项目现成环境，勿用系统 Python 3.13 —— 它连 mujoco 都装不上）：
     microduck-software/.venv-mjlab/Scripts/python.exe   (Python 3.12 + mujoco 3.7.0 + numpy)
@@ -47,16 +56,24 @@ OUT = BASE / "core" / "src" / "main" / "resources" / "duck_mesh.bin"
 # check_hardware_monitor.py 各自再判一次（三道独立判据，任一漂移都会红）。
 ANDROID_OUT = BASE / "app" / "src" / "main" / "assets" / "duck_mesh.bin"
 
-# 外观部件：构成鸭子外形的壳/脚/脸/颈/腿。内部机械件（PCB/轴承/电机支架）跳过。
-VISUAL_MESHES = {
-    "trunk_base", "left_shell", "right_shell",
-    "top_head_shell", "bottom_head_shell", "face_part",
-    "foot_left", "foot_right", "jaw", "jaw_soft",
-    "neck", "neck_pitch", "lens", "leg", "hip_l",
-    "sole_left", "sole_right", "soft_mouth_top",
+# 🔴 2026-11-15 第 5 轮真因：外观集合不能用「按 mesh 名字挑」的白名单。
+# 一手事实（本机真跑 robot_walk.xml）：共 75 个 mesh geom；其中 group=2（class=visual，
+# MuJoCo 默认可见）70 个 / 38 种 mesh，group=3（self_collision_only，不可见）5 个。
+# 旧白名单只命中 group=2 的 21 个 geom（18 种 mesh），却把另外 49 个连接骨架全丢了，
+# 还多画了 4 个 group=3 自碰撞体 ⇒ 头/躯干/腿/脚悬空分离（离线 PNG 目视实证）。
+# ⇒ 唯一权威 = MJCF 的 geom_group；颜色则按下表给语义色（MJCF material 全是占位灰 0.5）。
+VISUAL_GROUP = 2
+DEFAULT_STRUCT_COLOR = 0xFF2B2B2B   # 未登记的结构件：镜头黑语义色（舵机/轴承/电子件）
+
+# 3D 打印连杆/结构件 → 奶油白（用主橙语义色，core officialColor() 会重映射成 Cream 壳色）。
+# 判据来自官方 Cream 配色：奶油白壳 + 橙 trim/喙 + 深色舵机，镜头恒黑。
+WHITE_LINKS = {
+    "upper_leg_left", "upper_leg_right", "upper_leg_rigidity_plate",
+    "ankle_left", "ankle_right", "yaw2roll", "yaw_roll_motion",
 }
 
-# 部件颜色（ARGB，匹配 MicroDuck 橙色躯体主题，与 core DuckModelGeometry.ORANGE 一致）
+# 外壳部件语义色（ARGB）：主橙→Cream 壳、深橙→橙 trim/喙、黑→镜头黑。
+# 这张表只管**颜色**，不作几何取舍；未列出的 group=2 mesh 走 DEFAULT_STRUCT_COLOR。
 PART_COLORS = {
     "trunk_base": 0xFFFF8A3D,   # 主橙：躯干
     "left_shell": 0xFFFF8A3D,   # 主橙：左壳
@@ -77,6 +94,8 @@ PART_COLORS = {
     "sole_right": 0xFFE0691F,
     "soft_mouth_top": 0xFFE0691F,
 }
+for _name in WHITE_LINKS:
+    PART_COLORS[_name] = 0xFFFF8A3D
 
 # 三角形预算：Canvas 2D 每帧对每个三角形 drawPath 一次（1s tick 旋转 + 30ms 拖动节流）。
 # 旧版 stride 抽样是 7500 面但全是碎片；顶点聚类用相同量级预算画出**闭合表面**。
@@ -124,19 +143,28 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
     all_colors: list[np.ndarray] = []
     face_codes: list[np.ndarray] = []
     code_of_name: dict[str, int] = {}
+    visual_geom_count = 0
+    visual_mesh_kinds: set[str] = set()
+    used_mesh_kinds: set[str] = set()
 
     for i in range(m.ngeom):
         g = m.geom(i)
-        if g.type != mujoco.mjtGeom.mjGEOM_MESH:
+        # 🔴 唯一权威 = MJCF 的 group：group=2 是官方 visual（MuJoCo 默认可见），
+        # group=3 是 self_collision_only（不可见）。**不再按 mesh 名字挑外观**。
+        gt = int(np.asarray(g.type).ravel()[0])
+        if gt != int(mujoco.mjtGeom.mjGEOM_MESH):
+            continue
+        if int(m.geom_group[i]) != VISUAL_GROUP:
             continue
         mid = int(m.geom_dataid[i])
         mname = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MESH, mid)
-        if mname not in VISUAL_MESHES:
-            continue
+        visual_geom_count += 1
+        visual_mesh_kinds.add(mname)
         vadr, vnum = int(m.mesh_vertadr[mid]), int(m.mesh_vertnum[mid])
         fadr, fnum = int(m.mesh_faceadr[mid]), int(m.mesh_facenum[mid])
         if vnum == 0 or fnum == 0:
             continue
+        used_mesh_kinds.add(mname)
 
         local_verts = m.mesh_vert[vadr:vadr + vnum].copy()   # (n,3)
         local_faces = m.mesh_face[fadr:fadr + fnum].copy()   # (n,3) 局部索引
@@ -152,12 +180,14 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
 
         all_verts.append(world_verts.astype(np.float64))
         all_faces.append(local_faces.astype(np.int64) + base)
-        all_colors.append(np.full(local_faces.shape[0], PART_COLORS[mname], dtype=np.uint32))
+        all_colors.append(
+            np.full(local_faces.shape[0],
+                    PART_COLORS.get(mname, DEFAULT_STRUCT_COLOR), dtype=np.uint32))
         code = code_of_name.setdefault(mname, len(code_of_name))
         face_codes.append(np.full(local_faces.shape[0], code, dtype=np.int32))
 
     if not all_verts:
-        raise RuntimeError("未提取到任何外观网格，请检查 VISUAL_MESHES 与 MJCF")
+        raise RuntimeError("未提取到任何 group=2 visual 网格，请检查 MJCF 的 geom_group")
 
     v = np.concatenate(all_verts, axis=0)
     f = np.concatenate(all_faces, axis=0)
@@ -220,6 +250,11 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
         "bbox_min": mins.tolist(), "bbox_max": maxs.tolist(),
         "center": center.tolist(), "scale": scale,
         "raw_faces": raw_faces, "cell": cell_used,
+        # 🔴 覆盖率读数从 MJCF 派生，不写死数字：selftest 用它判「有没有把
+        # 连接骨架又漏掉」，MJCF 换版本也会跟着变，不会像写死 18/25 那样漂移。
+        "visual_geom_count": visual_geom_count,
+        "visual_mesh_kinds": len(visual_mesh_kinds),
+        "used_mesh_kinds": len(used_mesh_kinds),
     }
 
 
@@ -275,6 +310,58 @@ def scattered_fixture() -> bytes:
             + v.tobytes() + t.tobytes() + c.tobytes())
 
 
+def vertical_coverage(buf: bytes, bins: int = 128) -> tuple[float, float]:
+    """产物级「竖直方向每个高度有没有实体表面」读数，独立于生成过程。
+
+    返回 (最长连续未覆盖段占比, 未覆盖箱总占比)。
+    为什么需要它：shared-edge 连通性只能证明「面与面共享顶点」，证明不了
+    「头/躯干/腿之间连起来了」。旧版按名字挑外壳时，产物连通性读数仍是
+    1.000（每块壳自身闭合），但画面上是几块悬空分离的壳。
+    这里用每个三角形的 z 区间做**差分覆盖**（O(三角面数)，不逐箱循环）：
+    真实完整鸭子 ⇒ 全程有面覆盖；丢掉连杆 ⇒ 中段出现明显空档。
+    实测（128 箱）：旧白名单网格 0.039 / 0.109；补全 group=2 后 0.000 / 0.000。
+    """
+    _, _, nv, nt = struct.unpack_from("<4sIII", buf, 0)
+    off = 16
+    v = np.frombuffer(buf, dtype="<f4", count=nv * 3, offset=off).reshape(-1, 3).astype(np.float64)
+    off += nv * 3 * 4
+    t = np.frombuffer(buf, dtype="<i4", count=nt * 3, offset=off).reshape(-1, 3)
+    z = v[:, 2]
+    lo, hi = float(z.min()), float(z.max())
+    if hi <= lo:
+        return (1.0, 1.0)
+    zt = z[t]
+    zmin = np.clip(((zt.min(axis=1) - lo) / (hi - lo) * (bins - 1)).astype(np.int64), 0, bins - 1)
+    zmax = np.clip(((zt.max(axis=1) - lo) / (hi - lo) * (bins - 1)).astype(np.int64), 0, bins - 1)
+    delta = np.zeros(bins + 1, dtype=np.int32)
+    np.add.at(delta, zmin, 1)
+    np.add.at(delta, zmax + 1, -1)
+    cover = np.cumsum(delta)[:bins] > 0
+    best = cur = 0
+    for c in cover:
+        cur = cur + 1 if not c else 0
+        best = max(best, cur)
+    return (best / bins, float((~cover).mean()))
+
+
+def gapped_fixture(buf: bytes) -> bytes:
+    """负对照夹具：删掉竖直中段 [0.35, 0.65] 的全部三角形 ⇒ 头/躯干/腿断开。"""
+    _, ver, nv, nt = struct.unpack_from("<4sIII", buf, 0)
+    off = 16
+    vbytes = buf[off:off + nv * 3 * 4]
+    off_t = off + nv * 3 * 4
+    t = np.frombuffer(buf, dtype="<i4", count=nt * 3, offset=off_t).reshape(-1, 3).copy()
+    c = np.frombuffer(buf, dtype="<u4", count=nt, offset=off_t + nt * 3 * 4).copy()
+    v = np.frombuffer(vbytes, dtype="<f4").reshape(-1, 3)
+    z = v[:, 2]
+    lo, hi = float(z.min()), float(z.max())
+    zc = (z[t].mean(axis=1) - lo) / (hi - lo) if hi > lo else np.zeros(len(t))
+    keep = (zc < 0.35) | (zc > 0.65)
+    tk, ck = t[keep], c[keep]
+    return (struct.pack("<4sIII", b"DMSH", ver, nv, len(tk))
+            + vbytes + tk.astype("<i4").tobytes() + ck.astype("<u4").tobytes())
+
+
 def selftest() -> int:
     """自检：真跑提取，验证二进制结构与两份产物字节一致；带负对照。
 
@@ -326,6 +413,22 @@ def selftest() -> int:
     s_shared, s_degenerate, s_area = surface_metrics(scattered_fixture())
     check("负对照:散落碎片必被连通性判据拒绝",
           not (s_shared >= 0.90 and s_degenerate < 0.01 and s_area >= 1e-4))
+
+    # 🔴 第二条防线：官方 group=2 的 visual mesh 必须**全部**进产物。
+    # 旧版按名字挑 18 种外壳时，连通性读数照样是 1.000（每块壳自身闭合），
+    # 但连接骨架全丢 ⇒ 头/躯干/腿/脚悬空分离。数量从 MJCF 派生，不写死。
+    kinds = stats["visual_mesh_kinds"]
+    check(f"官方 visual mesh 全覆盖({stats['used_mesh_kinds']}/{kinds} 种, "
+          f"{stats['visual_geom_count']} 个 geom)",
+          kinds > 0
+          and stats["used_mesh_kinds"] == kinds
+          and len(stats["parts"]) == kinds)
+    long_gap, total_gap = vertical_coverage(payload)
+    check(f"竖直连续覆盖(最长断开 <= 0.01, 实测 {long_gap:.3f})", long_gap <= 0.01)
+    check(f"竖直空档总量 <= 0.02 (实测 {total_gap:.3f})", total_gap <= 0.02)
+    g_long, g_total = vertical_coverage(gapped_fixture(payload))
+    check("负对照:挖掉中段三角形必被竖直覆盖判据拒绝",
+          not (g_long <= 0.01 and g_total <= 0.02))
 
     # 🔴 core JVM 自检与 Android 真机必须看到同一个模型，否则又是一次「自检全绿、
     # 真机降级」的假绿。extract() 写完已校验一次，这里在产物层面再校验一次。
