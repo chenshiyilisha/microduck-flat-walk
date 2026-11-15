@@ -26,35 +26,91 @@ GSON="C:/Users/hejih/.gradle/caches/modules-2/files-2.1/com.google.code.gson/gso
 JAR="$JDK17/bin/jar.exe"
 JAVAC="$JDK17/bin/java.exe"
 
+# 🔴 2026-11-14 修：/tmp/kotlin240 是上次下载的**空目录**（只剩 kotlinc/ 壳），
+# 旧脚本会静默回退到 IDEA 的 1.9.0，而本项目源码用 K2 2.4.0 语法
+# （expression body 里的 Elvis return / inline lambda continue），1.9.0 直接编译报错。
+# 「WARN + 降级」在这里是假绿：根本跑不出 RESULT，却让人以为有证据。
+# ⇒ 改用 Gradle 缓存里**已完整落盘**的 Kotlin 2.4.0 工具链直接跑 K2JVMCompiler：
+#   kotlin-compiler-embeddable-2.4.0.jar 是 KGP 实际用的同一个编译器（60,351,320 B），
+#   配上同版本 stdlib/script-runtime + reflect/coroutines/intellij-core/trove4j。
+# 这是「先穷尽现成环境」，不是重装、不是手工降级；Gradle :core:compileKotlin 已独立证明
+# 这套依赖图能编译本项目 main 源码。
+KCACHE="C:/Users/hejih/.gradle/caches/modules-2/files-2.1"
+build_k2_cp() {
+  local out=""
+  local f
+  while IFS= read -r f; do out="$out;$(cygpath -w "$f")"; done < <(
+      find "/c/Users/hejih/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin" \
+           -path "*2.4.0*" -name "*.jar" 2>/dev/null)
+  for d in "org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.8.0" \
+           "com.android.tools.external.com-intellij/intellij-core/31.9.1" \
+           "org.jetbrains.kotlin/kotlin-reflect/2.1.0"; do
+    f=$(find "/c/Users/hejih/.gradle/caches/modules-2/files-2.1/$d" -name "*.jar" 2>/dev/null | head -1)
+    [ -n "$f" ] && out="$out;$(cygpath -w "$f")"
+  done
+  f=$(find /c/Users/hejih/.gradle/caches -name "instrumented-trove4j*.jar" 2>/dev/null | head -1)
+  [ -n "$f" ] && out="$out;$(cygpath -w "$f")"
+  printf '%s' "${out#;}"
+}
+K2_CP="$(build_k2_cp)"
+K2_EMBEDDABLE="$(find /c/Users/hejih/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin \
+                     -path '*2.4.0*' -name 'kotlin-compiler-embeddable-2.4.0.jar' 2>/dev/null | head -1)"
+
 echo "=== 环境自检 ==="
 "$JAVAC" -version 2>&1 | head -1
 if [ -x "$K240" ]; then
-  KC="$K240"
-elif [ -x "$IDEA_KC" ]; then
-  echo "WARN: 未找到 Kotlin 2.4.0 编译器，退回 IDEA 版（版本不符，证据降级！请重下 2.4.0）"
-  KC="$IDEA_KC"
+  KC="$K240"; KC_MODE="cli"
+elif [ -n "$K2_EMBEDDABLE" ] && [ -n "$K2_CP" ]; then
+  KC_MODE="gradle-cache-2.4.0"
+  "$JAVAC" -cp "$K2_CP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler -version 2>&1 | head -1
 else
-  echo "FAIL: 找不到 kotlinc。先跑: bash tools/fetch-kotlinc.sh"
+  echo "FAIL: 找不到 Kotlin 2.4.0 编译器，且 Gradle 缓存里也没有完整 2.4.0 工具链。"
+  echo "      🔴 绝不回退 IDEA 1.9.0：它编译不了本项目，会给『好像跑过』的假证据。"
+  echo "      先跑: bash tools/fetch-kotlinc.sh 或 ./gradlew :core:compileKotlin"
   exit 2
 fi
-JAVA_HOME="$JDK17" PATH="$JDK17/bin:$PATH" "$KC" -version 2>&1 | head -1
+echo "kotlin compiler mode = $KC_MODE"
 [ -f "$GSON" ] || { echo "FAIL: 找不到 gson jar: $GSON"; exit 2; }
 
-echo "=== 1) 编译 core + harness → build/selftest.jar ==="
-mkdir -p build/fat
+echo "=== 1) 编译 core + harness → build/classes ==="
+# 🔴 2026-11-14 修：两种模式统一编译成 class 目录，绝不用 -include-runtime。
+# embeddable CLI 没有 kotlin-home，-include-runtime 会抛
+# "Couldn't find kotlin-stdlib at <no_path>\lib\kotlin-stdlib.jar"（源码已编译完才炸），
+# 看起来像编译失败其实是打包失败。stdlib 改由第 2 步 fat 目录并入，语义等价且更可控。
+rm -rf build/classes && mkdir -p build/classes build/fat
 SRC=$(find core/src/main/kotlin core/src/test/kotlin -name '*.kt' | tr '\n' ' ')
-JAVA_HOME="$JDK17" PATH="$JDK17/bin:$PATH" "$KC" \
-  -jvm-target 17 -include-runtime -cp "$GSON" \
-  $SRC -d build/selftest.jar 2>&1
+if [ "$KC_MODE" = "cli" ]; then
+  JAVA_HOME="$JDK17" PATH="$JDK17/bin:$PATH" "$KC" \
+    -jvm-target 17 -cp "$GSON" \
+    $SRC -d build/classes 2>&1
+else
+  # 同一套 Kotlin 2.4.0 编译器，走 embeddable 的 CLI 入口。
+  # 🔴 不能加 -no-stdlib：那会连**编译期** built-in 声明一起去掉（kotlin.Any/Int 全报
+  # 「cannot access built-in declaration」）。stdlib 必须显式进编译器的 -cp。
+  # -no-reflect 只抑制「kotlin-home 里找不到 reflect」的无害告警（reflect 已在 K2_CP）。
+  K2_STDLIB="$(find /c/Users/hejih/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin \
+                    -path '*2.4.0*' -name 'kotlin-stdlib-2.4.0.jar' 2>/dev/null | head -1)"
+  [ -n "$K2_STDLIB" ] || { echo "FAIL: 缺 kotlin-stdlib-2.4.0.jar"; exit 2; }
+  KC_CP="$GSON;$(cygpath -w "$K2_STDLIB")"
+  JAVA_HOME="$JDK17" PATH="$JDK17/bin:$PATH" "$JAVAC" \
+    -cp "$K2_CP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
+    -jvm-target 17 -no-reflect -cp "$KC_CP" \
+    $SRC -d build/classes 2>&1
+fi
 rc=$?
 echo "compile_rc=$rc"
 [ $rc -ne 0 ] && exit $rc
+K2_STDLIB="${K2_STDLIB:-$(find /c/Users/hejih/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin \
+                    -path '*2.4.0*' -name 'kotlin-stdlib-2.4.0.jar' 2>/dev/null | head -1)}"
 
-echo "=== 2) 组装 fat 目录（selftest 类 + gson 类，绕开 classpath 分隔符）==="
+echo "=== 2) 组装 fat 目录（selftest 类 + gson + stdlib，绕开 classpath 分隔符）==="
 rm -rf build/fat && mkdir -p build/fat
-(cd build/fat && "$JAR" xf ../selftest.jar && "$JAR" xf "$GSON")
+cp -r build/classes/. build/fat/
+(cd build/fat && "$JAR" xf "$GSON")
+[ -n "$K2_STDLIB" ] && (cd build/fat && "$JAR" xf "$(cygpath -w "$K2_STDLIB")")
 [ -f build/fat/com/google/gson/Gson.class ] || { echo "FAIL: fat 目录缺 gson"; exit 2; }
 [ -f build/fat/io/microduck/app/core/CoreSelfTest.class ] || { echo "FAIL: fat 目录缺主类"; exit 2; }
+[ -f build/fat/kotlin/Unit.class ] || { echo "FAIL: fat 目录缺 kotlin stdlib"; exit 2; }
 echo "fat 目录就绪 ($(find build/fat -name '*.class' | wc -l) classes)"
 
 echo "=== 3) 运行自检（负对照内建，任一失败 exit 1）==="

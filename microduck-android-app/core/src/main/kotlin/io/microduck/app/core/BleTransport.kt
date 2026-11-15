@@ -41,6 +41,26 @@ class BleTransport(
 
     override val kind: TransportKind = TransportKind.BLE
 
+    /**
+     * 板端自报的 API_VERSION（GATT `read RPC_UUID` 首字节），connect() 成功后可读；
+     * 未连接 / 非 BLE 通道为 null。
+     *
+     * 🔴 为什么必须有：上游一手 `duck-ble/src/gatt.rs:34-39` 明写该 read 不是可选优化，
+     * 而是「read it once for the API version … a client that finds a version it does not know
+     * can say so before writing anything」—— 目的就是让版本 skew 可观测。旧实现读完只判
+     * isFailure 就把值丢了，等于把契约里的告警能力删掉。
+     *
+     * 2026-11-14 真机实证：PC 侧单次 read 稳定返回 `0x25`=**37**，而 App `Wire.API_VERSION=40`
+     * （SSH 侧另见 `robotctl` v37 CLI / `robotd` v40 daemon）。skew 真实存在且此前完全不可见。
+     *
+     * 语义：**只记录、不硬拒**。一手 `duck-ipc-proto/src/lib.rs:961` 原文
+     * "A version difference is logged and served"；`PROTOCOL_MISMATCH` 已退役，
+     * 方法缺失靠 -32601 逐方法降级。故这里绝不因 skew 断链。
+     */
+    @Volatile
+    var peerApiVersion: Int? = null
+        private set
+
     private val lock = Any()
     @Volatile private var connected = false
     @Volatile private var closing = false
@@ -66,15 +86,18 @@ class BleTransport(
             return Result.failure(IllegalArgumentException("BleTransport 只接受 ConnectTarget.Ble，收到 $target"))
         }
         closing = false
+        peerApiVersion = null
         val linked = link.connect()
         if (linked.isFailure) return Result.failure(linked.exceptionOrNull() ?: IOException("BLE_LINK_CONNECT_FAILED"))
 
         // 契约动作：先 read 一次 RPC_UUID，促成加密配对 + 拿 API_VERSION（gatt.rs:44-56）。
+        // 值必须留下来：见 peerApiVersion 注释（版本 skew 是契约要求可观测的）。
         val apiVersion = link.readApiVersion()
         if (apiVersion.isFailure) {
             link.close()
             return Result.failure(apiVersion.exceptionOrNull() ?: IOException("BLE_READ_API_VERSION_FAILED"))
         }
+        synchronized(lock) { peerApiVersion = apiVersion.getOrNull() }
         val gen = generation.incrementAndGet()
 
         // 订阅通知：每来一个 chunk 交给 for_replies 重组器，整行按 id 分流。

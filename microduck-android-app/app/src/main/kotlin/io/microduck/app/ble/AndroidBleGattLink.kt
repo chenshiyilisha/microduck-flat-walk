@@ -41,6 +41,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  6. API 33+ 用内存安全的 `writeCharacteristic(ch, value, writeType): Int`；以下用 setValue + 旧重载。
  *  7. Android 14 起首个 GATT client requestMtu 固定 517（官方行为变更）——但客户端出站仍用
  *     [BleChunkCodec.FLOOR_MTU]=20，不受协商 MTU 影响（duckctl 同款选择）。
+ *  8. 🔴 2026-11-14 真机修正：`requestMtu` 是**可选优化，不是建链前置**。旧实现把
+ *     `onMtuChanged` 当作 `connect()` 就绪的硬条件，且 `markMtuDone()` 定义了从未调用，
+ *     一旦该回调不来（部分机型/首次连接），`awaitConnectReady()` 必超时 ⇒ 整个 BLE 连接失败。
+ *     Google Android 平台文档 `connect-gatt-server` 只要求 connect → onConnectionStateChange
+ *     → discoverServices → onServicesDiscovered（原文实访），MTU 不在必需链上；出站固定 20B
+ *     也不依赖协商 MTU。⇒ 改为「服务发现即就绪」，MTU 回调到了只更新 `negotiatedMtu`。
  *
  * 所有 platform I/O 回调都在 Android 的 Binder 线程上触发；本类用 latch 把回调式 API 适配成
  * [GattLink] 的同步阻塞契约（与 TcpTransport.request 同样的「阻塞等信号」思路）。
@@ -49,7 +55,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class AndroidBleGattLink(
     private val context: Context,
     private val device: BluetoothDevice,
-    private val operationTimeoutMs: Long = 3_000,
+    /** 建链总超时。真机首连含扫描停止 + 配对协商，3 s 偏紧；给 12 s（不等于降低判据强度）。 */
+    private val operationTimeoutMs: Long = 12_000,
 ) : GattLink {
 
     private val serviceUuid: UUID = UUID.fromString(Wire.BLE_SERVICE_UUID)
@@ -110,8 +117,8 @@ class AndroidBleGattLink(
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            // 可选优化：只更新协商值，不再作为 connect() 的就绪条件（见类注释第 8 条）。
             if (status == BluetoothGatt.GATT_SUCCESS) negotiatedMtu = mtu
-            mtuDone = true
             releaseOp(status)
         }
 
@@ -156,7 +163,6 @@ class AndroidBleGattLink(
         synchronized(opLock) {
             opLatch = CountDownLatch(1)
             opStatus = BluetoothGatt.GATT_SUCCESS
-            mtuDone = false
             rpcChar = null
         }
         val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -269,26 +275,22 @@ class AndroidBleGattLink(
     }
 
     /**
-     * connect 阶段专用：整条链有多次回调（connected → servicesDiscovered → mtuChanged），
-     * 单次 latch 会在第一个回调就放行，故轮询「rpcChar 就位 + mtu 已协商」这个真正就绪状态。
-     * 这是骨架层的稳妥写法；真机联调时若发现 MTU 回调不来，可退化为「servicesDiscovered 即就绪」
-     * （出站固定 20 字节本就不依赖协商 MTU）。
+     * connect 阶段专用：就绪判据 = **RPC characteristic 就位**（`onServicesDiscovered` 里赋值）。
+     * MTU 回调是可选优化，不阻塞建链（见类注释第 8 条）：它到了就更新 `negotiatedMtu`，
+     * 不来也不影响出站（固定 20B）。
+     *
+     * 仍带两层硬守卫：① `opStatus` 一旦非 GATT_SUCCESS 立即失败；② 超时必失败，
+     * 不会无限等。⇒ 修的是「把可选回调当必需」，不是放宽或取消判据。
      */
     private fun awaitConnectReady(): Boolean {
         val deadline = System.currentTimeMillis() + operationTimeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (opStatus != BluetoothGatt.GATT_SUCCESS) return false
-            if (rpcChar != null && connectedMtuDone()) return true
+            if (rpcChar != null) return true
             Thread.sleep(10)
         }
         return false
     }
-
-    @Volatile private var mtuDone = false
-    private fun connectedMtuDone(): Boolean = mtuDone
-
-    /** 供回调标记 MTU 阶段完成（onMtuChanged 或超时兜底）。 */
-    private fun markMtuDone() { mtuDone = true }
 
     /** 回调到达：释放当前操作 latch（回调在 Binder 线程，opLatch 由 opLock 保护可见性）。 */
     private fun releaseOp(status: Int) {

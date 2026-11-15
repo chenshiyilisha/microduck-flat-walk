@@ -1,0 +1,184 @@
+{
+  "probe": "android_app_ble_connect_live",
+  "started_at": "2026-11-14T22:29:22+0800",
+  "adb_device_online": true,
+  "bluetooth_on": "1",
+  "app_installed": true,
+  "launch_app_nodes": 59,
+  "scrolls_to_ble_panel": 0,
+  "ble_panel_visible": true,
+  "candidate_scrolls": 1,
+  "scan_polls": [
+    {
+      "t": 0,
+      "duck_mentions": [
+        "MicroDuck  控制台",
+        "收到 182 条广播 · 附近 4 台 · MicroDuck 候选 1 台&#10;扫描结束（12 秒窗口）"
+      ],
+      "status": [
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备"
+      ],
+      "cdescs": []
+    },
+    {
+      "t": 1,
+      "duck_mentions": [
+        "MicroDuck  控制台",
+        "收到 182 条广播 · 附近 4 台 · MicroDuck 候选 1 台&#10;扫描结束（12 秒窗口）",
+        "● duck-6a07 · CC:C8:37:E3:7C:90&#10;-47 dBm · 判别=服务 UUID · 地址仅作缓存"
+      ],
+      "status": [
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备"
+      ],
+      "cdescs": [
+        "连接 BLE 设备 duck-6a07"
+      ]
+    }
+  ],
+  "duck_candidate_found": true,
+  "candidate_text": "● duck-6a07 · CC:C8:37:E3:7C:90&#10;-47 dBm · 判别=服务 UUID · 地址仅作缓存",
+  "connect_observations": [
+    {
+      "t": 0,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · RECONNECTING · 0 帧",
+        "⚠ 链路已断 · 正在重连（驾驶帧已停）",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 1,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 2,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 3,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 4,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 5,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 6,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 7,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 8,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    },
+    {
+      "t": 9,
+      "msgs": [
+        "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+        "⚠ 连接失败 · 请检查地址/权限后重新连接",
+        "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+        "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+        "扫描附近 BLE 设备",
+        "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+      ]
+    }
+  ],
+  "logcat": [
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@21257; boundsInParent: Rect(0, 0 - 1078, 57); boundsInScreen: Rect(91, 617 - 1169, -272); boundsInWindow: Rect(91, 617 - 1169, -272); packageName: io.microduck.app; className: android.widget.TextView; text: 遥控参数（进入横屏遥控页时生效 · 已本地持久化）; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@21618; boundsInParent: Rect(0, 0 - 1078, 68); boundsInScreen: Rect(91, 617 - 1169, -204); boundsInWindow: Rect(91, 617 - 1169, -204); packageName: io.microduck.app; className: android.widget.TextView; text: 取自 ROS_Robot_Controller / ohho.apk；模式与地址不持久化; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@219d9; boundsInParent: Rect(0, 0 - 1078, 187); boundsInScreen: Rect(91, 617 - 1169, -3); boundsInWindow: Rect(91, 617 - 1169, -3); packageName: io.microduck.app; className: android.widget.LinearLayout; text: null; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: io.microduck.app:id/dropdown_root; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: false; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@24324; boundsInParent: Rect(0, 0 - 1078, 187); boundsInScreen: Rect(91, 617 - 1169, 198); boundsInWindow: Rect(91, 617 - 1169, 198); packageName: io.microduck.app; className: android.widget.LinearLayout; text: null; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: io.microduck.app:id/dropdown_root; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: false; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@26c6f; boundsInParent: Rect(0, 0 - 1078, 168); boundsInScreen: Rect(91, 617 - 1169, 366); boundsInWindow: Rect(91, 617 - 1169, 366); packageName: io.microduck.app; className: android.widget.CheckBox; text: 反转前后（真机 R17 映射决定，客户端不硬编码）; error: null; maxTextLength: -1; stateDescription: 未勾选; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: true; checked: false; focusable: true; focused: false; selected: false; clickable: true; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_FOCUS - null, AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_CLICK - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@27030; boundsInParent: Rect(0, 0 - 1078, 52); boundsInScreen: Rect(91, 617 - 1169, 418); boundsInWindow: Rect(91, 617 - 1169, 418); packageName: io.microduck.app; className: android.widget.TextView; text: 前进上限 0.35 m/s（占位，待整机标定）; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@273f1; boundsInParent: Rect(0, 0 - 1078, 63); boundsInScreen: Rect(91, 617 - 1169, 481); boundsInWindow: Rect(91, 617 - 1169, 481); packageName: io.microduck.app; className: android.widget.SeekBar; text: null; error: null; maxTextLength: -1; stateDescription: 43%; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: true; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_FOCUS - null, AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_SCROLL_FORWARD - null, AccessibilityAction: ACTION_SCROLL_BACKWARD - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null, AccessibilityAction: ACTION_SET_PROGRESS - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@277b2; boundsInParent: Rect(0, 0 - 1078, 52); boundsInScreen: Rect(91, 617 - 1169, 533); boundsInWindow: Rect(91, 617 - 1169, 533); packageName: io.microduck.app; className: android.widget.TextView; text: 转向上限 1.20 rad/s（占位，待整机标定）; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@27b73; boundsInParent: Rect(0, 0 - 1078, 63); boundsInScreen: Rect(91, 617 - 1169, 596); boundsInWindow: Rect(91, 617 - 1169, 596); packageName: io.microduck.app; className: android.widget.SeekBar; text: null; error: null; maxTextLength: -1; stateDescription: 48%; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: true; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_FOCUS - null, AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_SCROLL_FORWARD - null, AccessibilityAction: ACTION_SCROLL_BACKWARD - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null, AccessibilityAction: ACTION_SET_PROGRESS - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@2b3c2; boundsInParent: Rect(0, 0 - 994, 47); boundsInScreen: Rect(133, 2419 - 1127, 2370); boundsInWindow: Rect(133, 2419 - 1127, 2370); packageName: io.microduck.app; className: android.widget.TextView; text: 手动检查 · 不做后台轮询（GitHub REST API 未认证 60 次/小时）; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@2b783; boundsInParent: Rect(0, 0 - 994, 80); boundsInScreen: Rect(133, 2466 - 1127, 2370); boundsInWindow: Rect(133, 2466 - 1127, 2370); packageName: io.microduck.app; className: android.widget.TextView; text: 当前版本 0.3.1 (4); error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@2bb44; boundsInParent: Rect(0, 0 - 994, 106); boundsInScreen: Rect(133, 2546 - 1127, 2370); boundsInWindow: Rect(133, 2546 - 1127, 2370); packageName: io.microduck.app; className: android.widget.TextView; text: 当前版本 0.3.1 (4) · 上次检查 11-14 19:57; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: true; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_NEXT_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY - null, AccessibilityAction: ACTION_SET_SELECTION - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@2bf05; boundsInParent: Rect(0, 0 - 994, 168); boundsInScreen: Rect(133, 2680 - 1127, 2370); boundsInWindow: Rect(133, 2680 - 1127, 2370); packageName: io.microduck.app; className: android.widget.LinearLayout; text: null; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: false; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false",
+    "I/AccessibilityNodeInfoDumper(29617): Skipping invisible child: android.view.accessibility.AccessibilityNodeInfo@2ca48; boundsInParent: Rect(0, 0 - 994, 0); boundsInScreen: Rect(133, 2862 - 1127, 2370); boundsInWindow: Rect(133, 2862 - 1127, 2370); packageName: io.microduck.app; className: android.widget.LinearLayout; text: null; error: null; maxTextLength: -1; stateDescription: null; contentDescription: null; tooltipText: null; containerTitle: null; viewIdResName: null; uniqueId: null; checkable: false; checked: false; focusable: false; focused: false; selected: false; clickable: false; longClickable: false; contextClickable: false; enabled: true; password: false; scrollable: false; granularScrollingSupported: false; importantForAccessibility: false; visible: false; actions: [AccessibilityAction: ACTION_SELECT - null, AccessibilityAction: ACTION_CLEAR_SELECTION - null, AccessibilityAction: ACTION_ACCESSIBILITY_FOCUS - null, AccessibilityAction: ACTION_SHOW_ON_SCREEN - null]; isTextSelectable: false"
+  ],
+  "final_relevant_texts": [
+    "BLE 连接失败（真 GATT 尚未上板验证） · 手动 · FAILED · 0 帧",
+    "⚠ 连接失败 · 请检查地址/权限后重新连接",
+    "BLE 连接（运行时权限 · 真 GATT 未上板验证）",
+    "扫描不做 service UUID 硬件过滤，全量接收后软件判别；身份按 serial，地址只是缓存，RSSI 只用于排序。&#10;⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。",
+    "扫描附近 BLE 设备",
+    "⚠ BLE 握手失败 · BLE 连接失败（真 GATT 尚未上板验证）。请确认设备是 MicroDuck 固件，或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED"
+  ],
+  "handshake_ready_claimed": false,
+  "handshake_failed_claimed": true,
+  "verdict": "APP_GATT_HANDSHAKE_NOT_READY",
+  "ba_x_5": "UNVERIFIED (partial evidence only; NOT PASS)"
+}

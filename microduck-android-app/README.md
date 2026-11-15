@@ -3,9 +3,18 @@
 给 MicroDuck（飞特 HD-1910，fanhao `hd1910-v167-trunk-imu-i2c` 固件）用的安卓控制端。
 Native Kotlin。**当前进度：P0 全闭环 + P1 驾驶/健康 + 多页/横屏/双模式 UI + 开源遥控 App 方案对照落地，
 已在 Android 真机上运行验证**。
-`core` 真编译真测 **230/230**；真固件活体：**C2 11/11**、**C2+ 真状态流 24/24**、
+`core` 真编译真测 **383/383**；真固件活体：**C2 11/11**、**C2+ 真状态流 24/24**、
 **P1 驾驶 28/28（连跑 5 次）**；**真机 UI 门禁 59/59**；
-`:app:assembleDebug` ⇒ `app/build/outputs/apk/debug/app-debug.apk`。
+`:app:assembleDebug` / `:app:assembleRelease` 均 **BUILD SUCCESSFUL**。
+
+> 🆕 **AI 可控调试通道 + 真机 GATT 证据链（2026-11-15）**：`app/src/debug/` 新增
+> 显式广播 Receiver（`adb am broadcast -n …/.AiDebugReceiver` → 固定 Logcat TAG 单行 JSON），
+> release 包经 aapt + dex 双通道实证**不含该组件**；PC 侧 `tools/ai_debug_bridge.py`
+> 支持 `status/scan/connect/mock/rpc/disconnect`，带只读 RPC 白名单与 `--precheck`。
+> 统一门禁 `python tools/check_all_app_gates.py --selftest` ⇒ **ALL_PASS**。
+> 单一权威：`docs/active/microduck-安卓App-AI调试通道与真机GATT证据链-2026-11-15.md`。
+> 🔴 手机已拔 ⇒ 该通道的**真机端到端仍 UNVERIFIED**；`BA-X-5` 自动派生
+> `UNVERIFIED_NOT_PASS`，`ship_verdict` 不翻。
 
 > 🔑 **多页 / 横屏 / 双模式 + 开源方案对照（2026-11-12 晚 – 2026-11-13 收口）**：竖屏控制台三页（状态/健康/设置）
 > + 独立横屏 `DriveActivity`，手动/自动模式可切，取景框铺底、双摇杆叠加左右下角。
@@ -131,7 +140,7 @@ Native Kotlin。**当前进度：P0 全闭环 + P1 驾驶/健康 + 多页/横屏
 重写 `MainActivity.kt`、`AndroidManifest.xml`、`JoystickView.kt`、`styles.xml`、`tools/device_ui_check.py`。
 零新增依赖（Material Components Views 1.12.0 + AppCompat，ViewCompat 走传递依赖）。
 
-- `bash tools/selftest.sh` ⇒ **230 passed / 0 failed**（`SELFTEST_RC=0`）。
+- `bash tools/selftest.sh` ⇒ **383 passed / 0 failed**（`SELFTEST_RC=0`，含 `[N+1]` 24 条 AI 调试策略真跑断言）。
 - `JAVA_HOME=E:/软件工具/OpenJdk17 ./gradlew :app:assembleDebug --offline` ⇒
   **BUILD SUCCESSFUL / GRADLE_RC=0**（`compileDebugKotlin` 真执行）。
 - `adb install -r` ⇒ `Success`；`python tools/device_ui_check.py` ⇒ **59 passed / 0 failed**
@@ -258,6 +267,40 @@ App 的骨架是 `RobotTransport` 抽象——四个后端收发**同一份 NDJS
   - `SessionHolder.kt` / `SettingsStore.kt` / `PreviewPlaceholderView.kt`（**本轮新建**）——
     跨页共享会话、参数持久化、明确标注「非实时视频」的取景框占位（绝不画假帧）。
 
+## AI 可控调试通道（debug-only，2026-11-15）
+
+让 AI 直接用 adb 读 App 状态 / 扫设备 / 发起连接 / 读失败原因，不用再靠 uiautomator 猜 UI。
+组件 `AiDebugReceiver` **只在 `app/src/debug/` 编译**，release 包里连清单都没有
+（`aapt dump xmltree` + `classes*.dex` 双通道实证）；不建 socket、不开端口、不新增权限，
+唯一出口是固定 Logcat TAG `MicroDuckAiDebug` 的**单行 JSON**。
+
+```bash
+# 先机械核对最前置前提（设备在线 / debug 包 / stopped-package flag）
+python tools/ai_debug_bridge.py --precheck
+python tools/ai_debug_bridge.py --cmd status
+python tools/ai_debug_bridge.py --cmd scan
+python tools/ai_debug_bridge.py --cmd connect --arg CC:C8:37:E3:7C:90
+python tools/ai_debug_bridge.py --cmd status          # 读 last_connect_error / peer_api_version
+python tools/ai_debug_bridge.py --cmd rpc --method system.info
+python tools/ai_debug_bridge.py --cmd mock            # 离线自检通道是否活着
+```
+
+命令白名单 `help/status/scan/connect/mock/rpc/disconnect`；`rpc` 只发
+`AiDebugPolicy.READ_ONLY_METHODS`，`robot.move` / `robot.do` / `net.connect` /
+`system.authenticate` 等一律拒绝（core 自检 + 静态检查器双向负对照锁住）。
+结果恒标 `COLLECTED_ONLY_NOT_PASS`，**不产出验收结论**。
+🔴 真机端到端仍 `UNVERIFIED`（手机已拔）；完整契约、证据链与下次上板 SOP 见
+`docs/active/microduck-安卓App-AI调试通道与真机GATT证据链-2026-11-15.md`。
+
+### 一条命令跑全部离线门禁
+
+```bash
+python tools/check_all_app_gates.py --selftest
+```
+动态发现 `tools/*.py` 里所有 `--selftest` 工具并**真起进程**跑，另加 core JVM 自检与
+APK 产物隔离核验；`rc=0` 但输出 `1/5 passed`、无结论行、`PRECONDITION_FAIL` 一律判红。
+`ALL_PASS` 只代表离线门禁，不验证真机、不改 `ship_verdict`。
+
 ## 验证命令
 
 ### core 会话层自检（**推荐**，最轻、最快、无需 Android/Gradle）
@@ -266,7 +309,7 @@ bash tools/selftest.sh
 ```
 干三件事：用 **真 Kotlin 2.4.0 + JDK17 + `-jvm-target 17`** 编译 core+harness →
 把 gson 合并进 `build/fat/`（绕开 Windows classpath 分隔符坑）→ 跑 main，失败 exit 1。
-当前结果：**230 passed / 0 failed**（`[22-24]` 头部控制 / `robot.head` / `robot.state`
+当前结果：**383 passed / 0 failed**（含 `[N+1]` AI 调试通道策略真跑 24 条；`[22-24]` 头部控制 / `robot.head` / `robot.state`
 缺失≠零 后，连跑多次无偶发）。覆盖：
 `[1-7]` Mock 后端（握手/业务/重连/幂等重放/错误码/状态门禁/并发负对照）+ `[8-12]` **阶段 C1 真 Socket**
 （换后端零改动、TCP 粘包/半包分帧、真断链→重连→重握手→重订阅、错误码经真 socket 透传、
@@ -555,6 +598,28 @@ JAVA_HOME=E:/软件工具/OpenJdk17 ./gradlew :core:compileKotlin :core:compileT
     (`md_accent`/`md_warn`) 配 `md_bg` 深字、深底 (`md_card_alt`/透明) 配 `md_text` 近白字，
     选中 tab 另用 `md_accent` 高亮 + 加粗；主 CTA「进入遥控驾驶」也显式设 `md_bg` 深字
     （主题默认 `colorOnPrimary` 偏暗紫）。真机截图复验后才算通过，编译绿不算。
+33. 🔴 **`selftest.sh` 两处历史假绿（2026-11-15 亲抓）**：① 真 Kotlin 2.4.0 CLI 目录是空壳时
+    脚本会**回退 IDEA 自带 1.9.0**，编译直接报 `returns are not allowed for functions with
+    expression body`（旧语法），或干脆用旧编译器给出 2.4.0 的假证据；② `object CoreSelfTest`
+    里的 `fun main` 没有 `@JvmStatic` ⇒ JVM 看到的是实例方法，`java -cp build/fat …CoreSelfTest`
+    **根本起不来**。✅ 修法：禁止回退 1.9.0，用 Gradle 缓存里的
+    `kotlin-compiler-embeddable/2.4.0` 拼全 `K2_CP`；`-include-runtime` 改成编译到
+    `build/classes` + fat 目录显式并入 `kotlin-stdlib-2.4.0.jar`，并断言
+    `build/fat/kotlin/Unit.class` 存在；`@JvmStatic` 只挂 `main`。
+34. 🔴 **「debug-only」不能靠源码树证明**：`app/src/debug/` 有 Receiver 源码，只说明 sourceSet
+    分得对；AGP manifest 合并 / R8 shrink / 变体配置任一处被改坏都可能让 release 悄悄带上它。
+    ✅ 必须**产物级**核验：`aapt dump xmltree` 读 binary manifest 的 receiver 表 +
+    `classes*.dex` 扫类名/TAG 字节。实测 debug 2 个 receiver / 42 处类引用 / 2 处 TAG，
+    release 全 0；`tools/check_apk_debug_isolation.py` 把这条做成可复跑门禁。
+35. 🔴 **读数与算术矛盾时，错的是读数**：临时核验脚本把同一个 dict key 加两遍、漏算
+    UTF-16LE 项，打印 `xml_AiDebugReceiver=0`，却与 aapt 明明列出的 receiver 并存。
+    ✅ 改为解析 AXML `ResStringPool` 得到**字符串集合**、用集合包含/差集判据；
+    正式工具对合成 AXML 同时覆盖 UTF-8 / UTF-16 池并带 `_BROKEN` 负对照。
+36. 🔴 **AI 通道零应答先查 stopped package，别猜 GATT/权限/蓝牙开关**：
+    AOSP `broadcastIntentLocked` 默认加 `FLAG_EXCLUDE_STOPPED_PACKAGES`，首次安装未启动
+    或 force-stop 后的 App 收不到任何广播。✅ PC helper 固定 `-f 32`，`--precheck`
+    不成立时直接报 `PRECONDITION_FAIL` 且零连接；把 `curl/adb timeout` 当「服务挂了」
+    是这个项目反复栽过的方向性错误。
 
 ## 下一步（P0/P1 已完成，P2 之后）
 
@@ -585,6 +650,13 @@ JAVA_HOME=E:/软件工具/OpenJdk17 ./gradlew :core:compileKotlin :core:compileT
   时序验收；板上 `service.sh netpad on` 后验证 UDP 驾驶方向与 250ms timeout；真机 50Hz 抖动 / 传感器。
   `AndroidBleGattLink` 真 GATT 上板应照 `Ley-WL/ducklink`（前台服务持 GATT + 串行写 + 后台/锁屏复用）
   补齐；**逐项收敛路径与验收 SOP 见 `docs/active/microduck-安卓App-整机落地验收清单-2026-11-13.md`**。
+- ✅ **App 可观测性 + AI 调试通道 + GATT 证据链已完成（2026-11-15，离线）**：
+  `ConnectFailed`/`lastConnectError`/`peerApiVersion` 让真实失败原因不再被吞，MTU 从建链
+  硬前置改回可选；debug-only 显式广播通道 + 只读 RPC 白名单 + 结构化 Logcat；
+  四份真机原始日志固化 + `BA-X-5` 自动派生判定链（恒 `UNVERIFIED_NOT_PASS`）。
+  `core` **383/383**、`:app:assembleDebug/Release` **BUILD SUCCESSFUL**、
+  `tools/check_all_app_gates.py --selftest` **ALL_PASS**、软件侧门禁 **51/51**。
+  ⚠️ 手机已拔 ⇒ 真机 AI 通道端到端、修复后 App 握手、`BA-X-5` 全部 4 项仍 `UNVERIFIED`。
 - **P2/P3**：视频（WebRTC mediad）、自有策略加载、标定/故障/技能屏。
 - 待拍板：Q1 仿真后端选型 / Q2 relay 形态 / Q3 BLE 是否加应用层加密 / Q5 无 stand 策略时「站立」按钮语义 /
   **R4 netpad 预开 vs 纯 WebRTC**（现双通道都已实现，可延后决定）。

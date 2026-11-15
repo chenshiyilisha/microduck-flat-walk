@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  🔴 只在 debug sourceSet 出现：AGP 合并 manifest 时，release 变体**看不到**这份文件，
+  因此 release APK 里不存在 AiDebugReceiver 这个组件（`aapt dump xmltree` 可核）。
+  这是「AI 可控制 App 以方便调试」与「发布包不暴露调试入口」的唯一隔离手段，
+  不能靠 BuildConfig.DEBUG 的运行时 if 判断替代 —— 那样组件仍在 release 清单里。
+
+  一手依据：
+   · Google Android《后台执行限制》developer.android.com/about/versions/oreo/background
+     「Apps can continue to register for explicit broadcasts in their manifests.」
+     ⇒ `adb shell am broadcast -n io.microduck.app/.AiDebugReceiver` 是显式广播，
+       在 targetSdk 35 / Android 8+ 上仍能送达 manifest 声明的 receiver。
+   · AOSP ActivityManagerService.broadcastIntentLocked 默认加
+     FLAG_EXCLUDE_STOPPED_PACKAGES ⇒ PC helper 固定带 `-f 32`
+     (FLAG_INCLUDE_STOPPED_PACKAGES)，或先把 App 手动启动一次脱离 stopped 状态。
+   · Google Android《Broadcasts overview》：manifest receiver 若 android:exported="false"
+     收不到来自 App 之外的广播；adb shell 是外部发送方 ⇒ 这里必须 exported=true。
+     代价：同机任何 App 也能给这个 debug 组件发广播；已由
+     `AiDebugPolicy` 的命令白名单 + RPC 只读方法白名单兜住，且 release 不含该组件。
+
+  ⚠️ 刻意**不写 <intent-filter>**：本组件只接受显式 component 广播，
+     不注册任何隐式 action，避免被系统/其他 App 的同类广播误触发。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <receiver
+            android:name=".AiDebugReceiver"
+            android:enabled="true"
+            android:exported="true" />
+    </application>
+
+</manifest>

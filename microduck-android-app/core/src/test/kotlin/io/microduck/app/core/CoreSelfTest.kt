@@ -1188,6 +1188,118 @@ object CoreSelfTest {
         check("负对照:合法地址不被误拒", p("10.0.0.7:7788").isSuccess)
     }
 
+    // ---- N+2. 真机实证驱动：板端 API_VERSION 必须可观测、失败原因不得被吞 ----
+    private fun testPeerApiVersionObservability() {
+        println("\n[N+2] 板端 API_VERSION 可观测（上游 gatt.rs:34-39 契约）")
+        // ① 正对照：真机读数 37 能被读回，且与 App 的 40 明确不同 ⇒ skew 可见
+        val link = FakeGattLink().apply { setPeerApiVersion(37) }
+        val t = BleTransport(link, requestTimeoutMs = 1_000)
+        check("connect 前 peerApiVersion 为 null", t.peerApiVersion == null) { "${t.peerApiVersion}" }
+        val s = RobotSession(t, backoffBaseMs = 10, maxReconnectAttempts = 1)
+        val ok = s.connect(ConnectTarget.Ble("SKEW37"))
+        check("板端报 37 时仍能连上（版本差异不硬拒）", ok && s.state == RobotSession.State.READY) { "ok=$ok state=${s.state}" }
+        check("真机 37 被读回而非丢弃", t.peerApiVersion == 37) { "got=${t.peerApiVersion}" }
+        check("负对照:37 != App 的 40（skew 确实存在）", t.peerApiVersion != Wire.API_VERSION)
+        s.close(); t.close(); link.close()
+
+        // ② 负对照：版本相同也必须如实读到 40，不能写死 37 制造「永远 skew」的假绿
+        val link40 = FakeGattLink().apply { setPeerApiVersion(Wire.API_VERSION) }
+        val t40 = BleTransport(link40, requestTimeoutMs = 1_000)
+        t40.connect(ConnectTarget.Ble("SAME40"))
+        check("负对照:板端 40 时读到 40", t40.peerApiVersion == 40) { "got=${t40.peerApiVersion}" }
+        t40.close(); link40.close()
+
+        // ③ 负对照：connect 失败时不得留下陈旧版本值（跨会话污染）
+        val linkFail = FakeGattLink().apply { failConnect = true }
+        val tFail = BleTransport(linkFail, requestTimeoutMs = 1_000)
+        tFail.connect(ConnectTarget.Ble("FAIL"))
+        check("负对照:连接失败后 peerApiVersion 保持 null", tFail.peerApiVersion == null)
+        tFail.close(); linkFail.close()
+    }
+
+    private fun testConnectFailureReason() {
+        println("\n[N+3] 建链失败原因透传（真机 11-14 抓到的可观测性缺陷）")
+        val linkFail = FakeGattLink().apply { failConnect = true }
+        val t = BleTransport(linkFail, requestTimeoutMs = 1_000)
+        val events = java.util.Collections.synchronizedList(mutableListOf<RobotSession.Event>())
+        val s = RobotSession(t, backoffBaseMs = 10, maxReconnectAttempts = 1)
+        s.onEvent { events.add(it) }
+        val ok = s.connect(ConnectTarget.Ble("DIAG"))
+        check("负对照:连接失败不进 READY", !ok && s.state == RobotSession.State.FAILED)
+        val cf = events.filterIsInstance<RobotSession.Event.ConnectFailed>()
+        check("失败发出 ConnectFailed 事件（不再静默 false）", cf.isNotEmpty()) { "events=$events" }
+        check("事件 stage=link", cf.any { it.stage == "link" }) { "cf=$cf" }
+        check("事件带真实异常而非通用文案",
+            cf.any { it.reason.contains("FAKE_GATT_CONNECT_FAIL") }) { "cf=$cf" }
+        check("lastConnectError 可被 UI/AI 通道读到",
+            s.lastConnectError?.contains("FAKE_GATT_CONNECT_FAIL") == true) { "${s.lastConnectError}" }
+        s.close(); t.close(); linkFail.close()
+
+        // 负对照：成功路径必须清掉上次失败原因，不把陈旧错误显示给用户
+        val linkOk = FakeGattLink()
+        val s2 = RobotSession(BleTransport(linkOk, requestTimeoutMs = 1_000),
+            backoffBaseMs = 10, maxReconnectAttempts = 1)
+        check("成功连接 READY", s2.connect(ConnectTarget.Ble("OK")) &&
+            s2.state == RobotSession.State.READY) { "state=${s2.state}" }
+        check("负对照:成功后 lastConnectError 清空", s2.lastConnectError == null) { "${s2.lastConnectError}" }
+        s2.close(); linkOk.close()
+    }
+
+    // ---- N+1. debug-only AI 调试通道：唯一策略真源要在 JVM 上真跑，不能只被静态解析 ----
+    private fun testAiDebugPolicy() {
+        println("\n[N+1] AI 调试通道策略 / 白名单真跑")
+        val p = AiDebugPolicy
+
+        // 命令白名单：判据是「真的调用判定函数」，不是「源码里出现了某个字面量」。
+        check("白名单命令 status 被放行", p.isCommandAllowed("status"))
+        check("白名单命令 rpc 被放行", p.isCommandAllowed("rpc"))
+        check("负对照:null 命令被拒", !p.isCommandAllowed(null))
+        check("负对照:未登记命令被拒", !p.isCommandAllowed("shell"))
+        check("负对照:运动方法名冒充命令被拒", !p.isCommandAllowed(Method.ROBOT_MOVE))
+        check("命令集恰为约定 7 个",
+            p.COMMANDS == setOf("help", "status", "scan", "connect", "mock", "rpc", "disconnect")) {
+            p.COMMANDS.toString()
+        }
+
+        // RPC 只读白名单：集合不相交是必要但不充分，放行/拒绝两侧都要动态实跑。
+        check("只读集合与禁止集合不相交",
+            p.READ_ONLY_METHODS.intersect(p.FORBIDDEN_METHODS).isEmpty()) {
+            p.READ_ONLY_METHODS.intersect(p.FORBIDDEN_METHODS).toString()
+        }
+        check("白名单里每条都真的被 isRpcAllowed 放行",
+            p.READ_ONLY_METHODS.all { p.isRpcAllowed(it) }) {
+            p.READ_ONLY_METHODS.filterNot { p.isRpcAllowed(it) }.toString()
+        }
+        check("禁止集里每条都真的被 isRpcAllowed 拒绝",
+            p.FORBIDDEN_METHODS.all { !p.isRpcAllowed(it) }) {
+            p.FORBIDDEN_METHODS.filter { p.isRpcAllowed(it) }.toString()
+        }
+        check("system.info 被放行", p.isRpcAllowed(Method.SYSTEM_INFO))
+        check("负对照:robot.move 被拒", !p.isRpcAllowed(Method.ROBOT_MOVE))
+        check("负对照:net.connect 被拒", !p.isRpcAllowed(Method.NET_CONNECT))
+        check("负对照:system.authenticate 被拒", !p.isRpcAllowed(Method.SYSTEM_AUTHENTICATE))
+        check("负对照:net.scan 有副作用不进白名单", !p.isRpcAllowed(Method.NET_SCAN))
+        check("负对照:update.check 有副作用不进白名单", !p.isRpcAllowed(Method.UPDATE_CHECK))
+        check("负对照:robot.state 通知方法不进白名单", !p.isRpcAllowed(Method.ROBOT_STATE))
+        check("负对照:null 方法被拒", !p.isRpcAllowed(null))
+
+        // 通道契约常量：PC 侧 helper 从本文件提取它们，改这里必须跟着变。
+        check("TAG 固定", p.TAG == "MicroDuckAiDebug") { p.TAG }
+        check("显式组件名格式正确", Regex("""^[\w.]+/\.[\w.]+$""").matches(p.COMPONENT)) { p.COMPONENT }
+        check("结果 schema 为正整数", p.RESULT_SCHEMA > 0)
+        val waits = listOf(p.SCAN_WINDOW_MS, p.CONNECT_GATT_TIMEOUT_MS, p.CONNECT_WAIT_MS, p.MOCK_WAIT_MS)
+        check("goAsync 预算内所有等待都 >0 且 <=10s", waits.all { it in 1..10_000L }) { waits.toString() }
+
+        // 跨文件：debug Receiver 必须真的调用这两个判定函数（否则白名单会另写一份悄悄漂移）。
+        val recv = java.io.File("app/src/debug/kotlin/io/microduck/app/AiDebugReceiver.kt")
+        val rtxt = if (recv.isFile) recv.readText() else ""
+        val calls = Regex("""\bAiDebugPolicy\.(\w+)\s*\(""")
+            .findAll(rtxt).map { it.groupValues[1] }.toSet()
+        check("Receiver 真调用 isCommandAllowed", "isCommandAllowed" in calls) { calls.toString() }
+        check("Receiver 真调用 isRpcAllowed", "isRpcAllowed" in calls) { calls.toString() }
+        check("负对照:拼错的调用名不在集合里(防子串假绿)", "isRpcAllowed_BROKEN" !in calls)
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         println("=" * 60)
@@ -1223,6 +1335,9 @@ object CoreSelfTest {
         testUpdatePolicy()
         testHexEncoding()
         testSerialGattLink()
+        testPeerApiVersionObservability()
+        testConnectFailureReason()
+        testAiDebugPolicy()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)

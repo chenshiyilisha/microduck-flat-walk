@@ -77,6 +77,19 @@ class RobotSession(
         data class AuthFailed(val attemptsRemaining: Int) : Event()
         data class ReconnectFailed(val attempts: Int) : Event()
         data class Notification(val method: String, val params: JsonObject) : Event()
+        /**
+         * 建链/握手失败的**真实原因**。
+         *
+         * 🔴 2026-11-14 真机实证抓到的可观测性缺陷：旧实现 `connect()` 里
+         * `transport.connect(target).isFailure` 只返回 false，把 IOException 的消息
+         * （如 `BLE_GATT_CONNECT_TIMEOUT` / GATT status 133）整个吞掉；`SessionHolder`
+         * 再换成「BLE 连接失败（真 GATT 尚未上板验证）」通用文案，结果 UI 与 logcat
+         * 都看不到真因，排障只能靠猜。
+         *
+         * 依据：项目准则「零应答先问接收方听不听得懂」+ 上游一手 `gatt.rs` 强调
+         * 「did the central get this far 是客户端挂起时的第一个问题」。⇒ 失败必须带原因。
+         */
+        data class ConnectFailed(val stage: String, val reason: String) : Event()
     }
 
     @Volatile
@@ -140,25 +153,47 @@ class RobotSession(
         synchronized(eventLock) { listeners.toList() }.forEach { it(e) }
     }
 
-    /** 建连 + 完整握手。记住 target 供重连复用。 */
+    /** 建连 + 完整握手。记住 target 供重连复用。失败一律带出真实原因（见 Event.ConnectFailed）。 */
     fun connect(target: ConnectTarget): Boolean {
         lastTarget = target
+        lastConnectError = null
         detachTransportCallbacks()
-        if (transport.connect(target).isFailure) {
+        val linked = transport.connect(target)
+        if (linked.isFailure) {
+            val reason = linked.exceptionOrNull()?.message ?: "unknown transport error"
+            lastConnectError = "link: $reason"
+            emit(Event.ConnectFailed("link", reason))
             transition(State.FAILED)
             return false
         }
         attachTransportCallbacks()
-        return handshake()
+        val ok = handshake()
+        if (!ok) {
+            // handshake() 内部多处早退（hello 超时 / 错 PIN / 断连）。补一条汇总事件，
+            // 让 UI 至少知道失败发生在握手阶段；具体子原因由 AuthFailed 等既有事件给出。
+            emit(Event.ConnectFailed("handshake", lastConnectError ?: "handshake failed"))
+        }
+        return ok
     }
+
+    /** 最近一次建链/握手失败原因；供 UI / AI 调试通道读取。成功时清空。 */
+    @Volatile
+    var lastConnectError: String? = null
+        private set
 
     /** 握手 hello →（仅 BLE 时）system.authenticate → READY。成功即 afterReconnect（首次为空操作）。 */
     private fun handshake(): Boolean {
         transition(State.HELLO)
         val helloResp = transport.request(
             newRequest(Method.HELLO, mapOf("api_version" to Wire.API_VERSION))
-        ).getOrElse { return false }
-        errorOf(helloResp)?.let { handleError(Method.HELLO, it); return false }
+        ).getOrElse {
+            lastConnectError = "hello: ${it.message ?: "request failed"}"
+            return false
+        }
+        errorOf(helloResp)?.let {
+            lastConnectError = "hello: ${it.message}"
+            handleError(Method.HELLO, it); return false
+        }
         // 版本差异不硬拒：B 代 lib.rs:552 / fanhao lib.rs 顶注都写明「a version difference is
         // logged and served」，实测 App 发 api_version=40 给 API16 真 robotd 仍回 result(api_version=16)。
         readResult(helloResp)?.let {
@@ -170,10 +205,17 @@ class RobotSession(
             transition(State.AUTH)
             val authResp = transport.request(
                 newRequest(Method.SYSTEM_AUTHENTICATE, mapOf("pin" to pin))
-            ).getOrElse { return false }
-            errorOf(authResp)?.let { handleError(Method.SYSTEM_AUTHENTICATE, it); return false }
+            ).getOrElse {
+                lastConnectError = "auth: ${it.message ?: "request failed"}"
+                return false
+            }
+            errorOf(authResp)?.let {
+                lastConnectError = "auth: ${it.message}"
+                handleError(Method.SYSTEM_AUTHENTICATE, it); return false
+            }
             val r = readResult(authResp)
             if (r == null || bool(r, "authenticated") != true) {
+                lastConnectError = "auth: PIN rejected (attempts_remaining=${int(r, "attempts_remaining") ?: 0})"
                 emit(Event.AuthFailed(int(r, "attempts_remaining") ?: 0))
                 transition(State.FAILED)
                 return false

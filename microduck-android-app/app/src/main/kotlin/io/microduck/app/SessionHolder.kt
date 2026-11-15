@@ -1,6 +1,7 @@
 package io.microduck.app
 
 import io.microduck.app.core.BleForegroundPolicy
+import io.microduck.app.core.BleTransport
 import io.microduck.app.core.ConnectInputParser
 import io.microduck.app.core.ConnectTarget
 import io.microduck.app.core.Disposable
@@ -87,6 +88,19 @@ object SessionHolder {
     @Volatile var remoteSessionActive: Boolean? = null
     /** model API 版本，只读展示用；「—」= 未读到。绝不拿它做硬拒（A9 维持不做）。 */
     @Volatile var modelApiText: String = "—"
+
+    /**
+     * 板端在 GATT `read RPC_UUID` 时自报的 API_VERSION（[BleTransport.peerApiVersion]）。
+     *
+     * 🔴 2026-11-14 真机实证：PC 侧单次 read 稳定返回 `0x25`=**37**，而本 App 声明
+     * `Wire.API_VERSION=40`。上游 `duck-ble/src/gatt.rs:34-39` 明写这次 read 的用途就是
+     * 让版本 skew 在写任何东西之前可观测；旧实现读完就丢，等于删掉契约告警能力。
+     * 这里把它抬到 UI 层共享单例，供 AI 调试通道 `status` 命令与后续状态页展示读取。
+     * **只记录、不硬拒**：`duck-ipc-proto/src/lib.rs` 原文 "A version difference is
+     * logged and served"，`PROTOCOL_MISMATCH` 已退役，方法缺失靠 -32601 逐方法降级。
+     * 非 BLE 通道恒 null；断链/切通道时清空，绝不沿用上一条链路的陈旧读数。
+     */
+    @Volatile var peerApiVersion: Int? = null
     /** A5：链路恢复提示的时间戳，0 = 无提示。超时由 [tick] 清掉。 */
     @Volatile var recoveredAtMs: Long = 0L
 
@@ -152,16 +166,23 @@ object SessionHolder {
             stateSub?.dispose(); stateSub = null
             session?.close()
             linkStatus = ""; linkLevel = 0
+            peerApiVersion = null   // 绝不让上一条 BLE 链路的板端版本残留到新会话
 
             val s = RobotSession(transport)
             watchEvents(s)
             val ok = s.connect(target)
+            // 必须在 s.connect() **之后**读：peerApiVersion 是 BleTransport.connect()
+            // 内 read RPC_UUID 成功后才写入的，提前读永远是 null。
+            peerApiVersion = (transport as? BleTransport)?.peerApiVersion
             session = s
             kind = transport.kind.name
             note = when {
                 ok -> "已连接 $kind"
-                transport.kind.name == "BLE" -> "BLE 连接失败（真 GATT 尚未上板验证）"
-                else -> "连接失败（检查 relay/地址）"
+                transport.kind.name == "BLE" ->
+                    // 🔴 2026-11-14 真机：旧版通用文案把真实 IOException 盖掉，UI/logcat 都看不到
+                    // 是 GATT 超时还是 status 133，排障只能猜。改为带出 RobotSession 透传的原因。
+                    "BLE 连接失败 · ${s.lastConnectError ?: "无原因（真 GATT 尚未上板验证）"}"
+                else -> "连接失败 · ${s.lastConnectError ?: "检查 relay/地址"}"
             }
             stateFrameCount = 0
             stateWindowFrames = 0
@@ -217,6 +238,10 @@ object SessionHolder {
                 }
                 is RobotSession.Event.AuthFailed -> {
                     linkStatus = "⚠ PIN 认证失败 · 剩余 ${e.attemptsRemaining} 次"; linkLevel = 2
+                }
+                is RobotSession.Event.ConnectFailed -> {
+                    // 失败原因进横幅，避免只看到「连接失败」四个字。
+                    linkStatus = "⚠ ${e.stage} 失败 · ${e.reason.take(160)}"; linkLevel = 2
                 }
                 else -> { /* CapabilityUnsupported / PermissionDenied / Notification 不占横幅 */ }
             }

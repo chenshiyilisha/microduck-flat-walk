@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "owner": "tools/check_ble_gatt_evidence.py --rebuild 从原始日志重算；禁止手改 derived 块",
+  "scope": "只登记 2026-11-14 真板 BLE GATT 观测并自动派生 BA-X-5 是否具备充分证据；不验证整机、不改 ship_verdict、不替代 board_acceptance 的 signoff。铁律：UNVERIFIED != PASS，COLLECTED != PASS。",
+  "observed_on": "2026-11-14",
+  "board": {
+    "ble_name": "duck-6a07",
+    "address": "CC:C8:37:E3:7C:90",
+    "note": "地址仅作缓存；身份判别走 service UUID（App 侧同样口径）"
+  },
+  "raw_logs": [
+    {
+      "id": "GATT_DISCOVERY",
+      "path": "tools/evidence/2026-11-14-ble-gatt/gatt_discovery_readonly.json",
+      "sha256": "893890be7a1d90c6fa7e45477096055907e58e7a3dc129444353cec267adae59",
+      "bytes": 4471
+    },
+    {
+      "id": "API_FIRST_ATTEMPT",
+      "path": "tools/evidence/2026-11-14-ble-gatt/api_version_read_first_attempt_failed.json",
+      "sha256": "a84e72acf02b2338be8c28826fe685987e15cbecd4f89779ff5bed1e373f270c",
+      "bytes": 1455
+    },
+    {
+      "id": "APP_CONNECT",
+      "path": "tools/evidence/2026-11-14-ble-gatt/android_app_connect_live.json",
+      "sha256": "c7162363f2c871a51c7864d1c1b7646de65ac13d7749d117a292856fc237def4",
+      "bytes": 26909
+    },
+    {
+      "id": "LOGCAT_DIAG",
+      "path": "tools/evidence/2026-11-14-ble-gatt/app_gatt_logcat_diag.json",
+      "sha256": "77b73c2d94e89abbff6551487425abb000776bc6b9677b8a54dc7486cd2c0ef1",
+      "bytes": 98
+    }
+  ],
+  "transcribed_observations": [
+    {
+      "id": "API_VERSION_SINGLE_READ_STABLE",
+      "raw_log_persisted": false,
+      "source_kind": "SESSION_STDOUT_TRANSCRIPT",
+      "grade": "TRANSCRIBED_NOT_ADMISSIBLE_FOR_PASS",
+      "observed_hex": "25",
+      "observed_decimal": 37,
+      "stable_repeats": 3,
+      "note": "首次 read 落盘为 READ_FAILED (BleakError: disconnected)；随后连续 3 次稳定返回 单字节 0x25，但那几次 stdout 未落盘。数值用 int(hex,16) 与 int.from_bytes(bytes.fromhex(hex),'little') 两条独立算法互算自洽，仍不等于有一手日志。下次上板用 probe_ble_api_version.py --json-out 补齐。"
+    }
+  ],
+  "derived": {
+    "app_api_version_from_wire": 40,
+    "gatt_discovery": {
+      "expected_service_uuid": "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019",
+      "expected_rpc_uuid": "6f5d2a11-3b47-4c8e-9a1f-2d7e8c4b6019",
+      "service_found": true,
+      "rpc_found": true,
+      "rpc_properties": [
+        "notify",
+        "write-without-response",
+        "write",
+        "read"
+      ],
+      "rpc_has_cccd": true,
+      "rpc_descriptors": [
+        "00002902-0000-1000-8000-00805f9b34fb"
+      ],
+      "target_address": "CC:C8:37:E3:7C:90",
+      "negative_control_connected": false,
+      "negative_control_error": "BleakDeviceNotFoundError",
+      "probe_verdict": "GATT_CONTRACT_ALIGNED",
+      "app_contract_aligned": true,
+      "read_only": true,
+      "forbidden_operations_not_performed": [
+        "read_characteristic",
+        "write_characteristic",
+        "write_descriptor",
+        "pair",
+        "bond"
+      ]
+    },
+    "android_app_connect": {
+      "adb_device_online": true,
+      "app_installed": true,
+      "bluetooth_on": "1",
+      "duck_candidate_found": true,
+      "handshake_ready_claimed": false,
+      "handshake_failed_claimed": true,
+      "probe_verdict": "APP_GATT_HANDSHAKE_NOT_READY",
+      "ba_x_5_claim": "UNVERIFIED (partial evidence only; NOT PASS)"
+    },
+    "api_version_first_attempt": {
+      "probe_verdict": "READ_FAILED",
+      "error": "BleakError: disconnected",
+      "allowed_writes": 0,
+      "connected": true
+    },
+    "app_gatt_logcat_diag": {
+      "total_kept": 0,
+      "verdict": "DIAG_CAPTURED"
+    }
+  },
+  "ba_x_5_sufficient_conditions": [
+    {
+      "id": "BA-X-5-C1",
+      "evidence_kind": "真机 BLE GATT 抓包或日志（bonding、CCCD、onCharacteristicWrite 时序）",
+      "status": "UNVERIFIED",
+      "raw_log_id": null
+    },
+    {
+      "id": "BA-X-5-C2",
+      "evidence_kind": "真机 robot.state 50Hz 帧结构与帧计数原始记录",
+      "status": "UNVERIFIED",
+      "raw_log_id": null
+    },
+    {
+      "id": "BA-X-5-C3",
+      "evidence_kind": "上板 netpad :4210 UDP 驾驶方向与 250ms timeout 原始记录",
+      "status": "UNVERIFIED",
+      "raw_log_id": null
+    },
+    {
+      "id": "BA-X-5-C4",
+      "evidence_kind": "断链与不订阅的负对照输出",
+      "status": "UNVERIFIED",
+      "raw_log_id": null
+    }
+  ],
+  "derivation_rule": {
+    "description": "BA-X-5 verdict 只由充分条件是否都持有『已落盘一手日志』派生；证据齐全也只到 EVIDENCE_COMPLETE_NOT_SIGNOFF，签收权在 board_acceptance + signoff。",
+    "requires_all_conditions_with_persisted_raw_log": true,
+    "forbid_handwritten_verdict_field": true,
+    "never_emit_pass": true
+  }
+}

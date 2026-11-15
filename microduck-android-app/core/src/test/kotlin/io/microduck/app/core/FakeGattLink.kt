@@ -40,6 +40,12 @@ class FakeGattLink(
     @Volatile var failReadApiVersion: Boolean = false
     @Volatile var failWrite: Boolean = false
 
+    /**
+     * 注入「板端自报的 API_VERSION」，用来验版本 skew 的可观测性。
+     * 2026-11-14 真机：板上 RPC_UUID 单次 read 返回 0x25=37，App 是 40，skew 真实存在。
+     */
+    fun setPeerApiVersion(v: Int) { apiVersion.set(v) }
+
     override fun connect(): Result<Int> {
         if (failConnect) { connected.set(false); return Result.failure(IOException("FAKE_GATT_CONNECT_FAIL")) }
         connected.set(true)

@@ -1,0 +1,65 @@
+{
+  "probe": "ble_api_version_single_read",
+  "allowed_writes": 0,
+  "app_api_version": 40,
+  "started_at": "2026-11-14T22:15:34+0800",
+  "scan": {
+    "devices_seen": 5,
+    "devices": [
+      {
+        "address": "CC:C8:37:E3:7C:90",
+        "name": "duck-6a07",
+        "uuids": [
+          "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019"
+        ],
+        "rssi": -56
+      },
+      {
+        "address": "55:25:BA:A7:87:C1",
+        "name": "",
+        "uuids": [],
+        "rssi": -74
+      },
+      {
+        "address": "8C:D0:B2:10:0F:59",
+        "name": "",
+        "uuids": [],
+        "rssi": -53
+      },
+      {
+        "address": "DE:B6:83:C6:3C:64",
+        "name": "",
+        "uuids": [
+          "616c6970-6179-626f-7869-62656f706f6c"
+        ],
+        "rssi": -103
+      },
+      {
+        "address": "47:D1:1A:C2:C0:A5",
+        "name": "",
+        "uuids": [],
+        "rssi": -75
+      }
+    ],
+    "independent_devices": 4
+  },
+  "candidates": [
+    {
+      "address": "CC:C8:37:E3:7C:90",
+      "name": "duck-6a07",
+      "uuids": [
+        "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019"
+      ],
+      "rssi": -56
+    }
+  ],
+  "negative_control_absent_peer": {
+    "address": "00:00:00:00:00:00",
+    "connected": false,
+    "error": "BleakDeviceNotFoundError",
+    "as_expected": true
+  },
+  "connected": true,
+  "verdict": "READ_FAILED",
+  "error": "BleakError: disconnected"
+}

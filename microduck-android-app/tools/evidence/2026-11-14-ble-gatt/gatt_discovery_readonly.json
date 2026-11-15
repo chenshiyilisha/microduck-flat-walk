@@ -1,0 +1,185 @@
+{
+  "probe": "ble_gatt_readonly_discovery",
+  "read_only": true,
+  "operations": [
+    "scan",
+    "connect",
+    "discover_services",
+    "enumerate"
+  ],
+  "forbidden_operations_not_performed": [
+    "read_characteristic",
+    "write_characteristic",
+    "write_descriptor",
+    "pair",
+    "bond"
+  ],
+  "started_at": "2026-11-14T22:08:03+0800",
+  "scan": {
+    "seconds": 8.0,
+    "devices_seen": 4,
+    "devices": [
+      {
+        "address": "8C:D0:B2:10:0F:59",
+        "name": "",
+        "rssi": -53,
+        "uuids": []
+      },
+      {
+        "address": "DE:B6:83:C6:3C:64",
+        "name": "",
+        "rssi": -95,
+        "uuids": [
+          "616c6970-6179-626f-7869-62656f706f6c"
+        ]
+      },
+      {
+        "address": "CC:C8:37:E3:7C:90",
+        "name": "duck-6a07",
+        "rssi": -52,
+        "uuids": [
+          "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019"
+        ]
+      },
+      {
+        "address": "55:25:BA:A7:87:C1",
+        "name": "",
+        "rssi": -78,
+        "uuids": []
+      }
+    ],
+    "independent_devices": 3
+  },
+  "candidates": [
+    {
+      "address": "CC:C8:37:E3:7C:90",
+      "name": "duck-6a07",
+      "rssi": -52,
+      "uuids": [
+        "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019"
+      ]
+    }
+  ],
+  "target": "CC:C8:37:E3:7C:90",
+  "negative_control": {
+    "address": "00:00:00:00:00:00",
+    "connected": false,
+    "as_expected": true,
+    "error": "BleakDeviceNotFoundError"
+  },
+  "connected": true,
+  "services": [
+    {
+      "uuid": "00001800-0000-1000-8000-00805f9b34fb",
+      "characteristics": [
+        {
+          "uuid": "00002a00-0000-1000-8000-00805f9b34fb",
+          "properties": [
+            "read"
+          ],
+          "descriptors": [],
+          "has_cccd": false
+        },
+        {
+          "uuid": "00002a01-0000-1000-8000-00805f9b34fb",
+          "properties": [
+            "read"
+          ],
+          "descriptors": [],
+          "has_cccd": false
+        }
+      ]
+    },
+    {
+      "uuid": "00001801-0000-1000-8000-00805f9b34fb",
+      "characteristics": [
+        {
+          "uuid": "00002a05-0000-1000-8000-00805f9b34fb",
+          "properties": [
+            "indicate"
+          ],
+          "descriptors": [
+            "00002902-0000-1000-8000-00805f9b34fb"
+          ],
+          "has_cccd": true
+        },
+        {
+          "uuid": "00002b29-0000-1000-8000-00805f9b34fb",
+          "properties": [
+            "write",
+            "read"
+          ],
+          "descriptors": [],
+          "has_cccd": false
+        },
+        {
+          "uuid": "00002b2a-0000-1000-8000-00805f9b34fb",
+          "properties": [
+            "read"
+          ],
+          "descriptors": [],
+          "has_cccd": false
+        }
+      ]
+    },
+    {
+      "uuid": "0000180a-0000-1000-8000-00805f9b34fb",
+      "characteristics": [
+        {
+          "uuid": "00002a50-0000-1000-8000-00805f9b34fb",
+          "properties": [
+            "read"
+          ],
+          "descriptors": [],
+          "has_cccd": false
+        }
+      ]
+    },
+    {
+      "uuid": "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019",
+      "characteristics": [
+        {
+          "uuid": "6f5d2a11-3b47-4c8e-9a1f-2d7e8c4b6019",
+          "properties": [
+            "notify",
+            "write-without-response",
+            "write",
+            "read"
+          ],
+          "descriptors": [
+            "00002902-0000-1000-8000-00805f9b34fb"
+          ],
+          "has_cccd": true
+        }
+      ]
+    }
+  ],
+  "elapsed_s": 3.53,
+  "contract_check": {
+    "expected_service_uuid": "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019",
+    "service_found": true,
+    "services_on_target": [
+      "00001800-0000-1000-8000-00805f9b34fb",
+      "00001801-0000-1000-8000-00805f9b34fb",
+      "0000180a-0000-1000-8000-00805f9b34fb",
+      "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019"
+    ],
+    "expected_rpc_uuid": "6f5d2a11-3b47-4c8e-9a1f-2d7e8c4b6019",
+    "rpc_found": true,
+    "rpc_properties": [
+      "notify",
+      "write-without-response",
+      "write",
+      "read"
+    ],
+    "rpc_has_cccd": true,
+    "rpc_descriptors": [
+      "00002902-0000-1000-8000-00805f9b34fb"
+    ],
+    "write_supported": true,
+    "notify_supported": true,
+    "read_supported": true,
+    "app_contract_aligned": true
+  },
+  "verdict": "GATT_CONTRACT_ALIGNED"
+}
