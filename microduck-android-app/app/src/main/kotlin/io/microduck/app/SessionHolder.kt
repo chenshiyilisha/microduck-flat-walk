@@ -5,8 +5,12 @@ import io.microduck.app.core.BleTransport
 import io.microduck.app.core.ConnectInputParser
 import io.microduck.app.core.ConnectTarget
 import io.microduck.app.core.Disposable
+import io.microduck.app.core.HardwareMonitor
 import io.microduck.app.core.HealthSnapshot
+import io.microduck.app.core.LinkState
 import io.microduck.app.core.Method
+import io.microduck.app.core.MonitorReport
+import io.microduck.app.core.MonitorSource
 import io.microduck.app.core.MockTransport
 import io.microduck.app.core.RobotSession
 import io.microduck.app.core.RobotTransport
@@ -101,6 +105,30 @@ object SessionHolder {
      * 非 BLE 通道恒 null；断链/切通道时清空，绝不沿用上一条链路的陈旧读数。
      */
     @Volatile var peerApiVersion: Int? = null
+
+    // ── 2026-11-15 硬件监控（温度/电量/通信/异常部位）──
+    /** 最近一次 `robot.health` **成功**的墙钟时间；0 = 从未成功。 */
+    @Volatile var lastHealthOkMs: Long = 0L
+    @Volatile var lastHealthError: String? = null
+    /** 传输层状态，只由 [watchEvents] 的会话事件写，绝不从读数猜。 */
+    @Volatile var linkState: LinkState = LinkState.UNKNOWN
+    @Volatile private var lastHealthSnapshot: HealthSnapshot? = null
+    @Volatile var lastMonitorReport: MonitorReport? = null
+
+    /**
+     * 数据来源分层：没读到 health 一律 NONE（零告警），Mock 夹具一律 MOCK_FIXTURE
+     * （verdict=DEMO_ONLY），其余才是 REAL_HEALTH。防止把演示数据当真机告警。
+     */
+    fun monitorSource(): MonitorSource = when {
+        lastHealthSnapshot == null -> MonitorSource.NONE
+        kind == "MOCK" -> MonitorSource.MOCK_FIXTURE
+        else -> MonitorSource.REAL_HEALTH
+    }
+
+    /** 每次调用都从一手读数重新派生，不缓存 verdict（读数会陈旧、链路会变）。 */
+    fun monitorReport(nowMs: Long = System.currentTimeMillis()): MonitorReport =
+        HardwareMonitor.evaluate(lastHealthSnapshot, monitorSource(), linkState, nowMs, lastHealthOkMs)
+
     /** A5：链路恢复提示的时间戳，0 = 无提示。超时由 [tick] 清掉。 */
     @Volatile var recoveredAtMs: Long = 0L
 
@@ -167,6 +195,9 @@ object SessionHolder {
             session?.close()
             linkStatus = ""; linkLevel = 0
             peerApiVersion = null   // 绝不让上一条 BLE 链路的板端版本残留到新会话
+            // 换链路 = 换数据源：旧读数/旧报告/旧成功时间一律清空，绝不沿用陈旧遥测。
+            lastHealthSnapshot = null; lastHealthOkMs = 0L; lastHealthError = null
+            lastMonitorReport = null; linkState = LinkState.CONNECTING
 
             val s = RobotSession(transport)
             watchEvents(s)
@@ -207,6 +238,20 @@ object SessionHolder {
      */
     private fun watchEvents(s: RobotSession) {
         eventSub = s.onEvent { e ->
+            // 硬件监控的「通信状态」只认会话层事件，绝不从遥测数值反推链路好坏。
+            linkState = when {
+                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.READY ->
+                    LinkState.CONNECTED
+                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.RECONNECTING ->
+                    LinkState.DOWN
+                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.FAILED ->
+                    LinkState.DOWN
+                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.DISCONNECTED ->
+                    LinkState.DOWN
+                e is RobotSession.Event.ReconnectFailed || e is RobotSession.Event.AuthFailed ||
+                    e is RobotSession.Event.ConnectFailed -> LinkState.DOWN
+                else -> linkState
+            }
             when (e) {
                 is RobotSession.Event.StateChanged -> when (e.to) {
                     RobotSession.State.READY -> {
@@ -306,6 +351,16 @@ object SessionHolder {
                 h.volts?.let { v -> "%.1f V · %s%%".format(v,
                     h.percent?.let { "%.0f".format(it) } ?: "—") } ?: "— 未读到"
             } ?: "— 未读到"
+            // 硬件监控：成功才推进「最后一次成功时间」。失败**不清空**上一次快照
+            // （否则面板会闪回全灰），但会记下错误，由 report 的读数年龄标注「陈旧」。
+            if (snap != null) {
+                lastHealthSnapshot = snap
+                lastHealthOkMs = System.currentTimeMillis()
+                lastHealthError = null
+            } else {
+                lastHealthError = r?.exceptionOrNull()?.message ?: "no session"
+            }
+            lastMonitorReport = monitorReport()
             onDone(text)
         }.start()
     }

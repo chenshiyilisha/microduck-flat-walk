@@ -64,6 +64,8 @@ object AiDebugPolicy {
     /** 允许的命令。任何未列在这里的 cmd 一律拒绝（不是「忽略」，要回一条结构化错误）。 */
     val COMMANDS: Set<String> = linkedSetOf(
         "help", "status", "scan", "connect", "mock", "rpc", "disconnect",
+        // 2026-11-15：只读硬件监控报告（温度/电量/通信/异常部位），不发 RPC、不改状态。
+        "monitor",
     )
 
     /**

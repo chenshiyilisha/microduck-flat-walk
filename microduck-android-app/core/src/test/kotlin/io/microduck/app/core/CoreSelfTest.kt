@@ -1256,10 +1256,15 @@ object CoreSelfTest {
         check("负对照:null 命令被拒", !p.isCommandAllowed(null))
         check("负对照:未登记命令被拒", !p.isCommandAllowed("shell"))
         check("负对照:运动方法名冒充命令被拒", !p.isCommandAllowed(Method.ROBOT_MOVE))
-        check("命令集恰为约定 7 个",
-            p.COMMANDS == setOf("help", "status", "scan", "connect", "mock", "rpc", "disconnect")) {
-            p.COMMANDS.toString()
-        }
+        // 不写死「N 个」：登记清单是权威，新增命令必须同步进这张清单，否则判红。
+        // 2026-11-15 新增只读 monitor（硬件监控报告），旧断言写死 7 个曾误报。
+        val expectedCommands = setOf(
+            "help", "status", "scan", "connect", "mock", "rpc", "disconnect", "monitor",
+        )
+        check("命令集与登记清单完全一致（新增命令须同步登记）",
+            p.COMMANDS == expectedCommands) { p.COMMANDS.toString() }
+        check("monitor 是只读命令且确实被放行",
+            p.isCommandAllowed("monitor") && Method.ROBOT_MOVE !in p.COMMANDS)
 
         // RPC 只读白名单：集合不相交是必要但不充分，放行/拒绝两侧都要动态实跑。
         check("只读集合与禁止集合不相交",
@@ -1300,6 +1305,231 @@ object CoreSelfTest {
         check("负对照:拼错的调用名不在集合里(防子串假绿)", "isRpcAllowed_BROKEN" !in calls)
     }
 
+    // ---- N+1. 硬件监控：阈值判据 / 数据真实性分层 / 异常部位绑定（全部真跑 + 负对照）----
+    private fun health(
+        healthy: Boolean = true, degraded: Boolean = false, reason: String? = null,
+        volts: Double? = 7.50, percent: Double? = 60.0,
+        maxC: Double? = 40.0, hottest: String? = "mouth", cpuTempC: Double? = 50.0,
+        missing: List<Int>? = null, busErrors: Int? = 0, startupFailures: Int? = 0,
+        imuReady: Boolean? = true, imuStale: Long? = 0L,
+        lastTickAgeMs: Long? = 15L, achievedHz: Double? = 50.0, targetHz: Double? = 50.0,
+        throttleLevel: Int? = 0, servos: List<ServoTelemetry> = emptyList(),
+    ): HealthSnapshot = HealthSnapshot(
+        healthy = healthy, degraded = degraded, reason = reason,
+        volts = volts, percent = percent, pack = null, batteryProblem = null,
+        hottest = hottest, maxC = maxC, meanC = 38.0, cpuTempC = cpuTempC,
+        targetHz = targetHz, achievedHz = achievedHz, ticks = 100L, missed = 0L,
+        lastTickAgeMs = lastTickAgeMs, busErrors = busErrors, startupFailures = startupFailures,
+        missingIds = missing ?: emptyList(), missingFieldPresent = missing != null,
+        imuReady = imuReady, imuStaleBlocks = 0L, imuConsecutiveStaleBlocks = imuStale,
+        cpuThrottleLevel = throttleLevel, cpuThrottleMaxLevel = 6,
+        cpuThrottleKhz = 1_800_000, servos = servos,
+    )
+
+    private fun eval(h: HealthSnapshot?, source: MonitorSource = MonitorSource.REAL_HEALTH,
+                     link: LinkState = LinkState.CONNECTED, staleMs: Long = 0L): MonitorReport =
+        HardwareMonitor.evaluate(h, source, link, 1_000_000L, 1_000_000L - staleMs)
+
+    private fun testHardwareMonitor() {
+        println("\n[N+1] 硬件监控：阈值 / 真实性分层 / 异常部位绑定")
+        // ① 关节表：来自 ft1910 lib.rs:536-564，位置即 wire 索引
+        check("15 关节名/ID/部位三表等长",
+            RobotParts.JOINT_NAMES.size == 15 && RobotParts.JOINT_IDS.size == 15 &&
+                RobotParts.JOINT_PARTS.size == 15)
+        check("ID 20→左髋偏航 / 34→喙 / 14→右踝",
+            RobotParts.partOfId(20) == RobotPart.LEFT_HIP_YAW &&
+                RobotParts.partOfId(34) == RobotPart.MOUTH &&
+                RobotParts.partOfId(14) == RobotPart.RIGHT_ANKLE)
+        check("hottest 'neck_pitch'→颈俯仰", RobotParts.partOfName("neck_pitch") == RobotPart.NECK_PITCH)
+        check("idOf(MOUTH)=34", RobotParts.idOf(RobotPart.MOUTH) == 34)
+        check("负对照:未知 ID / 未知关节名不猜部位",
+            RobotParts.partOfId(99) == null && RobotParts.partOfName("not_a_joint") == null)
+        check("负对照:系统部位没有舵机 ID", RobotParts.idOf(RobotPart.CPU) == null)
+        check("merge 取最严重 / 空集合为 UNKNOWN",
+            RobotParts.merge(listOf(Severity.OK, Severity.CRITICAL, Severity.WARN)) == Severity.CRITICAL &&
+                RobotParts.merge(emptyList()) == Severity.UNKNOWN)
+        val colors = Severity.entries.map { RobotParts.severityArgb(it) }
+        check("四档语义色互不相同（改重复必红）", colors.distinct().size == 4)
+        check("负对照:UNKNOWN 不是 OK 的颜色",
+            RobotParts.severityArgb(Severity.UNKNOWN) != RobotParts.severityArgb(Severity.OK))
+
+        // ② 无数据 ⇒ 零告警、零部位（没数据 ≠ 正常，也 ≠ 故障）
+        val noData = eval(null, source = MonitorSource.NONE, link = LinkState.UNKNOWN)
+        check("NO_DATA verdict", noData.verdict == MonitorVerdict.NO_DATA)
+        check("NO_DATA 零告警 / 零部位", noData.alerts.isEmpty() && noData.parts.isEmpty())
+        check("负对照:NO_DATA 不含任何 CRITICAL 部位", noData.flaggedParts().isEmpty())
+        check("NO_DATA 摘要写明「没数据不等于正常」",
+            noData.notes.any { it.contains("没数据不等于正常") })
+
+        // ③ Mock 夹具 ⇒ DEMO_ONLY + 每条告警带 demo 标记，即使数据本身是危急的
+        val mock = eval(health(percent = 5.0, missing = RobotParts.JOINT_IDS),
+            source = MonitorSource.MOCK_FIXTURE)
+        check("Mock 源 verdict 恒 DEMO_ONLY", mock.verdict == MonitorVerdict.DEMO_ONLY)
+        check("Mock 源所有告警都带 demo=true", mock.alerts.isNotEmpty() && mock.alerts.all { it.demo })
+        check("Mock 摘要自带「非实机读数」免责", mock.headline().contains("非实机读数"))
+        check("负对照:Mock 不会变成 REAL 的 CRITICAL/NOMINAL",
+            mock.verdict != MonitorVerdict.CRITICAL && mock.verdict != MonitorVerdict.NOMINAL)
+
+        // ④ 电量阈值（源码 battery_percent 6.6→0% / 8.2→100%；本地显示策略阈值）
+        check("电量 21% 无告警", eval(health(percent = 21.0)).alerts.none { it.part == RobotPart.BATTERY })
+        check("电量 19% 触发 WARN",
+            eval(health(percent = 19.0)).alerts.any { it.part == RobotPart.BATTERY && it.severity == Severity.WARN })
+        check("电量 9% 触发 CRITICAL",
+            eval(health(percent = 9.0)).alerts.any { it.part == RobotPart.BATTERY && it.severity == Severity.CRITICAL })
+        check("边界 20.0% 不 WARN / 10.0% 是 WARN 不是 CRITICAL",
+            eval(health(percent = 20.0)).alerts.none { it.part == RobotPart.BATTERY } &&
+                eval(health(percent = 10.0)).alerts.any {
+                    it.part == RobotPart.BATTERY && it.severity == Severity.WARN })
+        check("volts=6.6（源码 EMPTY_V）直接 CRITICAL",
+            eval(health(volts = 6.6, percent = 60.0)).alerts.any {
+                it.part == RobotPart.BATTERY && it.severity == Severity.CRITICAL })
+        val noBattery = eval(health(volts = null, percent = null))
+        check("负对照:电池字段缺失 ⇒ 零电池告警且部位 UNKNOWN（不是 0 V）",
+            noBattery.alerts.none { it.part == RobotPart.BATTERY } &&
+                noBattery.severityOf(RobotPart.BATTERY) == Severity.UNKNOWN)
+        check("电池告警带一手依据", eval(health(percent = 5.0)).alerts
+            .first { it.part == RobotPart.BATTERY }.basis.contains("battery_percent"))
+
+        // ⑤ 舵机/CPU 温度（Feetech 70°C 关扭矩 / Radxa 85°C governor）
+        check("舵机 59.9°C 无告警",
+            eval(health(maxC = 59.9)).alerts.none { it.message.contains("舵机高温") })
+        check("舵机 60.0°C WARN / 70.0°C CRITICAL",
+            eval(health(maxC = 60.0)).alerts.any { it.severity == Severity.WARN && it.message.contains("舵机高温") } &&
+                eval(health(maxC = 70.0)).alerts.any { it.severity == Severity.CRITICAL && it.message.contains("舵机高温") })
+        check("最热关节被着色（mouth→MOUTH）",
+            eval(health(maxC = 72.0, hottest = "mouth")).severityOf(RobotPart.MOUTH) == Severity.CRITICAL)
+        check("负对照:协议只给聚合温度 ⇒ 其余 14 关节仍 UNKNOWN",
+            eval(health(maxC = 72.0, hottest = "mouth")).severityOf(RobotPart.LEFT_KNEE) == Severity.UNKNOWN)
+        check("CPU 79.9 无告警 / 80 WARN / 85 CRITICAL",
+            eval(health(cpuTempC = 79.9)).alerts.none { it.message.contains("SoC 高温") } &&
+                eval(health(cpuTempC = 80.0)).alerts.any { it.severity == Severity.WARN && it.message.contains("SoC 高温") } &&
+                eval(health(cpuTempC = 85.0)).alerts.any { it.severity == Severity.CRITICAL && it.message.contains("SoC 高温") })
+        check("CPU 降频 level>0 触发 WARN",
+            eval(health(throttleLevel = 2)).alerts.any { it.message.contains("已降频") })
+        check("负对照:温度字段缺失 ⇒ 不报高温",
+            eval(health(maxC = null, cpuTempC = null)).alerts.none {
+                it.message.contains("高温") })
+
+        // ⑥ bus.missing[] 精确点名 15 个舵机 → 部位级着色
+        val oneMissing = eval(health(missing = listOf(32)))
+        check("missing=[32] ⇒ HEAD_YAW CRITICAL + BUS CRITICAL",
+            oneMissing.severityOf(RobotPart.HEAD_YAW) == Severity.CRITICAL &&
+                oneMissing.severityOf(RobotPart.BUS) == Severity.CRITICAL)
+        check("missing 告警文本点名关节",
+            oneMissing.alerts.first { it.part == RobotPart.BUS }.message.contains("头偏航"))
+        val allMissing = eval(health(missing = RobotParts.JOINT_IDS))
+        check("实机场景：15 个 ID 全缺 ⇒ 15 个关节全部 CRITICAL",
+            RobotParts.JOINT_PARTS.all { allMissing.severityOf(it) == Severity.CRITICAL })
+        check("显式空 missing ⇒ BUS OK",
+            eval(health(missing = emptyList())).severityOf(RobotPart.BUS) == Severity.OK)
+        check("负对照:missing 字段缺失 ⇒ 不据此判总线正常",
+            eval(health(missing = null)).notes.any { it.contains("不据此判总线正常") })
+        check("负对照:未知 ID 不产生部位着色",
+            eval(health(missing = listOf(99))).severityOf(RobotPart.LEFT_KNEE) == Severity.UNKNOWN)
+        check("busErrors / startupFailures 分别触发 WARN / CRITICAL",
+            eval(health(busErrors = 3)).alerts.any { it.part == RobotPart.BUS && it.severity == Severity.WARN } &&
+                eval(health(startupFailures = 1)).alerts.any { it.part == RobotPart.BUS && it.severity == Severity.CRITICAL })
+
+        // ⑦ IMU / 通信 / 控制环
+        check("IMU not ready ⇒ CRITICAL",
+            eval(health(imuReady = false)).severityOf(RobotPart.IMU) == Severity.CRITICAL)
+        check("IMU 连续陈旧块 ⇒ WARN",
+            eval(health(imuStale = 4L)).alerts.any { it.part == RobotPart.IMU && it.severity == Severity.WARN })
+        check("链路 DOWN ⇒ LINK CRITICAL",
+            eval(health(), link = LinkState.DOWN).severityOf(RobotPart.LINK) == Severity.CRITICAL)
+        check("链路正常且读数新鲜 ⇒ LINK OK",
+            eval(health()).severityOf(RobotPart.LINK) == Severity.OK)
+        check("负对照:读数陈旧 ⇒ LINK 不再判 OK",
+            eval(health(), staleMs = 9_000L).severityOf(RobotPart.LINK) == Severity.UNKNOWN)
+        check("陈旧读数在 notes 里明写「不代表当前状态」",
+            eval(health(), staleMs = 9_000L).notes.any { it.contains("不代表当前状态") })
+        check("last_tick_age>1s / achieved<90%target 均触发链路 WARN",
+            eval(health(lastTickAgeMs = 2_000L)).alerts.any { it.message.contains("最后一拍") } &&
+                eval(health(achievedHz = 40.0)).alerts.any { it.message.contains("控制环") })
+        check("协议没有无线 RSSI：notes 明确不伪造",
+            eval(health()).notes.any { it.contains("不提供无线 RSSI") })
+
+        // ⑧ robotd 自己的判决 / 前向兼容补丁
+        check("degraded=true + reason ⇒ 躯干 CRITICAL 且带 reason",
+            eval(health(degraded = true, healthy = false, reason = "motor bus startup")).alerts.any {
+                it.part == RobotPart.TORSO && it.severity == Severity.CRITICAL && it.message.contains("motor bus startup") })
+        check("负对照:healthy ⇒ 不报上游判决",
+            eval(health()).alerts.none { it.part == RobotPart.TORSO })
+        val patched = eval(health(servos = listOf(ServoTelemetry(20, 75.0, 7.4, 1.0))))
+        check("扩展字段 servo_telemetry ⇒ 逐舵机温度真判据启用",
+            patched.severityOf(RobotPart.LEFT_HIP_YAW) == Severity.CRITICAL &&
+                patched.notes.any { it.contains("逐舵机判据已启用") })
+        check("负对照:无扩展字段 ⇒ 逐舵机温度 UNVERIFIED",
+            eval(health()).notes.any { it.contains("逐舵机温度 UNVERIFIED") })
+        val parsed = HealthSnapshot.from(JsonParser.parseString(
+            """{"healthy":true,"battery":{"volts":7.4,"percent":58.0},"bus":{"missing":[10,11]},""" +
+                """"imu":{"ready":false},"servo_telemetry":[{"id":20,"temp_c":72.0}]}""",
+        ).asJsonObject)
+        check("HealthSnapshot.from 解析 bus.missing / imu / 扩展字段",
+            parsed.missingIds == listOf(10, 11) && parsed.missingFieldPresent &&
+                parsed.imuReady == false && parsed.servos.size == 1 && parsed.servos[0].tempC == 72.0)
+        check("负对照:未知 ID 的扩展行被丢弃（不猜部位）",
+            HealthSnapshot.from(JsonParser.parseString(
+                """{"servo_telemetry":[{"id":99,"temp_c":99.0}]}""",
+            ).asJsonObject).servos.isEmpty())
+
+        // ⑨ 判定链本身：绝不输出 PASS
+        check("MonitorVerdict 不含 PASS",
+            MonitorVerdict.entries.none { it.name == "PASS" })
+        check("toJson 的 verdict 不是 PASS 且带部位表",
+            eval(health(percent = 5.0)).toJson().let { j ->
+                j.get("verdict").asString != "PASS" && j.getAsJsonObject("parts").size() > 0 })
+        check("flaggedParts 只返回 WARN/CRITICAL",
+            eval(health(percent = 5.0)).flaggedParts().all {
+                eval(health(percent = 5.0)).severityOf(it) in listOf(Severity.WARN, Severity.CRITICAL) })
+    }
+
+    // ---- N+2. 3D 几何：两条独立算法互算 / 投影范围 / 深度排序 ----
+    private fun testDuckModelGeometry() {
+        println("\n[N+2] 3D 仿真模型几何（旋转/投影纯 JVM 真跑）")
+        val g = DuckModelGeometry
+        val p = Vec3(1f, 0f, 0f)
+        val q90 = g.rotateY(p, 90.0)
+        check("旋转 90°：+x 转向 -z", g.near(q90, Vec3(0f, 0f, -1f))) { "got=$q90" }
+        check("旋转 0° 是恒等", g.near(g.rotateY(p, 0.0), p))
+        check("旋转 360° 回到原点", g.near(g.rotateY(p, 360.0), p, 1e-3f))
+        // 🔴 两条独立算法互算：主公式 vs 旋转群复合律 R(a)=R(a/2)·R(a/2)
+        val angles = listOf(0.0, 17.0, 45.0, 90.0, 123.0, 270.0, 359.0)
+        check("两条独立旋转算法在 7 个角度上互算一致",
+            angles.all { a -> g.near(g.rotateY(Vec3(0.7f, -1.2f, 0.4f), a),
+                g.rotateYTwice(Vec3(0.7f, -1.2f, 0.4f), a), 1e-3f) })
+        check("负对照:两次半角 != 一次半角（复合律真的在起作用）",
+            !g.near(g.rotateYTwice(p, 90.0), g.rotateY(p, 45.0)))
+
+        val w = 720f; val h = 420f
+        val f0 = g.frame(0.0, w, h)
+        check("一帧包含全部 21 个部位锚点",
+            f0.nodes.size == g.NODES.size && g.NODES.size == 21) { "nodes=${f0.nodes.size}" }
+        check("壳体线框与骨架都非空", f0.hull.isNotEmpty() && f0.bones.isNotEmpty())
+        check("投影点全部落在画布内",
+            f0.nodes.all { (_, q) -> q.x in -1f..w + 1f && q.y in -1f..h + 1f })
+        check("节点/线按深度升序（远→近，painter's algorithm）",
+            f0.nodes.zipWithNext().all { (a, b) -> a.second.depth <= b.second.depth } &&
+                f0.hull.zipWithNext().all { (a, b) -> a.avgDepth <= b.avgDepth })
+        check("透视近大远小：同 x/y、z 更大 ⇒ 离中心更远",
+            g.project(Vec3(1f, 0f, 1f), w, h).x > g.project(Vec3(1f, 0f, -1f), w, h).x)
+        check("负对照:0° 与 90° 的帧投影确实不同",
+            f0.nodes.map { it.second.x } != g.frame(90.0, w, h).nodes.map { it.second.x })
+        check("负对照:旋转后 y 不应整体漂移",
+            abs(g.frame(45.0, w, h).nodes.first().second.y - f0.nodes.first().second.y) < 1f ||
+                abs(g.frame(45.0, w, h).nodes.first().second.x - f0.nodes.first().second.x) > 0f)
+
+        // 异常部位筛选：severityOf 由调用方注入（与 MonitorReport 单一真源对接）
+        val flagged = f0.flagged { if (it == RobotPart.MOUTH) Severity.CRITICAL else Severity.UNKNOWN }
+        check("flagged() 只返回异常部位",
+            flagged.size == 1 && flagged[0].first.part == RobotPart.MOUTH)
+        check("负对照:全 UNKNOWN 时零异常标记",
+            f0.flagged { Severity.UNKNOWN }.isEmpty())
+        check("模型节点覆盖 15 关节 + 6 系统部位",
+            g.NODES.count { it.part.kind == RobotPart.PartKind.JOINT } == 15 &&
+                g.NODES.count { it.part.kind == RobotPart.PartKind.SYSTEM } == 6)
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         println("=" * 60)
@@ -1338,6 +1568,8 @@ object CoreSelfTest {
         testPeerApiVersionObservability()
         testConnectFailureReason()
         testAiDebugPolicy()
+        testHardwareMonitor()
+        testDuckModelGeometry()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)

@@ -3,7 +3,7 @@
 给 MicroDuck（飞特 HD-1910，fanhao `hd1910-v167-trunk-imu-i2c` 固件）用的安卓控制端。
 Native Kotlin。**当前进度：P0 全闭环 + P1 驾驶/健康 + 多页/横屏/双模式 UI + 开源遥控 App 方案对照落地，
 已在 Android 真机上运行验证**。
-`core` 真编译真测 **383/383**；真固件活体：**C2 11/11**、**C2+ 真状态流 24/24**、
+`core` 真编译真测 **454/454**；真固件活体：**C2 11/11**、**C2+ 真状态流 24/24**、
 **P1 驾驶 28/28（连跑 5 次）**；**真机 UI 门禁 59/59**；
 `:app:assembleDebug` / `:app:assembleRelease` 均 **BUILD SUCCESSFUL**。
 
@@ -140,7 +140,8 @@ Native Kotlin。**当前进度：P0 全闭环 + P1 驾驶/健康 + 多页/横屏
 重写 `MainActivity.kt`、`AndroidManifest.xml`、`JoystickView.kt`、`styles.xml`、`tools/device_ui_check.py`。
 零新增依赖（Material Components Views 1.12.0 + AppCompat，ViewCompat 走传递依赖）。
 
-- `bash tools/selftest.sh` ⇒ **383 passed / 0 failed**（`SELFTEST_RC=0`，含 `[N+1]` 24 条 AI 调试策略真跑断言）。
+- `bash tools/selftest.sh` ⇒ **383 passed / 0 failed**（该阶段当时值，`SELFTEST_RC=0`；
+  当前为 **454/454**，见「硬件状态监控」章节）。
 - `JAVA_HOME=E:/软件工具/OpenJdk17 ./gradlew :app:assembleDebug --offline` ⇒
   **BUILD SUCCESSFUL / GRADLE_RC=0**（`compileDebugKotlin` 真执行）。
 - `adb install -r` ⇒ `Success`；`python tools/device_ui_check.py` ⇒ **59 passed / 0 failed**
@@ -285,7 +286,8 @@ python tools/ai_debug_bridge.py --cmd rpc --method system.info
 python tools/ai_debug_bridge.py --cmd mock            # 离线自检通道是否活着
 ```
 
-命令白名单 `help/status/scan/connect/mock/rpc/disconnect`；`rpc` 只发
+命令白名单 `help/status/scan/connect/mock/rpc/disconnect/monitor`（`monitor` = 只读硬件监控报告，
+输出 `verdict/parts/alerts`，与 UI 调同一个 `SessionHolder.monitorReport()`）；`rpc` 只发
 `AiDebugPolicy.READ_ONLY_METHODS`，`robot.move` / `robot.do` / `net.connect` /
 `system.authenticate` 等一律拒绝（core 自检 + 静态检查器双向负对照锁住）。
 结果恒标 `COLLECTED_ONLY_NOT_PASS`，**不产出验收结论**。
@@ -300,6 +302,66 @@ python tools/check_all_app_gates.py --selftest
 动态发现 `tools/*.py` 里所有 `--selftest` 工具并**真起进程**跑，另加 core JVM 自检与
 APK 产物隔离核验；`rc=0` 但输出 `1/5 passed`、无结论行、`PRECONDITION_FAIL` 一律判红。
 `ALL_PASS` 只代表离线门禁，不验证真机、不改 `ship_verdict`。
+`tools/check_hardware_monitor.py`（16/16 注入式负对照）也由它自动纳管。
+
+## 硬件状态监控 + 缓慢旋转 3D 仿真模型（2026-11-15）
+
+健康页新增：**每硬件状态**（电池/舵机/CPU/IMU/总线/通信链路/21 个部位）、
+**状态异常提醒**、**低电量与高温告警**，以及一个**缓慢旋转的鸭子仿真模型**；
+异常部位按严重度着色：绿=正常 / 琥珀=警告 / 红=严重 / **灰=未读到**。
+模型是**示意几何，不是运动学解算**，不冒充真实关节位姿。
+
+### 零新增依赖的 3D 路线
+Google Android 平台文档 `android.graphics.Camera`（API 1）：「compute 3D transformations
+and generate a matrix that can be applied … on a Canvas」。本项目用的是**软件透视投影 →
+2D Canvas 绘制**（线框 + 骨架 + 部位标记），无需 OpenGL ES / Sceneform / filament，
+因此离线 `--offline` 构建不受影响。旋转、投影、深度排序全在 core 的
+`DuckModelGeometry.kt` 纯 JVM 实现，可被自检真跑（app 层 Canvas 在 JVM 是 stub）。
+旋转由 1s tick 驱动 **900ms 有限补间转 6°**（一圈 60s），不用无限动画 —— 真机门禁踩过
+「持续 UI 刷新 → uiautomator idle 死锁」，且所有新 `TextView` 都走 `setTextIfChanged`。
+
+### 真字段与协议边界（先查一手源码，不造字段）
+| 想要的状态 | 真实来源 | 边界 |
+|---|---|---|
+| 电量/电压 | `battery.volts` / `percent` | 服务端已算好，App 不重算；缺失 ≠ 0 V |
+| 温度 | `motors.{hottest,max_c,mean_c}`、`cpu_temp_c` | **只有聚合量**，其余 14 个关节温度不提供 |
+| 通信状态 | `bus.*`、`control_loop.last_tick_age_ms`、传输层事件、health 新鲜度 | 协议**没有**无线 RSSI，`net.status.signal` 是 WiFi 0–100 且属另一 method |
+| 异常位置 | `BusHealth.missing: Vec<u8>` 点名缺失舵机 ID | `JOINT_IDS` 映射到 15 个模型关节锚点，实机 15 个 ID 全缺 ⇒ 全身标红 |
+
+`btd/src/route.rs` 只放行 `RobotHealth`、拒绝 `RobotSubscribe`，故手机侧只能 2 秒级
+`robot.health` 轮询，拿不到 `robot.state` 流。
+
+### 告警阈值（每条都带 `basis` 一手依据，UI/JSON 可追溯）
+| 判据 | WARN | CRITICAL | 依据 |
+|---|---|---|---|
+| 舵机温度 | ≥ 60 °C | ≥ 70 °C | Feetech STS3215 产品规格书：工作上限 60 °C、>70 °C 关扭矩 |
+| CPU 温度 | ≥ 80 °C | ≥ 85 °C | Radxa ZERO 3W Product Brief Rev1.8 §6.5（85 °C thermal governor） |
+| 电池 | < 20 % | < 10 % 或 ≤ 6.6 V | `battery_percent` 6.6 V→0% / 8.2 V→100%；2S Li-ion 3.3 V/芯警戒线 |
+| 总线 | `consecutive_errors>0` | `missing[]` 非空 / `startup_failures>0` | `BusHealth` 注释「naming them is the point」 |
+| IMU / 控制环 | 陈旧块 / tick>1s / <90% target | `ready=false` / 链路 DOWN | `ImuHealth` / `LoopHealth` |
+
+🔴 这些是**本地显示策略阈值，不是固件判定**：`robotd::health()` 注释明写描述量
+「Reported, never judged」；`healthy/degraded/reason` 作为独立判据单独接入。
+
+### 数据真实性分层（防假绿）
+`NO_DATA`（未连接/调用失败）⇒ 零告警；`MOCK_FIXTURE` ⇒ **verdict 恒 `DEMO_ONLY`**、
+每条告警带 `demo=true`、摘要自带「非实机读数」；`REAL_HEALTH` 才允许触发告警。
+字段缺失一律 `UNKNOWN` 灰色，**绝不默认绿**；`MonitorVerdict` 枚举**没有 PASS**。
+`SessionHolder.monitorReport()` 是唯一入口，UI 与 AI 通道 `monitor` 命令调同一个函数。
+
+### 镜像/固件补丁提案：`PATCH_PROPOSED_NOT_APPLIED`
+用户已授权「镜像与软件都可改」。软件侧已按授权真改并做了**协议前向兼容**：
+`HealthSnapshot.parseServos()` 可消费未来的 `servo_telemetry`，字段出现即启用逐舵机判据。
+但**本轮不重烧镜像**，因为机械核对过的前置前提不成立：本机无 `cargo/rustc`、
+`.upstream/` 被 gitignore（改上游不产生可交付证据）、板上是 V112 的 `robotd` v40
+而本地一手源码是 API 39、BLE `FLOOR_MTU=20` 下 15 路遥测需先核 btd 响应分片、
+重打包会破坏 V112 镜像 sha pin、手机已拔无法端到端复验。
+精确 diff 与落地 SOP 见 `docs/active/microduck-安卓App-硬件监控与3D仿真模型-2026-11-15.md` §5。
+**改本地 vendor 源码 ≠ 镜像优化完成。**
+
+⚠️ 手机已拔 ⇒ 3D 真机渲染、旋转对 `uiautomator` idle 的影响、真机 59/59 门禁、
+`monitor` 的 adb 端到端、真机告警触发行为**全部 `UNVERIFIED`**；
+`BA-X-5` / `live_hardware_accessed` / `ship_verdict` 一个都没翻。
 
 ## 验证命令
 
@@ -309,7 +371,9 @@ bash tools/selftest.sh
 ```
 干三件事：用 **真 Kotlin 2.4.0 + JDK17 + `-jvm-target 17`** 编译 core+harness →
 把 gson 合并进 `build/fat/`（绕开 Windows classpath 分隔符坑）→ 跑 main，失败 exit 1。
-当前结果：**383 passed / 0 failed**（含 `[N+1]` AI 调试通道策略真跑 24 条；`[22-24]` 头部控制 / `robot.head` / `robot.state`
+当前结果：**454 passed / 0 failed**（`[N+1]` AI 调试通道策略真跑 24 条；
+本轮新增 `[N+2]` 硬件监控/阈值/异常部位绑定 **55** 条、`[N+3]` 3D 几何两算法互算 **15** 条，
+另 1 条来自「命令集写死 7 个」拆成集合断言 + `monitor` 放行；`[22-24]` 头部控制 / `robot.head` / `robot.state`
 缺失≠零 后，连跑多次无偶发）。覆盖：
 `[1-7]` Mock 后端（握手/业务/重连/幂等重放/错误码/状态门禁/并发负对照）+ `[8-12]` **阶段 C1 真 Socket**
 （换后端零改动、TCP 粘包/半包分帧、真断链→重连→重握手→重订阅、错误码经真 socket 透传、
@@ -657,6 +721,15 @@ JAVA_HOME=E:/软件工具/OpenJdk17 ./gradlew :core:compileKotlin :core:compileT
   `core` **383/383**、`:app:assembleDebug/Release` **BUILD SUCCESSFUL**、
   `tools/check_all_app_gates.py --selftest` **ALL_PASS**、软件侧门禁 **51/51**。
   ⚠️ 手机已拔 ⇒ 真机 AI 通道端到端、修复后 App 握手、`BA-X-5` 全部 4 项仍 `UNVERIFIED`。
+- ✅ **硬件状态监控 + 缓慢旋转 3D 仿真模型已完成（2026-11-15，离线）**：
+  21 部位状态 / 低电量高温告警 / `bus.missing[]` 精确点名 15 个关节并着色 /
+  零新依赖 Canvas 软件透视投影 / AI 通道只读 `monitor` 命令；
+  阈值全部带一手依据，`NO_DATA` 与 `DEMO_ONLY` 分层，缺失一律灰色。
+  `core` **454/454**、`check_hardware_monitor.py` 注入式负对照 **16/16**、
+  `check_all_app_gates.py --selftest` **ALL_PASS**。
+  🔴 逐舵机遥测镜像补丁 = `PATCH_PROPOSED_NOT_APPLIED`（无 Rust 工具链 /
+  `.upstream` 不入库 / 板上 v40 与本地 API39 不同快照 / BLE 20B 需分片 / 手机已拔）；
+  App 侧已前向兼容。**真机渲染、告警触发、59/59 门禁复跑仍 `UNVERIFIED`**。
 - **P2/P3**：视频（WebRTC mediad）、自有策略加载、标定/故障/技能屏。
 - 待拍板：Q1 仿真后端选型 / Q2 relay 形态 / Q3 BLE 是否加应用层加密 / Q5 无 stand 策略时「站立」按钮语义 /
   **R4 netpad 预开 vs 纯 WebRTC**（现双通道都已实现，可延后决定）。

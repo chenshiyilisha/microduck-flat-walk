@@ -3,6 +3,19 @@ package io.microduck.app.core
 import com.google.gson.JsonObject
 
 /**
+ * 上游「逐舵机遥测」纯新增补丁提案的可选字段（见
+ * `docs/active/microduck-安卓App-硬件监控与3D仿真模型-2026-11-15.md` §固件补丁提案）。
+ * 当前 `ft1910` 一手协议与板上 v40 镜像**都没有**这些字段；这里只是前向兼容解析，
+ * 拿到就用、拿不到就空，绝不生成占位值。
+ */
+data class ServoTelemetry(
+    val id: Int,
+    val tempC: Double?,
+    val volts: Double?,
+    val load: Double?,
+)
+
+/**
  * `robot.health` 应答的安全解析 —— 一手字段来自 B 代 `duck-ipc-proto/src/lib.rs:2429+`
  * （`HealthResult` / `Battery:2603` / `LoopHealth:2492` / `BusHealth:2516` / `MotorThermal:2589`）。
  *
@@ -41,6 +54,21 @@ data class HealthSnapshot(
     val lastTickAgeMs: Long?,
     val busErrors: Int?,
     val startupFailures: Int?,
+    // ── 以下为 2026-11-15 硬件监控扩展，**纯新增且全带默认值**，不破坏既有构造/自检 ──
+    /** `BusHealth.missing`：协议在空数组时 `skip_serializing_if` 省略，故要区分「缺失」与「显式空」。 */
+    val missingIds: List<Int> = emptyList(),
+    val missingFieldPresent: Boolean = false,
+    val imuReady: Boolean? = null,
+    val imuStaleBlocks: Long? = null,
+    val imuConsecutiveStaleBlocks: Long? = null,
+    val cpuThrottleLevel: Int? = null,
+    val cpuThrottleMaxLevel: Int? = null,
+    val cpuThrottleKhz: Int? = null,
+    /**
+     * 前向兼容：上游纯新增补丁提案里的逐舵机遥测。**当前板上 v40 镜像未提供**，
+     * 字段缺失即空列表 ⇒ 14 个关节温度保持 UNKNOWN，绝不填 0 / 造数。
+     */
+    val servos: List<ServoTelemetry> = emptyList(),
 ) {
     /** 缺电池时绝不显示 0.00 V。 */
     fun batteryText(): String {
@@ -83,6 +111,10 @@ data class HealthSnapshot(
             val motors = obj(o, "motors")
             val loop = obj(o, "control_loop")
             val bus = obj(o, "bus")
+            val imu = obj(o, "imu")
+            val throttle = obj(o, "cpu_throttle")
+            val missingEl = try { bus?.get("missing") } catch (_: Exception) { null }
+            val missingPresent = missingEl != null && missingEl.isJsonArray
             return HealthSnapshot(
                 healthy = bool(o, "healthy", false),
                 degraded = bool(o, "degraded", false),
@@ -102,8 +134,49 @@ data class HealthSnapshot(
                 lastTickAgeMs = lng(loop, "last_tick_age_ms"),
                 busErrors = integer(bus, "consecutive_errors"),
                 startupFailures = integer(bus, "startup_failures"),
+                missingIds = if (missingPresent) intArray(missingEl) else emptyList(),
+                missingFieldPresent = missingPresent,
+                imuReady = nullableBool(imu, "ready"),
+                imuStaleBlocks = lng(imu, "stale_blocks"),
+                imuConsecutiveStaleBlocks = lng(imu, "consecutive_stale_blocks"),
+                cpuThrottleLevel = integer(throttle, "level"),
+                cpuThrottleMaxLevel = integer(throttle, "max_level"),
+                cpuThrottleKhz = integer(throttle, "khz"),
+                servos = parseServos(o),
             )
         }
+
+        /** 逐舵机补丁的前向兼容解析：字段名与补丁提案一致，两个别名都接受，缺一不可读即丢弃该行。 */
+        private fun parseServos(o: JsonObject): List<ServoTelemetry> {
+            val arr = try {
+                (o.get("servo_telemetry") ?: o.get("servos"))
+                    ?.takeIf { it.isJsonArray }?.asJsonArray
+            } catch (_: Exception) { null } ?: return emptyList()
+            val out = mutableListOf<ServoTelemetry>()
+            for (el in arr) {
+                if (!el.isJsonObject) continue
+                val e = el.asJsonObject
+                val id = integer(e, "id") ?: continue
+                if (RobotParts.partOfId(id) == null) continue   // 未知 ID 不猜部位
+                out += ServoTelemetry(
+                    id = id,
+                    tempC = num(e, "temp_c") ?: num(e, "temperature"),
+                    volts = num(e, "volts") ?: num(e, "voltage"),
+                    load = num(e, "load"),
+                )
+            }
+            return out
+        }
+
+        private fun nullableBool(o: JsonObject?, key: String): Boolean? = try {
+            primitive(o, key)?.asBoolean
+        } catch (_: Exception) { null }
+
+        private fun intArray(el: com.google.gson.JsonElement?): List<Int> = try {
+            el?.asJsonArray?.mapNotNull {
+                if (it.isJsonPrimitive && !it.isJsonNull) it.asInt else null
+            } ?: emptyList()
+        } catch (_: Exception) { emptyList() }
 
         private fun obj(o: JsonObject?, key: String): JsonObject? = try {
             o?.get(key)?.takeIf { it.isJsonObject }?.asJsonObject

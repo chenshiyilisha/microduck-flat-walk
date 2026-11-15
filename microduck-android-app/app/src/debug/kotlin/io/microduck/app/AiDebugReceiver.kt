@@ -119,6 +119,7 @@ class AiDebugReceiver : BroadcastReceiver() {
             "mock" -> doMock(c)
             "rpc" -> doRpc(c, c.method, c.paramsJson)
             "disconnect" -> doDisconnect(o)
+            "monitor" -> doMonitor(o)
             else -> { o.fail("UNREACHABLE_BRANCH"); emit(o) }
         }
     }
@@ -172,6 +173,20 @@ class AiDebugReceiver : BroadcastReceiver() {
         o.addProperty("ble_service_uuid", Wire.BLE_SERVICE_UUID)
         o.addProperty("ble_rpc_uuid", Wire.BLE_RPC_UUID)
         o.addProperty("next", "status 只回报观测值；判 PASS 走既有 board_acceptance 证据链")
+        emit(o)
+    }
+
+    /**
+     * 只读硬件监控报告。与 MainActivity 健康页调的是**同一个** `SessionHolder.monitorReport()`
+     * ⇒ AI 读到的 verdict / 部位严重度与 UI 完全一致，不会出现「两条链各自算」的漂移。
+     * 明确不输出 PASS：`MonitorVerdict` 只有 NO_DATA/DEMO_ONLY/NOMINAL/WARNING/CRITICAL。
+     */
+    private fun doMonitor(o: JsonObject) {
+        val r = SessionHolder.monitorReport()
+        o.add("monitor", r.toJson())
+        o.add("summary_lines", gson.toJsonTree(r.summaryLines()))
+        o.addProperty("flagged_parts", r.flaggedParts().joinToString(",") { it.name })
+        o.addProperty("next", "monitor 只回报观测值；MOCK 源 verdict=DEMO_ONLY，不得当真机告警")
         emit(o)
     }
 

@@ -36,7 +36,11 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputLayout
 import io.microduck.app.ble.BleConnectPanel
+import io.microduck.app.core.MonitorReport
+import io.microduck.app.core.MonitorVerdict
+import io.microduck.app.core.Severity
 import io.microduck.app.core.StateSnapshot
+import io.microduck.app.monitor.DuckModelView
 import io.microduck.app.update.GithubReleaseClient
 import io.microduck.app.update.UpdateController
 import io.microduck.app.update.UpdatePanel
@@ -92,6 +96,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var stateSourceText: TextView
     private lateinit var healthText: TextView
     private lateinit var healthSourceText: TextView
+    // 2026-11-15 硬件监控：旋转仿真模型 + 告警横幅 + 部位状态
+    private lateinit var duckModelView: DuckModelView
+    private lateinit var monitorAlertText: TextView
+    private lateinit var monitorPartsText: TextView
     private lateinit var autoRefreshBox: CheckBox
     // M3 exposed dropdown menu：不再是 android.widget.Spinner（平台老式弹窗）。
     // 持有 MaterialAutoCompleteTextView 以便 restoreSettingsUi() 用 setText(text, false) 回写选中值。
@@ -589,6 +597,24 @@ class MainActivity : AppCompatActivity() {
             text = "robot.health 真字段：缺失显示「未读到」，绝不渲染成 0"
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
         })
+        // ── 2026-11-15 硬件监控：缓慢旋转的鸭子模型 + 异常部位着色 ──
+        // 顶部两行断言文本（healthSourceText / 上面这行）刻意保持在最前，
+        // 真机门禁 uiautomator 只 dump 视口内节点，插到它们前面会把 59 条断言挤红。
+        duckModelView = DuckModelView(this@MainActivity).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, dp(168))
+        }
+        col.addView(duckModelView)
+        monitorAlertText = TextView(this@MainActivity).apply {
+            textSize = 12f; setTextColor(c(R.color.md_text))
+            setPadding(0, dp(4), 0, dp(4)); maxLines = 5
+        }
+        col.addView(monitorAlertText)
+        monitorPartsText = TextView(this@MainActivity).apply {
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setTypeface(Typeface.MONOSPACE); maxLines = 6
+            setPadding(0, dp(2), 0, dp(6))
+        }
+        col.addView(monitorPartsText)
         val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(MaterialButton(this@MainActivity).apply {
             text = "刷新"; minimumHeight = dp(48)
@@ -848,6 +874,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPage(i: Int) {
         currentPage = i
+        if (::duckModelView.isInitialized) duckModelView.setRotating(i == 1)
         statePage.visibility = if (i == 0) View.VISIBLE else View.GONE
         healthPage.visibility = if (i == 1) View.VISIBLE else View.GONE
         settingsPage.visibility = if (i == 2) View.VISIBLE else View.GONE
@@ -883,6 +910,48 @@ class MainActivity : AppCompatActivity() {
         launchButton.text = if (manual) "进入遥控驾驶（横屏全屏）" else "进入监测视图（横屏全屏）"
         healthSourceText.text = if (SessionHolder.kind == "MOCK")
             "⚠ 当前为 Mock 演示夹具，非实机读数" else "robot.health 实机应答"
+        renderMonitor()
+    }
+
+    /**
+     * 硬件监控渲染。1s tick 也会走这里 ⇒ 必须 `setTextIfChanged`：
+     * 真机门禁曾因「1s setText 连发 AccessibilityEvent」导致 uiautomator waitForIdle 死锁，
+     * 修法就是变化才写（见 DriveActivity 的 1500ms 节流 + setTextIfChanged）。
+     */
+    private fun renderMonitor() {
+        if (!::duckModelView.isInitialized) return
+        val r: MonitorReport = SessionHolder.monitorReport()
+        duckModelView.setReport(r)
+        monitorAlertText.setTextColor(
+            when (r.verdict) {
+                MonitorVerdict.CRITICAL -> c(R.color.md_bad)
+                MonitorVerdict.WARNING, MonitorVerdict.DEMO_ONLY -> c(R.color.md_warn)
+                MonitorVerdict.NOMINAL -> c(R.color.md_ok)
+                MonitorVerdict.NO_DATA -> c(R.color.md_text_dim)
+            },
+        )
+        monitorAlertText.setTextIfChanged(r.summaryLines().take(5).joinToString("\n"))
+        val counts = Severity.entries.associateWith { s -> r.parts.values.count { it == s } }
+        monitorPartsText.setTextIfChanged(buildString {
+            append("部位 ").append(r.parts.size)
+                .append(" · 正常 ").append(counts[Severity.OK] ?: 0)
+                .append(" / 警告 ").append(counts[Severity.WARN] ?: 0)
+                .append(" / 严重 ").append(counts[Severity.CRITICAL] ?: 0)
+                .append(" / 未读到 ").append(counts[Severity.UNKNOWN] ?: 0)
+            val flagged = r.flaggedParts()
+            if (flagged.isNotEmpty()) {
+                append("\n异常部位：").append(flagged.joinToString("、") {
+                    "${it.label}=${r.severityOf(it)}"
+                })
+            } else {
+                append("\n未读到 ≠ 正常：灰点表示协议未提供该部位读数")
+            }
+        })
+    }
+
+    /** 只有内容真变了才写，避免 1s tick 持续发 AccessibilityEvent。 */
+    private fun TextView.setTextIfChanged(s: CharSequence) {
+        if (text.toString() != s.toString()) text = s
     }
 
     private fun connectFromUi() {
@@ -999,6 +1068,9 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             SessionHolder.tick()
             renderAll()
+            // 只在健康页可见时推进模型旋转；有限补间（900ms）而非无限动画，
+            // 每 1s 留 100ms 主线程空窗，避免 uiautomator waitForIdle 被持续 invalidate 卡住。
+            if (currentPage == 1 && ::duckModelView.isInitialized) duckModelView.advanceFrame()
             if (SessionHolder.autoRefreshHealth && currentPage == 1) refreshHealth()
             ui.postDelayed(this, 1_000)
         }
