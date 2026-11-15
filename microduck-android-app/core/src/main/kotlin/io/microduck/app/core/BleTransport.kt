@@ -90,6 +90,14 @@ class BleTransport(
         val linked = link.connect()
         if (linked.isFailure) return Result.failure(linked.exceptionOrNull() ?: IOException("BLE_LINK_CONNECT_FAILED"))
 
+        // 🔴 **不请求 MTU 协商**（一手依据见 [GattLink.requestMtu] 注释）：Android 14 起首个 GATT client 的
+        // requestMtu 由系统固定为 517，且本机/板端对该请求的 onMtuChanged 回调常延迟或缺失；一旦发出却未收到
+        // 回调，该请求在 Android 蓝牙栈层面会一直「outstanding」，与后续 read/hello 写竞争「单 outstanding
+        // 操作」约束 → 首条 hello 写被 ERROR_GATT_WRITE_REQUEST_BUSY 拒绝（真机实测：无论把 requestMtu 放在
+        // onServicesDiscovered 还是这里、是否 await，只要发出就可能 BUSY）。而客户端出站固定 FLOOR_MTU=20、
+        // 不依赖协商 MTU（duckctl 同款），入站 chunk 由板端按自身 MTU 切、与本地协商无关 ⇒ 请求 MTU 在此链路
+        // 是净负收益。故直接不请求；[GattLink.requestMtu] 保留为可选能力但本连接路径不调用。
+
         // 契约动作：先 read 一次 RPC_UUID，促成加密配对 + 拿 API_VERSION（gatt.rs:44-56）。
         // 值必须留下来：见 peerApiVersion 注释（版本 skew 是契约要求可观测的）。
         val apiVersion = link.readApiVersion()

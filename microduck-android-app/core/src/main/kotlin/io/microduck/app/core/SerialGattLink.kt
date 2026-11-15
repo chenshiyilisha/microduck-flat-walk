@@ -80,6 +80,9 @@ class SerialGattLink(
     override fun readApiVersion(): Result<Int> =
         runSerial("readApiVersion") { delegate.readApiVersion() }
 
+    override fun requestMtu(): Result<Unit> =
+        runSerial("requestMtu") { delegate.requestMtu() }
+
     override fun setNotificationHandler(onChunk: (ByteArray) -> Unit): Result<Unit> =
         runSerial("setNotificationHandler") { delegate.setNotificationHandler(onChunk) }
 

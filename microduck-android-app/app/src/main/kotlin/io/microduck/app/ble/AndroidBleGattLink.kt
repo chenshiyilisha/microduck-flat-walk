@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import io.microduck.app.core.BleChunkCodec
 import io.microduck.app.core.GattLink
 import io.microduck.app.core.Wire
@@ -41,12 +42,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  6. API 33+ 用内存安全的 `writeCharacteristic(ch, value, writeType): Int`；以下用 setValue + 旧重载。
  *  7. Android 14 起首个 GATT client requestMtu 固定 517（官方行为变更）——但客户端出站仍用
  *     [BleChunkCodec.FLOOR_MTU]=20，不受协商 MTU 影响（duckctl 同款选择）。
- *  8. 🔴 2026-11-14 真机修正：`requestMtu` 是**可选优化，不是建链前置**。旧实现把
- *     `onMtuChanged` 当作 `connect()` 就绪的硬条件，且 `markMtuDone()` 定义了从未调用，
- *     一旦该回调不来（部分机型/首次连接），`awaitConnectReady()` 必超时 ⇒ 整个 BLE 连接失败。
- *     Google Android 平台文档 `connect-gatt-server` 只要求 connect → onConnectionStateChange
- *     → discoverServices → onServicesDiscovered（原文实访），MTU 不在必需链上；出站固定 20B
- *     也不依赖协商 MTU。⇒ 改为「服务发现即就绪」，MTU 回调到了只更新 `negotiatedMtu`。
+ *  8. 🔴 `requestMtu` 是**可选优化，不是建链前置**（一手 Android 平台文档 `connect-gatt-server`
+ *     只要求 connect → onConnectionStateChange → discoverServices → onServicesDiscovered；MTU 不在
+ *     必需链上，出站固定 20B 也不依赖协商 MTU）。🔴 **2026-11-15 真机修正**：MTU 不能再在
+ *     `onServicesDiscovered` 里 fire-and-forget——那样它会作为 untracked outstanding 操作与后续
+ *     `readApiVersion`/hello 写竞争 Android「单 outstanding 操作」约束，导致首条 hello 写被
+ *     `ERROR_GATT_WRITE_REQUEST_BUSY` 拒绝（真机实测）。改为由 `BleTransport.connect()` 显式调
+ *     `GattLink.requestMtu()`，经 `beginOp/awaitOp` 串行发出、等 `onMtuChanged` 回调后再放行协议帧；
+ *     失败/超时非致命（保持 `FLOOR_MTU`）。
  *
  * 所有 platform I/O 回调都在 Android 的 Binder 线程上触发；本类用 latch 把回调式 API 适配成
  * [GattLink] 的同步阻塞契约（与 TcpTransport.request 同样的「阻塞等信号」思路）。
@@ -57,6 +60,8 @@ class AndroidBleGattLink(
     private val device: BluetoothDevice,
     /** 建链总超时。真机首连含扫描停止 + 配对协商，3 s 偏紧；给 12 s（不等于降低判据强度）。 */
     private val operationTimeoutMs: Long = 12_000,
+    /** MTU 协商超时：可选优化，回调不来也不致命，给 2 s 即放行后续协议帧（不等于降低判据强度）。 */
+    private val mtuTimeoutMs: Long = 2_000,
 ) : GattLink {
 
     private val serviceUuid: UUID = UUID.fromString(Wire.BLE_SERVICE_UUID)
@@ -85,6 +90,27 @@ class AndroidBleGattLink(
     @Volatile private var opLatch: CountDownLatch? = null
     @Volatile private var opStatus: Int = BluetoothGatt.GATT_SUCCESS
     @Volatile private var opReadValue: ByteArray? = null
+    /**
+     * 当前在飞的 GATT 操作标签（"connect"/"read"/"MTU"/"cccd"/"write"）。
+     * 🔴 2026-11-15 真机根因修复：Android 的 GATT 回调（尤其 [onMtuChanged]）**不带 op id**，
+     * 且在重连（栈缓存了先前协商的 MTU）时会于 [onConnectionStateChange] 之后**自动触发**，
+     * 并非只响应你发的 requestMtu。旧 `releaseOp(status)` 不分标签直接 countDown 当前 latch，
+     * 错位回调会**提前释放错误的 latch** → 上层误以为在飞 op 已完成 → 抢发下一条 → 平台报
+     * `ERROR_GATT_WRITE_REQUEST_BUSY`（真机实测 hello 写被拒）。改为按 `opKind` 路由：只有
+     * 回调的标签与当前在飞 op 匹配才释放；错位回调被忽略（写 STRAY 日志供排查）。
+     */
+    @Volatile private var opKind: String? = null
+
+    // 🔴 诊断：GATT 操作/回调时间戳环形缓冲，定位「hello 写 BUSY」时哪个 op 仍 outstanding。
+    private val gattTrace = ArrayDeque<String>()
+    private fun trace(s: String) {
+        val t = (System.currentTimeMillis() % 100000) / 1000.0f
+        synchronized(gattTrace) {
+            gattTrace.addLast("%.2f $s".format(t))
+            while (gattTrace.size > 48) gattTrace.removeFirst()
+        }
+        Log.i("DuckGatt", s)
+    }
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
@@ -96,7 +122,7 @@ class AndroidBleGattLink(
                 g.close()
                 if (this@AndroidBleGattLink.gatt === g) this@AndroidBleGattLink.gatt = null
             }
-            releaseOp(status)
+            releaseOp("connect", status)
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
@@ -105,40 +131,47 @@ class AndroidBleGattLink(
                 val ch = svc?.getCharacteristic(rpcUuid)
                 if (ch == null) {
                     opStatus = GATT_LOCAL_NO_CHARACTERISTIC
-                    releaseOp(status)
+                    releaseOp("connect", status)
                     return
                 }
                 rpcChar = ch
-                g.requestMtu(517)   // 步骤 2：请求 MTU（Android 14 首 client 固定 517）；onMtuChanged 后继续
+                // 🔴 2026-11-15：requestMtu 移出此处。原 fire-and-forget 调 requestMtu 未走 beginOp/awaitOp，
+                // 会在 connect() 返回后仍 outstanding，与后续协议帧竞争「单 outstanding 操作」→ 首条 hello 写
+                // 被 ERROR_GATT_WRITE_REQUEST_BUSY 拒绝（真机实测）。现改为 BleTransport.connect() 显式调
+                // 本类的 requestMtu()（经 beginOp/awaitOp 串行），确保无 outstanding op 再发协议帧。
             } else {
                 opStatus = status
             }
-            releaseOp(status)
+            releaseOp("connect", status)
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
             // 可选优化：只更新协商值，不再作为 connect() 的就绪条件（见类注释第 8 条）。
+            // 🔴 关键：onMtuChanged **不带 op id**，重连时栈会**自动**触发（缓存 MTU），并非只响应你发的
+            // requestMtu。若此刻在飞的是 CCCD/hello 写，错位回调会误释放其 latch → 抢发 → BUSY。
+            // 故仅当当前在飞 op 确为 "MTU" 时才释放；否则忽略（写 STRAY 供排查），绝不碰其它 latch。
             if (status == BluetoothGatt.GATT_SUCCESS) negotiatedMtu = mtu
-            releaseOp(status)
+            trace("onMtuChanged mtu=$mtu status=$status pending=${opKind ?: "none"}")
+            releaseOp("MTU", status)
         }
 
         override fun onCharacteristicRead(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
             if (characteristic.uuid == rpcUuid) opReadValue = value
-            releaseOp(status)
+            releaseOp("read", status)
         }
 
         @Deprecated("API 33 以下兼容回调")
         override fun onCharacteristicRead(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             if (characteristic.uuid == rpcUuid) opReadValue = characteristic.value
-            releaseOp(status)
+            releaseOp("read", status)
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            releaseOp(status)   // 关键：每个 write 都有回调（官方 "in response to every writeCharacteristic call"）
+            releaseOp("write", status)   // 关键：每个 write 都有回调（官方 "in response to every writeCharacteristic call"）
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            releaseOp(status)   // CCCD 写入完成 ⇒ 订阅真正生效
+            releaseOp("cccd", status)   // CCCD 写入完成 ⇒ 订阅真正生效
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
@@ -163,6 +196,7 @@ class AndroidBleGattLink(
         synchronized(opLock) {
             opLatch = CountDownLatch(1)
             opStatus = BluetoothGatt.GATT_SUCCESS
+            opKind = "connect"
             rpcChar = null
         }
         val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -190,7 +224,7 @@ class AndroidBleGattLink(
         val ch = rpcChar ?: return Result.failure(IOException("BLE_GATT_RPC_CHAR_MISSING"))
         return try {
             opReadValue = null
-            if (!beginOp { g.readCharacteristic(ch) }) return Result.failure(IOException("BLE_GATT_READ_REJECTED"))
+            if (!beginOp("read") { g.readCharacteristic(ch) }) return Result.failure(IOException("BLE_GATT_READ_REJECTED"))
             if (!awaitOp("read RPC_UUID")) return Result.failure(IOException("BLE_GATT_READ_TIMEOUT"))
             // RPC_UUID 首字节即 API_VERSION（gatt.rs:44 "read it once for the API version"）；
             // 具体编码由固件定，这里取单字节无符号值，失败则回退 Wire.API_VERSION 让上层继续握手。
@@ -199,6 +233,23 @@ class AndroidBleGattLink(
         } catch (e: Exception) {
             Result.failure(IOException("BLE_GATT_READ_EXCEPTION: ${e.message}"))
         }
+    }
+
+    /**
+     * 协商 ATT MTU（可选优化）。🔴 2026-11-15 真机修正：原实现在 [onServicesDiscovered] 里
+     * fire-and-forget 调 requestMtu（未走 [beginOp]/[awaitOp]），该请求在 connect() 返回后仍
+     * outstanding，与后续 readApiVersion/hello 写竞争 Android「单 outstanding 操作」约束 →
+     * 首条 hello 写被 ERROR_GATT_WRITE_REQUEST_BUSY 拒绝（真机实测）。现经 [beginOp]/[awaitOp]
+     * 串行发出，等 onMtuChanged 回调后才放行后续协议帧。失败/超时非致命：出站固定 20B 不依赖协商 MTU。
+     */
+    override fun requestMtu(): Result<Unit> = try {
+        val g = gatt ?: return Result.failure(IOException("BLE_GATT_NOT_CONNECTED"))
+        if (!beginOp("MTU") { g.requestMtu(517) }) return Result.failure(IOException("BLE_GATT_MTU_REJECTED"))
+        // 超时（回调没来）非致命：保持 FLOOR_MTU，出站不受影响。
+        awaitOp("request MTU", mtuTimeoutMs)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(IOException("BLE_GATT_MTU_EXCEPTION: ${e.message}"))
     }
 
     override fun setNotificationHandler(onChunk: (ByteArray) -> Unit): Result<Unit> {
@@ -224,17 +275,25 @@ class AndroidBleGattLink(
     override fun writeChunk(chunk: ByteArray): Result<Unit> = try {
         val g = gatt ?: return Result.failure(IOException("BLE_GATT_NOT_CONNECTED"))
         val ch = rpcChar ?: return Result.failure(IOException("BLE_GATT_RPC_CHAR_MISSING"))
-        val initiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // API 33+：内存安全重载，返回 BluetoothStatusCodes；ERROR_GATT_WRITE_REQUEST_BUSY 表示上一操作未完
-            g.writeCharacteristic(ch, chunk, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
-                android.bluetooth.BluetoothStatusCodes.SUCCESS
-        } else {
-            @Suppress("DEPRECATION")
-            ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            @Suppress("DEPRECATION") ch.setValue(chunk)
-            @Suppress("DEPRECATION") g.writeCharacteristic(ch)
+        // 🔴 **必须走 [beginOp] 建 latch**：否则 [onCharacteristicWrite] 回调无 latch 可释放，
+        // [awaitOp] 拿到 null latch 会**立即返回 false** → 被误报成 "WRITE_TIMEOUT"（真机实测：hello 写
+        // 被栈接受 initiated=true，但回调永远等不到 → 秒超时）。beginOp 同时保证「单 outstanding 操作」。
+        val initiated = beginOp("write") {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // API 33+：内存安全重载，返回 BluetoothStatusCodes；ERROR_GATT_WRITE_REQUEST_BUSY 表示上一操作未完
+                g.writeCharacteristic(ch, chunk, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) ==
+                    android.bluetooth.BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                @Suppress("DEPRECATION") ch.setValue(chunk)
+                @Suppress("DEPRECATION") g.writeCharacteristic(ch)
+            }
         }
-        if (!initiated) return Result.failure(IOException("BLE_GATT_WRITE_REJECTED_BUSY"))
+        if (!initiated) {
+            trace("WRITE_BUSY kind=write pending=${opKind ?: "none"}")
+            return Result.failure(IOException("BLE_GATT_WRITE_REJECTED_BUSY"))
+        }
         if (!awaitOp("write chunk")) return Result.failure(IOException("BLE_GATT_WRITE_TIMEOUT"))
         if (opStatus != BluetoothGatt.GATT_SUCCESS) return Result.failure(IOException("BLE_GATT_WRITE_STATUS=$opStatus"))
         Result.success(Unit)
@@ -247,14 +306,16 @@ class AndroidBleGattLink(
      * 发起**任一** GATT 操作前先建 latch（必须在 platform 调用之前，否则回调可能先于 latch 到达而丢失）。
      * 读/写/描述符/MTU 都走这里，配合 opLock 保证一次只有一个 outstanding 操作。
      */
-    private fun beginOp(action: () -> Boolean): Boolean = synchronized(opLock) {
+    private fun beginOp(kind: String, action: () -> Boolean): Boolean = synchronized(opLock) {
         opLatch = CountDownLatch(1)
         opStatus = BluetoothGatt.GATT_SUCCESS
-        if (!action()) { opLatch = null; false } else true
+        opKind = kind
+        trace("BEGIN $kind")
+        if (!action()) { opLatch = null; opKind = null; false } else true
     }
 
     private fun writeDescriptorSafe(g: BluetoothGatt, d: BluetoothGattDescriptor, value: ByteArray): Boolean =
-        beginOp {
+        beginOp("cccd") {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 g.writeDescriptor(d, value) == android.bluetooth.BluetoothStatusCodes.SUCCESS
             } else {
@@ -263,11 +324,14 @@ class AndroidBleGattLink(
             }
         }
 
-    private fun awaitOp(what: String): Boolean {
+    private fun awaitOp(what: String, timeoutMs: Long = operationTimeoutMs): Boolean {
         val latch = opLatch ?: return false
         return try {
-            val ok = latch.await(operationTimeoutMs, TimeUnit.MILLISECONDS)
-            if (!ok) opLatch = null
+            val ok = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            if (!ok) {
+                trace("TIMEOUT $what pending=${opKind ?: "none"}")
+                synchronized(opLock) { opLatch = null; opKind = null }
+            }
             ok
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt(); false
@@ -292,10 +356,24 @@ class AndroidBleGattLink(
         return false
     }
 
-    /** 回调到达：释放当前操作 latch（回调在 Binder 线程，opLatch 由 opLock 保护可见性）。 */
-    private fun releaseOp(status: Int) {
-        if (status != BluetoothGatt.GATT_SUCCESS) opStatus = status
-        synchronized(opLock) { opLatch?.countDown() }
+    /**
+     * 回调到达：🔴 **按 `opKind` 路由**，只有标签匹配的回调才释放对应 latch。
+     * 错位回调（重连时栈自动触发的 onMtuChanged、重复 onConnectionStateChange 等）
+     * 不再能 countDown 当前在飞 op 的 latch —— 这正是一手 BUSY 错误的根因（详见 `opKind` 注释）。
+     * 返回 true 表示本回调匹配并释放了在飞 op。
+     */
+    private fun releaseOp(kind: String, status: Int): Boolean = synchronized(opLock) {
+        if (opKind != kind) {
+            trace("STRAY $kind ignored (pending=${opKind ?: "none"})")
+            false
+        } else {
+            if (status != BluetoothGatt.GATT_SUCCESS) opStatus = status
+            opLatch?.countDown()
+            opLatch = null
+            opKind = null
+            trace("RELEASE $kind status=$status")
+            true
+        }
     }
 
     /**

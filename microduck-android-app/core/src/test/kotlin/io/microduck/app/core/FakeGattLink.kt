@@ -58,6 +58,9 @@ class FakeGattLink(
         return Result.success(apiVersion.get())
     }
 
+    /** MTU 协商：可选优化，本夹具无协商，直接成功（出站固定 20B 不受影响）。 */
+    override fun requestMtu(): Result<Unit> = Result.success(Unit)
+
     override fun setNotificationHandler(onChunk: (ByteArray) -> Unit): Result<Unit> {
         handler = onChunk
         return Result.success(Unit)

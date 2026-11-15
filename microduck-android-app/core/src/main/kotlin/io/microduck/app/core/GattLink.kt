@@ -34,6 +34,18 @@ interface GattLink {
     fun connect(): Result<Int>
 
     /**
+     * 协商 ATT MTU（可选优化，非必需）。一手 Android 平台文档 + duckctl 同款：客户端出站固定用
+     * [BleChunkCodec.FLOOR_MTU]=20，不依赖协商结果；Android 14 起首个 GATT client 的 requestMtu 固定 517。
+     *
+     * 🔴 关键约束（真机实测 2026-11-15）：**必须经与 [writeChunk]/[readApiVersion] 同一条串行
+     * 链路（[AndroidBleGattLink] 的 beginOp/awaitOp）发出并等 onMtuChanged 回调**。若在
+     * onServicesDiscovered 里 fire-and-forget 调 requestMtu（未串行），它会作为 untracked outstanding
+     * 操作与后续协议帧竞争 Android「单 outstanding 操作」规则，导致首条 hello 写被
+     * ERROR_GATT_WRITE_REQUEST_BUSY 拒绝。失败/超时非致命，调用方应继续（出站固定 20B 不受影响）。
+     */
+    fun requestMtu(): Result<Unit>
+
+    /**
      * read 一次 RPC_UUID，返回固件报的 API_VERSION（促成配对的契约动作，gatt.rs:44）。
      * 用 count 与 [BleTransport] 的 Wire.API_VERSION 比对；版本 skew 不致命（无 daemon 因版本拒答，
      * 靠 METHOD_NOT_FOUND 降级），但记录以便 UI 提示。

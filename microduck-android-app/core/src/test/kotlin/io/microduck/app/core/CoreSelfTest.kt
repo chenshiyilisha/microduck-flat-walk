@@ -1820,6 +1820,7 @@ object CoreSelfTest {
 
         override fun connect(): Result<Int> = enter("connect") { Result.success(20) }
         override fun readApiVersion(): Result<Int> = enter("readApiVersion") { Result.success(40) }
+        override fun requestMtu(): Result<Unit> = Result.success(Unit)
         override fun setNotificationHandler(onChunk: (ByteArray) -> Unit): Result<Unit> =
             enter("setNotificationHandler") { Result.success(Unit) }
         override fun writeChunk(chunk: ByteArray): Result<Unit> = enter("writeChunk") { Result.success(Unit) }
