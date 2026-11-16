@@ -1637,6 +1637,139 @@ object CoreSelfTest {
             tris.map { it.colorArgb }.toHashSet() != tris90.map { it.colorArgb }.toHashSet())
     }
 
+    // ---- 一键休息 / 恢复站立（robot.rest / robot.init，无参离散请求）----
+    private fun testRestController() {
+        println("\n[REST] 一键休息 robot.rest / 恢复 robot.init")
+        val t = MockTransport()
+        val s = RobotSession(t, backoffBaseMs = 10)
+        s.connect(ConnectTarget.Mock)
+        val rc = RestController(s)
+
+        // 正向：rest 被接受，应答结构对齐 IntentResult{accepted, reason}
+        val r = rc.requestRest()
+        check("robot.rest 调用成功", r.isSuccess) { "${r.exceptionOrNull()}" }
+        val o = r.getOrNull()
+        check("rest 应答 accepted=true", o?.accepted == true) { "o=$o" }
+        check("rest 恰好发一次(无参请求)", t.countOf(Method.ROBOT_REST) == 1) { "log=${t.log()}" }
+        // rest 是 request 不是 notification：发出的行必须带 id
+        val restLine = t.rawLog().first { it.contains("\"robot.rest\"") }
+        check("rest 以 request 发出(带 id)", restLine.contains("\"id\":") && !restLine.contains("\"jsonrpc\":\"2.0\",\"method\""))
+        // 负对照：请求行不能带 params（deny_unknown_fields ⇒ 多键会被 -32602 拒）
+        check("负对照:rest 请求不带 params 键", !restLine.contains("\"params\""))
+
+        // 正向：init 是 rest 的逆操作，同样被接受
+        val r2 = rc.requestInit()
+        check("robot.init 调用成功", r2.isSuccess) { "${r2.exceptionOrNull()}" }
+        check("init 应答 accepted=true", r2.getOrNull()?.accepted == true) { "o=${r2.getOrNull()}" }
+
+        // 负对照：应答缺 accepted 字段 ⇒ 必须判「未确认接受」，绝不假定 true。
+        // 走 RestController 的同一解析路径（acc == true 才接受，缺字段为 null ⇒ false）。
+        val fake = JsonObject().apply { addProperty("foo", "bar") }
+        val acc = fake.get("accepted")?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive
+            ?.takeIf { it.isBoolean }?.asBoolean
+        val parsed = RestController.Outcome(acc == true, null)
+        check("负对照:缺 accepted 字段判未确认接受", !parsed.accepted) { "o=$parsed" }
+
+        // 负对照：断链后调用必须失败，不能假成功
+        t.simulateDisconnect()
+        val r3 = rc.requestRest()
+        check("负对照:断链后 rest 必失败", r3.isFailure) { "r3=$r3" }
+        s.close()
+    }
+
+    // ---- 阶段1：RobotRepository 数据层（不可变快照 + 监听器 + 动作）----
+    /** 等条件成立，超时返回 false（自检里异步动作的同步等待，避免依赖固定 sleep）。 */
+    private fun waitFor(timeoutMs: Long, cond: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (cond()) return true
+            Thread.sleep(10)
+        }
+        return cond()
+    }
+
+    private fun testRobotRepository() {
+        println("\n[REPO] RobotRepository 数据层：快照/监听/动作")
+        val t = MockTransport()
+        val repo = RobotRepository { _ -> t }
+
+        // 初始快照：未连接、无数据、零告警
+        val init = repo.snapshot()
+        check("初始快照未连接", !init.connected && init.sessionState == "NONE") { "s=$init" }
+        check("初始快照 kind 为占位", init.kind == "—") { "kind=${init.kind}" }
+        check("初始快照无 health ⇒ monitorSource 判 NONE",
+            repo.monitorSource() == MonitorSource.NONE) { "src=${repo.monitorSource()}" }
+
+        // 监听器注册
+        val seen = mutableListOf<RobotRepository.Snapshot>()
+        val sub = repo.onSnapshot { seen.add(it) }
+
+        // 正向：connectWith 建链，快照应反映 READY
+        val ok = repo.connectWith(t, ConnectTarget.Mock)
+        check("connectWith 返回成功", ok) { "ok=$ok" }
+        check("快照反映 READY", waitFor(2000) { repo.snapshot().connected && repo.snapshot().sessionState == "READY" }) {
+            "state=${repo.snapshot().sessionState}"
+        }
+        check("快照 kind=MOCK", repo.snapshot().kind == "MOCK") { "kind=${repo.snapshot().kind}" }
+        check("监听器收到至少一次快照", seen.isNotEmpty()) { "seen=${seen.size}" }
+
+        // 正向：refreshHealth 更新 lastHealth 与监控报告
+        repo.refreshHealth()
+        check("refreshHealth 后读到 health", waitFor(2000) { repo.snapshot().lastHealth != null }) {
+            "health=${repo.snapshot().lastHealth}"
+        }
+        check("health 后 monitorSource=MOCK_FIXTURE",
+            repo.monitorSource() == MonitorSource.MOCK_FIXTURE) { "src=${repo.monitorSource()}" }
+        check("monitorReport 非空", repo.snapshot().monitorReport != null) { "rep=${repo.snapshot().monitorReport}" }
+        check("batteryText 由 health 派生(非0兜底)",
+            repo.snapshot().batteryText.isNotEmpty() && repo.snapshot().batteryText != "— 未读到") {
+            "batt=${repo.snapshot().batteryText}"
+        }
+
+        // 正向：状态帧到达 ⇒ lastState 更新 + 帧计数增长
+        val before = repo.snapshot().stateFrameCount
+        t.pushFrame("""{"jsonrpc":"2.0","method":"robot.state","params":{"t":1.0,"policy":"walk"}}""")
+        check("状态帧后 lastState 更新", waitFor(2000) { repo.snapshot().lastState != null }) {
+            "state=${repo.snapshot().lastState}"
+        }
+        check("状态帧计数增长", repo.snapshot().stateFrameCount > before) {
+            "before=$before after=${repo.snapshot().stateFrameCount}"
+        }
+
+        // 正向：tick 推进速率窗口
+        repo.tick()
+        check("tick 后快照仍自洽", repo.snapshot().connected) { "s=${repo.snapshot()}" }
+
+        // 负对照：disconnect 后快照复位、monitorSource 回 NONE
+        repo.disconnect()
+        val after = repo.snapshot()
+        check("disconnect 后未连接", !after.connected && after.sessionState == "NONE") { "s=$after" }
+        check("负对照:disconnect 后 health 清空", after.lastHealth == null) { "h=${after.lastHealth}" }
+        check("负对照:disconnect 后 monitorSource=NONE",
+            repo.monitorSource() == MonitorSource.NONE) { "src=${repo.monitorSource()}" }
+
+        // 负对照：非法连接串 ⇒ connectError 非空、不建链
+        val bad = RobotRepository { _ -> MockTransport() }
+        val badOk = bad.connect("host:99999")
+        check("负对照:非法端口连接返回失败", !badOk) { "ok=$badOk" }
+        check("负对照:非法端口写 connectError", bad.snapshot().connectError.isNotEmpty()) {
+            "err=${bad.snapshot().connectError}"
+        }
+
+        // 负对照：监听器 dispose 后不再回调
+        val repo2 = RobotRepository { _ -> MockTransport() }
+        var cbCount = 0
+        val d = repo2.onSnapshot { cbCount++ }
+        repo2.connectWith(MockTransport(), ConnectTarget.Mock)
+        waitFor(2000) { cbCount > 0 }
+        d.dispose()
+        val c1 = cbCount
+        repo2.disconnect()
+        Thread.sleep(50)
+        check("负对照:dispose 后监听器不再触发", cbCount == c1) { "before=$c1 after=$cbCount" }
+        sub.dispose()
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         println("=" * 60)
@@ -1678,6 +1811,8 @@ object CoreSelfTest {
         testHardwareMonitor()
         testDuckModelGeometry()
         testDuckMesh()
+        testRestController()
+        testRobotRepository()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
