@@ -80,24 +80,43 @@
         <item name="colorOutlineVariant">@color/md_outline_variant</item>
     </style>
 
-    <!-- 原有 8 色保持色值不变：真机 59/59 门禁与对比度已验证，不动它们最安全 -->
-    <color name="md_bg">#0B1B30</color>
-    <color name="md_card">#132B47</color>
-    <color name="md_card_alt">#19365A</color>
-    <color name="md_accent">#4FD1FF</color>
-    <color name="md_warn">#FFB020</color>
-    <color name="md_text">#EAF4FF</color>
-    <color name="md_text_dim">#8FA9C4</color>
-    <color name="md_ok">#4ADE80</color>
-    <color name="md_bad">#FF6B6B</color>
+    <!--
+      2026-11-16 去「AI 味」改版：色板从「深空蓝 + 高饱和霓虹」转向「中性深灰 + 低饱和语义色」。
 
-    <!-- 新增：M3 tone-based surface 五级中的高两级 + 语义描边 + 低饱和 accent 容器。
-         亮度递进符合 Material dark theme「higher elevation → lighter surface」，
-         且都不是纯黑（Dark grey rather than black）。 -->
-    <color name="md_surface">#0E2138</color>
-    <color name="md_surface_high">#244970</color>
-    <color name="md_surface_highest">#315C88</color>
-    <color name="md_outline">#4A7093</color>
-    <color name="md_outline_variant">#274560</color>
-    <color name="md_accent_container">#123E58</color>
+      🔴 改色依据（anti-slop 资料共识，多来源一致）：
+       · 深空蓝底 + 高饱和（saturation>80%）霓虹强调色，是 LLM 生成"科技感/监控界面"的
+         头号默认指纹（standoutmcp「AI-slop checklist」、opencue「anti-slop-rules」、
+         lobehub「Anti-Slop UI/UX」、TheArmagan「no-ai-design-cliches」）。
+       · 修法：底色用 neutral off-black（非纯黑、非深蓝），强调色降饱和到"有色调的灰"，
+         状态语义色保留但去霓虹。
+
+      🔴 本项目约束：这是**机器人硬件监控控制台**，状态语义色（nom/caution/critical/
+         confirmed）是功能性必需，不能删；故不套"单主色"简单规则，而是**降饱和 + 保持语义**。
+         DuckMesh 的模型本体色（奶油白壳 / 橙 trim）是鸭子物理外观，与 UI 风格无关，**不动**
+         （core 自检锁定，见 CoreSelfTest）。
+
+      🔴 对比度：md_text/md_text_dim 对 md_bg 均过 WCAG AA（≥4.5:1）；状态色作色块/图标 ≥3:1。
+    -->
+    <!-- 底色层级：中性深灰（去深空蓝），亮度递进符合 Material dark「higher elevation → lighter surface」 -->
+    <color name="md_bg">#0D1015</color>
+    <color name="md_card">#171B22</color>
+    <color name="md_card_alt">#1D222B</color>
+
+    <!-- 文字：中性近白 / 中性灰（去蓝调） -->
+    <color name="md_text">#E4E7EB</color>
+    <color name="md_text_dim">#868D97</color>
+
+    <!-- 状态语义色：保留语义，全面降饱和去霓虹（cyan nominal / amber caution / red critical / green confirmed） -->
+    <color name="md_accent">#5BA3D4</color>
+    <color name="md_warn">#D8A23E</color>
+    <color name="md_ok">#5FAE7A</color>
+    <color name="md_bad">#DD6A6A</color>
+
+    <!-- M3 tone-based surface 高两级 + 语义描边 + accent 容器（同步降饱和、去蓝调） -->
+    <color name="md_surface">#12161C</color>
+    <color name="md_surface_high">#252B35</color>
+    <color name="md_surface_highest">#2F3640</color>
+    <color name="md_outline">#3A4150</color>
+    <color name="md_outline_variant">#272D36</color>
+    <color name="md_accent_container">#15202B</color>
 </resources>

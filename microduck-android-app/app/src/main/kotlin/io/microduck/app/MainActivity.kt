@@ -1,5 +1,6 @@
 package io.microduck.app
 
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
@@ -40,6 +41,8 @@ import io.microduck.app.core.MonitorReport
 import io.microduck.app.core.MonitorVerdict
 import io.microduck.app.core.RobotPart
 import io.microduck.app.core.RobotParts
+import io.microduck.app.core.RobotSession
+import io.microduck.app.core.RestController
 import io.microduck.app.core.Severity
 import io.microduck.app.core.StateSnapshot
 import io.microduck.app.core.HealthSnapshot
@@ -99,6 +102,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var modeAuto: MaterialButton
     private lateinit var modeHint: TextView
     private lateinit var launchButton: MaterialButton
+    // 一键休息 / 恢复站立（robot.rest / robot.init，无参离散请求）。
+    // 状态回显分两层：关节 limp 状态（robot.state.safety.limp，常驻）+ 请求结果（点击后更新）。
+    private lateinit var restButton: MaterialButton
+    private lateinit var wakeButton: MaterialButton
+    private lateinit var restLimpText: TextView
+    private lateinit var restResultText: TextView
     private lateinit var stateSourceText: TextView
     private lateinit var healthText: TextView
     private lateinit var healthSourceText: TextView
@@ -219,7 +228,7 @@ class MainActivity : AppCompatActivity() {
         section(buildTabRow())
         root.addView(content, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        topScrim = View(this).apply { setBackgroundColor(Color.argb(190, 0x06, 0x12, 0x22)) }
+        topScrim = View(this).apply { setBackgroundColor(Color.argb(190, 0x0D, 0x10, 0x15)) }
         root.addView(topScrim, FrameLayout.LayoutParams(MATCH, 0, Gravity.TOP))
         setContentView(root)
 
@@ -466,7 +475,109 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, DriveActivity::class.java)) }
         }
         col.addView(launchButton)
+        // 一键休息 / 恢复站立：robot.rest / robot.init（无参离散请求，见 Wire.ROBOT_REST KDoc）。
+        // 两按钮并排；下方常驻回显关节 limp 状态（robot.state.safety.limp，不造数），
+        // 结果行只在点击后更新，失败（含 BLE 通道的 PERMISSION_DENIED=14）如实回显。
+        col.addView(divider())
+        col.addView(TextView(this@MainActivity).apply {
+            text = "一键休息（卸力省电）"; textSize = 13f; setTextColor(c(R.color.md_text))
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(4), 0, 0)
+        })
+        val restRow = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) }
+        }
+        restButton = MaterialButton(this@MainActivity).apply {
+            text = "一键休息"; textSize = 12f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_LARGE_DP)
+            contentDescription = "一键休息：让机器人坐下卸力省电"
+            setOnClickListener { confirmRest() }
+        }
+        wakeButton = MaterialButton(this@MainActivity).apply {
+            text = "恢复站立"; textSize = 12f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_LARGE_DP)
+            contentDescription = "恢复站立：结束休息，重新上电回 home 姿态"
+            setOnClickListener { confirmWake() }
+        }
+        restRow.addView(restButton, LinearLayout.LayoutParams(0, WRAP, 1f))
+        restRow.addView(wakeButton, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(8) })
+        col.addView(restRow)
+        restLimpText = TextView(this@MainActivity).apply {
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setPadding(0, dp(10), 0, 0)
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+        }
+        col.addView(restLimpText)
+        restResultText = TextView(this@MainActivity).apply {
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+            setLineSpacing(0f, 1.2f)
+        }
+        col.addView(restResultText)
         addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
+    }
+
+    /** 常驻回显关节 limp 状态（robot.state.safety.limp）；无帧时不造数。 */
+    private fun renderRestLimp() {
+        if (!::restLimpText.isInitialized) return
+        val limp = SessionHolder.lastState?.limp
+        restLimpText.text = when {
+            limp == null -> "关节状态：— 未读到（无状态帧）"
+            limp == true -> "关节状态：⚠ 已卸力（休息中）"
+            else -> "关节状态：站立（未卸力）"
+        }
+    }
+
+    /** 一键休息：robot.rest 会让实体机器人坐下卸力 ⇒ 写操作二次确认，绝不静默执行。 */
+    private fun confirmRest() {
+        val s = SessionHolder.session
+        if (s == null || s.state != RobotSession.State.READY) {
+            restResultText.text = "⚠ 会话未就绪，无法休息（${SessionHolder.sessionState()}）"
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("一键休息（写操作）")
+            .setMessage("将向板端发送 robot.rest（无参）：\n坐下 → 缓入休息姿态 → 卸力 + 舵机重启省电。\n\n" +
+                "⚠ BLE 通道下该方法不在放行白名单，会被拒绝（PERMISSION_DENIED=14），失败将如实回显。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确认休息") { _, _ -> runRestCall(RestController::requestRest, "休息") }
+            .show()
+    }
+
+    /** 恢复站立：robot.init（rest 的逆操作：上电 + 回 home），同样二次确认。 */
+    private fun confirmWake() {
+        val s = SessionHolder.session
+        if (s == null || s.state != RobotSession.State.READY) {
+            restResultText.text = "⚠ 会话未就绪，无法恢复（${SessionHolder.sessionState()}）"
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("恢复站立（写操作）")
+            .setMessage("将向板端发送 robot.init（无参）：\n重新上电 + 回到 home 站立姿态，结束休息。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确认恢复") { _, _ -> runRestCall(RestController::requestInit, "恢复") }
+            .show()
+    }
+
+    /** 后台线程发 rest/init，主线程回显结果；失败原因（含 RPC 错误码）原样呈现，不造假。 */
+    private fun runRestCall(block: (RestController) -> Result<RestController.Outcome>, label: String) {
+        val s = SessionHolder.session ?: run {
+            restResultText.text = "⚠ 无会话，无法执行$label"
+            return
+        }
+        Thread {
+            val r = block(RestController(s))
+            val text = when {
+                r.isFailure -> {
+                    val msg = r.exceptionOrNull()?.message ?: "未知错误"
+                    "⚠ ${label}失败：$msg"
+                }
+                r.getOrNull()?.accepted == true -> "✓ ${label}已被板端接受"
+                else -> "⚠ ${label}未确认接受（accepted≠true）：${r.getOrNull()?.reason ?: "无 reason"}"
+            }
+            runOnUiThread { restResultText.text = text }
+        }.start()
     }
 
     /** 三个顶层目的地 + SSH 终端（M3 允许 3–5 个 destinations），固定位置、不滚动。 */
@@ -1267,6 +1378,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderAll() {
         renderState(SessionHolder.lastState)
         renderTelemetry()
+        renderRestLimp()
         renderLinkBanner()
         renderConnectionRow()
         // 单行状态串：完整信息在来源标签 / 状态卡里，不再让 appBar 折成两行。

@@ -108,10 +108,10 @@ object RobotParts {
      * 供 3D 视图标记异常部位；自检断言四色互不相同（改重复必红）。
      */
     fun severityArgb(s: Severity): Int = when (s) {
-        Severity.OK -> 0xFF4ADE80.toInt()
-        Severity.WARN -> 0xFFFFB020.toInt()
-        Severity.CRITICAL -> 0xFFFF6B6B.toInt()
-        Severity.UNKNOWN -> 0xFF8FA9C4.toInt()
+        Severity.OK -> 0xFF5FAE7A.toInt()
+        Severity.WARN -> 0xFFD8A23E.toInt()
+        Severity.CRITICAL -> 0xFFDD6A6A.toInt()
+        Severity.UNKNOWN -> 0xFF868D97.toInt()
     }
 
     /** 无证据时的部位底色；所有部位都从这里起步，绝不默认绿。 */

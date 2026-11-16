@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.view.MotionEvent
 import android.view.View
+import androidx.core.content.ContextCompat
+import io.microduck.app.R
 import io.microduck.app.core.DuckMesh
 import io.microduck.app.core.DuckModelGeometry
 import io.microduck.app.core.MonitorReport
@@ -65,10 +67,10 @@ class DuckModelView(context: Context) : View(context) {
 
     // ── 降级路径（assets 网格加载失败时才用）──
     private val hullPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(1f); color = Color.parseColor("#3E6F9B")
+        style = Paint.Style.STROKE; strokeWidth = dp(1f); color = ContextCompat.getColor(context, R.color.md_outline)
     }
     private val bonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(2f); color = Color.parseColor("#7FB6DE")
+        style = Paint.Style.STROKE; strokeWidth = dp(2f); color = ContextCompat.getColor(context, R.color.md_accent)
     }
     private val surfacePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(2.2f); strokeCap = Paint.Cap.ROUND
@@ -84,13 +86,14 @@ class DuckModelView(context: Context) : View(context) {
         // 误判成 View.setAlpha(Float 0..1)，报「Value must be ≤ 1.0」。
         // 一手依据：Google Android 注解文档明确 setAlpha(@IntRange(0,255) int)。
         // 把 alpha 直接编进 ARGB 颜色，既正确又避开误报。
-        style = Paint.Style.FILL; color = Color.argb(170, 0x0A, 0x16, 0x26)
+        // RGB 与 md_bg 同源（去 AI 味改版 2026-11-16），仅叠半透明光晕。
+        style = Paint.Style.FILL; color = Color.argb(170, 0x0D, 0x10, 0x15)
     }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = dp(2f)
     }
     private val groundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL; color = Color.parseColor("#1B3552")
+        style = Paint.Style.FILL; color = ContextCompat.getColor(context, R.color.md_card)
     }
 
     @Volatile private var report: MonitorReport? = null

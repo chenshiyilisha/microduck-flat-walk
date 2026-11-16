@@ -487,7 +487,7 @@ class DriveActivity : AppCompatActivity() {
         setTextColor(c(R.color.md_warn))
         gravity = Gravity.CENTER
         setLineSpacing(0f, 1.4f)
-        background = roundedCard(Color.argb(238, 0x0B, 0x1B, 0x30), 12)
+        background = roundedCard(Color.argb(238, 0x0D, 0x10, 0x15), 12)
         setPadding(dp(14), dp(10), dp(14), dp(10))
         contentDescription = "自动模式说明：仅监测，App不发送驾驶命令"
     }
@@ -666,7 +666,7 @@ class DriveActivity : AppCompatActivity() {
             armedPill.text = armedText
             armedPill.setTextColor(armedColor)
             armedPill.background = borderedCard(
-                Color.argb(70, 0x06, 0x12, 0x22), armedColor, 8)
+                Color.argb(70, 0x0D, 0x10, 0x15), armedColor, 8)
         }
         armedPill.visibility = View.VISIBLE
 
