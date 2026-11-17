@@ -92,13 +92,16 @@ class SshPanel(
     private var snapshotDisposable: Disposable? = null
 
     /** 快捷只读命令：不编造控制命令，只放一手实机依据或 Linux 平台通用只读命令。
-     *  🔴 标签控制在 ≤4 字：4 个按钮均分窄屏宽度，长标签会折行把按钮撑变形
-     *  （用户 2026-11-16「终端界面按钮文字超长，换行，按钮变形」）。 */
+     *  🔴 标签控制在 ≤2 字：4 个按钮均分窄屏宽度（实测 vivo V2338A 每个约 62dp），
+     *  4 字标签在 MaterialButton 默认 inset + 字距下被截成「健…/更…」省略号
+     *  （用户 2026-11-16「按钮文字超长换行/变形」、2026-11-17「超长显示省略号」）。
+     *  2 字标签（负载/磁盘已验证可完整显示）从源头消除截断；命令全文由
+     *  contentDescription 承载，文字语义不丢。 */
     private val quickCommands = listOf(
-        "robotctl health --json" to "健康检查",
+        "robotctl health --json" to "检查",
         "uptime" to "负载",
         "df -h" to "磁盘",
-        "systemctl is-active updaterd; systemctl is-enabled updaterd" to "更新服务",
+        "systemctl is-active updaterd; systemctl is-enabled updaterd" to "服务",
     )
 
     /**
@@ -292,7 +295,12 @@ class SshPanel(
             },
             error = s.state == SshRepository.State.FAILED,
         )
-        fingerprintText.text = "主机指纹：${s.fingerprint}"
+        // 指纹是安全核对项，必须保留这一行；但未连接时 Repository 真值恰好是「未连接」，
+        // 会与上面状态行的「● 未连接」视觉重复（用户 2026-11-17 反馈）。这里只做展示层
+        // 映射：IDLE 态显示「连接后显示」——语义更准（指纹只有连上才有），不改 Repository
+        // 真值，连上后照常显示 SHA256 指纹供肉眼核对。
+        fingerprintText.text = "主机指纹：" + if (s.state == SshRepository.State.IDLE)
+            "连接后显示" else s.fingerprint
         connectBtn.isEnabled = s.state != SshRepository.State.CONNECTING &&
             s.state != SshRepository.State.CONNECTED
         disconnectBtn.isEnabled = s.state == SshRepository.State.CONNECTED
