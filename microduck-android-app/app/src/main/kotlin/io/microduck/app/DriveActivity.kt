@@ -23,10 +23,14 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import io.microduck.app.core.DriveController
 import io.microduck.app.core.DriveSink
@@ -34,6 +38,7 @@ import io.microduck.app.core.HeadController
 import io.microduck.app.core.JsonRpcDriveSink
 import io.microduck.app.core.JsonRpcHeadSink
 import io.microduck.app.core.NetpadDriveSink
+import kotlinx.coroutines.launch
 
 /**
  * 横屏全屏遥控 / 监督视图 —— 用户 2026-11-12「打开遥控界面应该横屏」「一个界面放不下这么多内容」。
@@ -149,6 +154,9 @@ class DriveActivity : AppCompatActivity() {
     private val vibrator by lazy { getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator }
     private var lastLinkLevel = 0
 
+    /** 阶段 2：遥控页 ViewModel，状态出口统一为 StateFlow（UDF 单一真源）。 */
+    private val viewModel: DriveViewModel by viewModels { AppViewModelFactory.drive }
+
     private val d: Float by lazy { resources.displayMetrics.density }
     private fun dp(v: Int): Int = (v * d).toInt()
     private fun c(id: Int): Int = getColor(id)
@@ -209,7 +217,7 @@ class DriveActivity : AppCompatActivity() {
             contentDescription = "切回手动"
             visibility = if (manual) View.GONE else View.VISIBLE
             setOnClickListener {
-                SessionHolder.selectMode(ControlMode.MANUAL)
+                viewModel.onSwitchToManual()
                 recreate()   // 重新走 onCreate：自动页没有摇杆，必须重建才有 controller
             }
         }
@@ -293,6 +301,16 @@ class DriveActivity : AppCompatActivity() {
         }
 
         if (manual) setupControllers()
+        // 阶段 2 UDF（官方 repeatOnLifecycle 模式）：订阅 uiState 渲染 HUD 与链路横幅，
+        // 状态驱动字段全部来自 ViewModel。初始值立即发射，覆盖首次渲染。
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { state ->
+                    renderHud(state)
+                    renderLinkBanner(state)
+                }
+            }
+        }
         ui.post(tick)
     }
 
@@ -457,16 +475,16 @@ class DriveActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderLinkBanner() {
-        val inputError = SessionHolder.connectError
+    private fun renderLinkBanner(state: DriveViewModel.UiState) {
+        val inputError = state.connectError
         val msg = if (inputError.isNotEmpty()) "⚠ 地址无效 · $inputError"
-        else SessionHolder.linkStatus
-        if (msg.isEmpty()) { linkBanner.visibility = View.GONE; lastLinkLevel = SessionHolder.linkLevel; return }
+        else state.linkStatus
+        if (msg.isEmpty()) { linkBanner.visibility = View.GONE; lastLinkLevel = state.linkLevel; return }
         linkBanner.visibility = View.VISIBLE
         // 差异更新：A5 的恢复提示会持续数秒，若每 1.5s 无条件 setText 会持续发射
         // TYPE_VIEW_TEXT_CHANGED，重新触发 uiautomator "could not get idle state" 死锁。
         setTextIfChanged(linkBanner, msg)
-        val level = if (inputError.isNotEmpty()) 2 else SessionHolder.linkLevel
+        val level = if (inputError.isNotEmpty()) 2 else state.linkLevel
         // 户外可读性：深底 + 同色描边，强光下仍清晰（ColorSift 技巧#4）。
         linkBanner.background = borderedCard(
             if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn),
@@ -576,8 +594,8 @@ class DriveActivity : AppCompatActivity() {
         )
     }
 
-    private fun renderHud() {
-        val s = SessionHolder.lastState
+    private fun renderHud(state: DriveViewModel.UiState) {
+        val s = state.lastState
         val applied = s?.applied?.takeIf { it.size >= 3 }
         val requested = s?.requested?.takeIf { it.size >= 3 }
         // SP/PV（setpoint / process variable）—— Lukaszm94/AndroidROSRobotTeleoperation
@@ -593,12 +611,12 @@ class DriveActivity : AppCompatActivity() {
             "p%.0f° y%.0f°".format(Math.toDegrees(it[1]), Math.toDegrees(it[2]))
         } ?: "— 未读到"
         val vals = listOf(
-            if (SessionHolder.mode == ControlMode.AUTO) "自动 · 仅监测"
-            else "${SessionHolder.kind} · ${SessionHolder.sessionState()}",
-            if (SessionHolder.stateFrameCount == 0) "0 帧 · 未订阅"
-            else "${SessionHolder.stateFrameCount} 帧 · %.1f Hz".format(SessionHolder.stateHz),
+            if (state.mode == ControlMode.AUTO) "自动 · 仅监测"
+            else "${state.kind} · ${state.sessionState}",
+            if (state.stateFrameCount == 0) "0 帧 · 未订阅"
+            else "${state.stateFrameCount} 帧 · %.1f Hz".format(state.stateHz),
             applied?.let { "%.2f m/s".format(it[0]) } ?: "— 未读到",
-            SessionHolder.batteryText,
+            state.batteryText,
             tracking,
             headDeg,
         )
@@ -606,28 +624,29 @@ class DriveActivity : AppCompatActivity() {
             hudValues.getOrNull(i)?.let { setHudMetric(it, label, vals[i]) }
         }
         // ohho.apk 的 LIVE/DEMO 标注：数据源必须在驾驶页可见，不能只在控制台页。
-        val real = SessionHolder.session != null && SessionHolder.kind != "MOCK"
-        val sourceText = if (real) "● 实机 [${SessionHolder.kind}] · robot.state / robot.health"
-            else if (SessionHolder.session != null) "● MOCK 演示夹具 · 非实机读数"
+        // state.kind = "—" 表示无会话；非 MOCK 即实机。
+        val real = state.kind != "—" && state.kind != "MOCK"
+        val sourceText = if (real) "● 实机 [${state.kind}] · robot.state / robot.health"
+            else if (state.kind != "—") "● MOCK 演示夹具 · 非实机读数"
             else "● 未连接 · 无数据源"
         setTextIfChanged(sourceRow, sourceText)
         sourceRow.setTextColor(if (real) c(R.color.md_ok) else c(R.color.md_warn))
         // 常驻链路信号（真实数据）：linkLevel 映射「强/弱/断」+ 状态订阅速率。
-        val lvl = SessionHolder.linkLevel
+        val lvl = state.linkLevel
         val quality = when {
             lvl >= 2 -> "断"
             lvl == 1 -> "弱·重连中"
-            SessionHolder.stateFrameCount == 0 -> "无"
+            state.stateFrameCount == 0 -> "无"
             else -> "强"
         }
-        val hz = if (SessionHolder.stateFrameCount == 0) "—" else "%.0f".format(SessionHolder.stateHz)
+        val hz = if (state.stateFrameCount == 0) "—" else "%.0f".format(state.stateHz)
         // A4 控制者归属（Wandelbots NOVA 合规文档 / DIN EN ISO 10218-1：
         // 「It must always be made clear by the UI which device is currently controlling
         //  the robot」）。只展示 `robot.remoteSessionActive` 的真实读回值；
         // null 一律写「未知」，绝不把「没读到」画成「无遥在场」（UNVERIFIED != PASS）。
         // 合并进已有 signalRow 而不新增 View：零布局变化，避免把下方内容挤出
         // uiautomator 视口（门禁工具自身第 5 坑）。
-        val telepresence = when (SessionHolder.remoteSessionActive) {
+        val telepresence = when (state.remoteSessionActive) {
             true -> "有遥在场"
             false -> "无遥在场"
             null -> "未知"
@@ -645,16 +664,16 @@ class DriveActivity : AppCompatActivity() {
         val armedText: String
         val armedColor: Int
         when {
-            SessionHolder.mode == ControlMode.AUTO -> {
+            state.mode == ControlMode.AUTO -> {
                 armedText = "○ 监督视图 · 零驾驶帧"; armedColor = c(R.color.md_text_dim)
             }
-            SessionHolder.linkLevel >= 2 -> {
+            state.linkLevel >= 2 -> {
                 armedText = "⚠ 链路失败 · 控制挂起"; armedColor = c(R.color.md_bad)
             }
-            SessionHolder.linkLevel == 1 -> {
+            state.linkLevel == 1 -> {
                 armedText = "⚠ 重连中 · 控制挂起"; armedColor = c(R.color.md_warn)
             }
-            SessionHolder.heartbeatRunning -> {
+            state.heartbeatRunning -> {
                 armedText = "● 已接管（指令发送中）"; armedColor = c(R.color.md_ok)
             }
             else -> {
@@ -673,18 +692,18 @@ class DriveActivity : AppCompatActivity() {
         // ---- 组合告警行（Falcon：失败/停滞是第一态，必须立刻可见）----
         val alerts = mutableListOf<String>()
         // (1) 状态停滞：链路看似正常但很久没新帧 —— 最危险的是「看起来仍实时」的陈旧值。
-        val age = SessionHolder.stateAgeMs()
-        if (SessionHolder.mode == ControlMode.MANUAL && SessionHolder.linkLevel == 0 && age >= 1500) {
+        val age = state.stateAgeMs
+        if (state.mode == ControlMode.MANUAL && state.linkLevel == 0 && age >= 1500) {
             alerts.add("状态停滞 %.1f s".format(age / 1000.0))
         }
         // (2) 指令发送失败：推了摇杆但帧没真正出去（drive.lastError 此前捕获却从未显示）。
-        if (SessionHolder.mode == ControlMode.MANUAL) {
+        if (state.mode == ControlMode.MANUAL) {
             val de = drive?.lastError
             if (!de.isNullOrEmpty()) alerts.add("指令发送失败")
         }
         // (3) 低电量：field robot 安全 —— 解析固件给的百分比（缺失不显示 0）。
-        val pct = parseBatteryPct(SessionHolder.batteryText)
-        if (pct != null && pct < 20 && SessionHolder.kind != "MOCK") alerts.add("电量低 $pct%")
+        val pct = parseBatteryPct(state.batteryText)
+        if (pct != null && pct < 20 && state.kind != "MOCK") alerts.add("电量低 $pct%")
         if (alerts.isNotEmpty()) {
             val alertText = "⚠ " + alerts.joinToString(" · ")
             alertLine.visibility = View.VISIBLE
@@ -704,18 +723,17 @@ class DriveActivity : AppCompatActivity() {
         // TYPE_VIEW_TEXT_CHANGED；tick 已节流到 1500ms，使相邻事件间隔稳定 >1000ms，
         // 给 uiautomator dump 留出 1000ms 静默窗（否则报 could not get idle state）。
         counterText.text = "已发 %d 帧 · 头 %d 帧 · %s\n最后输入 %s".format(
-            SessionHolder.sentCount.get(), SessionHolder.headSentCount.get(),
-            if (SessionHolder.mode == ControlMode.AUTO) "自动·零驾驶帧"
-            else if (SessionHolder.heartbeatRunning) "心跳中" else "已停",
-            SessionHolder.lastInput,
+            state.sentCount, state.headSentCount,
+            if (state.mode == ControlMode.AUTO) "自动·零驾驶帧"
+            else if (state.heartbeatRunning) "心跳中" else "已停",
+            state.lastInput,
         )
     }
 
     private val tick = object : Runnable {
         override fun run() {
-            SessionHolder.tick()
-            renderHud()
-            renderLinkBanner()
+            // 时间驱动：遥测采样经 ViewModel.onTick 更新 uiState，渲染由 collect 负责。
+            viewModel.onTick()
             // 🔴 节流到 1500ms：uiautomator dump 要求连续 1000ms 无无障碍事件才能取层级
             // （UiAutomation.waitForIdle(1000,10000)，usespectra.dev 一手核验）。1000ms 的心跳
             // 计数每秒刷新会恰好卡在边界、抖动即失败；1500ms 稳定留出 >1000ms 静默窗，

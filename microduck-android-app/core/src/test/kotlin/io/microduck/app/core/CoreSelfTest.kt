@@ -1635,6 +1635,180 @@ object CoreSelfTest {
         // 旋转后明暗必须跟着变（光照在相机空间算，不是贴图烤死）。
         check("旋转后分面明暗发生变化(光照在相机空间)",
             tris.map { it.colorArgb }.toHashSet() != tris90.map { it.colorArgb }.toHashSet())
+
+        // ── 阶段 4：DMSH v2 部件索引 + 状态着色（颜色即状态）──
+        check("网格格式升级 v2 且 n_parts=单一真源槽位数",
+            mesh.version == 2 && mesh.nParts == ModelPart.SLOT_COUNT) { "v=${mesh.version} nParts=${mesh.nParts}" }
+        check("v2 部件索引表长度=nTris", mesh.partIndices.size == mesh.nTris)
+        check("v2 每个三角形部件索引合法(0..20 或 255)",
+            mesh.partIndices.all { (it.toInt() and 0xFF).let { i -> i == ModelPart.NO_PART || ModelPart.of(i) != null } })
+        val colorable = (0 until mesh.nTris).count { DuckMesh.partIndexOf(mesh, it) != ModelPart.NO_PART }
+        check("v2 可着色三角形>0 (实测 $colorable)", colorable > 0)
+        val present = (0 until mesh.nTris).map { DuckMesh.partIndexOf(mesh, it) }.toHashSet()
+        val jointsPresent = present.count { it in 0..14 }
+        check("v2 关节部件覆盖>=12/15 (实测 $jointsPresent)", jointsPresent >= 12)
+        check("v2 系统件 BATTERY/CPU/IMU 命中(16/17/18)", listOf(16, 17, 18).all { it in present })
+
+        // 部件映射：索引即 RobotPart.entries ordinal，且 of/indexOf 互逆（负对照锁越界）。
+        check("ModelPart 映射:0=左髋偏航/16=电池/17=CPU/18=IMU",
+            ModelPart.of(0) == RobotPart.LEFT_HIP_YAW &&
+                ModelPart.of(15) == RobotPart.TORSO &&
+                ModelPart.of(16) == RobotPart.BATTERY &&
+                ModelPart.of(17) == RobotPart.CPU &&
+                ModelPart.of(18) == RobotPart.IMU)
+        check("负对照:ModelPart 越界/NO_PART/负数均返回 null",
+            ModelPart.of(21) == null && ModelPart.of(255) == null && ModelPart.of(-1) == null)
+        check("ModelPart.indexOf 与 of 互逆(21 槽位全覆盖)",
+            (0 until ModelPart.SLOT_COUNT).all { ModelPart.indexOf(ModelPart.of(it)!!) == it })
+
+        // 状态色：UNKNOWN 原样基色（铁律不造色），OK 低强度 < WARN < CRITICAL。
+        val cream = 0xFFF3E6D2.toInt()
+        val okC = DuckMesh.statusTint(cream, Severity.OK)
+        val warnC = DuckMesh.statusTint(cream, Severity.WARN)
+        val critC = DuckMesh.statusTint(cream, Severity.CRITICAL)
+        fun dist(a: Int, b: Int) = abs(((a ushr 16) and 0xFF) - ((b ushr 16) and 0xFF)) +
+            abs(((a ushr 8) and 0xFF) - ((b ushr 8) and 0xFF)) + abs((a and 0xFF) - (b and 0xFF))
+        check("状态色:UNKNOWN 原样返回基色(不造色)", DuckMesh.statusTint(cream, Severity.UNKNOWN) == cream)
+        check("状态色:混合强度 MIX_OK < MIX_WARN < MIX_CRITICAL",
+            DuckMesh.MIX_OK < DuckMesh.MIX_WARN && DuckMesh.MIX_WARN < DuckMesh.MIX_CRITICAL)
+        check("状态色:三档都改色且 alpha 恒 0xFF",
+            okC != cream && warnC != cream && critC != cream &&
+                listOf(okC, warnC, critC).all { (it ushr 24) == 0xFF })
+        check("状态色:OK 强度小于 CRITICAL(避免整机刷绿)", dist(okC, cream) < dist(critC, cream))
+        check("状态色:三档互不相同", okC != warnC && warnC != critC && okC != critC)
+        check("状态色:CRITICAL 红分量主导(比绿高 40 以上)",
+            ((critC ushr 16) and 0xFF) > ((critC ushr 8) and 0xFF) + 40)
+
+        // project 链： severityOf 只改目标部件，NO_PART 三角形绝不变色。
+        val twoTris = DuckMesh.MeshData(
+            floatArrayOf(0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f),
+            intArrayOf(0, 1, 2, 0, 1, 2), intArrayOf(cream, cream), 4, 2,
+            byteArrayOf(16, ModelPart.NO_PART.toByte()), 2, ModelPart.SLOT_COUNT,
+        )
+        val baseProj = DuckMesh.project(twoTris, 0.0, 100f, 100f) { Severity.UNKNOWN }
+        val critProj = DuckMesh.project(twoTris, 0.0, 100f, 100f) { Severity.CRITICAL }
+        check("投影着色:目标部件(电池)三角形 CRITICAL 变色",
+            baseProj[0].colorArgb != critProj[0].colorArgb)
+        check("负对照:NO_PART 三角形即使全 CRITICAL 也不变色",
+            baseProj[1].colorArgb == critProj[1].colorArgb)
+        val triNeutral = DuckMesh.project(mesh, 30.0, w, h) { Severity.UNKNOWN }
+        val triAllCrit = DuckMesh.project(mesh, 30.0, w, h) { Severity.CRITICAL }
+        val changed = triNeutral.indices.count { triNeutral[it].colorArgb != triAllCrit[it].colorArgb }
+        check("真实网格:全 CRITICAL 只改可着色三角形(实测 $changed / $colorable)",
+            changed > 0 && changed <= colorable)
+
+        // 解析负对照：坏版本 / n_parts 漂移 / 部件索引越界 / 截断 / v1 兼容分支。
+        val rawV2 = DuckMesh::class.java.getResourceAsStream("/duck_mesh.bin")!!.readBytes()
+        fun rejects(mutate: (ByteArray) -> Unit): Boolean {
+            val b = rawV2.copyOf(); mutate(b)
+            return try { DuckMesh.loadFromBytes(b); false } catch (_: Exception) { true }
+        }
+        check("负对照:未知版本 3 被拒绝",
+            rejects { it[4] = 0; it[5] = 0; it[6] = 0; it[7] = 3 })
+        check("负对照:n_parts 漂移(21→22)被拒绝", rejects { it[19] = 22 })
+        val partOff = 20 + mesh.nVerts * 3 * 4 + mesh.nTris * 3 * 4 + mesh.nTris * 4
+        check("负对照:部件索引越界(→21)被拒绝", rejects { it[partOff] = 21 })
+        check("负对照:截断一字节被拒绝",
+            try { DuckMesh.loadFromBytes(rawV2.copyOf(rawV2.size - 1)); false } catch (_: Exception) { true })
+        // v1 fixture：从 v2 字节剥掉 n_parts 头与部件数组，版本号改回 1。
+        val v1Bytes = ByteArray(rawV2.size - 4 - mesh.nTris).also { out ->
+            rawV2.copyInto(out, 0, 0, 16)
+            out[4] = 1; out[5] = 0; out[6] = 0; out[7] = 0  // 小端 version 在 4..7，LSB 是 byte4
+            rawV2.copyInto(out, 16, 20, rawV2.size - mesh.nTris)
+        }
+        val legacy = DuckMesh.loadFromBytes(v1Bytes)
+        check("v1 兼容:老网格可解析且部件全 NO_PART",
+            legacy.version == 1 && legacy.nParts == 0 &&
+                legacy.partIndices.all { (it.toInt() and 0xFF) == ModelPart.NO_PART })
+        check("v1 兼容:无部件时状态着色不生效(不造色)",
+            DuckMesh.project(legacy, 0.0, w, h) { Severity.CRITICAL }.map { it.colorArgb } ==
+                DuckMesh.project(legacy, 0.0, w, h) { Severity.UNKNOWN }.map { it.colorArgb })
+    }
+
+    // ---- 全息渲染管线（纯 JVM 像素断言 + 负对照）----
+    /**
+     * [HoloRenderer] 是「颜色即状态」在真机上的唯一出口，但它的输出是像素 ——
+     * 文本门禁照不出「整机发灰 / 状态色没落上 / 模型全空」。故在此直接对像素数组下断言：
+     * 尺寸/不透明、可见面积量级、状态色出现与不出现的负对照、旋转真的改变画面、幂等。
+     */
+    private fun testHoloRenderer() {
+        println("\n[HOLO] 全息渲染管线（图像空间提边 + 状态色 + 负对照）")
+        val mesh = try {
+            DuckMesh.load()
+        } catch (e: Exception) {
+            check("全息:duck_mesh.bin 可加载", false) { "加载异常: ${e.message}" }
+            return
+        }
+        val w = 144
+        val h = 108
+        val ssw = 2
+
+        // 数据驱动挑「三角形最多的部件槽位」——不手写部件名，避免与网格版本脱钩
+        val counts = IntArray(21)
+        for (b in mesh.partIndices) {
+            val p = b.toInt() and 0xFF
+            if (p in 0 until 21) counts[p]++
+        }
+        val hotPart = counts.indices.maxByOrNull { counts[it] } ?: -1
+        check("全息:存在承载最多三角形的部件槽位", hotPart in 0 until 21 && counts[hotPart] > 100) {
+            "counts=${counts.toList()}"
+        }
+        val hotRobotPart = if (hotPart >= 0) ModelPart.of(hotPart) else null
+
+        val unknown: (RobotPart) -> Severity = { Severity.UNKNOWN }
+        val allCritical: (RobotPart) -> Severity = { Severity.CRITICAL }
+        val hotCritical: (RobotPart) -> Severity = { p ->
+            if (p == hotRobotPart) Severity.CRITICAL else Severity.UNKNOWN
+        }
+
+        val pxUnknown = HoloRenderer.render(mesh, 0.0, w, h, unknown, ssw)
+        check("全息:输出像素数 = w*h", pxUnknown.size == w * h) { "${pxUnknown.size}" }
+        check("全息:输出全部不透明(alpha=0xFF)", pxUnknown.all { (it ushr 24) == 0xFF })
+        // 🔴 覆盖率必须取自光栅化计数：第一版按亮度统计 → 背景渐变也算「可见」，
+        // 实测 vis=0.995 假绿。判据失效的教训直接写在这条断言旁边。
+        val (_, coverage) = HoloRenderer.renderWithCoverage(mesh, 0.0, w, h, unknown, ssw)
+        check("全息:模型覆盖率合理(5%~85%)", coverage in 0.05f..0.85f) { "coverage=$coverage" }
+        // 线条真的画出来了：亮青像素（b、g 高、r 中低）必须成片存在
+        val cyan = pxUnknown.count { p ->
+            val r = (p shr 16) and 255; val g = (p shr 8) and 255; val b = p and 255
+            b > 140 && g > 120 && r < 190
+        }
+        check("全息:外轮廓/分界线成片存在(>200 px)", cyan > 200) { "cyan=$cyan" }
+
+        // 负对照①：全 UNKNOWN ⇒ 不应出现红色系像素（无证据不造状态色）
+        fun redCount(px: IntArray) = px.count { p ->
+            val r = (p shr 16) and 255; val g = (p shr 8) and 255; val b = p and 255
+            r > g + 25 && r > b + 25
+        }
+        check("负对照:全 UNKNOWN 时无红色状态像素", redCount(pxUnknown) == 0) {
+            "red=${redCount(pxUnknown)}"
+        }
+        // 正向：承载最多三角形的部件判 CRITICAL ⇒ 红色状态像素必须出现
+        val pxHot = HoloRenderer.render(mesh, 0.0, w, h, hotCritical, ssw)
+        check("状态色:CRITICAL 部件渲染出红色像素", redCount(pxHot) > 0) {
+            "red=${redCount(pxHot)}"
+        }
+        // 负对照②：不同部件状态不应等价（防「状态表没接进去」假绿）
+        check("负对照:UNKNOWN 与 CRITICAL 画面必须不同",
+            !pxUnknown.contentEquals(pxHot))
+        // 正向：全 CRITICAL 的红色像素应显著多于单部件 CRITICAL（状态真的按部件扩散）
+        val pxAll = HoloRenderer.render(mesh, 0.0, w, h, allCritical, ssw)
+        check("状态色:全 CRITICAL 红像素 > 单部件 CRITICAL", redCount(pxAll) > redCount(pxHot)) {
+            "all=${redCount(pxAll)} hot=${redCount(pxHot)}"
+        }
+        // 负对照③：旋转必须真的改变画面（缓存/角度未生效会假绿）
+        val px90 = HoloRenderer.render(mesh, 90.0, w, h, unknown, ssw)
+        check("负对照:0° 与 90° 画面不同", !pxUnknown.contentEquals(px90))
+        // 幂等：同输入两次渲染逐像素一致（背景缓存/静态缓冲不得串帧）
+        val pxAgain = HoloRenderer.render(mesh, 0.0, w, h, unknown, ssw)
+        check("幂等:同输入两次渲染逐像素一致", pxUnknown.contentEquals(pxAgain))
+        // 状态色单一真源：HoloRenderer 不得自造 RGB，必须取 RobotParts.severityArgb
+        val holoSrc = java.io.File("core/src/main/kotlin/io/microduck/app/core/HoloRenderer.kt")
+        val holo = if (holoSrc.isFile) holoSrc.readText() else ""
+        check("全息:状态色取自 RobotParts.severityArgb(单一真源)",
+            holo.contains("RobotParts.severityArgb"))
+        check("负对照:全息源码未硬编码语义色(0xDD6A6A/0xD8A23E)",
+            !holo.contains("0xDD6A6A") && !holo.contains("0xD8A23E"))
     }
 
     // ---- 一键休息 / 恢复站立（robot.rest / robot.init，无参离散请求）----
@@ -1811,6 +1985,7 @@ object CoreSelfTest {
         testHardwareMonitor()
         testDuckModelGeometry()
         testDuckMesh()
+        testHoloRenderer()
         testRestController()
         testRobotRepository()
         println("\n" + "=" * 60)

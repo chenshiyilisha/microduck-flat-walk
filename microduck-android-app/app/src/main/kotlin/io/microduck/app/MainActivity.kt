@@ -27,11 +27,15 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.Insets
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -41,17 +45,17 @@ import io.microduck.app.core.MonitorReport
 import io.microduck.app.core.MonitorVerdict
 import io.microduck.app.core.RobotPart
 import io.microduck.app.core.RobotParts
-import io.microduck.app.core.RobotSession
-import io.microduck.app.core.RestController
 import io.microduck.app.core.Severity
 import io.microduck.app.core.StateSnapshot
 import io.microduck.app.core.HealthSnapshot
 import io.microduck.app.core.HwThresholds
 import io.microduck.app.monitor.DuckModelView
 import io.microduck.app.ssh.SshPanel
+import io.microduck.app.ssh.SshRepository
 import io.microduck.app.update.GithubReleaseClient
-import io.microduck.app.update.UpdateController
+import io.microduck.app.update.UpdateRepository
 import io.microduck.app.update.UpdatePanel
+import kotlinx.coroutines.launch
 
 /**
  * 竖屏控制台首页 —— 用户 2026-11-12「一个界面放不下这么多内容，应该合理的拆分界面，
@@ -139,18 +143,23 @@ class MainActivity : AppCompatActivity() {
     private lateinit var headDzLabel: TextView
     private lateinit var topScrim: View
     private lateinit var blePanel: BleConnectPanel
-    private lateinit var updateController: UpdateController
+    private lateinit var updateRepository: UpdateRepository
     private lateinit var updatePanel: UpdatePanel
     private lateinit var statePage: View
     private lateinit var healthPage: View
     private lateinit var settingsPage: View
     private lateinit var sshPage: View
     private lateinit var sshPanel: SshPanel
+    /** 阶段 3：SSH 会话单一真源，跨终端页重建存活（面板只订阅，不持有 session）。 */
+    private val sshRepository = SshRepository()
     private val stateValues = mutableListOf<TextView>()
     private val telemetryValues = mutableListOf<TextView>()
     private val tabButtons = mutableListOf<MaterialButton>()
     private var currentPage = 0
     private val ui = Handler(Looper.getMainLooper())
+
+    /** 阶段 2：控制台首页 ViewModel，聚合四页 uiState，状态出口统一为 StateFlow（UDF 单一真源）。 */
+    private val viewModel: MainViewModel by viewModels { AppViewModelFactory.main }
 
     private val d: Float by lazy { resources.displayMetrics.density }
     private fun dp(v: Int): Int = (v * d).toInt()
@@ -173,8 +182,8 @@ class MainActivity : AppCompatActivity() {
         }
         val extraHosts = overrideBase?.let { setOfNotNull(it.toUri().host?.lowercase()) }
             ?: emptySet()
-        updateController = UpdateController(this, overrideBase ?: GithubReleaseClient.API_BASE, extraHosts)
-        updatePanel = UpdatePanel(this, updateController)
+        updateRepository = UpdateRepository(this, overrideBase ?: GithubReleaseClient.API_BASE, extraHosts)
+        updatePanel = UpdatePanel(this, updateRepository)
         val root = FrameLayout(this).apply { setBackgroundColor(c(R.color.md_bg)) }
         // 视觉节奏按 M1「Metrics & keylines」一手数值：8dp 基线网格、移动端左右 16dp
         // 边距、内容组之间 8dp。旧版 10dp 边距 / 6dp 组距不在网格上，截图显得散。
@@ -248,8 +257,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         showPage(0)
-        refreshModeUi()
-        connectFromUi()                    // 默认 Mock：无整机也能看到完整交互
+        connectFromUi()                    // 默认 Mock：触发连接，结果经 uiState 渲染
+        // 阶段 2 UDF（官方 repeatOnLifecycle 模式）：订阅 uiState 渲染，状态驱动字段
+        // 全部来自 ViewModel，不再各自读 SessionHolder。初始值立即发射，覆盖首次渲染。
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { state -> renderAll(state) }
+            }
+        }
         ui.post(tick)
     }
 
@@ -287,7 +302,7 @@ class MainActivity : AppCompatActivity() {
                 it.topMargin = dp(8)
             })
             3 -> {
-                sshPanel = SshPanel(this)
+                sshPanel = SshPanel(this, sshRepository)
                 page.addView(sshPanel, LinearLayout.LayoutParams(MATCH, MATCH).also {
                     it.topMargin = dp(8)
                 })
@@ -330,10 +345,8 @@ class MainActivity : AppCompatActivity() {
         visibility = View.GONE
     }
 
-    private fun renderLinkBanner() {
-        val inputError = SessionHolder.connectError
-        val link = SessionHolder.linkStatus
-        val msg = if (inputError.isNotEmpty()) "⚠ 地址无效 · $inputError" else link
+    private fun renderLinkBanner(connectError: String, linkStatus: String, linkLevel: Int) {
+        val msg = if (connectError.isNotEmpty()) "⚠ 地址无效 · $connectError" else linkStatus
         // 全局唯一一份链路横幅（框架层常驻），任何目的地下断链信息都可见。
         val banner = chrome.linkBanner
         if (msg.isEmpty()) {
@@ -341,7 +354,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             banner.visibility = View.VISIBLE
             banner.text = msg
-            val level = if (inputError.isNotEmpty()) 2 else SessionHolder.linkLevel
+            val level = if (connectError.isNotEmpty()) 2 else linkLevel
             // 亮底配深字：MaterialButton 那个「只换背景不换字色」的坑不能在这里重演。
             banner.setBackgroundColor(if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn))
             banner.setTextColor(c(R.color.md_bg))
@@ -402,21 +415,26 @@ class MainActivity : AppCompatActivity() {
             addView(MaterialButton(this@MainActivity).apply {
                 text = "修改"; textSize = 12f; minimumHeight = dp(36)
                 cornerRadius = dp(CORNER_LARGE_DP)
-                setOnClickListener { connectionExpanded = true; renderConnectionRow() }
+                setOnClickListener {
+                    connectionExpanded = true
+                    val s = viewModel.uiState.value
+                    renderConnectionRow(s.kind, s.connectError)
+                }
             })
         }
         addView(connectionSummary)
-        renderConnectionRow()
+        val s = viewModel.uiState.value
+        renderConnectionRow(s.kind, s.connectError)
     }
 
     /** 按连接状态 + 展开标志切换输入行 / 摘要行的可见性。 */
-    private fun renderConnectionRow() {
-        val connected = SessionHolder.kind.isNotEmpty() && SessionHolder.connectError.isEmpty()
+    private fun renderConnectionRow(kind: String, connectError: String) {
+        val connected = kind.isNotEmpty() && connectError.isEmpty()
         val showInput = connectionExpanded || !connected
         connectionInputRow.visibility = if (showInput) View.VISIBLE else View.GONE
         connectionSummary.visibility = if (showInput) View.GONE else View.VISIBLE
         if (!showInput) {
-            connectionSummaryText.text = "已连接 · ${SessionHolder.kind}"
+            connectionSummaryText.text = "已连接 · $kind"
         }
     }
 
@@ -519,9 +537,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 常驻回显关节 limp 状态（robot.state.safety.limp）；无帧时不造数。 */
-    private fun renderRestLimp() {
+    private fun renderRestLimp(limp: Boolean?) {
         if (!::restLimpText.isInitialized) return
-        val limp = SessionHolder.lastState?.limp
         restLimpText.text = when {
             limp == null -> "关节状态：— 未读到（无状态帧）"
             limp == true -> "关节状态：⚠ 已卸力（休息中）"
@@ -531,9 +548,8 @@ class MainActivity : AppCompatActivity() {
 
     /** 一键休息：robot.rest 会让实体机器人坐下卸力 ⇒ 写操作二次确认，绝不静默执行。 */
     private fun confirmRest() {
-        val s = SessionHolder.session
-        if (s == null || s.state != RobotSession.State.READY) {
-            restResultText.text = "⚠ 会话未就绪，无法休息（${SessionHolder.sessionState()}）"
+        if (!viewModel.isSessionReady()) {
+            viewModel.onRest()
             return
         }
         AlertDialog.Builder(this)
@@ -541,43 +557,22 @@ class MainActivity : AppCompatActivity() {
             .setMessage("将向板端发送 robot.rest（无参）：\n坐下 → 缓入休息姿态 → 卸力 + 舵机重启省电。\n\n" +
                 "⚠ BLE 通道下该方法不在放行白名单，会被拒绝（PERMISSION_DENIED=14），失败将如实回显。")
             .setNegativeButton("取消", null)
-            .setPositiveButton("确认休息") { _, _ -> runRestCall(RestController::requestRest, "休息") }
+            .setPositiveButton("确认休息") { _, _ -> viewModel.onRest() }
             .show()
     }
 
     /** 恢复站立：robot.init（rest 的逆操作：上电 + 回 home），同样二次确认。 */
     private fun confirmWake() {
-        val s = SessionHolder.session
-        if (s == null || s.state != RobotSession.State.READY) {
-            restResultText.text = "⚠ 会话未就绪，无法恢复（${SessionHolder.sessionState()}）"
+        if (!viewModel.isSessionReady()) {
+            viewModel.onWake()
             return
         }
         AlertDialog.Builder(this)
             .setTitle("恢复站立（写操作）")
             .setMessage("将向板端发送 robot.init（无参）：\n重新上电 + 回到 home 站立姿态，结束休息。")
             .setNegativeButton("取消", null)
-            .setPositiveButton("确认恢复") { _, _ -> runRestCall(RestController::requestInit, "恢复") }
+            .setPositiveButton("确认恢复") { _, _ -> viewModel.onWake() }
             .show()
-    }
-
-    /** 后台线程发 rest/init，主线程回显结果；失败原因（含 RPC 错误码）原样呈现，不造假。 */
-    private fun runRestCall(block: (RestController) -> Result<RestController.Outcome>, label: String) {
-        val s = SessionHolder.session ?: run {
-            restResultText.text = "⚠ 无会话，无法执行$label"
-            return
-        }
-        Thread {
-            val r = block(RestController(s))
-            val text = when {
-                r.isFailure -> {
-                    val msg = r.exceptionOrNull()?.message ?: "未知错误"
-                    "⚠ ${label}失败：$msg"
-                }
-                r.getOrNull()?.accepted == true -> "✓ ${label}已被板端接受"
-                else -> "⚠ ${label}未确认接受（accepted≠true）：${r.getOrNull()?.reason ?: "无 reason"}"
-            }
-            runOnUiThread { restResultText.text = text }
-        }.start()
     }
 
     /** 三个顶层目的地 + SSH 终端（M3 允许 3–5 个 destinations），固定位置、不滚动。 */
@@ -762,7 +757,7 @@ class MainActivity : AppCompatActivity() {
             text = "每秒自动刷新"; minimumHeight = dp(48)
             setTextColor(c(R.color.md_text_dim))
             setOnCheckedChangeListener { _, checked ->
-                SessionHolder.autoRefreshHealth = checked
+                viewModel.onSetAutoRefreshHealth(checked)
                 persist()
             }
         }
@@ -1078,7 +1073,7 @@ class MainActivity : AppCompatActivity() {
                 SettingsStore.reset(applicationContext)
                 restoreSettingsUi()
                 updateSettingLabels()
-                renderAll()
+                viewModel.onResetDriveParams()
             }
         }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) })
         // A1：BLE 运行时权限 + unfiltered 扫描 + 真 BleTransport 入口。
@@ -1230,13 +1225,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun switchMode(m: ControlMode) {
-        SessionHolder.selectMode(m)
-        refreshModeUi()
-        renderAll()
+        viewModel.onSelectMode(m)
     }
 
-    private fun refreshModeUi() {
-        val manual = SessionHolder.mode == ControlMode.MANUAL
+    private fun refreshModeUi(state: MainViewModel.UiState) {
+        val manual = state.mode == ControlMode.MANUAL
         modeManual.setBackgroundColor(if (manual) c(R.color.md_accent) else c(R.color.md_card_alt))
         modeAuto.setBackgroundColor(if (!manual) c(R.color.md_warn) else c(R.color.md_card_alt))
         // 亮底(accent/warn)配深字、深底(card_alt)配近白字；只用主题默认深色字会在
@@ -1248,19 +1241,24 @@ class MainActivity : AppCompatActivity() {
         else
             "自动：App 零驾驶帧、只监测 robot.state；未验证策略启停，不等于已启动自主行走"
         launchButton.text = if (manual) "进入遥控驾驶（横屏全屏）" else "进入监测视图（横屏全屏）"
-        healthSourceText.text = if (SessionHolder.kind == "MOCK")
+        healthSourceText.text = if (state.kind == "MOCK")
             "⚠ 当前为 Mock 演示夹具，非实机读数" else "robot.health 实机应答"
-        renderMonitor()
+        renderMonitor(state)
     }
 
     /**
-     * 硬件监控渲染。1s tick 也会走这里 ⇒ 必须 `setTextIfChanged`：
-     * 真机门禁曾因「1s setText 连发 AccessibilityEvent」导致 uiautomator waitForIdle 死锁，
-     * 修法就是变化才写（见 DriveActivity 的 1500ms 节流 + setTextIfChanged）。
+     * 硬件监控渲染。由 uiState 驱动；[MainViewModel.UiState.monitorReport] 为 null
+     * （尚未拉取 health）时只显示无数据说明，不调用 [DuckModelView.setReport]。
+     * 必须 `setTextIfChanged`：真机门禁曾因「1s setText 连发 AccessibilityEvent」
+     * 导致 uiautomator waitForIdle 死锁。
      */
-    private fun renderMonitor() {
+    private fun renderMonitor(state: MainViewModel.UiState) {
         if (!::duckModelView.isInitialized) return
-        val r: MonitorReport = SessionHolder.monitorReport()
+        val r = state.monitorReport
+        if (r == null) {
+            monitorAlertText.setTextIfChanged("○ 无数据 · 未连接或 robot.health 调用失败")
+            return
+        }
         duckModelView.setReport(r)
         // 告警：只列真实告警（不含 notes），无告警时给一句诚实说明。
         val alertColor = when {
@@ -1283,8 +1281,30 @@ class MainActivity : AppCompatActivity() {
                 }
             },
         )
-        updateHealthCards(SessionHolder.healthSnapshot(), r)
-        updateServoGrid(SessionHolder.healthSnapshot())
+        updateHealthCards(state.lastHealth, r)
+        updateServoGrid(state.lastHealth)
+    }
+
+    /** 来源标签（连接类型 / 地址无效 / 未连接），全局唯一一份。 */
+    private fun renderSourceChip(state: MainViewModel.UiState) {
+        val chipText = when {
+            state.connected -> "● ${state.kind}"
+            state.connectError.isNotEmpty() -> "● 地址无效"
+            else -> "● 未连接"
+        }
+        chrome.sourceChip.text = chipText
+        chrome.sourceChip.setTextColor(c(if (state.connected) R.color.md_ok else R.color.md_bad))
+    }
+
+    /** 休息/恢复请求结果回显（来自 ViewModel 写操作，null = 无新结果不覆盖）。 */
+    private fun renderRestResult(text: String?) {
+        if (text != null) restResultText.setTextIfChanged(text)
+    }
+
+    /** 原始 health 读数文本（调试用）；来自 uiState.lastHealth，缺失时如实说明。 */
+    private fun renderHealthText(state: MainViewModel.UiState) {
+        if (!::healthText.isInitialized) return
+        healthText.setTextIfChanged(state.lastHealth?.summary() ?: "— 未读到 health")
     }
 
     /** 只有内容真变了才写，避免 1s tick 持续发 AccessibilityEvent。 */
@@ -1292,24 +1312,10 @@ class MainActivity : AppCompatActivity() {
         if (text.toString() != s.toString()) text = s
     }
 
+    /** 阶段 2：连接动作交给 ViewModel，结果经 uiState 反映，渲染由 collect 统一负责。 */
     private fun connectFromUi() {
         val raw = hostEdit.text?.toString()?.trim().orEmpty()
-        SessionHolder.connect(raw) { ok ->
-            runOnUiThread {
-                val chipText = when {
-                    ok -> "● ${SessionHolder.kind}"
-                    SessionHolder.connectError.isNotEmpty() -> "● 地址无效"
-                    else -> "● 未连接"
-                }
-                val chipColor = if (ok) c(R.color.md_ok) else c(R.color.md_bad)
-                // 全局唯一一份来源标签。
-                chrome.sourceChip.text = chipText
-                chrome.sourceChip.setTextColor(chipColor)
-                refreshModeUi()
-                renderConnectionRow()
-                renderAll()
-            }
-        }
+        viewModel.onConnect(raw)
     }
 
     override fun onRequestPermissionsResult(
@@ -1319,14 +1325,13 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == BleConnectPanel.REQ_CODE) blePanel.onPermissionResult(grantResults)
     }
 
+    /** 阶段 2：健康刷新交给 ViewModel，结果经 uiState 反映，渲染由 collect 统一负责。 */
     private fun refreshHealth() {
-        SessionHolder.refreshHealth { text ->
-            runOnUiThread { healthText.text = text; renderAll() }
-        }
+        viewModel.onRefreshHealth()
     }
 
     /** 实机 8 项：null = 无帧，一律「未读到」，绝不写 0、绝不拿本地计数填。 */
-    private fun renderState(s: StateSnapshot?) {
+    private fun renderState(s: StateSnapshot?, kind: String, frameCount: Int) {
         val vals: List<String> = if (s == null) List(STATE_LABELS.size) { "— 未读到" } else listOf(
             s.policy ?: "— 未读到",
             s.loopHz?.let { if (it <= 0.0) "0 Hz·窗口未闭合" else "%.1f Hz".format(it) } ?: "— 未读到",
@@ -1353,44 +1358,52 @@ class MainActivity : AppCompatActivity() {
         stateValues.forEachIndexed { i, v -> setMetric(v, STATE_LABELS[i], vals[i]) }
         stateSourceText.text = if (s == null)
             "实机状态帧 · robot.state · 当前无状态帧\nMock 不推流 / 真机未连接，不伪造"
-        else "实机状态帧 · robot.state [${SessionHolder.kind}] · 第 ${SessionHolder.stateFrameCount} 帧"
+        else "实机状态帧 · robot.state [$kind] · 第 $frameCount 帧"
     }
 
-    private fun renderTelemetry() {
+    private fun renderTelemetry(state: MainViewModel.UiState) {
         val localVals = listOf(
-            SessionHolder.sessionState(),
-            SessionHolder.sinkLabel,
-            "%d 帧 · %s".format(SessionHolder.sentCount.get(),
-                if (SessionHolder.heartbeatRunning) "心跳中" else "已停"),
-            "%d 帧".format(SessionHolder.headSentCount.get()),
-            if (SessionHolder.stateFrameCount == 0) "0 帧 · 无流"
-            else "%d 帧 · %.1f Hz".format(SessionHolder.stateFrameCount, SessionHolder.stateHz),
-            SessionHolder.lastInput,
+            state.sessionState,
+            state.sinkLabel,
+            "%d 帧 · %s".format(state.sentCount,
+                if (state.heartbeatRunning) "心跳中" else "已停"),
+            "%d 帧".format(state.headSentCount),
+            if (state.stateFrameCount == 0) "0 帧 · 无流"
+            else "%d 帧 · %.1f Hz".format(state.stateFrameCount, state.stateHz),
+            state.lastInput,
             // 拆页后主页不持有 controller ⇒ 驾驶帧恒 0 是正确行为。
             // 这一项给「本地遥测面板真的在刷新」提供可观测量，且明确属于 App 自观测。
-            "%d 次".format(SessionHolder.uiTickCount.get()),
+            "%d 次".format(state.uiTickCount),
         )
         TELEMETRY_LABELS.forEachIndexed { i, label ->
             telemetryValues.getOrNull(i)?.let { setMetric(it, label, localVals[i]) }
         }
     }
 
-    private fun renderAll() {
-        renderState(SessionHolder.lastState)
-        renderTelemetry()
-        renderRestLimp()
-        renderLinkBanner()
-        renderConnectionRow()
+    /**
+     * 由 uiState 驱动渲染（UDF 单一真源）。状态驱动字段全部来自 [MainViewModel.UiState]，
+     * 不再各自读 [SessionHolder]。每次 [MainViewModel.uiState] 发射新值时由 collect 调用。
+     */
+    private fun renderAll(state: MainViewModel.UiState) {
+        renderState(state.lastState, state.kind, state.stateFrameCount)
+        renderTelemetry(state)
+        renderRestLimp(state.lastState?.limp)
+        renderLinkBanner(state.connectError, state.linkStatus, state.linkLevel)
+        renderConnectionRow(state.kind, state.connectError)
+        renderSourceChip(state)
+        renderRestResult(state.restResultText)
+        renderHealthText(state)
+        refreshModeUi(state)
         // 单行状态串：完整信息在来源标签 / 状态卡里，不再让 appBar 折成两行。
         // 三个目的地各持一套状态串，统一刷新，保证任何页面下连接/模式/帧数都可见。
-        val statusText = if (SessionHolder.connectError.isNotEmpty())
-            "地址无效 · 会话=${SessionHolder.sessionState()}"
+        val statusText = if (state.connectError.isNotEmpty())
+            "地址无效 · 会话=${state.sessionState}"
         else buildString {
-            if (SessionHolder.note.isNotEmpty() && SessionHolder.note != "地址无效")
-                append(SessionHolder.note).append(" · ")
-            append(if (SessionHolder.mode == ControlMode.MANUAL) "手动" else "自动")
-            append(" · ").append(SessionHolder.sessionState())
-            append(" · ").append(SessionHolder.stateFrameCount).append(" 帧")
+            if (state.note.isNotEmpty() && state.note != "地址无效")
+                append(state.note).append(" · ")
+            append(if (state.mode == ControlMode.MANUAL) "手动" else "自动")
+            append(" · ").append(state.sessionState)
+            append(" · ").append(state.stateFrameCount).append(" 帧")
         }
         chrome.statusText.text = statusText
         // 底部「通道=…」状态条已移除（与状态页「App 本地遥测」重复，用户 2026-11-15 反馈）。
@@ -1399,12 +1412,13 @@ class MainActivity : AppCompatActivity() {
 
     private val tick = object : Runnable {
         override fun run() {
-            SessionHolder.tick()
-            renderAll()
+            // 时间驱动：遥测采样经 ViewModel.onTick 更新 uiState（渲染由 collect 负责），
+            // 3D 模型旋转步进是纯时间驱动，不经状态。
+            viewModel.onTick()
             // 只在健康页可见时推进模型旋转；有限补间（900ms）而非无限动画，
             // 每 1s 留 100ms 主线程空窗，避免 uiautomator waitForIdle 被持续 invalidate 卡住。
             if (currentPage == 1 && ::duckModelView.isInitialized) duckModelView.advanceFrame()
-            if (SessionHolder.autoRefreshHealth && currentPage == 1) refreshHealth()
+            if (viewModel.uiState.value.autoRefreshHealth && currentPage == 1) viewModel.onRefreshHealth()
             ui.postDelayed(this, 1_000)
         }
     }
@@ -1418,7 +1432,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         ui.removeCallbacks(tick)
         blePanel.onDestroy()
-        updateController.release()
+        updatePanel.release()       // 退订 Repository 快照，避免持有已销毁面板
+        updateRepository.release()  // 注销安装结果接收器
         if (::sshPanel.isInitialized) sshPanel.release()   // 断开 SSH 会话，避免后台连接泄漏
         // 🔴 不 close session：SessionHolder 拥有它，DriveActivity 返回后仍要复用。
         super.onDestroy()

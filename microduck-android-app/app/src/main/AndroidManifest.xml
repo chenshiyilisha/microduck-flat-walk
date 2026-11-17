@@ -76,6 +76,7 @@
     <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
 
     <application
+        android:name=".MicroDuckApp"
         android:allowBackup="false"
         android:label="MicroDuck"
         android:icon="@mipmap/ic_launcher"

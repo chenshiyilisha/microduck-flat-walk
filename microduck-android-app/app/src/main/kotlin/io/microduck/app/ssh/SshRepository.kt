@@ -35,6 +35,11 @@ import io.microduck.app.core.Disposable
  * ── 双轨 ──
  * 阶段 1 只**新增**本 Repository，`SshPanel` 暂不切换（旧路径继续工作），门禁保持绿后
  * 再在阶段 3 把面板接到本 Repository。
+ *
+ * ── 阶段 3：终端输出累积 ──
+ * 面板原用 TerminalEmulator 累积多次命令历史（"终端"是用户可见语义）。为了让面板
+ * 纯渲染、不自管输出缓冲，本 Repository 的 [lastOutput] 改为**流式累积**（每次 exec
+ * 追加而非替换），连接/断开提示也写进快照。[MAX_OUTPUT_CHARS] 只保留尾部，避免撑爆。
  */
 class SshRepository(
     private val client: SshClient = SshClient(),
@@ -118,9 +123,20 @@ class SshRepository(
     @Volatile private var lastOutput = ""
     @Volatile private var busy = false
 
-    /** 输出累积上限：只保留尾部，避免长会话把快照撑爆（终端命令是一次性刷，不流式）。 */
+    /** 输出累积上限：只保留尾部，避免长会话把快照撑爆。 */
     private companion object {
         const val MAX_OUTPUT_CHARS = 32_000
+    }
+
+    /** 追加一段终端输出并裁剪到尾部上限；空串忽略。供连接提示与 exec 输出共用。 */
+    private fun appendTerminal(s: String) {
+        if (s.isEmpty()) return
+        val merged = lastOutput + s
+        lastOutput = if (merged.length > MAX_OUTPUT_CHARS) {
+            merged.substring(merged.length - MAX_OUTPUT_CHARS)
+        } else {
+            merged
+        }
     }
 
     /**
@@ -152,6 +168,8 @@ class SshRepository(
                 fingerprint = result.hostKeyFingerprint
                 state = State.CONNECTED
                 error = ""
+                appendTerminal("[connected] $endpoint\n")
+                appendTerminal("主机指纹：$fingerprint\n")
             } catch (e: Exception) {
                 session = null
                 state = State.FAILED
@@ -171,6 +189,7 @@ class SshRepository(
         endpoint = "—"
         fingerprint = "未连接"
         error = ""
+        appendTerminal("\n[disconnected]\n")
         publish()
     }
 
@@ -196,26 +215,18 @@ class SshRepository(
         lastCommand = command
         busy = true
         error = ""
+        appendTerminal("\n$ $command\n")
         publish()
         Thread {
             try {
                 val out = client.exec(s, command, stdin = stdin)
-                appendOutput(out)
+                appendTerminal(out + "\n")
             } catch (e: Exception) {
-                appendOutput("[error] ${e.message?.take(120) ?: "执行失败"}")
+                appendTerminal("[error] ${e.message?.take(120) ?: "执行失败"}\n")
             }
             busy = false
             publish()
         }.start()
-    }
-
-    /** 累积输出，只保留尾部 [MAX_OUTPUT_CHARS] 字符。 */
-    private fun appendOutput(s: String) {
-        lastOutput = if (s.length > MAX_OUTPUT_CHARS) {
-            s.substring(s.length - MAX_OUTPUT_CHARS)
-        } else {
-            s
-        }
     }
 
     /** 页面销毁时释放连接（与 `SshPanel.release` 同语义）。 */

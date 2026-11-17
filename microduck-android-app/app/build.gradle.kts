@@ -100,4 +100,15 @@ dependencies {
     // compile scope ⇒ 对 compileClasspath 可见）。⚠️ 别显式写 androidx.core:core:1.13.1：
     // 新坐标会强制 Gradle 去 dl.google.com 校验元数据，国内超时导致整包构建失败；
     // 而缓存里虽已有该版本产物，Gradle 仍会先做仓库 HEAD 检查。
+
+    // ── 阶段 2 ViewModel + UDF ──
+    // 官方架构组件（developer.android.com/topic/libraries/architecture/viewmodel 一手核验）：
+    // ViewModel 手动工厂构造（不引入 Hilt），UI 用 lifecycleScope.launch { repeatOnLifecycle(STARTED)
+    // { viewModel.uiState.collect { … } } } 渲染。activity-ktx 提供 by viewModels 委托，
+    // lifecycle-runtime-ktx 提供 repeatOnLifecycle，lifecycle-viewmodel-ktx 提供 viewModelScope。
+    // 协程用 kotlinx-coroutines-android（ViewModel 内 collect 需 Main 调度器）。
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.activity:activity-ktx:1.8.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

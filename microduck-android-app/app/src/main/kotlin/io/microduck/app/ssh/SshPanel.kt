@@ -15,9 +15,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
-import com.jcraft.jsch.Session
 import io.microduck.app.R
-import io.microduck.app.ssh.SshClient
+import io.microduck.app.core.Disposable
 
 /**
  * SSH 远程控制界面（主板命令行）。
@@ -60,8 +59,18 @@ import io.microduck.app.ssh.SshClient
  * ── 线程 ──
  * 所有 SSH 网络操作在后台线程执行，UI 更新一律 `post {}` 回主线程（Android 主线程
  * 禁止网络 I/O）。页面销毁时断开 session。
+ *
+ * ── 阶段 3：纯展示 + 回调 ──
+ * SSH 会话状态与连接/命令逻辑的单一真源是 [SshRepository]：本面板不再自管
+ * `Session` / `SshClient`，只订阅仓库快照渲染状态行 / 指纹 / 输出区，按钮只发
+ * connect / disconnect / exec 事件。保留在组件内的只有**瞬时 UI element state**
+ * ——四个凭据输入框、"记住凭据"勾选、TerminalEmulator 的 ANSI 渲染缓冲
+ * （官方 state hoisting 指南：UI 元素自身状态留在组件，不上移）。
  */
-class SshPanel(context: Context) : MaterialCardView(context) {
+class SshPanel(
+    context: Context,
+    private val repository: SshRepository,
+) : MaterialCardView(context) {
 
     private val d = resources.displayMetrics.density
     private fun dp(v: Int) = (v * d).toInt()
@@ -79,16 +88,17 @@ class SshPanel(context: Context) : MaterialCardView(context) {
     private val outputScroll: ScrollView
     private val statusText: TextView
 
-    private val client = SshClient()
-    @Volatile private var session: Session? = null
     private var terminal = TerminalEmulator(cols = 80, rows = 40) { }
+    private var snapshotDisposable: Disposable? = null
 
-    /** 快捷只读命令：不编造控制命令，只放一手实机依据或 Linux 平台通用只读命令。 */
+    /** 快捷只读命令：不编造控制命令，只放一手实机依据或 Linux 平台通用只读命令。
+     *  🔴 标签控制在 ≤4 字：4 个按钮均分窄屏宽度，长标签会折行把按钮撑变形
+     *  （用户 2026-11-16「终端界面按钮文字超长，换行，按钮变形」）。 */
     private val quickCommands = listOf(
         "robotctl health --json" to "健康检查",
         "uptime" to "负载",
         "df -h" to "磁盘",
-        "systemctl is-active updaterd; systemctl is-enabled updaterd" to "更新服务状态",
+        "systemctl is-active updaterd; systemctl is-enabled updaterd" to "更新服务",
     )
 
     /**
@@ -191,6 +201,9 @@ class SshPanel(context: Context) : MaterialCardView(context) {
             val b = MaterialButton(context).apply {
                 text = label; textSize = 10.5f; minimumHeight = dp(38)
                 contentDescription = "快捷命令 $label"
+                // 🔴 防折行：单行 + 末尾省略号。长命令的全文由 contentDescription 承载，
+                // 按钮可视文本永不换行（否则窄屏均分时按钮被撑高变形）。
+                maxLines = 1; ellipsize = TextUtils.TruncateAt.END
                 setOnClickListener { runCommand(cmd) }
             }
             quickRow.addView(b, LinearLayout.LayoutParams(0, WRAP, 1f).also {
@@ -201,10 +214,14 @@ class SshPanel(context: Context) : MaterialCardView(context) {
 
         // ── 写操作：启动 updaterd（默认被关），必须二次确认，绝不自动执行 ──
         // 单独一行 + 警示色，与上面的只读快捷命令区视觉隔离，避免误触。
+        // 🔴 按钮文字只留「启动 updaterd」（用户 2026-11-16：长文本在窄屏折行、
+        // 按钮被撑变形）；「默认关闭 · 需确认」的警示语义由下方说明文字承载，
+        // 二次确认对话框里也完整展示，不丢信息。
         val writeBtn = MaterialButton(context).apply {
-            text = "启动 updaterd（默认关闭 · 需确认）"
+            text = "启动 updaterd"
             textSize = 11f; minimumHeight = dp(40)
-            contentDescription = "写操作 启动 updaterd"
+            contentDescription = "写操作 启动 updaterd（默认关闭，需二次确认）"
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
             setBackgroundColor(context.getColor(R.color.md_warn))
             setTextColor(context.getColor(R.color.md_bg))
             setOnClickListener { confirmStartUpdaterd() }
@@ -213,7 +230,7 @@ class SshPanel(context: Context) : MaterialCardView(context) {
             it.topMargin = dp(6)
         })
         root.addView(TextView(context).apply {
-            text = "镜像故意把 updaterd 设为手动；start 只本次生效，不改开机自启"
+            text = "默认关闭 · 需确认 · start 只本次生效，不改开机自启"
             textSize = 9.5f; setTextColor(context.getColor(R.color.md_text_dim))
             setPadding(0, dp(2), 0, 0)
         })
@@ -257,6 +274,35 @@ class SshPanel(context: Context) : MaterialCardView(context) {
         })
 
         addView(root, LayoutParams(MATCH, MATCH))
+
+        // 订阅仓库快照：Repository.publish 在后台线程回调，必须 post 回主线程改 View。
+        // 初始快照立即渲染一次（未连接态），与旧版 init 的初始文案等价。
+        snapshotDisposable = repository.onSnapshot { s -> post { render(s) } }
+        render(repository.snapshot())
+    }
+
+    /** 按仓库快照渲染整个面板（状态行 / 指纹 / 按钮态 / 终端输出）。 */
+    private fun render(s: SshRepository.Snapshot) {
+        setStatus(
+            when (s.state) {
+                SshRepository.State.CONNECTING -> "● 正在连接 ${s.endpoint} …"
+                SshRepository.State.CONNECTED -> "● 已连接 ${s.endpoint}"
+                SshRepository.State.FAILED -> "● 连接失败：${s.error}" + if (s.error.isEmpty()) "（未知错误）" else ""
+                SshRepository.State.IDLE -> "● 未连接"
+            },
+            error = s.state == SshRepository.State.FAILED,
+        )
+        fingerprintText.text = "主机指纹：${s.fingerprint}"
+        connectBtn.isEnabled = s.state != SshRepository.State.CONNECTING &&
+            s.state != SshRepository.State.CONNECTED
+        disconnectBtn.isEnabled = s.state == SshRepository.State.CONNECTED
+        // 终端输出：仓库存 raw 文本（含命令回显/错误），面板用 TerminalEmulator 做 ANSI 渲染。
+        // 先发清屏序列重置 grid，再从快照整体重建，避免多次命令历史被重复叠加。
+        terminal.write("\u001b[2J\u001b[H")
+        terminal.write(s.lastOutput)
+        outputText.text = terminal.render()
+        outputText.setTextColor(Color.parseColor("#E6EDF3"))
+        outputScroll.post { outputScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun credEdit(value: String, hint: String, inputType: Int) = EditText(context).apply {
@@ -283,6 +329,8 @@ class SshPanel(context: Context) : MaterialCardView(context) {
 
     private fun connect() {
         val creds = currentCreds()
+        // 凭据输入框是 UI element state：非空校验与"记住凭据"勾选在此处理，
+        // 校验通过后把建链事件交给仓库；连接状态与结果由快照回推。
         if (creds.host.isEmpty() || creds.user.isEmpty() || creds.password.isEmpty()) {
             setStatus("● 主机 / 用户名 / 密码不能为空", error = true)
             return
@@ -290,35 +338,11 @@ class SshPanel(context: Context) : MaterialCardView(context) {
         if (rememberBox.isChecked) {
             try { SshCredentialStore.save(context, creds) } catch (_: Exception) { /* 存储失败不阻塞连接 */ }
         }
-        connectBtn.isEnabled = false
-        setStatus("● 正在连接 ${creds.host}:${creds.port} …")
-        Thread {
-            try {
-                val result = client.connect(creds)
-                session = result.session
-                post {
-                    fingerprintText.text = "主机指纹：${result.hostKeyFingerprint}"
-                    disconnectBtn.isEnabled = true
-                    setStatus("● 已连接 ${creds.host}")
-                    appendOutput("[connected] ${creds.user}@${creds.host}:${creds.port}\n")
-                }
-            } catch (e: Exception) {
-                post {
-                    connectBtn.isEnabled = true
-                    setStatus("● 连接失败：${e.message?.take(80) ?: "未知错误"}", error = true)
-                }
-            }
-        }.start()
+        repository.connect(creds)
     }
 
     private fun disconnect() {
-        val s = session
-        session = null
-        Thread { try { s?.disconnect() } catch (_: Exception) {} }.start()
-        connectBtn.isEnabled = true
-        disconnectBtn.isEnabled = false
-        fingerprintText.text = "主机指纹：未连接"
-        setStatus("● 已断开")
+        repository.disconnect()
     }
 
     /** 写操作二次确认：把命令全文与一手依据摊开给用户看，绝不静默执行。 */
@@ -337,30 +361,9 @@ class SshPanel(context: Context) : MaterialCardView(context) {
     }
 
     private fun runCommand(command: String, stdin: String? = null) {
-        val s = session
-        if (s == null || !s.isConnected) {
-            setStatus("● 请先连接", error = true)
-            return
-        }
-        appendOutput("\n$ $command\n")
-        Thread {
-            try {
-                val out = client.exec(s, command, stdin = stdin)
-                post { appendOutput(out + "\n") }
-            } catch (e: Exception) {
-                post { appendOutput("[error] ${e.message?.take(120) ?: "执行失败"}\n") }
-            }
-            // stdin 引用的局部字符串随栈帧回收；不做任何持久化。
-        }.start()
-    }
-
-    private fun appendOutput(s: String) {
-        // 用 TerminalEmulator 处理 ANSI/VT100（远端 robotctl/journalctl 会带颜色码），
-        // 只在命令返回时刷一次 TextView，不做持续刷新（门禁 idle 约束）。
-        terminal.write(s)
-        outputText.text = terminal.render()
-        outputText.setTextColor(Color.parseColor("#E6EDF3"))
-        outputScroll.post { outputScroll.fullScroll(View.FOCUS_DOWN) }
+        // 未连接时仓库的 exec 会发布"请先连接"错误快照，由 render 统一呈现，
+        // 面板不自己写状态文案。stdin（sudo 密码）只在事件里传一次，随栈回收。
+        repository.exec(command, stdin = stdin)
     }
 
     private fun setStatus(msg: String, error: Boolean = false) {
@@ -368,11 +371,11 @@ class SshPanel(context: Context) : MaterialCardView(context) {
         statusText.setTextColor(context.getColor(if (error) R.color.md_bad else R.color.md_ok))
     }
 
-    /** 页面销毁时断开，避免后台连接泄漏。 */
+    /** 页面销毁时退订并断开，避免后台连接泄漏与持有已销毁 View 的回调。 */
     fun release() {
-        val s = session
-        session = null
-        Thread { try { s?.disconnect() } catch (_: Exception) {} }.start()
+        snapshotDisposable?.dispose()
+        snapshotDisposable = null
+        repository.release()
     }
 
     private companion object {

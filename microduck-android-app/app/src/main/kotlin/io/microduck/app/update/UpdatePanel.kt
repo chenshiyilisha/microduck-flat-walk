@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
 import io.microduck.app.R
+import io.microduck.app.core.Disposable
 
 /**
  * 设置页末尾的「版本与更新」面板（纯代码构建，与既有 UI 同风格）。
@@ -29,19 +30,25 @@ import io.microduck.app.R
  *    下载百分比跳动不推歪整行；所有状态文本来自真实 HTTP 结果，不伪造。
  *  · 面板放在设置页**最末尾**：真机 uiautomator 只 dump 视口内节点，
  *    往上插会把「方向摇杆死区」推出首屏（门禁 59 条实测踩过）。
+ *
+ * ── 阶段 3：纯展示 + 回调 ──
+ * 流程状态（busy / canDownload / needsInstallPermission / 文案）的单一真源是
+ * [UpdateRepository]，本面板**不再自管** lastState / releaseUrl，改为订阅仓库快照
+ * 渲染；按钮只发事件给仓库。这消除了旧 `UpdateController` 与 `UpdateRepository`
+ * 两套并行真源。布局代码（本文件 98% 篇幅）保持不动，真机视觉零回归。
  */
 class UpdatePanel(
     private val activity: AppCompatActivity,
-    private val controller: UpdateController,
+    private val repository: UpdateRepository,
 ) {
     val view: LinearLayout
-    private lateinit var statusText: TextView
-    private lateinit var checkButton: MaterialButton
-    private lateinit var downloadButton: MaterialButton
-    private lateinit var permissionButton: MaterialButton
-    private lateinit var releaseButton: MaterialButton
-    private var lastState = controller.idleState()
-    private var releaseUrl: String? = null
+    private val statusText: TextView
+    private val checkButton: MaterialButton
+    private val downloadButton: MaterialButton
+    private val permissionButton: MaterialButton
+    private val releaseButton: MaterialButton
+    private var snapshot: UpdateRepository.Snapshot = repository.snapshot()
+    private var snapshotDisposable: Disposable? = null
 
     private fun dp(v: Int) = (v * activity.resources.displayMetrics.density).toInt()
     private fun color(res: Int) = ContextCompat.getColor(activity, res)
@@ -72,7 +79,7 @@ class UpdatePanel(
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
         })
         view.addView(TextView(activity).apply {
-            text = "当前版本 " + controller.versionLabel()
+            text = "当前版本 " + repository.versionLabel
             textSize = 11f; setTextColor(color(R.color.md_accent))
             fontFeatureSettings = "tnum"
             setPadding(0, dp(6), 0, dp(2))
@@ -86,9 +93,9 @@ class UpdatePanel(
         view.addView(statusText)
 
         val row1 = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        checkButton = actionButton("检查更新") { controller.check { render(it) } }
+        checkButton = actionButton("检查更新") { repository.check() }
         releaseButton = actionButton("打开发布页") {
-            releaseUrl?.let { controller.openReleasePage(it) }
+            snapshot.releaseUrl?.let { repository.openReleasePage(it) }
         }
         row1.addView(checkButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         row1.addView(releaseButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -97,15 +104,20 @@ class UpdatePanel(
         ).also { it.topMargin = dp(8) })
 
         val row2 = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-        downloadButton = actionButton("下载并安装") { controller.downloadAndInstall { render(it) } }
-        permissionButton = actionButton("开启安装权限") { controller.openInstallPermissionSettings() }
+        downloadButton = actionButton("下载并安装") { repository.downloadAndInstall() }
+        permissionButton = actionButton("开启安装权限") { repository.openInstallPermissionSettings() }
         row2.addView(downloadButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         row2.addView(permissionButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         view.addView(row2, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).also { it.topMargin = dp(4) })
 
-        render(lastState)
+        render(snapshot)
+        // 订阅仓库快照：Repository 的 publish 在后台线程回调，render 必须切主线程
+        // （Android 禁止非主线程改 View；旧 UpdateController 用 runOnUiThread 包回调）。
+        snapshotDisposable = repository.onSnapshot { s ->
+            activity.runOnUiThread { render(s) }
+        }
     }
 
     private fun actionButton(label: String, onClick: () -> Unit) = MaterialButton(activity).apply {
@@ -115,9 +127,8 @@ class UpdatePanel(
         setOnClickListener { onClick() }
     }
 
-    fun render(state: UpdateController.State) {
-        lastState = state
-        releaseUrl = state.releaseUrl
+    fun render(state: UpdateRepository.Snapshot) {
+        snapshot = state
         statusText.text = state.text
         checkButton.isEnabled = !state.busy
         downloadButton.visibility = if (state.canDownload) View.VISIBLE else View.GONE
@@ -127,12 +138,14 @@ class UpdatePanel(
 
     /** 用户从「安装未知应用」设置页返回后重新查权限，不把「返回」当作「已授权」。 */
     fun onResume() {
-        if (lastState.needsInstallPermission && controller.canRequestInstalls()) {
-            render(UpdateController.State(
-                text = "安装权限已开启，可继续「下载并安装」",
-                canDownload = true,
-                releaseUrl = lastState.releaseUrl,
-            ))
-        }
+        // 权限状态迁移已搬进 Repository（单一真源），面板只发事件；
+        // 状态变化会通过 onSnapshot 推回 render。
+        repository.onInstallPermissionGranted()
+    }
+
+    /** 页面销毁时退订，避免 Repository 持有已销毁面板的回调。 */
+    fun release() {
+        snapshotDisposable?.dispose()
+        snapshotDisposable = null
     }
 }

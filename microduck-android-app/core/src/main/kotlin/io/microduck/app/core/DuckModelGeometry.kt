@@ -79,7 +79,8 @@ data class ModelFrame(
 object DuckModelGeometry {
 
     const val CAMERA_DISTANCE: Float = 4.0f
-    private const val FOCAL_RATIO: Float = 0.26f
+    /** 透视焦距比（HoloRenderer 内联投影与本 project() 共用同一真源，禁止各自另写一版）。 */
+    const val FOCAL_RATIO: Float = 0.26f
 
     /** MicroDuck 标志橙：躯体/头/喙主色。依据 BoBo 复刻文档「分色分盘…橙 / 躯体 / 黑」。 */
     const val ORANGE: Int = 0xFFFF8A3D.toInt()

@@ -97,6 +97,38 @@ PART_COLORS = {
 for _name in WHITE_LINKS:
     PART_COLORS[_name] = 0xFFFF8A3D
 
+# ── DMSH v2 部件索引（阶段 4：颜色即状态）──
+# 每个三角形带一个 part index，与 core 的 RobotPart 序号一一对应：
+#   0..14  = 15 关节（顺序 = lib.rs JOINT_NAMES，即 RobotParts.JOINT_PARTS 顺序）
+#   15..20 = 系统部件（TORSO/BATTERY/CPU/IMU/BUS/LINK，RobotPart.entries 中 JOINT 之后的顺序）
+#   255    = NO_PART（纯外观件：壳/脸/喙/脚/镜头/PCB 等，无对应健康读数 ⇒ 保持官方基色）
+#
+# 🔴 映射唯一权威 = MJCF 的 joint→body 归属（一手，实测 15 joint 名 == lib.rs JOINT_NAMES）：
+#   对每个 group=2 geom，取其 body；body 若恰好是某语义关节的 jnt_bodyid，则该 geom 的
+#   **结构/舵机件**归该关节部件。系统件按 mesh 名的一手语义归 BATTERY/CPU/IMU。
+#   纯外观壳件一律 NO_PART。禁止手写关节↔mesh 猜测。
+MESH_SYSTEM_PART = {
+    "np_f970": 16,                       # BATTERY（NP-F970 电池，一手 mesh 名）
+    "pcb__raspberry_pi_zero_2_w": 17,    # CPU（RPi Zero 2W 主板）
+    "elec_rpi_robot_hat_pcb": 17,        # CPU（robot HAT 板）
+    "noenoeil": 18,                      # IMU（头部传感器模组；读数由 health 的 imu_ready 决定）
+}
+# 结构/舵机件 mesh：这些归其 body 对应的语义关节；其余 mesh 视为外观件 → NO_PART。
+# 判据来自 mesh 的一手机械语义（onshape-to-robot 导出的连杆/轴承/舵机/支架）。
+STRUCTURAL_MESH_PREFIXES = (
+    "xl330", "seeed_bearing", "upper_leg", "ankle", "hip_l",
+    "yaw2roll", "yaw_roll_motion", "bearing_roll", "leg",
+    "motor_support",
+)
+# 15 关节顺序 = lib.rs JOINT_NAMES = RobotParts.JOINT_PARTS（一手，禁止重排）。
+JOINT_ORDER = [
+    "left_hip_yaw", "left_hip_roll", "left_hip_pitch", "left_knee", "left_ankle",
+    "neck_pitch", "head_pitch", "head_yaw", "head_roll", "mouth",
+    "right_hip_yaw", "right_hip_roll", "right_hip_pitch", "right_knee", "right_ankle",
+]
+NO_PART = 255
+DMSH_VERSION = 2
+
 # 三角形预算：Canvas 2D 每帧对每个三角形 drawPath 一次（1s tick 旋转 + 30ms 拖动节流）。
 # 旧版 stride 抽样是 7500 面但全是碎片；顶点聚类用相同量级预算画出**闭合表面**。
 # 二分搜索最细的聚类 cell，使输出 <= TARGET_TRIS，MJCF/STL 面数漂移时也不会爆量。
@@ -104,6 +136,16 @@ TARGET_TRIS = 12000
 CELL_MIN = 0.002
 CELL_MAX = 0.030
 CELL_ITERS = 20
+# 🔴 2026-11-16：聚类路线已废弃（保留 _cluster 仅作 QEM 失败时的兜底）。
+# 聚类把大 geom 压到 ~9% 面数时曲面向质心塌缩（head_pitch z 跨度实测被压扁 96%），
+# 整机高宽比从 1.26 拉成 1.85 —— 「渲染不像真鸭」的真因是几何本身失真。
+# 现行路线 = pymeshlab QECD 逐 geom 保形简化 + 生成期 bbox 跨度守恒校验。
+# 🔴 2026-11-17 后端实测：fast_simplification（trimesh simplify_quadric_decimation）
+# 与 pyfqmr 是同一受限 C++ 内核，对 CAD 网格有「质量地板」——塌边提前停手
+# （np_f970 请求 80 面实际输出 14044 面，agg=10 也不动；yaw2roll 地板 2484 面
+# 且 z 主体塌 71%）。pymeshlab 的 QECD（MeshLab 参考实现）对同样网格全部
+# 精确到目标面数且保形 0%（实测 7 个代表块 req300 全部 out=300, shk<=3%）。
+# 判据：请求面数 vs 实际输出面数，非单调 = 后端不可信。
 
 
 def _cluster(v: np.ndarray, f: np.ndarray, c: np.ndarray,
@@ -138,10 +180,20 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
     mujoco.mj_comPos(m, data)
 
     # 收集全部外观 geom 的**原始**三角形（不做 stride 抽样）。
+    # 🔴 一手映射：joint 语义名 → jnt_bodyid。15 个 joint 名 == lib.rs JOINT_NAMES，
+    # 故 body→joint 反查是权威的关节归属（零手写猜测），供 v2 部件索引使用。
+    body_to_joint: dict[int, str] = {}
+    for j in range(m.njnt):
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j)
+        if name in JOINT_ORDER:
+            body_to_joint[int(m.jnt_bodyid[j])] = name
+
     all_verts: list[np.ndarray] = []
     all_faces: list[np.ndarray] = []
     all_colors: list[np.ndarray] = []
     face_codes: list[np.ndarray] = []
+    face_parts: list[np.ndarray] = []       # v2：每三角形部件索引
+    geom_blocks: list[dict] = []            # 分件聚类用：每个 visual geom 的块边界
     code_of_name: dict[str, int] = {}
     visual_geom_count = 0
     visual_mesh_kinds: set[str] = set()
@@ -185,6 +237,21 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
                     PART_COLORS.get(mname, DEFAULT_STRUCT_COLOR), dtype=np.uint32))
         code = code_of_name.setdefault(mname, len(code_of_name))
         face_codes.append(np.full(local_faces.shape[0], code, dtype=np.int32))
+        # v2 部件索引：系统件按 mesh 名语义；结构件按 body→joint 归属；其余 NO_PART。
+        part = MESH_SYSTEM_PART.get(mname)
+        if part is None:
+            joint = body_to_joint.get(int(m.geom_bodyid[i]))
+            is_structural = any(mname.startswith(pre) for pre in STRUCTURAL_MESH_PREFIXES)
+            if joint is not None and is_structural:
+                part = JOINT_ORDER.index(joint)
+            else:
+                part = NO_PART
+        face_parts.append(np.full(local_faces.shape[0], part, dtype=np.uint8))
+        geom_blocks.append({
+            "v0": base, "vn": int(world_verts.shape[0]),
+            "f0": sum(x.shape[0] for x in all_faces) - int(local_faces.shape[0]),
+            "fn": int(local_faces.shape[0]), "name": mname,
+        })
 
     if not all_verts:
         raise RuntimeError("未提取到任何 group=2 visual 网格，请检查 MJCF 的 geom_group")
@@ -193,26 +260,177 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
     f = np.concatenate(all_faces, axis=0)
     c = np.concatenate(all_colors, axis=0)
     codes = np.concatenate(face_codes, axis=0)
+    parts = np.concatenate(face_parts, axis=0)
     raw_faces = int(f.shape[0])
 
-    # 🔴 二分搜索最细的 cell，使聚类后三角形数 <= TARGET_TRIS。
-    # 比固定 cell 稳：MJCF/STL 换版本导致原始面数变化时，输出规模仍受控。
-    lo, hi = CELL_MIN, CELL_MAX
-    centers, cf, cc, keep = _cluster(v, f, c, hi)
-    for _ in range(CELL_ITERS):
-        mid_cell = (lo + hi) / 2.0
-        t_centers, t_faces, t_colors, t_keep = _cluster(v, f, c, mid_cell)
-        if t_faces.shape[0] > TARGET_TRIS:
-            lo = mid_cell                       # 太细 ⇒ 面太多 ⇒ 放大 cell
+    # 🔴 QEM 保形简化（2026-11-16 取代顶点聚类；2026-11-17 换 pymeshlab 后端）：
+    # 聚类把大 geom 压到 ~9% 面数时，格子只能并成大块 → 曲面向质心塌缩
+    # （实测 head_pitch z 跨度被压扁 96%、整机高宽比 1.26 被拉成 1.85），
+    # 这正是「渲染不像真鸭」的真因 —— 几何本身就歪了，渲染风格救不回来。
+    # QECD（Garland-Heckbert 二次误差度量）按「简化后形状误差最小」折叠边，
+    # 是保形简化的标准算法；低面数下形状/比例保持远优于格子聚类。
+    # 预算按 sqrt(世界表面积) 分配 —— 原始面数被镶嵌密度支配（轴承 23 万个微三角），
+    # 表面积才对应屏幕占比；clamp 后迭代重分配逼近 TARGET_TRIS。
+    # 形状自适应：某块在预算下 bbox 跨度塌缩 > SHAPE_TOL 时倍增预算重试
+    # （pymeshlab 后端保形性好，升级极少触发）；仍不过则原样保留整块。
+    # 最后若总量超 TARGET，按预算余量反哺收缩（缩完重测形状，失败回退）。
+    import pymeshlab
+
+    MIN_FACES = 80
+    MAX_FACES = 1500
+    # 小件原样保留：复杂小件（如 banana_pcb_locker）低面数也表达不了，QEM 会压扁；
+    # ≤KEEP_SMALL_FACES 的块不动，QEM 预算只在剩余额度内按 sqrt(面积) 分配。
+    KEEP_SMALL_FACES = 1500
+    SHAPE_TOL = 0.20
+
+    def _qem(bv: np.ndarray, bf: np.ndarray, target: int):
+        """pymeshlab QECD 到 target 面。失败抛异常；成功返回 (verts, faces)。"""
+        ms = pymeshlab.MeshSet()
+        ms.add_mesh(pymeshlab.Mesh(
+            vertex_matrix=bv.astype(np.float64),
+            face_matrix=bf.astype(np.int32)), "blk")
+        ms.meshing_decimation_quadric_edge_collapse(
+            targetfacenum=int(target), preservenormal=True)
+        mm = ms.current_mesh()
+        return (np.asarray(mm.vertex_matrix(), dtype=np.float64),
+                np.asarray(mm.face_matrix(), dtype=np.int64))
+
+    def _shape_shrink(pre_v: np.ndarray, post_v: np.ndarray) -> float:
+        """各轴 bbox 跨度最大收缩率（>0 表示压扁）。"""
+        pre = pre_v.max(axis=0) - pre_v.min(axis=0)
+        post = post_v.max(axis=0) - post_v.min(axis=0)
+        return float(max((pre - post) / np.maximum(pre, 1e-9)))
+
+    def _simplify_with_gate(bv, bf, budget_g):
+        """带形状门禁的简化：预算下塌了就倍增重试；不过则原样保留。
+        返回 (verts, faces, used_budget, shrink)。"""
+        pre_lo, pre_hi = bv.min(axis=0), bv.max(axis=0)
+        pre_span = pre_hi - pre_lo
+        try_fc = int(budget_g)
+        while try_fc < bf.shape[0]:
+            try:
+                cand_v, cand_f = _qem(bv, bf, try_fc)
+            except Exception as e:
+                print(f"WARN QECD 失败 {try_fc} 面: {type(e).__name__} {e}")
+                break
+            post_span = cand_v.max(axis=0) - cand_v.min(axis=0)
+            shrink = float(max((pre_span - post_span)
+                               / np.maximum(pre_span, 1e-9)))
+            if shrink <= SHAPE_TOL:
+                return cand_v, cand_f, try_fc, shrink
+            try_fc = min(try_fc * 2, bf.shape[0])  # 塌了→加预算重试
+        return bv, bf, int(bf.shape[0]), 0.0  # 原样保留
+
+    areas = []
+    for blk in geom_blocks:
+        bv = v[blk["v0"]:blk["v0"] + blk["vn"]]
+        bf = f[blk["f0"]:blk["f0"] + blk["fn"]] - blk["v0"]
+        tri = bv[bf]
+        cross = np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
+        areas.append(float(cross.sum()) / 2.0)
+    w = np.sqrt(np.maximum(np.array(areas), 1e-9))
+    small_mask = np.array([blk["fn"] <= KEEP_SMALL_FACES for blk in geom_blocks])
+    big_idx = [k for k, blk in enumerate(geom_blocks) if not small_mask[k]]
+    small_sum = int(sum(blk["fn"] for blk, s in zip(geom_blocks, small_mask) if s))
+    avail = TARGET_TRIS - small_sum
+    w_q = np.where(small_mask, 0.0, w)
+    w_sum = w_q.sum()
+    if w_sum <= 0 or avail <= 0:
+        raise RuntimeError("没有可 QECD 的大 geom 或预算耗尽")
+    budget = np.clip(avail * w_q / w_sum, MIN_FACES, MAX_FACES).astype(np.float64)
+    for _ in range(8):  # clamp 后迭代重分配：把封顶块的余额分给未封顶块
+        over = budget > MAX_FACES
+        budget[over] = MAX_FACES
+        rest = avail - budget[over].sum()
+        free = (~over) & (~small_mask)
+        free_idx = np.where(free)[0]
+        if free_idx.size == 0 or rest <= MIN_FACES * free_idx.size:
+            break
+        budget[free_idx] = np.clip(
+            rest * w[free_idx] / w[free_idx].sum(), MIN_FACES, MAX_FACES)
+    budget = budget.astype(int)
+    budget = np.where(small_mask, np.array([blk["fn"] for blk in geom_blocks]), budget)
+
+    # 第一轮：按预算逐块 QECD（带形状门禁）
+    results = []  # (t_v, t_f, shrink, budget_used) 按块序
+    total_faces = 0
+    for blk, budget_g in zip(geom_blocks, budget):
+        bv = v[blk["v0"]:blk["v0"] + blk["vn"]]
+        bf = f[blk["f0"]:blk["f0"] + blk["fn"]] - blk["v0"]
+        if budget_g < blk["fn"]:
+            t_v, t_f, used, shr = _simplify_with_gate(bv, bf, budget_g)
         else:
-            hi = mid_cell                       # 够粗 ⇒ 试着更细
-            centers, cf, cc, keep = t_centers, t_faces, t_colors, t_keep
-    cell_used = hi
+            t_v, t_f, used, shr = bv, bf, blk["fn"], 0.0
+        results.append([t_v, t_f, shr, used])
+        total_faces += int(t_f.shape[0])
+
+    # 预算再平衡：总量超 TARGET 时，从形状余量大的块反哺收缩（缩完重测，
+    # 塌了就回退到上一次合格结果）。最多 4 轮；仍超则诚实报错不放宽。
+    for _ in range(4):
+        if total_faces <= TARGET_TRIS:
+            break
+        reducible = [k for k in big_idx
+                     if results[k][3] > MIN_FACES
+                     and results[k][3] < geom_blocks[k]["fn"]]
+        if not reducible:
+            break
+        excess = total_faces - TARGET_TRIS
+        w_r = np.array([max(results[k][3], 1) for k in reducible], dtype=np.float64)
+        for k, wk in zip(reducible, w_r):
+            blk = geom_blocks[k]
+            bv = v[blk["v0"]:blk["v0"] + blk["vn"]]
+            bf = f[blk["f0"]:blk["f0"] + blk["fn"]] - blk["v0"]
+            cut = int(excess * wk / w_r.sum()) + 1
+            new_fc = max(results[k][3] - cut, MIN_FACES)
+            try:
+                cand_v, cand_f = _qem(bv, bf, new_fc)
+            except Exception:
+                continue
+            shrink = _shape_shrink(bv, cand_v)
+            if shrink <= SHAPE_TOL and cand_f.shape[0] < results[k][1].shape[0]:
+                total_faces += int(cand_f.shape[0]) - int(results[k][1].shape[0])
+                results[k] = [cand_v, cand_f, shrink, new_fc]
+            # 塌了/没变小 → 保留原结果，下一轮换别的块
+    if total_faces > TARGET_TRIS:
+        raise RuntimeError(
+            f"简化后三角形 {total_faces} 超出预算 {TARGET_TRIS} 且无余量可收 "
+            f"(保形优先于预算；如需更低预算请调 TARGET_TRIS)")
+
+    out_v, out_f, out_c, out_p, out_k, cells = [], [], [], [], [], []
+    v_off = 0
+    for blk, res in zip(geom_blocks, results):
+        t_v, t_f, shr, _used = res
+        bv = v[blk["v0"]:blk["v0"] + blk["vn"]]
+        bc = c[blk["f0"]:blk["f0"] + blk["fn"]]
+        bp = parts[blk["f0"]:blk["f0"] + blk["fn"]]
+        bk = codes[blk["f0"]:blk["f0"] + blk["fn"]]
+        out_v.append(t_v)
+        out_f.append(t_f + v_off)
+        out_c.append(np.full(t_f.shape[0], int(bc[0]), dtype=np.uint32))
+        out_p.append(np.full(t_f.shape[0], int(bp[0]), dtype=np.uint8))
+        out_k.append(np.full(t_f.shape[0], int(bk[0]), dtype=np.int32))
+        cells.append((blk["name"], int(t_f.shape[0]), int(blk["fn"]),
+                      round(float(shr), 3)))
+        v_off += int(t_v.shape[0])
+
+    centers = np.concatenate(out_v, axis=0)
+    cf = np.concatenate(out_f, axis=0).astype(np.int64)
+    cc = np.concatenate(out_c, axis=0)
+    cparts = np.concatenate(out_p, axis=0)
+    kept_codes = np.concatenate(out_k, axis=0)
+    cell_used = 0.0  # QEM 路线不再有聚类 cell；字段保留供报告兼容
+    total_faces = int(cf.shape[0])
+    worst = max((c[3] for c in cells), default=0.0)
+    print(f"QEM: {raw_faces} -> {total_faces} faces (budget {TARGET_TRIS})")
+    print("QEM 各块面数/原始/最大收缩率：")
+    for nm, fn, raw_fn, shr in sorted(cells, key=lambda x: -x[3])[:8]:
+        print(f"  {nm[:34]:<34} {fn:>5}/{raw_fn:>6}  收缩 {shr:.0%}")
+    print(f"QEM 最大部件收缩率 = {worst:.0%}")
 
     if cf.shape[0] == 0:
-        raise RuntimeError("顶点聚类后无有效三角形")
+        raise RuntimeError("简化后无有效三角形")
     if cf.shape[0] > TARGET_TRIS:
-        raise RuntimeError(f"聚类后三角形 {cf.shape[0]} 超出预算 {TARGET_TRIS}")
+        raise RuntimeError(f"简化后三角形 {cf.shape[0]} 超出预算 {TARGET_TRIS}")
 
     # 居中 + 均匀归一化（Kotlin DuckMesh 再做 Z-up→Y-up 轴置换与 NODES 尺度对齐）
     mins = centers.min(axis=0).astype(np.float64)
@@ -225,16 +443,26 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
     n_verts, n_tris = int(centered.shape[0]), int(cf.shape[0])
     inv_code = {code: name for name, code in code_of_name.items()}
     part_tri_counts: dict[str, int] = {}
-    for code, cnt in zip(*np.unique(codes[keep], return_counts=True)):
+    for code, cnt in zip(*np.unique(kept_codes, return_counts=True)):
         part_tri_counts[inv_code[int(code)]] = int(cnt)
 
-    # 写二进制：header / 顶点表 / 三角形索引 / 每三角形颜色
+    # v2 部件分布统计（从实际写出的索引派生，供自检/文档核对，不手写）
+    part_index_counts: dict[int, int] = {}
+    for idx, cnt in zip(*np.unique(cparts, return_counts=True)):
+        part_index_counts[int(idx)] = int(cnt)
+    # 不变量：部件索引必须是 0..20 或 NO_PART(255)，不能越界到 21..254。
+    bad = [i for i in part_index_counts if not (0 <= i <= 20 or i == NO_PART)]
+    if bad:
+        raise RuntimeError(f"部件索引越界: {bad}")
+
+    # 写二进制 v2：header / 顶点表 / 三角形索引 / 每三角形颜色 / 每三角形部件索引
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "wb") as fp:
-        fp.write(struct.pack("<4sIII", b"DMSH", 1, n_verts, n_tris))
+        fp.write(struct.pack("<4sIIII", b"DMSH", DMSH_VERSION, n_verts, n_tris, 21))
         fp.write(centered.tobytes())
         fp.write(cf.astype(np.int32).tobytes())
         fp.write(cc.astype(np.uint32).tobytes())
+        fp.write(cparts.astype(np.uint8).tobytes())
 
     # 🔴 双写 + 字节级一致性校验：两份资源一旦漂移，真机与 JVM 自检看到的就不是
     # 同一个模型（这正是「core 自检全绿、真机降级」这类假绿的温床）。
@@ -246,7 +474,8 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
 
     return {
         "n_verts": n_verts, "n_tris": n_tris,
-        "parts": part_tri_counts, "out": str(out_path),
+        "parts": part_tri_counts, "part_index_counts": part_index_counts,
+        "n_parts": 21, "out": str(out_path),
         "bbox_min": mins.tolist(), "bbox_max": maxs.tolist(),
         "center": center.tolist(), "scale": scale,
         "raw_faces": raw_faces, "cell": cell_used,
@@ -259,13 +488,18 @@ def extract(mjcf_path: Path, out_path: Path) -> dict:
 
 
 def header_ok(buf: bytes, stats: dict) -> bool:
-    """第二条独立算法：直接 struct 解析字节，不复用 extract() 自己的计数变量。"""
+    """第二条独立算法：直接 struct 解析字节，不复用 extract() 自己的计数变量。
+
+    v2 header = 4s + 5×u32（magic/version/n_verts/n_tris/n_parts）= 20 字节；
+    part 数组 = n_tris × u8 追加在颜色表之后。
+    """
     try:
-        magic, ver, nv, nt = struct.unpack_from("<4sIII", buf, 0)
-        # header(16) + 顶点(3*f32) + 三角形索引(3*i32) + 每三角形颜色(u32)
-        expected_len = 16 + nv * 3 * 4 + nt * 3 * 4 + nt * 4
-        return (magic == b"DMSH" and ver == 1
+        magic, ver, nv, nt, nparts = struct.unpack_from("<4sIIII", buf, 0)
+        # header(20) + 顶点(3*f32) + 三角形索引(3*i32) + 颜色(u32) + 部件索引(u8)
+        expected_len = 20 + nv * 3 * 4 + nt * 3 * 4 + nt * 4 + nt
+        return (magic == b"DMSH" and ver == DMSH_VERSION
                 and nv == stats["n_verts"] and nt == stats["n_tris"]
+                and nparts == stats["n_parts"]
                 and len(buf) == expected_len)
     except Exception:
         return False
@@ -285,8 +519,8 @@ def surface_metrics(buf: bytes) -> tuple[float, float, float]:
       · stride 抽样（散落碎片）⇒ 约 0.25。
     这个量不来自 extract() 的自报数字，改坏生成逻辑它就会掉下来。
     """
-    _, _, nv, nt = struct.unpack_from("<4sIII", buf, 0)
-    off = 16
+    _, _, nv, nt, _ = struct.unpack_from("<4sIIII", buf, 0)
+    off = 20
     v = np.frombuffer(buf, dtype="<f4", count=nv * 3, offset=off).reshape(-1, 3).astype(np.float64)
     off += nv * 3 * 4
     t = np.frombuffer(buf, dtype="<i4", count=nt * 3, offset=off).reshape(-1, 3)
@@ -306,8 +540,9 @@ def scattered_fixture() -> bytes:
     v = rng.normal(size=(nv, 3)).astype(np.float32)
     t = np.arange(nt * 3, dtype=np.int32).reshape(-1, 3)
     c = np.zeros(nt, dtype=np.uint32)
-    return (struct.pack("<4sIII", b"DMSH", 1, nv, nt)
-            + v.tobytes() + t.tobytes() + c.tobytes())
+    p = np.full(nt, NO_PART, dtype=np.uint8)
+    return (struct.pack("<4sIIII", b"DMSH", DMSH_VERSION, nv, nt, 21)
+            + v.tobytes() + t.tobytes() + c.tobytes() + p.tobytes())
 
 
 def vertical_coverage(buf: bytes, bins: int = 128) -> tuple[float, float]:
@@ -321,8 +556,8 @@ def vertical_coverage(buf: bytes, bins: int = 128) -> tuple[float, float]:
     真实完整鸭子 ⇒ 全程有面覆盖；丢掉连杆 ⇒ 中段出现明显空档。
     实测（128 箱）：旧白名单网格 0.039 / 0.109；补全 group=2 后 0.000 / 0.000。
     """
-    _, _, nv, nt = struct.unpack_from("<4sIII", buf, 0)
-    off = 16
+    _, _, nv, nt, _ = struct.unpack_from("<4sIIII", buf, 0)
+    off = 20
     v = np.frombuffer(buf, dtype="<f4", count=nv * 3, offset=off).reshape(-1, 3).astype(np.float64)
     off += nv * 3 * 4
     t = np.frombuffer(buf, dtype="<i4", count=nt * 3, offset=off).reshape(-1, 3)
@@ -346,20 +581,23 @@ def vertical_coverage(buf: bytes, bins: int = 128) -> tuple[float, float]:
 
 def gapped_fixture(buf: bytes) -> bytes:
     """负对照夹具：删掉竖直中段 [0.35, 0.65] 的全部三角形 ⇒ 头/躯干/腿断开。"""
-    _, ver, nv, nt = struct.unpack_from("<4sIII", buf, 0)
-    off = 16
+    _, ver, nv, nt, nparts = struct.unpack_from("<4sIIII", buf, 0)
+    off = 20
     vbytes = buf[off:off + nv * 3 * 4]
     off_t = off + nv * 3 * 4
     t = np.frombuffer(buf, dtype="<i4", count=nt * 3, offset=off_t).reshape(-1, 3).copy()
     c = np.frombuffer(buf, dtype="<u4", count=nt, offset=off_t + nt * 3 * 4).copy()
+    off_p = off_t + nt * 3 * 4 + nt * 4
+    p = np.frombuffer(buf, dtype="<u1", count=nt, offset=off_p).copy()
     v = np.frombuffer(vbytes, dtype="<f4").reshape(-1, 3)
     z = v[:, 2]
     lo, hi = float(z.min()), float(z.max())
     zc = (z[t].mean(axis=1) - lo) / (hi - lo) if hi > lo else np.zeros(len(t))
     keep = (zc < 0.35) | (zc > 0.65)
-    tk, ck = t[keep], c[keep]
-    return (struct.pack("<4sIII", b"DMSH", ver, nv, len(tk))
-            + vbytes + tk.astype("<i4").tobytes() + ck.astype("<u4").tobytes())
+    tk, ck, pk = t[keep], c[keep], p[keep]
+    return (struct.pack("<4sIIII", b"DMSH", ver, nv, len(tk), nparts)
+            + vbytes + tk.astype("<i4").tobytes() + ck.astype("<u4").tobytes()
+            + pk.astype("<u1").tobytes())
 
 
 def selftest() -> int:
@@ -397,6 +635,34 @@ def selftest() -> int:
 
     payload = OUT.read_bytes()
     check("二进制结构自洽（独立 struct 解析）", header_ok(payload, stats))
+
+    # 🔴 v2 部件索引产物级判据（阶段 4）：直接从产物字节读，不复用生成器计数。
+    _, ver, nv, nt, nparts = struct.unpack_from("<4sIIII", payload, 0)
+    p_off = 20 + nv * 3 * 4 + nt * 3 * 4 + nt * 4
+    p_arr = np.frombuffer(payload, dtype="<u1", count=nt, offset=p_off)
+    check(f"v2 版本号={DMSH_VERSION}", ver == DMSH_VERSION)
+    check(f"v2 n_parts={nparts} 合理(21)", nparts == 21)
+    check(f"v2 部件数组长度={nt} 对齐三角形数", p_arr.shape[0] == nt)
+    check("v2 部件索引不越界(<=20 或 255)",
+          bool(np.all((p_arr <= 20) | (p_arr == NO_PART))))
+    colorable = int(np.sum(p_arr != NO_PART))
+    check(f"v2 可着色三角形>0 (实测 {colorable})", colorable > 0)
+    present = set(int(x) for x in np.unique(p_arr))
+    # 15 关节至少覆盖多数（舵机/连杆都在）；系统件至少电池/CPU/IMU 命中。
+    joints_present = len([i for i in present if 0 <= i <= 14])
+    check(f"v2 关节部件覆盖 >= 12/15 (实测 {joints_present})", joints_present >= 12)
+    check("v2 系统部件 BATTERY/CPU/IMU 命中",
+          {16, 17, 18}.issubset(present))
+    # 负对照：把 part 数组一字节改越界(200)，必须被不越界判据拒绝。
+    drift_p = bytearray(payload)
+    drift_p[p_off] = 200
+    bad_arr = np.frombuffer(bytes(drift_p), dtype="<u1", count=nt, offset=p_off)
+    check("负对照:部件索引越界必被拒绝",
+          not bool(np.all((bad_arr <= 20) | (bad_arr == NO_PART))))
+    # 负对照：版本号改成 1，header 判据必须拒绝（v1 解析器另行保留在 core）。
+    ver1 = bytearray(payload)
+    struct.pack_into("<I", ver1, 4, 1)
+    check("负对照:版本号降级为1必被 header 拒绝", not header_ok(bytes(ver1), stats))
     # 负对照：改坏魔数 / 截掉一字节，必须被同一个 header 判据拒绝。
     check("负对照:坏魔数必被 header 判据拒绝",
           not header_ok(b"XXXX" + payload[4:], stats))

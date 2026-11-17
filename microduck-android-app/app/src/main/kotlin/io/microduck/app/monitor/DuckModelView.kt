@@ -1,23 +1,32 @@
 package io.microduck.app.monitor
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
+import android.graphics.Rect
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
 import io.microduck.app.R
 import io.microduck.app.core.DuckMesh
 import io.microduck.app.core.DuckModelGeometry
+import io.microduck.app.core.HoloRenderer
 import io.microduck.app.core.MonitorReport
 import io.microduck.app.core.RobotPart
 import io.microduck.app.core.RobotParts
 import io.microduck.app.core.Severity
 
 /**
- * 鸭子真实外观模型 —— **单一真实网格 + 15 舵机状态点叠加，非运动学解算**。
+ * 鸭子真实外观模型 —— **单一真实网格 + 按部件本体着色，非运动学解算**。
+ *
+ * ── 阶段 4（颜色即状态，见重构规划 §5）──
+ * 旧版在真实网格上叠 15 个状态圆点，状态与模型本体割裂（用户明确要求去掉）。
+ * 现改为：DMSH v2 网格每个三角形带 partIndex，core 的 [DuckMesh.project] 按
+ * [MonitorReport.severityOf] 把状态色低强度叠加到官方基色上，再过 Lambert 光照。
+ * 本 View 只做「接收 report → 调同一条投影链 → 填充不透明三角形」，
+ * 不再持有任何圆点 Paint，也不自己判severity（单一真源在 core）。
  *
  * ── 🔴 2026-11-15 真因修复：Android 资源路径 ──
  * 旧版 `DuckMesh.load()` 用 `Class.getResourceAsStream("/duck_mesh.bin")`，这在**纯 JVM
@@ -49,21 +58,28 @@ import io.microduck.app.core.Severity
  * 故改为 **1s tick 直接步进 6°**（一圈 60s，仍是缓慢旋转），每秒只重绘一帧；
  * 触摸拖动按需重绘并做 30ms 节流。本 View 只 onDraw、绝不 setText。
  *
+ * ── 阶段 5：数字孪生全息渲染（2026-11-17，用户确认效果图后落地）──
+ * 不透明 Lambert 填充被**全息线框**取代：整条像素管线在 core 的 [HoloRenderer]
+ * （纯 JVM，可被自检真跑），本 View 只做 `Bitmap.setPixels` + `drawBitmap`。
+ * 管线 = 超采样 z-buffer 光栅化（精确遮挡 + 部件 ID）→ 图像空间提边（外轮廓/部件分界）
+ * → 覆盖率抗锯齿 → HDR 三级 bloom → Reinhard → 背景渐变/地面网格/暗角合成。
+ * 状态色仍走单一真源 [RobotParts.severityArgb]（经 [HoloRenderer] 的 fillRgb/kindRgb），
+ * 本 View 只把 [MonitorReport.severityOf] 作为回调传进去 —— 颜色即状态的链路没换。
+ *
+ * ── 性能（手机端）──
+ * 全息管线与分辨率强相关（内存/耗时 ∝ 内部像素 × SS²）。故内部渲染尺寸**上限**
+ * [HOLO_MAX_DIM]（拖动时降到 [HOLO_MAX_DIM_DRAG]、SS 降一档），再按视图比例缩放后
+ * 由 Canvas 双线性放大 —— 全息风格对轻微放大不敏感，换来每秒一帧的稳定预算。
+ * 帧缓存按「角度 1° 量化 + 状态签名」失效，旋转 tick 每秒只重算一次。
+ *
  * ── 颜色语义 ──
- * 15 个舵机状态圆点来自 [RobotParts.severityArgb]（core 单一真源）：
- * 绿=OK / 琥珀=WARN / 红=CRITICAL / 灰=UNKNOWN。**没证据一律灰，绝不默认绿**。
+ * 状态色来自 core 的 [RobotParts.severityArgb] 单一真源：
+ * 绿=OK / 琥珀=WARN / 红=CRITICAL / 青系基色=UNKNOWN。**没证据用基色，绝不默认绿**。
  */
 class DuckModelView(context: Context) : View(context) {
 
     private val d = resources.displayMetrics.density
     private fun dp(v: Float) = v * d
-
-    /** 真实网格三角形填充：颜色由 core 给出（已含不透明 alpha + Lambert 明暗）。 */
-    private val triFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-    /** 复用 Path：每帧对每个三角形 reset 重用，避免为每个面分配对象。 */
-    private val triPath = Path()
 
     // ── 降级路径（assets 网格加载失败时才用）──
     private val hullPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -79,25 +95,12 @@ class DuckModelView(context: Context) : View(context) {
         style = Paint.Style.FILL
     }
 
-    // ── 15 舵机状态点（叠在真实模型上）──
-    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val dotHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        // 🔴 不用 `alpha = 170`：AGP lint 的 Range 检测器会把 Paint.setAlpha(Int 0..255)
-        // 误判成 View.setAlpha(Float 0..1)，报「Value must be ≤ 1.0」。
-        // 一手依据：Google Android 注解文档明确 setAlpha(@IntRange(0,255) int)。
-        // 把 alpha 直接编进 ARGB 颜色，既正确又避开误报。
-        // RGB 与 md_bg 同源（去 AI 味改版 2026-11-16），仅叠半透明光晕。
-        style = Paint.Style.FILL; color = Color.argb(170, 0x0D, 0x10, 0x15)
-    }
-    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = dp(2f)
-    }
     private val groundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = ContextCompat.getColor(context, R.color.md_card)
     }
 
     @Volatile private var report: MonitorReport? = null
-    private var angleDeg: Float = 0f
+    @Volatile private var angleDeg: Float = 0f  // UI 写、渲染线程读
     private var rotating = true
 
     /** 真实外观网格：首次使用时从 assets 加载并缓存；失败则降级到程序化几何。 */
@@ -111,10 +114,42 @@ class DuckModelView(context: Context) : View(context) {
     private var dragStartAngle = 0f
     private var lastDragDrawMs = 0L
 
+    // ── 全息帧缓存：同角度同状态不重算；渲染在后台线程，UI 线程只贴图 ──
+    // 🔴 桌面稳态 42ms/帧（480×360 ss=3，HoloPreview 实测），手机约 3~5 倍 ⇒
+    // 同步渲染在 UI 线程会卡帧（uiautomator idle 死锁老坑）。改为后台单线程渲染、
+    // 「最新优先」去重（in-flight 期间的新请求只记 key 不排队），完成后 post 回 UI。
+    private var holoBitmap: Bitmap? = null
+    private var holoSrcRect = Rect()
+    private var holoKeyAngle = Int.MIN_VALUE
+    private var holoKeySev = Int.MIN_VALUE
+    private var holoKeyW = -1
+    private var holoKeyH = -1
+    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val dstRect = android.graphics.RectF()
+    private var renderExecutor: java.util.concurrent.ExecutorService? = null
+    /** 正在后台渲染的请求键；null = 空闲。用 key 字符串做最新优先去重。 */
+    @Volatile private var inflightKey: String? = null
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (renderExecutor == null) {
+            renderExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "duck-holo-render").apply { priority = Thread.NORM_PRIORITY - 1; isDaemon = true }
+            }
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        renderExecutor?.shutdownNow()
+        renderExecutor = null
+        inflightKey = null
+        super.onDetachedFromWindow()
+    }
+
     init {
         // 🔴 加载状态写进 contentDescription：真机 uiautomator dump 可直接观测，
         // 不再靠「core 自检绿」推断真机也加载成功（这正是上一轮的假绿来源）。
-        contentDescription = "鸭子外观模型（加载中）· 15 舵机状态点 · 可拖动旋转"
+        contentDescription = "鸭子外观模型（加载中）· 按部件状态着色 · 可拖动旋转"
         isClickable = true
     }
 
@@ -175,70 +210,107 @@ class DuckModelView(context: Context) : View(context) {
         val w = width.toFloat(); val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
         val r = report
-        val sevOf = { p: RobotPart -> r?.severityOf(p) ?: Severity.UNKNOWN }
+        // 状态真源单一：报告缺失时一律 UNKNOWN（core 据此保持基色，绝不默认绿）。
+        val sevOf: (RobotPart) -> Severity = { p: RobotPart -> r?.severityOf(p) ?: Severity.UNKNOWN }
 
-        // 地面投影（椭圆只是视觉锚，不参与任何判据）
-        canvas.drawOval(w * 0.22f, h * 0.88f, w * 0.78f, h * 0.95f, groundPaint)
-
-        // 全高都可用于模型：文字已移出 canvas，模型比旧版更大更完整。
-        val f = DuckModelGeometry.frame(angleDeg.toDouble(), w, h)
         val m = ensureMesh()
-
         if (m != null) {
-            // ── 单一真实模型：不透明填充 + Lambert 明暗 + 深度排序 ──
-            val tris = DuckMesh.project(m, angleDeg.toDouble(), w, h)
-            for (t in tris) {
-                triFillPaint.color = t.colorArgb
-                triPath.reset()
-                triPath.moveTo(t.a.x, t.a.y)
-                triPath.lineTo(t.b.x, t.b.y)
-                triPath.lineTo(t.c.x, t.c.y)
-                triPath.close()
-                canvas.drawPath(triPath, triFillPaint)
+            // ── 全息管线：core 出像素，View 只贴图（状态经 sevOf 注入，颜色即状态）──
+            // 命中缓存画新帧；未命中画上一帧（保持连续）并排后台渲染，完成后 invalidate。
+            val maxDim = if (isDragging) HOLO_MAX_DIM_DRAG else HOLO_MAX_DIM
+            val ss = if (isDragging) HOLO_SS_DRAG else HOLO_SS
+            val aspect = w / h
+            var iw = maxDim
+            var ih = (maxDim / aspect).toInt().coerceAtLeast(2)
+            if (ih > maxDim) { ih = maxDim; iw = (maxDim * aspect).toInt().coerceAtLeast(2) }
+            var sevSig = 17
+            for (p in 0 until 21) {
+                val part = io.microduck.app.core.ModelPart.of(p) ?: continue
+                sevSig = sevSig * 31 + sevOf(part).ordinal
             }
-        } else {
-            // ── 降级：网格缺失时才画程序化鸭身 + 外观表面线 + 示意骨架 ──
-            f.bodyEllipse?.let { e ->
-                bodyFillPaint.color = Color.argb(
-                    90, Color.red(e.fillArgb), Color.green(e.fillArgb), Color.blue(e.fillArgb))
-                canvas.drawOval(e.cx - e.rx, e.cy - e.ry, e.cx + e.rx, e.cy + e.ry, bodyFillPaint)
+            val angKey = ((angleDeg % 360f) + 360f).toInt() % 360
+            val upToDate = angKey == holoKeyAngle && sevSig == holoKeySev &&
+                iw == holoKeyW && ih == holoKeyH
+
+            val cached = holoBitmap
+            if (cached != null) {
+                holoSrcRect.set(0, 0, cached.width, cached.height)
+                dstRect.set(0f, 0f, w, h)
+                canvas.drawBitmap(cached, holoSrcRect, dstRect, bitmapPaint)
             }
-            for (s in f.surfaces) {
-                surfacePaint.color = s.colorArgb
-                for (l in s.lines) {
-                    surfacePaint.alpha = depthAlpha(l.avgDepth) + 30
-                    canvas.drawLine(l.a.x, l.a.y, l.b.x, l.b.y, surfacePaint)
-                }
-            }
-            for (l in f.hull) {
-                hullPaint.alpha = depthAlpha(l.avgDepth)
-                canvas.drawLine(l.a.x, l.a.y, l.b.x, l.b.y, hullPaint)
-            }
-            for (l in f.bones) {
-                bonePaint.alpha = depthAlpha(l.avgDepth) + 40
-                canvas.drawLine(l.a.x, l.a.y, l.b.x, l.b.y, bonePaint)
-            }
+            if (!upToDate) scheduleHolo(m, sevOf, angKey, sevSig, iw, ih, ss)
+            return
         }
 
-        // ── 15 舵机状态点：叠在真实模型上（同一套旋转/投影，不会错位）──
-        for ((node, p) in f.nodes) {
-            if (node.part.kind != RobotPart.PartKind.JOINT) continue
-            val s = sevOf(node.part)
-            val color = RobotParts.severityArgb(s)
-            val radius = when (s) {
-                Severity.CRITICAL -> dp(7f)
-                Severity.WARN -> dp(6f)
-                else -> dp(4.5f)
+        // ── 降级：网格缺失时才画程序化鸭身 + 外观表面线 + 示意骨架 ──
+        // 降级路径无法按部件着色（无 partIndex），按约定保持基色，不造状态色。
+        canvas.drawOval(w * 0.22f, h * 0.88f, w * 0.78f, h * 0.95f, groundPaint)
+        val f = DuckModelGeometry.frame(angleDeg.toDouble(), w, h)
+        f.bodyEllipse?.let { e ->
+            bodyFillPaint.color = Color.argb(
+                90, Color.red(e.fillArgb), Color.green(e.fillArgb), Color.blue(e.fillArgb))
+            canvas.drawOval(e.cx - e.rx, e.cy - e.ry, e.cx + e.rx, e.cy + e.ry, bodyFillPaint)
+        }
+        for (s in f.surfaces) {
+            surfacePaint.color = s.colorArgb
+            for (l in s.lines) {
+                surfacePaint.alpha = depthAlpha(l.avgDepth) + 30
+                canvas.drawLine(l.a.x, l.a.y, l.b.x, l.b.y, surfacePaint)
             }
-            canvas.drawCircle(p.x, p.y, radius + dp(2.5f), dotHaloPaint)
-            if (s == Severity.CRITICAL || s == Severity.WARN) {
-                val a = if (s == Severity.CRITICAL) 170 else 120
-                glowPaint.color = Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
-                canvas.drawCircle(p.x, p.y, radius + dp(5f), glowPaint)
+        }
+        for (l in f.hull) {
+            hullPaint.alpha = depthAlpha(l.avgDepth)
+            canvas.drawLine(l.a.x, l.a.y, l.b.x, l.b.y, hullPaint)
+        }
+        for (l in f.bones) {
+            bonePaint.alpha = depthAlpha(l.avgDepth) + 40
+            canvas.drawLine(l.a.x, l.a.y, l.b.x, l.b.y, bonePaint)
+        }
+    }
+
+    /**
+     * 后台渲染一帧（最新优先去重）：同一 key 已在渲染则跳过；完成后 post 回 UI 线程
+     * 写 Bitmap 并 invalidate。渲染失败不静默白屏：记日志，保留上一帧。
+     */
+    private fun scheduleHolo(
+        m: DuckMesh.MeshData,
+        sevOf: (RobotPart) -> Severity,
+        angKey: Int,
+        sevSig: Int,
+        iw: Int,
+        ih: Int,
+        ss: Int,
+    ) {
+        val executor = renderExecutor ?: return
+        val key = "$angKey/$sevSig/$iw/$ih/$ss"
+        if (inflightKey == key) return
+        inflightKey = key
+        executor.execute {
+            try {
+                val t0 = android.os.SystemClock.uptimeMillis()
+                // angleDeg 在执行时刻读（volatile）；tick 与调度同源，两者几乎必然一致。
+                val pixels = HoloRenderer.render(m, angleDeg.toDouble(), iw, ih, sevOf, ss)
+                post {
+                    inflightKey = null
+                    val bmp = holoBitmap?.takeIf { it.width == iw && it.height == ih }
+                        ?: Bitmap.createBitmap(iw, ih, Bitmap.Config.ARGB_8888)
+                    bmp.setPixels(pixels, 0, iw, 0, 0, iw, ih)
+                    holoBitmap = bmp
+                    holoSrcRect.set(0, 0, iw, ih)
+                    holoKeyAngle = angKey
+                    holoKeySev = sevSig
+                    holoKeyW = iw
+                    holoKeyH = ih
+                    if (HOLO_LOG) {
+                        android.util.Log.d(
+                            TAG, "holo ${iw}x$ih ss=$ss ${android.os.SystemClock.uptimeMillis() - t0}ms")
+                    }
+                    invalidate()
+                }
+            } catch (e: Exception) {
+                inflightKey = null
+                android.util.Log.w(TAG, "全息渲染失败: ${e.message}")
             }
-            val dotA = if (s == Severity.UNKNOWN) 190 else 255
-            dotPaint.color = Color.argb(dotA, Color.red(color), Color.green(color), Color.blue(color))
-            canvas.drawCircle(p.x, p.y, radius, dotPaint)
         }
     }
 
@@ -259,12 +331,12 @@ class DuckModelView(context: Context) : View(context) {
             val loaded = DuckMesh.loadFromBytes(bytes)
             mesh = loaded
             contentDescription =
-                "鸭子真实外观网格已加载 · ${loaded.nTris} 三角形 · 15 舵机状态点 · 可拖动旋转"
+                "鸭子真实外观网格已加载 · ${loaded.nTris} 三角形 · 全息渲染 · 按部件状态着色 · 可拖动旋转"
             loaded
         } catch (e: Exception) {
             meshFailed = true
             android.util.Log.w(TAG, "真实网格 assets 加载失败，降级示意几何: ${e.message}")
-            contentDescription = "鸭子示意几何(真实网格未加载) · 15 舵机状态点 · 可拖动旋转"
+            contentDescription = "鸭子示意几何(真实网格未加载) · 按部件状态着色 · 可拖动旋转"
             null
         }
     }
@@ -273,5 +345,14 @@ class DuckModelView(context: Context) : View(context) {
         const val TAG = "DuckModelView"
         const val MESH_ASSET = "duck_mesh.bin"
         const val DEG_PER_TICK = 6f
+        /** 内部全息渲染尺寸上限（px）：内存/耗时 ∝ (dim×SS)²。 */
+        const val HOLO_MAX_DIM = 520
+        /** 拖动时降档：更小尺寸 + SS=2，保证拖动跟手。 */
+        const val HOLO_MAX_DIM_DRAG = 400
+        /** 超采样档位：静止 3（细线圆滑），拖动 2（跟手优先）。 */
+        const val HOLO_SS = 3
+        const val HOLO_SS_DRAG = 2
+        /** 打点开关：性能实测时打开（默认关，避免日志影响帧时）。 */
+        const val HOLO_LOG = false
     }
 }

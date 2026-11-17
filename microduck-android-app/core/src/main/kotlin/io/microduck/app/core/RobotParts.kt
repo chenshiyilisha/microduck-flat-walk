@@ -117,3 +117,41 @@ object RobotParts {
     /** 无证据时的部位底色；所有部位都从这里起步，绝不默认绿。 */
     val ALL: List<RobotPart> = RobotPart.entries.toList()
 }
+
+/**
+ * DMSH v2 网格三角形 partIndex(0..20) → 模型可着色部件的**唯一映射**（纯 JVM）。
+ *
+ * ── 为什么索引直接取枚举 ordinal，而不是再写一张手写表 ──
+ * 生成期 `tools/build_duck_mesh.py` 的 `JOINT_ORDER` 与 [JOINT_NAMES] 逐字一致，
+ * 系统件索引 16/17/18 = BATTERY/CPU/IMU，与本枚举声明顺序完全对齐：
+ *   0..14 = 15 关节（JOINT_PARTS）、15=TORSO、16=BATTERY、17=CPU、
+ *   18=IMU、19=BUS、20=LINK。
+ * 故索引即 [RobotPart.entries] 的 ordinal —— 一张表两个用途，不存在两张表漂移。
+ * init 里的断言把「生成期序号契约」钉死：枚举一旦重排，加载网格时立刻抛错，
+ * 而不是静默把电池染成 IMU 的颜色。
+ */
+object ModelPart {
+    /** 纯外观件（壳/脸/喙/镜头等）无健康读数，保持官方基色。 */
+    const val NO_PART: Int = 255
+
+    /** 生成期写死的部件槽位数；与 [RobotPart.entries].size 双向校验。 */
+    const val SLOT_COUNT: Int = 21
+
+    init {
+        require(RobotPart.entries.size == SLOT_COUNT) {
+            "RobotPart 枚举数量 ${RobotPart.entries.size} 与网格部件槽位 $SLOT_COUNT 不符"
+        }
+        require(RobotPart.entries[16] == RobotPart.BATTERY &&
+                RobotPart.entries[17] == RobotPart.CPU &&
+                RobotPart.entries[18] == RobotPart.IMU) {
+            "系统部件序号契约漂移：生成期 16/17/18 = BATTERY/CPU/IMU"
+        }
+    }
+
+    /** 三角形部件索引 → 部位；255/越界 → null（不猜、不映射默认部位）。 */
+    fun of(index: Int): RobotPart? =
+        if (index in 0 until SLOT_COUNT) RobotPart.entries[index] else null
+
+    /** 部位 → 生成期部件索引（[RobotPart.entries] 的 ordinal，禁止手写分支）。 */
+    fun indexOf(part: RobotPart): Int = part.ordinal
+}

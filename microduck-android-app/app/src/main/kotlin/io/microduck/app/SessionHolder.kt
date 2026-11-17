@@ -1,21 +1,16 @@
 package io.microduck.app
 
 import io.microduck.app.core.BleForegroundPolicy
-import io.microduck.app.core.BleTransport
-import io.microduck.app.core.ConnectInputParser
 import io.microduck.app.core.ConnectTarget
-import io.microduck.app.core.Disposable
 import io.microduck.app.core.HardwareMonitor
 import io.microduck.app.core.HealthSnapshot
 import io.microduck.app.core.LinkState
-import io.microduck.app.core.Method
 import io.microduck.app.core.MonitorReport
 import io.microduck.app.core.MonitorSource
-import io.microduck.app.core.MockTransport
+import io.microduck.app.core.RobotRepository
 import io.microduck.app.core.RobotSession
 import io.microduck.app.core.RobotTransport
 import io.microduck.app.core.StateSnapshot
-import io.microduck.app.core.TcpTransport
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -47,12 +42,20 @@ enum class ControlMode { MANUAL, AUTO }
  */
 object SessionHolder {
 
+    /**
+     * 会话/状态/健康/监控的单一真源（阶段 2 桥接）。由 [MicroDuckApp] 在 Application 启动时注入。
+     * 会话方法（connect/connectWith/refreshHealth/refreshSessionInfo）委托给它，
+     * 避免 [RobotRepository] 与 [SessionHolder] 各建一条会话导致双真源。
+     * 驱动参数与本地遥测计数仍留在本对象（时间驱动，阶段 5 再迁移）。
+     */
+    @Volatile var robotRepository: RobotRepository? = null
+
     @Volatile var mode: ControlMode = ControlMode.MANUAL
-    @Volatile var session: RobotSession? = null
+    /** 会话实例 —— 委托给 [RobotRepository]（阶段 2：RobotRepository 成为会话单一真源）。 */
+    val session: RobotSession? get() = robotRepository?.session()
     @Volatile var kind: String = "MOCK"
     @Volatile var note: String = ""
     @Volatile var sinkLabel: String = "-"
-    @Volatile var stateSub: Disposable? = null
     @Volatile var lastState: StateSnapshot? = null
     @Volatile var stateFrameCount: Int = 0
     @Volatile var stateWindowFrames: Int = 0
@@ -80,7 +83,6 @@ object SessionHolder {
     @Volatile var linkStatus: String = ""
     /** 0=无 / 1=警告(重连中) / 2=错误(失败)。UI 据此选背景色。 */
     @Volatile var linkLevel: Int = 0
-    private var eventSub: Disposable? = null
 
     /**
      * A4 控制者归属 / 会话活性。**null = 未知**（固件未提供 / 方法不支持 / 未查询），
@@ -106,31 +108,21 @@ object SessionHolder {
      */
     @Volatile var peerApiVersion: Int? = null
 
-    // ── 2026-11-15 硬件监控（温度/电量/通信/异常部位）──
-    /** 最近一次 `robot.health` **成功**的墙钟时间；0 = 从未成功。 */
-    @Volatile var lastHealthOkMs: Long = 0L
-    @Volatile var lastHealthError: String? = null
-    /** 传输层状态，只由 [watchEvents] 的会话事件写，绝不从读数猜。 */
-    @Volatile var linkState: LinkState = LinkState.UNKNOWN
-    @Volatile private var lastHealthSnapshot: HealthSnapshot? = null
-    @Volatile var lastMonitorReport: MonitorReport? = null
+    // ── 2026-11-15 硬件监控：状态真源已全部迁到 RobotRepository.snapshot()（阶段 5 删散列字段）──
+    // lastHealthOkMs / lastHealthError / linkState / lastHealthSnapshot / lastMonitorReport
+    // 五个 @Volatile 字段外部零引用且与快照双真源，已删；monitorSource()/monitorReport()/
+    // healthSnapshot()/stateAgeMs() 均委托快照，保留为 AI 通道与 UI 的统一只读入口。
 
-    /**
-     * 数据来源分层：没读到 health 一律 NONE（零告警），Mock 夹具一律 MOCK_FIXTURE
-     * （verdict=DEMO_ONLY），其余才是 REAL_HEALTH。防止把演示数据当真机告警。
-     */
-    fun monitorSource(): MonitorSource = when {
-        lastHealthSnapshot == null -> MonitorSource.NONE
-        kind == "MOCK" -> MonitorSource.MOCK_FIXTURE
-        else -> MonitorSource.REAL_HEALTH
-    }
+    /** 数据来源分层：阶段 2 委托给 [RobotRepository]（没读到 health 一律 NONE，Mock 一律 MOCK_FIXTURE）。 */
+    fun monitorSource(): MonitorSource = robotRepository?.monitorSource() ?: MonitorSource.NONE
 
-    /** 每次调用都从一手读数重新派生，不缓存 verdict（读数会陈旧、链路会变）。 */
+    /** 每次调用都从一手读数重新派生，不缓存 verdict。阶段 2 委托给 [RobotRepository] 快照。 */
     fun monitorReport(nowMs: Long = System.currentTimeMillis()): MonitorReport =
-        HardwareMonitor.evaluate(lastHealthSnapshot, monitorSource(), linkState, nowMs, lastHealthOkMs)
+        robotRepository?.snapshot()?.monitorReport
+            ?: HardwareMonitor.evaluate(null, MonitorSource.NONE, LinkState.UNKNOWN, nowMs, 0L)
 
-    /** 最近一次 robot.health 成功快照（只读展示用；null = 未读到）。供健康页结构化卡片取数值。 */
-    fun healthSnapshot(): HealthSnapshot? = lastHealthSnapshot
+    /** 最近一次 robot.health 成功快照；阶段 2 委托给 [RobotRepository] 快照（null = 未读到）。 */
+    fun healthSnapshot(): HealthSnapshot? = robotRepository?.snapshot()?.lastHealth
 
     /** A5：链路恢复提示的时间戳，0 = 无提示。超时由 [tick] 清掉。 */
     @Volatile var recoveredAtMs: Long = 0L
@@ -156,216 +148,41 @@ object SessionHolder {
     fun sessionState(): String = session?.state?.toString() ?: "NONE"
 
     /**
-     * 后台解析 + 建链；[onDone] 在后台线程回调，调用方需自行切主线程。
-     *
-     * 🔴 解析失败**不拆现有会话**（BoBo `mobile-app.md` §2：错误要带可恢复的下一步，
-     * 「try again does not restart the flow」）。只把错误写进 [connectError] 让 UI 显示。
+     * 后台解析 + 建链；[onDone] 回调连接结果。
+     * 阶段 2：委托给 [RobotRepository]（会话单一真源），避免双会话。
+     * 解析失败/BLE/WebRtc 的显式错误由 [RobotRepository.connect] 写入其快照，UI 经 uiState 读取。
      */
     fun connect(raw: String, onDone: (Boolean) -> Unit) {
-        val parsed = ConnectInputParser.parse(raw)
-        if (parsed.isFailure) {
-            connectError = parsed.exceptionOrNull()?.message ?: "连接地址无效"
-            note = "地址无效"
-            onDone(false)
-            return
-        }
-        val p = parsed.getOrNull()!!
-        connectError = ""
-        note = p.note
-        val transport: RobotTransport = when (p.target) {
-            is ConnectTarget.Mock -> MockTransport()
-            is ConnectTarget.Tcp -> TcpTransport()
-            // BLE 走 connectWith(AndroidBleGattLink → BleTransport)，见 BleConnectPanel。
-            // 这里只可能由 BLE 扫描入口传入真正的 transport，不应从地址栏走到这个分支。
-            is ConnectTarget.Ble -> {
-                connectError = "请使用设置页的「BLE 连接」入口选择设备"
-                onDone(false); return
-            }
-            is ConnectTarget.WebRtc -> {
-                connectError = "WebRTC 通道尚未接入（P2）"
-                onDone(false); return
-            }
-        }
-        connectWith(transport, p.target, onDone)
+        val repo = robotRepository ?: run { onDone(false); return }
+        onDone(repo.connect(raw))
     }
 
-    /** 通用建链入口：TCP / Mock / BLE 共用同一套会话、订阅与事件监听，避免各写一份漂移。 */
+    /**
+     * 通用建链入口：TCP / Mock / BLE 共用同一套会话、订阅与事件监听。
+     * 阶段 2：委托给 [RobotRepository]（会话单一真源），避免双会话。
+     * 保留后台线程（[RobotSession.connect] 对真 TCP 是阻塞 I/O），[onDone] 在后台线程回调，
+     * 调用方需自行切主线程（与原行为一致）。
+     */
     fun connectWith(transport: RobotTransport, target: ConnectTarget, onDone: (Boolean) -> Unit) {
-        Thread {
-            // 顺序要紧：先摘旧监听，再 close（close 会 emit DISCONNECTED，不该污染新会话）。
-            eventSub?.dispose(); eventSub = null
-            stateSub?.dispose(); stateSub = null
-            session?.close()
-            linkStatus = ""; linkLevel = 0
-            peerApiVersion = null   // 绝不让上一条 BLE 链路的板端版本残留到新会话
-            // 换链路 = 换数据源：旧读数/旧报告/旧成功时间一律清空，绝不沿用陈旧遥测。
-            lastHealthSnapshot = null; lastHealthOkMs = 0L; lastHealthError = null
-            lastMonitorReport = null; linkState = LinkState.CONNECTING
-
-            val s = RobotSession(transport)
-            watchEvents(s)
-            val ok = s.connect(target)
-            // 必须在 s.connect() **之后**读：peerApiVersion 是 BleTransport.connect()
-            // 内 read RPC_UUID 成功后才写入的，提前读永远是 null。
-            peerApiVersion = (transport as? BleTransport)?.peerApiVersion
-            session = s
-            kind = transport.kind.name
-            note = when {
-                ok -> "已连接 $kind"
-                transport.kind.name == "BLE" ->
-                    // 🔴 2026-11-14 真机：旧版通用文案把真实 IOException 盖掉，UI/logcat 都看不到
-                    // 是 GATT 超时还是 status 133，排障只能猜。改为带出 RobotSession 透传的原因。
-                    "BLE 连接失败 · ${s.lastConnectError ?: "无原因（真 GATT 尚未上板验证）"}"
-                else -> "连接失败 · ${s.lastConnectError ?: "检查 relay/地址"}"
-            }
-            stateFrameCount = 0
-            stateWindowFrames = 0
-            stateWindowStartMs = System.currentTimeMillis()
-            stateHz = 0.0
-            lastStateMs = 0
-            lastState = null
-            batteryText = "— 未读到"
-            sinkLabel = "-"
-            // subscribe() 内部同步发请求（真 TCP 是阻塞 I/O），必须在后台线程。
-            Thread { subscribe(s, kind) }.start()
-            // A4：连接建立后读一次控制者归属；只在真实链路上查，Mock 夹具不当实机。
-            if (ok) refreshSessionInfo()
-            onDone(ok)
-        }.start()
+        val repo = robotRepository ?: run { onDone(false); return }
+        Thread { onDone(repo.connectWith(transport, target)) }.start()
     }
 
-    /**
-     * 把会话层状态机映射成 UI 可见的横幅。core 的 `onEvent` 本来就有 StateChanged /
-     * ReconnectFailed / AuthFailed，只是此前 App 没订阅 —— 断链时摇杆还在发帧、用户却看不到
-     * 「已断链 / 重连中 / 驾驶已停」，这是安全信息而不是锦上添花。
-     */
-    private fun watchEvents(s: RobotSession) {
-        eventSub = s.onEvent { e ->
-            // 硬件监控的「通信状态」只认会话层事件，绝不从遥测数值反推链路好坏。
-            linkState = when {
-                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.READY ->
-                    LinkState.CONNECTED
-                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.RECONNECTING ->
-                    LinkState.DOWN
-                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.FAILED ->
-                    LinkState.DOWN
-                e is RobotSession.Event.StateChanged && e.to == RobotSession.State.DISCONNECTED ->
-                    LinkState.DOWN
-                e is RobotSession.Event.ReconnectFailed || e is RobotSession.Event.AuthFailed ||
-                    e is RobotSession.Event.ConnectFailed -> LinkState.DOWN
-                else -> linkState
-            }
-            when (e) {
-                is RobotSession.Event.StateChanged -> when (e.to) {
-                    RobotSession.State.READY -> {
-                        // A5：断链恢复后**不自动续动**。一手依据 Wandelbots NOVA 合规文档
-                        // 「Restored communication can't result in machine reboots, actions
-                        //  or movements」+ Pollen 原厂 mobile-app.md §4「Every screen
-                        //  tolerates the link dropping underneath it and coming back」。
-                        // 机制本就已有（松手归零 + 重连后不发意图），这里只把状态说清，
-                        // 不新增运动能力，避免操作员误以为恢复即续动。
-                        val wasDown = linkLevel > 0
-                        linkStatus = if (wasDown)
-                            "✓ 链路已恢复 · 驾驶不自动续动，需重新主动接管" else ""
-                        linkLevel = 0
-                        recoveredAtMs = if (wasDown) System.currentTimeMillis() else 0L
-                        // 重连后重新读回会话活性，绝不沿用断链前的陈旧值。
-                        if (wasDown) refreshSessionInfo()
-                    }
-                    RobotSession.State.RECONNECTING -> {
-                        linkStatus = "⚠ 链路已断 · 正在重连（驾驶帧已停）"; linkLevel = 1
-                    }
-                    RobotSession.State.FAILED -> {
-                        linkStatus = "⚠ 连接失败 · 请检查地址/权限后重新连接"; linkLevel = 2
-                    }
-                    RobotSession.State.DISCONNECTED -> { linkStatus = ""; linkLevel = 0 }
-                    else -> { /* HELLO / AUTH 是瞬时中间态，不刷横幅 */ }
-                }
-                is RobotSession.Event.ReconnectFailed -> {
-                    linkStatus = "⚠ 重连 ${e.attempts} 次仍失败 · 请检查链路后重新连接"; linkLevel = 2
-                }
-                is RobotSession.Event.AuthFailed -> {
-                    linkStatus = "⚠ PIN 认证失败 · 剩余 ${e.attemptsRemaining} 次"; linkLevel = 2
-                }
-                is RobotSession.Event.ConnectFailed -> {
-                    // 失败原因进横幅，避免只看到「连接失败」四个字。
-                    linkStatus = "⚠ ${e.stage} 失败 · ${e.reason.take(160)}"; linkLevel = 2
-                }
-                else -> { /* CapabilityUnsupported / PermissionDenied / Notification 不占横幅 */ }
-            }
-        }
-    }
+    // watchEvents / subscribe 已迁移到 [RobotRepository]（阶段 2 委托，避免双会话）。
+    // 链路横幅映射、状态帧订阅逻辑见 RobotRepository.watchEvents / subscribe。
 
-    private fun subscribe(s: RobotSession, k: String) {
-        stateSub = s.subscribe(Method.ROBOT_SUBSCRIBE, mapOf("hz" to 5),
-            streamMethod = Method.ROBOT_STATE) { o ->
-            lastState = StateSnapshot.from(o)
-            stateFrameCount++
-            stateWindowFrames++
-            lastStateMs = System.currentTimeMillis()
-            kind = k
-        }
-    }
-
-    /**
-     * A4：只读查询 `robot.remoteSessionActive` / `robot.modelApi`（一手 lib.rs:587/589）。
-     *
-     * 🔴 三条纪律：
-     *  1. **Mock 夹具不查**：它不是实机，查出来的任何值都不能当实机读数展示；
-     *     同时避免未知方法请求扰动门禁用的 Mock 会话。
-     *  2. **缺字段/不支持 ⇒ null（未知）**，绝不默认 false。`-32601` 由 RobotSession
-     *     做能力降级（记入 unsupported），此处不报错、不重连。
-     *  3. 响应结构各固件版本可能不同 ⇒ null-safe 多候选键，取不到就保持未知。
-     */
+    /** A4：只读查询控制者归属 / 模型 API。阶段 2：委托给 [RobotRepository]。 */
     fun refreshSessionInfo() {
-        if (session == null || kind == "MOCK") {
-            remoteSessionActive = null; modelApiText = "—"; return
-        }
-        Thread {
-            val o = session?.call(Method.ROBOT_REMOTE_SESSION_ACTIVE)?.getOrNull()
-            remoteSessionActive = o?.let { obj ->
-                val key = listOf("active", "session_active", "remote_session_active", "value")
-                    .firstOrNull { obj.has(it) && obj.get(it).isJsonPrimitive }
-                val prim = key?.let { obj.get(it).takeIf { p -> p.isJsonPrimitive }?.asJsonPrimitive }
-                when {
-                    prim == null -> null
-                    prim.isBoolean -> prim.asBoolean
-                    prim.isNumber -> prim.asInt != 0
-                    else -> null
-                }
-            }
-            val m = session?.call(Method.ROBOT_MODEL_API)?.getOrNull()
-            modelApiText = m?.let { obj ->
-                listOf("api_version", "model_api", "version")
-                    .firstOrNull { obj.has(it) && obj.get(it).isJsonPrimitive }
-                    ?.let { obj.get(it).asJsonPrimitive.asString } ?: "—"
-            } ?: "—"
-        }.start()
+        robotRepository?.refreshSessionInfo()
     }
 
-    /** robot.health 只读；[onDone] 在后台线程回调。 */
+    /** robot.health 只读；[onDone] 回调文本。阶段 2：委托给 [RobotRepository]，结果经快照流反映到 UI。 */
     fun refreshHealth(onDone: (String) -> Unit) {
-        Thread {
-            val r = session?.call(Method.ROBOT_HEALTH)
-            val snap = r?.getOrNull()?.let { HealthSnapshot.from(it) }
-            val text = snap?.summary()
-                ?: "未连接或调用失败：${r?.exceptionOrNull()?.message ?: "no session"}"
-            batteryText = snap?.let { h ->
-                h.volts?.let { v -> "%.1f V · %s%%".format(v,
-                    h.percent?.let { "%.0f".format(it) } ?: "—") } ?: "— 未读到"
-            } ?: "— 未读到"
-            // 硬件监控：成功才推进「最后一次成功时间」。失败**不清空**上一次快照
-            // （否则面板会闪回全灰），但会记下错误，由 report 的读数年龄标注「陈旧」。
-            if (snap != null) {
-                lastHealthSnapshot = snap
-                lastHealthOkMs = System.currentTimeMillis()
-                lastHealthError = null
-            } else {
-                lastHealthError = r?.exceptionOrNull()?.message ?: "no session"
-            }
-            lastMonitorReport = monitorReport()
-            onDone(text)
-        }.start()
+        val repo = robotRepository ?: run { onDone("未连接或调用失败：no session"); return }
+        repo.refreshHealth()
+        val snap = repo.snapshot()
+        onDone(snap.lastHealth?.summary()
+            ?: "未连接或调用失败：${snap.lastHealthError ?: "no session"}")
     }
 
     /**
@@ -402,14 +219,14 @@ object SessionHolder {
     fun markInput(s: String) { lastInput = s }
 
     /**
-     * 状态帧年龄(ms) —— 链路看似正常但很久没新帧时返回 >0，UI 据此打「状态停滞」告警。
-     * 无帧 / 未订阅返回 -1。依据 Falcon「make loss visible immediately … a frozen value that
-     * still looks live is the worst outcome」与 TechnoLynx 操作员控制台读序第 3 位
-     * 「frame age / freeze flag / link quality — Can I trust what I am seeing?」。
+     * 状态帧年龄(ms) —— 阶段 2 委托给 [RobotRepository] 快照。
+     * 链路看似正常但很久没新帧时返回 >0，UI 据此打「状态停滞」告警。无帧 / 未订阅返回 -1。
      */
-    fun stateAgeMs(): Long =
-        if (stateFrameCount == 0 || lastStateMs == 0L) -1
-        else System.currentTimeMillis() - lastStateMs
+    fun stateAgeMs(): Long {
+        val snap = robotRepository?.snapshot() ?: return -1
+        return if (snap.stateFrameCount == 0 || snap.lastStateMs == 0L) -1
+        else System.currentTimeMillis() - snap.lastStateMs
+    }
 
     /**
      * 模式切换：自动模式绝不允许残留心跳帧。

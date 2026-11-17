@@ -43,11 +43,19 @@ import java.nio.ByteOrder
  * 生成脚本写的是「语义色」（主橙 / 深橙 / 黑），本类在加载时重映射为 Cream 款：
  * 主橙→奶油白壳、深橙→橙 trim/喙、黑→镜头黑。**纯视觉层，不参与任何判据。**
  *
- * ── 二进制格式（见 build_duck_mesh.py）──
- *   header:  magic(4="DMSH") version(u32=1) n_verts(u32) n_tris(u32)
+ * ── 二进制格式（见 build_duck_mesh.py，阶段 4 升级 v2）──
+ *   header:  magic(4="DMSH") version(u32) n_verts(u32) n_tris(u32)
+ *            v2 额外: n_parts(u32)
  *   vertices:  n_verts * 3 * float32 (x, y, z)  —— MuJoCo 世界坐标，已居中归一化
  *   triangles: n_tris * 3 * int32 (顶点索引)
  *   tri_colors: n_tris * uint32 (ARGB，生成期语义色)
+ *   v2 额外:   n_tris * uint8 partIndex（0..20 = [ModelPart] 槽位，255 = NO_PART）
+ *   v1 解析器保留：老网格能读，但无部件索引 ⇒ 全部按 NO_PART 处理（不造状态色）。
+ *
+ * ── 状态着色（阶段 4：颜色即状态，见规划 §5.3）──
+ * 每个三角形带 partIndex；project() 接受 severityOf 回调，按部件 [Severity] 把
+ * **状态色低强度叠加到官方基色**上，再统一过 Lambert 光照。UNKNOWN 与 NO_PART
+ * 一律基色（铁律：无证据不造状态色）。语义色单一真源 = [RobotParts.severityArgb]。
  *
  * ── 纯 JVM，零 Android 依赖 ──
  * core 是 Kotlin/JVM 模块，资源通过 classpath 加载（`/duck_mesh.bin`）。
@@ -57,6 +65,13 @@ object DuckMesh {
 
     private const val RESOURCE = "/duck_mesh.bin"
     private const val MAGIC = 0x48534D44  // "DMSH"（小端序下的 int 值）
+    private const val VERSION_V1 = 1
+    private const val VERSION_V2 = 2
+
+    /** 状态色混合强度：OK 低强度避免整机刷绿；WARN/CRITICAL 逐级加强。 */
+    const val MIX_OK = 0.20f
+    const val MIX_WARN = 0.62f
+    const val MIX_CRITICAL = 0.78f
 
     // ── 生成期语义色 → 官方 Cream 配色 ──
     private const val SEM_SHELL = 0xFFFF8A3D.toInt()   // 生成期主橙：躯干/头/脸/颈/腿
@@ -70,13 +85,16 @@ object DuckMesh {
     private const val NODE_Y_MIN = -1.48f
     private const val NODE_Y_MAX = 1.32f
 
-    /** 顶点表（**已转为 App Y-up 坐标系**并对齐到 NODES 尺度）+ 官方配色。 */
+    /** 顶点表（**已转为 App Y-up 坐标系**并对齐到 NODES 尺度）+ 官方配色 + 部件索引。 */
     data class MeshData(
         val verts: FloatArray,   // 长度 n_verts * 3
         val tris: IntArray,      // 长度 n_tris * 3
         val colors: IntArray,    // 长度 n_tris，ARGB（官方配色）
         val nVerts: Int,
         val nTris: Int,
+        val partIndices: ByteArray,  // 长度 n_tris；0..20 = ModelPart 槽位，255 = NO_PART
+        val version: Int,            // 解析出的格式版本（1 或 2），供自检断言与负对照
+        val nParts: Int,             // v2 头部声明的槽位数；v1 为 0
     )
 
     @Volatile private var cached: MeshData? = null
@@ -112,10 +130,26 @@ object DuckMesh {
         val magic = buf.int
         if (magic != MAGIC) error("duck_mesh.bin 魔数不匹配: 0x$magic (期望 0x$MAGIC)")
         val version = buf.int
-        if (version != 1) error("duck_mesh.bin 版本不支持: $version (期望 1)")
+        if (version != VERSION_V1 && version != VERSION_V2) {
+            error("duck_mesh.bin 版本不支持: $version (期望 $VERSION_V1 或 $VERSION_V2)")
+        }
         val nVerts = buf.int
         val nTris = buf.int
         if (nVerts <= 0 || nTris <= 0) error("duck_mesh.bin 计数异常: n_verts=$nVerts n_tris=$nTris")
+
+        // v2 头部多一个 n_parts(u32)；它必须与单一真源 ModelPart.SLOT_COUNT 对齐，
+        // 否则「生成期槽位」与「core 部位映射」会静默错位（电池染成 IMU 色）。
+        val nParts = if (version == VERSION_V2) buf.int else 0
+        if (version == VERSION_V2 && nParts != ModelPart.SLOT_COUNT) {
+            error("duck_mesh.bin v2 n_parts=$nParts 与 ModelPart.SLOT_COUNT=${ModelPart.SLOT_COUNT} 不符")
+        }
+        // 结构长度硬校验：防止少一字节的截断文件被当成合法网格（负对照锁此判据）。
+        val expected = 16 + (if (version == VERSION_V2) 4 else 0) +
+            nVerts * 3 * Float.SIZE_BYTES + nTris * 3 * Int.SIZE_BYTES +
+            nTris * Int.SIZE_BYTES + (if (version == VERSION_V2) nTris else 0)
+        if (bytes.size != expected) {
+            error("duck_mesh.bin 长度异常: ${bytes.size} 字节，按 v$version 头应 $expected 字节")
+        }
 
         val verts = FloatArray(nVerts * 3)
         buf.asFloatBuffer().get(verts)
@@ -125,6 +159,20 @@ object DuckMesh {
         buf.position(buf.position() + nTris * 3 * Int.SIZE_BYTES)
         val colors = IntArray(nTris)
         buf.asIntBuffer().get(colors)
+        buf.position(buf.position() + nTris * Int.SIZE_BYTES)
+
+        // v2 才读部件索引；v1 全部置 NO_PART（无证据不造状态色，且老文件仍可读）。
+        val partIndices = if (version == VERSION_V2) {
+            ByteArray(nTris).also { buf.get(it) }
+        } else {
+            ByteArray(nTris) { ModelPart.NO_PART.toByte() }
+        }
+        for (i in partIndices.indices) {
+            val idx = partIndices[i].toInt() and 0xFF  // uint8：字节有符号性必须剥掉
+            if (idx != ModelPart.NO_PART && ModelPart.of(idx) == null) {
+                error("duck_mesh.bin 部件索引越界: partIndices[$i]=$idx n_parts=$nParts")
+            }
+        }
 
         // 基本健全性：三角形索引不越界
         for (i in tris.indices) {
@@ -134,7 +182,7 @@ object DuckMesh {
         }
         val appVerts = toAppFrame(verts)
         val official = IntArray(nTris) { i -> officialColor(colors[i]) }
-        return MeshData(appVerts, tris, official, nVerts, nTris)
+        return MeshData(appVerts, tris, official, nVerts, nTris, partIndices, version, nParts)
     }
 
     /**
@@ -207,11 +255,30 @@ object DuckMesh {
      * @param width 画布宽（像素）
      * @param height 画布高（像素，已扣除顶部/底部文字带）
      */
-    fun project(mesh: MeshData, angleDegrees: Double, width: Float, height: Float): List<ProjectedTriangle> {
+    fun project(mesh: MeshData, angleDegrees: Double, width: Float, height: Float): List<ProjectedTriangle> =
+        project(mesh, angleDegrees, width, height, { Severity.UNKNOWN })
+
+    /**
+     * 状态着色版投影：与 [project] 四参版**同一个实现**，唯一区别是每个三角形
+     * 按 [ModelPart] 槽位取 [severityOf] 的状态色叠加到官方基色上，再过 Lambert。
+     *
+     * 四参版等价于本版传 `{ Severity.UNKNOWN }`（即全基色）——所以自检、MeshPreview
+     * 与真机 View 共用同一条投影链，不会出现「预览好看、真机另一套」的偏差。
+     *
+     * @param severityOf 部位 → 严重度；由调用方从 MonitorReport 单一真源注入。
+     */
+    fun project(
+        mesh: MeshData,
+        angleDegrees: Double,
+        width: Float,
+        height: Float,
+        severityOf: (RobotPart) -> Severity,
+    ): List<ProjectedTriangle> {
         val out = ArrayList<ProjectedTriangle>(mesh.nTris)
         val v = mesh.verts
         val t = mesh.tris
         val c = mesh.colors
+        val p = mesh.partIndices
         for (i in 0 until mesh.nTris) {
             val i0 = i * 3
             val aIdx = t[i0] * 3
@@ -226,10 +293,41 @@ object DuckMesh {
             val pb = DuckModelGeometry.project(wb, width, height)
             val pc = DuckModelGeometry.project(wc, width, height)
             val depth = (pa.depth + pb.depth + pc.depth) / 3f
-            out.add(ProjectedTriangle(pa, pb, pc, depth, shadeColor(c[i], wa, wb, wc)))
+            val base = c[i]
+            // v1 网格 partIndices 全 NO_PART ⇒ 恒走基色；v2 按槽位取状态。
+            val idx = partIndexOf(mesh, i)
+            val part = ModelPart.of(idx)
+            val tinted = if (part == null) base else statusTint(base, severityOf(part))
+            out.add(ProjectedTriangle(pa, pb, pc, depth, shadeColor(tinted, wa, wb, wc)))
         }
         out.sortBy { it.depth }
         return out
+    }
+
+    /** 三角形 → 部件槽位（uint8 剥符号）。NO_PART=255 表示纯外观件，不着状态色。 */
+    fun partIndexOf(mesh: MeshData, triangle: Int): Int = mesh.partIndices[triangle].toInt() and 0xFF
+
+    /**
+     * 状态色叠加（渲染前、Lambert 之前，纯 JVM 可独立测）：
+     *  · UNKNOWN → 原样返回基色（铁律：无证据不造状态色，不默认绿）；
+     *  · OK/WARN/CRITICAL → 把 [RobotParts.severityArgb] 的语义色按低/中/高混合强度
+     *    叠加到官方基色，alpha 恒 0xFF。OK 用 20% 低强度，避免整机刷绿失真。
+     * 强度系数取自身可观测的 const，自检断言 MIX_OK < MIX_WARN < MIX_CRITICAL。
+     */
+    fun statusTint(baseArgb: Int, severity: Severity): Int {
+        if (severity == Severity.UNKNOWN) return baseArgb
+        val mix = when (severity) {
+            Severity.OK -> MIX_OK
+            Severity.WARN -> MIX_WARN
+            Severity.CRITICAL -> MIX_CRITICAL
+            Severity.UNKNOWN -> 0f
+        }
+        val target = RobotParts.severityArgb(severity)
+        fun channel(base: Int, t: Int): Int = base + ((t - base) * mix).toInt()
+        val r = channel((baseArgb ushr 16) and 0xFF, (target ushr 16) and 0xFF)
+        val g = channel((baseArgb ushr 8) and 0xFF, (target ushr 8) and 0xFF)
+        val b = channel(baseArgb and 0xFF, target and 0xFF)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     /** 环境光系数：保证背光面不是纯黑（官方奶油白壳仍需可辨）。 */

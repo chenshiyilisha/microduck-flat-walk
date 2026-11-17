@@ -328,6 +328,23 @@ class UpdateRepository(
 
     fun canRequestInstalls(): Boolean = installer.canRequestInstalls()
 
+    /**
+     * 用户从「安装未知应用」系统设置返回后由 UI 调用（对应旧 UpdatePanel.onResume）。
+     *
+     * 返回动作本身不等于已授权 ⇒ 这里**重新查** [UpdateInstaller.canRequestInstalls]，
+     * 只有真授权了才把「需要权限」状态推进到「可下载」，不把「返回」误判成「已授权」。
+     * 阶段 3：这段状态迁移从面板搬进 Repository，保持流程状态单一真源。
+     */
+    fun onInstallPermissionGranted() {
+        if (!needsInstallPermission) return
+        if (!installer.canRequestInstalls()) return
+        needsInstallPermission = false
+        canDownload = true
+        text = "安装权限已开启，可继续「下载并安装」"
+        phase = "AVAILABLE"
+        publish()
+    }
+
     fun openReleasePage(url: String) {
         activity.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
     }

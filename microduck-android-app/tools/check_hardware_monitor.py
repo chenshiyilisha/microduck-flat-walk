@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import struct
 import sys
 from pathlib import Path
 
@@ -41,10 +42,12 @@ FILES = {
     "parts": CORE / "RobotParts.kt",
     "geometry": CORE / "DuckModelGeometry.kt",
     "mesh": CORE / "DuckMesh.kt",
+    "holo": CORE / "HoloRenderer.kt",
     "health": CORE / "HealthSnapshot.kt",
     "policy": CORE / "AiDebugPolicy.kt",
     "view": APP / "monitor/DuckModelView.kt",
     "main": APP / "MainActivity.kt",
+    "viewmodel": APP / "MainViewModel.kt",
     "holder": APP / "SessionHolder.kt",
     "receiver": BASE / "app/src/debug/kotlin/io/microduck/app/AiDebugReceiver.kt",
     "selftest": TESTS / "CoreSelfTest.kt",
@@ -163,6 +166,7 @@ def evaluate(src: dict, app_mesh_override: bytes | None = None) -> tuple[str, li
     m, p, g = read(src, "monitor"), read(src, "parts"), read(src, "geometry")
     h, v = read(src, "health"), read(src, "view")
     main, holder, receiver = read(src, "main"), read(src, "holder"), read(src, "receiver")
+    vm = read(src, "viewmodel")
     st, doc, policy = read(src, "selftest"), read(src, "doc"), read(src, "policy")
 
     for k, label in (("monitor", "HardwareMonitor.kt"), ("parts", "RobotParts.kt"),
@@ -252,7 +256,10 @@ def evaluate(src: dict, app_mesh_override: bytes | None = None) -> tuple[str, li
          "边界 20.0% 不 WARN" in st, "动态自检缺阈值边界负对照")
 
     # ⑦ UI 接入 + 真机门禁回归防护
-    need("DuckModelView" in main and "renderMonitor()" in main, "健康页没接 3D 模型")
+    # 阶段 2 UDF：渲染由 uiState.collect 驱动，renderMonitor 改为接收 state 参数
+    # （旧形态 renderMonitor() 已不存在）——用正则锁「渲染入口存在」而非写死参数签名。
+    need("DuckModelView" in main and re.search(r"renderMonitor\s*\(", main) is not None,
+         "健康页没接 3D 模型")
     need("DuckModelView(this@MainActivity)" in main,
          "健康页没有真的构造 DuckModelView（只留 import/字段声明不算接入）")
     need("advanceFrame()" in main, "模型没有旋转驱动")
@@ -260,12 +267,33 @@ def evaluate(src: dict, app_mesh_override: bytes | None = None) -> tuple[str, li
     need("setRotating(i == 1)" in main, "离开健康页未暂停旋转")
     need('"robot.health 真字段：' in main, "健康页顶部断言文本被挤掉（真机 59/59 会红）")
     need("Mock 演示夹具" in main, "健康页 Mock 来源标注被删（真机 59/59 会红）")
-    need("severityArgb" in v, "3D 视图没用 core 的语义色单一真源")
+    viewCode = code_only(v)
+    # 阶段 4：视图不再自己算颜色/画圆点，改为把 report 的 severityOf 注入 core 投影链。
+    # 🔴 2026-11-17 阶段 5：投影链升为全息管线（core HoloRenderer，像素级 z-buffer + 提边），
+    # 判据同步改为「视图把 sevOf 注入 HoloRenderer.render」+「状态色仍取自 severityArgb
+    # 单一真源」——断言意图不变（颜色即状态不断链），不靠字符串残留。
+    holo = src.get("holo", "")
+    # 判据必须锁「sevOf 作为第 5 实参真的传进去」，而不是「文件里出现过 sevOf」
+    # （实测：只查标识符存在时，把实参换成 { Severity.UNKNOWN } 仍假绿）。
+    need(re.search(
+        r"HoloRenderer\.render\(\s*m\s*,\s*angleDeg\.toDouble\(\)\s*,\s*iw\s*,\s*ih\s*,\s*sevOf\s*,",
+        viewCode) is not None,
+        "3D 视图未把状态注入 core 全息渲染链（颜色即状态断链）")
+    need("RobotParts.severityArgb" in holo,
+         "全息渲染自造状态色（必须取 RobotParts.severityArgb 单一真源）")
+    need("r?.severityOf(p) ?: Severity.UNKNOWN" in viewCode,
+         "3D 视图状态真源未接 MonitorReport（无证据时必须 UNKNOWN=基色）")
+    # z 测试必须以代码形式存在（注释里出现「z-buffer」不算）——负对照会把 zbuf 全改掉。
+    need(re.search(r"if \(z > zbuf\[idx\]\)", holo) is not None,
+         "全息渲染缺 z 测试（内部零件会从缝隙漏线）")
+    need(re.search(r"\bdrawCircle\s*\(", viewCode) is None,
+         "3D 视图仍在画状态圆点（阶段 4 要求去圆点、部件本体着色）")
+    need("Severity.UNKNOWN" in viewCode and "按部件状态着色" in v,
+         "3D 视图 contentDescription 未说明部件着色（真机门禁可观测）")
     need("非运动学解算" in v, "3D 视图缺「非运动学解算」声明")
     # 🔴 资源可达性（2026-11-15 真因固化）：core/src/main/resources 是 Java resource，
     # 打进 APK 根目录后 ART ClassLoader 读不到；真机必须走 assets + AssetManager.open。
     # 上一轮 core 自检 476/476 全绿却真机降级线框，就是因为缺这条判据。
-    viewCode = code_only(v)
     need("assets.open(MESH_ASSET)" in viewCode and "DuckMesh.loadFromBytes" in viewCode,
          "真机网格未走 assets + loadFromBytes（classpath 在 Android 读不到，会静默降级）")
     need("DuckMesh.load()" not in viewCode,
@@ -274,16 +302,66 @@ def evaluate(src: dict, app_mesh_override: bytes | None = None) -> tuple[str, li
          "网格加载状态不可观测（contentDescription 必须写明已加载/未加载）")
     need(re.search(r"\b\w+\.drawText\(", viewCode) is None,
          "模型 Canvas 内仍在 drawText，会压在模型上遮挡（声明/图例应移到卡片外 TextView）")
-    need("fun shadeColor(" in read(src, "mesh"),
+    mesh_code = read(src, "mesh")
+    need("fun shadeColor(" in mesh_code,
          "网格缺 Lambert 光照（半透明+无光照会把模型画成碎片）")
-    need("(0xFF shl 24)" in read(src, "mesh"),
+    need("(0xFF shl 24)" in mesh_code,
          "网格填充 alpha 未强制不透明（无 z-buffer 时半透明叠色会画成碎片）")
 
-    # ⑧ 三条消费链调同一个函数（UI / AI 通道 / 报告）
+    # ⑦b 阶段 4：DMSH v2 部件映射 + 状态着色（源码结构 + 产物字节双重判据）。
+    # 源码判据防「有人把 project 切回四参版/把 UNKNOWN 默认成绿」；
+    # 产物判据直接读字节，防「源码写了 v2 但 bin 还是 v1」的假绿。
+    need("VERSION_V2" in mesh_code and "n_parts" in mesh_code and "partIndices" in mesh_code,
+         "DuckMesh 缺 DMSH v2 解析（n_parts/partIndices 分支）")
+    need("VERSION_V1" in mesh_code and "ModelPart.NO_PART" in mesh_code,
+         "DuckMesh 缺 v1 兼容解析（老网格无部件索引必须保持基色）")
+    need("nParts != ModelPart.SLOT_COUNT" in mesh_code,
+         "v2 n_parts 未与单一真源槽位数校验（生成期/core 会静默错位）")
+    need("severityOf: (RobotPart) -> Severity" in mesh_code and "statusTint" in mesh_code,
+         "project 缺 severityOf 状态着色重载（颜色即状态未接入投影链）")
+    need("project(mesh, angleDegrees, width, height, { Severity.UNKNOWN })" in mesh_code,
+         "四参 project 未委托到状态着色版（两条消费链会漂移）")
+    need("MIX_OK < MIX_WARN" in st and "MIX_WARN < MIX_CRITICAL" in st,
+         "core 自检缺「OK 低强度 < WARN < CRITICAL」强度梯度断言")
+    need("ModelPart" in p and "SLOT_COUNT" in p,
+         "RobotParts 缺 ModelPart 部件槽位单一映射")
+    need("partIndexOf" in mesh_code and "ModelPart.of" in mesh_code,
+         "状态着色未按部件槽位取 severity（会整只刷同色）")
+
+    # 产物字节判据（独立 struct 解析，不复用生成脚本自报数字）：
+    # v2 header = magic + version + n_verts + n_tris + n_parts = 20B，末尾 n_tris×u8 部件索引。
+    if core_mesh:
+        try:
+            mg, ver, nv, nt, nparts = struct.unpack_from("<4sIIII", core_mesh, 0)
+            p_off = 20 + nv * 3 * 4 + nt * 3 * 4 + nt * 4
+            parts = list(core_mesh[p_off:p_off + nt])
+            need(mg == b"DMSH" and ver == 2, f"网格产物不是 v2: magic={mg!r} version={ver}")
+            need(nparts == 21, f"网格产物 n_parts={nparts} 与 21 槽位不符")
+            need(len(parts) == nt, "网格产物部件索引数组长度 != n_tris")
+            need(all(x <= 20 or x == 255 for x in parts),
+                 "网格产物存在越界部件索引(非 0..20/255)")
+            need(any(x != 255 for x in parts), "网格产物没有任何可着色三角形")
+            need(all(x in parts for x in (16, 17, 18)),
+                 "网格产物缺 BATTERY/CPU/IMU 系统件槽位")
+            need(len(core_mesh) == p_off + nt, "网格产物尾部长度与部件索引数组不符")
+        except struct.error:
+            need(False, "网格产物太短，无法解析 v2 header")
+
+    # ⑧ 三条消费链汇聚同一个真源：RobotRepository.snapshot().monitorReport
+    #    阶段 2 UDF 后 UI 链经 MainViewModel 中转，不再直连 SessionHolder：
+    #      UI 链   = MainActivity.renderMonitor 读 uiState.monitorReport
+    #                ← MainViewModel.onSnapshot 从 snap.monitorReport 派生（snap=repository 快照）
+    #      AI 链   = AiDebugReceiver → SessionHolder.monitorReport() → repository 快照
+    #      报告入口 = SessionHolder.monitorReport()（委托 repository 快照）
+    #    三链最终仍读同一快照；不允许任何一链另起炉灶重算。
     need("fun monitorReport(" in holder, "SessionHolder 缺统一报告入口")
     need(receiver.count("SessionHolder.monitorReport()") >= 1,
          "AI 通道 monitor 命令未复用统一报告入口")
-    need("SessionHolder.monitorReport()" in main, "健康页未复用统一报告入口")
+    need("snapshot()" in holder and "monitorReport" in holder,
+         "SessionHolder.monitorReport 未委托 repository 快照（真源分叉）")
+    need("state.monitorReport" in main, "健康页未从 uiState 消费 monitorReport（UDF 断链）")
+    need("snap.monitorReport" in vm and "onSnapshot" in vm,
+         "MainViewModel 未从 repository 快照派生 monitorReport（UI 链真源分叉）")
     need('"monitor"' in policy, "AI 通道命令白名单缺 monitor")
 
     # ⑨ 单一权威文档必须写清可行性边界与 UNVERIFIED
@@ -292,7 +370,8 @@ def evaluate(src: dict, app_mesh_override: bytes | None = None) -> tuple[str, li
         need(token in doc, f"单一权威文档缺关键结论：{token}")
 
     verdict = "UNVERIFIED_ARTIFACTS_ABSENT" if any(
-        not read(src, k) for k in ("monitor", "parts", "geometry", "view", "main", "selftest", "doc")
+        not read(src, k) for k in ("monitor", "parts", "geometry", "view", "main", "viewmodel",
+                                   "selftest", "doc")
     ) else ("NOT_PASS" if errs else "OK")
     print(f"first_source_cross_check: {cross}")
     return verdict, errs
@@ -303,10 +382,11 @@ def selftest(src: dict) -> list[tuple[str, bool]]:
     def variant(**kw) -> dict:
         return {**src, **kw}
 
-    m, g, p, main, holder, policy, st, doc, v, mesh = (
+    m, g, p, main, holder, policy, st, doc, v, mesh, vm, holo = (
         read(src, "monitor"), read(src, "geometry"), read(src, "parts"),
         read(src, "main"), read(src, "holder"), read(src, "policy"),
         read(src, "selftest"), read(src, "doc"), read(src, "view"), read(src, "mesh"),
+        read(src, "viewmodel"), read(src, "holo"),
     )
     cases: list[tuple[str, dict]] = [
         ("阈值 70→90 必红", variant(monitor=m.replace("SERVO_CRITICAL_C = 70.0", "SERVO_CRITICAL_C = 90.0"))),
@@ -331,6 +411,12 @@ def selftest(src: dict) -> list[tuple[str, bool]]:
          variant(main=main.replace("robot.health 真字段：", "已删除："))),
         ("AI 通道白名单删掉 monitor 必红",
          variant(policy=policy.replace('"monitor",', ""))),
+        # 🔴 阶段 2 UDF 真源链负对照：UI 链脱离 uiState / ViewModel 脱离快照 都必须判红，
+        # 否则上面两条新判据只是摆设（注入式负对照，非只看绿）。
+        ("健康页脱离 uiState.monitorReport 必红",
+         variant(main=main.replace("state.monitorReport", "SessionHolder.monitorReport()"))),
+        ("ViewModel 脱离 repository 快照必红",
+         variant(viewmodel=vm.replace("snap.monitorReport", "null"))),
         ("自检函数没挂进 main 必红",
          variant(selftest=st.replace("        testHardwareMonitor()\n", ""))),
         ("文档删掉 UNVERIFIED 边界必红",
@@ -350,6 +436,33 @@ def selftest(src: dict) -> list[tuple[str, bool]]:
          variant(mesh=mesh.replace("fun shadeColor", "fun unusedShade"))),
         ("删掉不透明 alpha 必红",
          variant(mesh=mesh.replace("(0xFF shl 24)", "(0x80 shl 24)"))),
+        # 🔴 阶段 4 v2/着色负对照：改坏任一条新判据都必须判红。
+        ("删掉 v2 n_parts 真源校验必红",
+         variant(mesh=mesh.replace("nParts != ModelPart.SLOT_COUNT", "nParts < 0"))),
+        ("删掉 severityOf 着色重载必红",
+         variant(mesh=mesh.replace("severityOf: (RobotPart) -> Severity", "unused: Int"))),
+        ("四参 project 脱离着色版必红",
+         variant(mesh=mesh.replace("project(mesh, angleDegrees, width, height, { Severity.UNKNOWN })",
+                                   "projectLegacy(mesh, angleDegrees, width, height)"))),
+        ("部件映射槽位数消失必红",
+         variant(parts=p.replace("SLOT_COUNT", "SOMETHING_ELSE"))),
+        ("自检删掉强度梯度断言必红",
+         variant(selftest=st.replace("MIX_WARN < MIX_CRITICAL", "MIX_WARN > MIX_CRITICAL"))),
+        # 🔴 阶段 5 全息管线负对照（2026-11-17）：视图不把 sevOf 注入 HoloRenderer /
+        # 渲染器自造状态色 / 删掉 z-buffer 遮挡 —— 任一改坏都必须判红。
+        ("视图删除全息状态注入链必红",
+         variant(view=v.replace(
+             "HoloRenderer.render(m, angleDeg.toDouble(), iw, ih, sevOf, ss)",
+             "HoloRenderer.render(m, angleDeg.toDouble(), iw, ih, { Severity.UNKNOWN }, ss)"))),
+        ("全息自造状态色必红",
+         variant(holo=holo.replace("RobotParts.severityArgb", "unusedStatusColor"))),
+        ("全息删掉 z-buffer 遮挡必红",
+         variant(holo=holo.replace("zbuf", "unusedDepthBuf"))),
+        ("视图恢复状态圆点必红",
+         variant(view=v.replace("        canvas.drawOval(w * 0.22f",
+                                "        canvas.drawCircle(1f, 1f, 1f, triFillPaint)\n        canvas.drawOval(w * 0.22f"))),
+        ("视图 severify 真源脱离 report 必红",
+         variant(view=v.replace("r?.severityOf(p) ?: Severity.UNKNOWN", "Severity.UNKNOWN"))),
     ]
     out = []
     for label, evidence in cases:

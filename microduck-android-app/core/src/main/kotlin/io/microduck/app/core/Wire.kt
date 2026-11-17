@@ -36,6 +36,16 @@ object Method {
     const val ROBOT_INIT = "robot.init"
     const val ROBOT_ENABLE = "robot.enable"
     const val ROBOT_DO = "robot.do"
+    /**
+     * 一键休息：坐下 → 缓入休息姿态 → 卸力 + 舵机重启，结束 limp。
+     * 一手：ft1910 `duck-ipc-proto/src/lib.rs:676` `ROBOT_REST = "robot.rest"`，
+     * `Call::RobotRest` 是**无参**单元变体（`deny_unknown_fields` ⇒ 多带参数会被
+     * INVALID_PARAMS=-32602 拒），离散请求，响应 `IntentResult{accepted, reason}`。
+     * robotd `main.rs:5350` 从不拒绝。逆操作是 [ROBOT_INIT]（上电 + 回 home）。
+     * ⚠️ BLE 不可达：`btd/src/route.rs:565-609` 的 BLE 放行白名单不含本方法
+     * ⇒ BLE 通道返回 PERMISSION_DENIED=14，UI 必须如实回显失败原因。
+     */
+    const val ROBOT_REST = "robot.rest"
     const val ROBOT_MOVE = "robot.move"
     /** 头部关节目标，弧度。连续意图，发 notification。一手：fanhao lib.rs:610。 */
     const val ROBOT_HEAD = "robot.head"

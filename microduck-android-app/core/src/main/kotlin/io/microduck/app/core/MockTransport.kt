@@ -151,6 +151,10 @@ class MockTransport(
             }
             Method.ROBOT_HEALTH -> ok(healthFixture())
             Method.ROBOT_STATE -> ok(stateFixture())
+            // 一键休息 / 恢复站立：对齐 ft1910 `IntentResult{accepted, reason}`（lib.rs:3738）。
+            // robotd 对 rest/init 从不拒绝，夹具如实返回 accepted=true。
+            Method.ROBOT_REST -> ok(mapOf("accepted" to true))
+            Method.ROBOT_INIT -> ok(mapOf("accepted" to true))
             Method.SYSTEM_INFO -> ok(mapOf("name" to "duck-mock", "serial" to "MOCK0001"))
             Method.ROBOT_POLICIES -> ok(mapOf("policies" to listOf("walk", "p8head_2999")))
             Method.NET_STATUS -> ok(mapOf("mode" to "sta", "ssid" to "mock-net", "ipv4" to "192.168.1.42"))
