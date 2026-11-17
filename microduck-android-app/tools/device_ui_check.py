@@ -278,6 +278,26 @@ def scroll_up():
     time.sleep(0.5)
 
 
+def scroll_to_top(max_tries=8):
+    """把状态页「监测数据卡」内部滚回顶部（锚点 = 卡片首行「实机状态帧」）。
+
+    🔴 真机实测踩坑：锚点不能选「控制模式」——它在 ScrollView **外面**、恒可见，
+    会让本函数第一次 dump 立即返回，卡片实际仍停在底部；随后从健康页切回状态页
+    就读不到卡片首行（门禁假红）。滑动落点也必须在卡片区域内（y≈1980→2200，
+    与 scroll_down 的 2200→1980 反向），起手落在卡片外不会滚动它。
+    """
+    W, H = display_size()
+    x = W // 2
+    y1, y2 = round(H * 1980 / 2800), round(H * 2200 / 2800)  # 卡片内向下拖 = 回顶
+    for _ in range(max_tries):
+        nodes, _ = dump_nodes()
+        if "实机状态帧" in texts(nodes):
+            return nodes
+        shell("input", "swipe", str(x), str(y1), str(x), str(y2), "250")
+        time.sleep(0.5)
+    return dump_nodes()[0]
+
+
 def scroll_until(pred_text, max_tries=14):
     """反复小步下滑直到 dump 文本包含目标串（或达到上限），返回最终 nodes。
     目标串用面板按钮「扫描附近 BLE 设备」——它是面板里位置最低的元素，出现即
@@ -318,13 +338,25 @@ def main():
     check("🔑 主页为竖屏", rot == "0", "hierarchy rotation=%s" % rot)
     check("主页含手动/自动模式选择", "手动模式" in t0 and "自动模式" in t0, t0[:160])
     check("主页含三个顶层目的地", all(k in t0 for k in ("状态", "健康", "设置")), t0[:160])
-    check("🔑 数据来源分组标注(实机帧 vs 本地遥测)",
-          "实机状态帧" in t0 and "App 本地遥测（非实机数据" in t0, t0[:220])
+    # 🔴 2026-11-17 真机实测：状态页内容已高于一屏（新增「一键休息/恢复站立」卡后，
+    # 折叠线以下的「App 本地遥测」组整体 dump 不到）。uiautomator 只 dump 视口内节点是
+    # 固有行为，不是产品缺陷 ⇒ 观测方补齐：先断言首屏内容，再滚动读遥测组，最后滚回。
+    # 「单屏容纳全部指标」不再是硬约束（每加一个卡就会红的老坑），但**内容存在性**仍是。
+    check("🔑 实机状态帧组标注(robot.state 单一来源)",
+          "实机状态帧" in t0, t0[:220])
     check("🔑 无状态帧时实机组不伪造成 0",
           "当前无状态帧" in t0 and "— 未读到" in t0, t0[:220])
-    lt0 = local_drive_frames(nodes)
-    tk0 = local_ticks(nodes)
-    time.sleep(1.4)
+    # 负对照：滚动前确实读不到遥测组 —— 证明下面的滚动不是空操作、断言不恒真。
+    check("负对照:遥测组在首屏外(滚动前读不到)",
+          "App 本地遥测（非实机数据" not in t0, "首屏已含遥测组，滚动步骤失去意义")
+    nodes_lt = scroll_until("App 本地遥测（非实机数据")
+    t_lt = texts(nodes_lt)
+    check("🔑 数据来源分组标注(实机帧 vs 本地遥测)",
+          "实机状态帧" in t0 and "App 本地遥测（非实机数据" in t_lt,
+          "实机组=%r 遥测组=%r" % ("实机状态帧" in t0, "App 本地遥测（非实机数据" in t_lt))
+    lt0 = local_drive_frames(nodes_lt)
+    tk0 = local_ticks(nodes_lt)
+    time.sleep(1.6)
     nodes2 = dump_nodes()[0]
     lt1 = local_drive_frames(nodes2)
     tk1 = local_ticks(nodes2)
@@ -334,6 +366,8 @@ def main():
           "%d → %d；若主页误建 controller 会增长" % (lt0, lt1))
     check("🔑 本地遥测数值真在变化(非静态占位)", tk0 >= 0 and tk1 > tk0,
           "刷新 %d → %d" % (tk0, tk1))
+    # 滚回顶部：后面要 tap「进入遥控界面」，滚动状态下它在视口外（点不到≠功能坏）。
+    nodes = scroll_to_top()
 
     # ---------- 进入横屏遥控页（手动模式） ----------
     nodes, _ = dump_nodes()
@@ -452,7 +486,9 @@ def main():
     check("🔑 健康页渲染且标注 Mock 夹具来源",
           "robot.health" in th and ("Mock 演示夹具" in th or "非实机读数" in th), th[:200])
     tap(dump_nodes()[0], lambda n: n["desc"] == "标签页状态", "状态标签", settle=0.6)
-    check("状态页可返回", "实机状态帧" in texts(dump_nodes()[0]))
+    st = texts(dump_nodes()[0])
+    check("状态页可返回", "实机状态帧" in st,
+          "len=%d 实机状态帧=%r 标题=%r" % (len(st), "实机状态帧" in st, "MicroDuck · 状态" in st))
 
     # ---------- 开源方案取长补短：设置持久化 / 模式刻意不持久化 ----------
     # 依据：ROS_Robot_Controller「Persistent user preferences」、ohho.apk「Saved in

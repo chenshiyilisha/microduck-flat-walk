@@ -288,6 +288,14 @@ class MainViewModel(
      * 规划明确保留在 1s tick 里。同时触发 [RobotRepository.tick] 更新状态帧速率窗口。
      */
     fun onTick() {
+        // 🔴 2026-11-17 真机实测回归修复：阶段 2 把会话委托给 Repository 时漏了这一行。
+        // `uiTickCount`（本地刷新计数）、`heartbeatRunning`（心跳态）、A5 恢复提示清理
+        // **只在 SessionHolder.tick() 里更新**；只调 repository.tick() 会让「本地刷新」
+        // 永远停在 0 次、心跳态永远 false —— 文本门禁读不到，真机 UI 也静止。
+        // 两者职责不同，不能互相替代：
+        //   · RobotRepository.tick() = 状态帧速率窗口（实机帧）
+        //   · SessionHolder.tick()   = App 自观测计数（非实机数据）
+        SessionHolder.tick()
         robotRepository.tick()
         _uiState.update {
             it.copy(

@@ -108,6 +108,10 @@ class DriveViewModel(
      * 更新状态帧速率窗口。
      */
     fun onTick() {
+        // 🔴 2026-11-17 真机实测回归修复：与 MainViewModel.onTick 同因 —— 阶段 2 委托
+        // Repository 时漏调 SessionHolder.tick()，导致「本地刷新」恒 0、心跳态恒 false。
+        // Repository.tick = 状态帧速率窗口；SessionHolder.tick = App 自观测计数，不可替代。
+        SessionHolder.tick()
         robotRepository.tick()
         _uiState.update {
             it.copy(
