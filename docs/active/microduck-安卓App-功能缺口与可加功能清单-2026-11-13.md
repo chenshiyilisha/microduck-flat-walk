@@ -2,6 +2,8 @@
 
 _2026-11-13 建档。用户要求：「看看还缺什么功能，还有什么功能可以加上，找找资料」。_
 _**2026-11-18 更新**：§5 落地状态已刷新（A2/A2'/A3/A6/A7 已落地、A8 明确不做），并新增 §5.1 原厂 9 屏逐方法对照、§5.2 原厂 §7 欠账归属。§0/§2 保留 11-13 历史盘点原貌（当时 A2–A8 全未做），**以 §5 为准**。_
+
+_**2026-11-18 晚更新**：新增 §5.4 —— 一手定位并修复 hello 握手死锁（updaterd 默认关闭导致的 `Updater is not answering`），**真机打通 BLE→READY→configd→net.status/scan 配网链路**；A2 从「链路不通」升级为「只读链路真机可用、写密码待用户操作」。_
 _本文件**只做盘点与依据核对，不改功能代码**。每条建议挂一手来源；_
 _术语严格遵循 `docs/active/microduck-来源术语约定-2026-11-13.md`：**「原厂 / 官方」只指 Pollen Robotics 原厂**。_
 _整机未落地 ⇒ 交付判定仍为「不可交付」；未验证不等于通过。_
@@ -161,7 +163,8 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 | A3 | ✅ 已落地（11-18） | `DiagnosticsSnapshot` 纯 JVM 只读解析（缺字段 null / 空列表、不造假），`RobotRepository.refreshDiagnostics()` 后台拉取，健康页只读展示；Wire/RobotSession 只读白名单登记 | `tools/check_diagnostics_readonly.py` **6/6 + 负对照**；core 自检 |
 | A6 | ✅ 已落地（11-18，只读） | `robot.policies`/`robot.model` 纳入诊断快照只读展示（**不做启停**，AUTO 零驾驶帧防假启动） | core 自检 + 只读门禁 |
 | A7 | ✅ 已落地（11-18，只读） | `update.status`/`update.listInstalled`/`update.log` 纳入诊断快照（**不做 apply/rollback/select**，mutating 等整机） | core 自检 + 只读门禁 |
-| A2 | ✅ 已落地（11-18，仅内测） | `NetSnapshot`（net.status/net.scan 解析）+ `NetProvisioning`（net.connect/net.forget 请求构造，严格 deny_unknown_fields 键集，**psk 只进出站 JSON 不落日志**）；设置页配网卡片（Mock 隔离、明文风险常驻警示、连接二次确认） | `tools/check_net_provisioning.py` **9/9 + 9 负对照**；core 自检 |
+| A2 | ✅ 已落地（11-18，仅内测；11-18 晚真机打通配网链路） | `NetSnapshot`（net.status/net.scan 解析）+ `NetProvisioning`（net.connect/net.forget 请求构造，严格 deny_unknown_fields 键集，**psk 只进出站 JSON 不落日志**）；设置页配网卡片（Mock 隔离、明文风险常驻警示、连接二次确认）。11-18 晚修复 hello 握手死锁（见 §5.4）：仅「上游版本探测服务不可达」降级继续握手，net.connect 链路真机可用 | `tools/check_net_provisioning.py` **9/9 + 9 负对照**；core 自检 629/629（A2 段 16 项含 7 负对照）；**真机 BLE→READY→configd→net.status/scan 全链路打通**（读到板子 SSID=Microduck-kissqy / IPv4=10.42.0.1 与附近真实网络）；⚠️ 真写密码 net.connect 未做（明文风险，待用户操作） |
+| A2.1 | ✅ 已落地（11-18 晚，hello 握手死锁修复） | 一手定位：hello→updaterd 而首启镜像故意关 updaterd ⇒ btd 回 `Updater is not answering`（INTERNAL_ERROR）；但 authorize/配网都走 configd，不经 updaterd。`isHelloDegradable` 仅该消息两段结构命中才降级继续 auth→READY，如实记录 `helloDegradedReason` + `Event.HelloDegraded`（不伪造 hello 成功），其余错误仍致命 | core `testHelloDegrade` 16 项（8 正向含 net.connect 能发出 + 7 负对照 + 判据）；统一门禁 ALL_PASS；Debug/Release 编译 PASS；**真机 UI 逐字抓到「已连接·hello 版本探测降级…READY」+ net.status/scan 实读** |
 | A2' | 🟡 能力预埋（11-18，**默认不接入配网路径**） | `ProvisioningCrypto` 纯 JVM 参考实现（X25519/HKDF-SHA256/AES-GCM）+ RFC7748/5869 权威向量 KAT + 低阶点负对照。不接入理由：固件端零加密实现、minSdk26 无稳定 X25519 API ⇒ 接入即假绿。规格见 `docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md` | core KAT 真跑通过；门禁约束「加密默认不接入」 |
 | A8 | ⛔ 明确不做（用户 11-18 拍板） | 地址栏留空进 Mock 已是可用入口，`sourceRow` LIVE/DEMO 标签已齐，不另加显式按钮 | — |
 | A9 / B / C | 维持不做 / 等整机 | 见 §3、§4、§5.1、§5.2 | — |
@@ -204,7 +207,16 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 
 **11-18 批次验证汇总**：core **613/613**；统一门禁 **ALL_PASS**（12 项）；`assembleDebug` + `assembleRelease` **PASS**；提交 `f6d4d07` 已 push（local==remote）。
 
-⚠️ 边界：真 GATT 上板、后台保活真机行为、断链恢复提示显示、配网真机写密码均**未验证**；整机落地前 `ship_verdict=NOT_SHIPPABLE`。
+⚠️ 边界：真 GATT 上板、后台保活真机行为、断链恢复提示显示均**未验证**；配网**11-18 晚真机打通 BLE 握手→READY→configd→net.status/scan 只读链路**，但**真写密码 net.connect 未做**（明文风险 + 无用户授权，UI 强制 §8.1 警示常驻）——真换 WiFi 需用户在配网卡片输入 SSID/密码点连接。整机落地前 `ship_verdict=NOT_SHIPPABLE`。
+
+### 5.4 hello 握手死锁修复（2026-11-18 晚，A2 配网链路的前置解锁）
+
+上一轮真机验证卡在 `hello: Updater is not answering: ... os error 2`，一度判定「net.connect 链路不通、需 SSH 登板或走 8088 门户」。本轮一手源码定位后纯 App 侧修复并真机打通，无需改固件：
+
+- **根因**：`hello → Upstream::Updater`（`duck-ipc-proto/src/lib.rs:858`），首启镜像 drop-in `zzzz-r17-manual.conf` 故意关 updaterd，`/run/updaterd.sock` 不存在（`btd/src/session.rs:218-221` 回消息）。App 把 hello 的 JSON-RPC error 一律当致命 ⇒ 到不了 auth/READY ⇒ net.connect 发不出。
+- **为什么能降级**：btd 注释 `session.rs:163-166` 明说 hello「only reports versions」；`system.authenticate` 是 btd 本地应答、`net.connect → Upstream::Config`（configd），都不经过 updaterd。版本探测服务不可达 ≠ 授权/配网不可用。
+- **判据（严，带负对照）**：仅 `code==INTERNAL_ERROR(-32603) && message 含 "is not answering"` 才降级；错 PIN / 普通 INTERNAL_ERROR / -32602 / -32601 / 传输失败全部仍致命。降级如实记录原因、不伪造 hello 成功/serial。
+- **真机证据**（vivo V2338A 无线 adb）：BLE 连 `duck-6a07` 后 UI 显示「已连接·hello 版本探测降级（updaterd 未启动，配网/认证链路可用）：Updater is not answering… · READY」；点刷新读到 `net.status`（SSID=Microduck-kissqy / 10.42.0.1 / MAC=CC:C8:37:E3:F2:1A）与 `net.scan`（DS1002 等真实网络）。⇒ A2 换 WiFi 链路具备可用会话通道。
 
 ---
 

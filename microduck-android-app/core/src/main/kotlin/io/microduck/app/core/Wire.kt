@@ -87,6 +87,9 @@ object RpcCode {
     const val METHOD_NOT_FOUND = -32601     // 版本 skew：该方法此固件不支持 → 能力降级、UI 灰化
     const val INVALID_PARAMS = -32602       // 契约 skew：我们多发/少发/类型错的字段 → 报 bug
     const val PERMISSION_DENIED = 14        // BLE 路由拒绝（低频白名单外，如 robot.move）→ 走别的传输
+    /** 上游服务不可达（lib.rs:546 `code::INTERNAL_ERROR`）。btd session.rs:221 用它包
+     *  「{Upstream:?} is not answering: {io error}」——updaterd 默认关闭的首启板上 hello 命中此码。 */
+    const val INTERNAL_ERROR = -32603
 }
 
 /**

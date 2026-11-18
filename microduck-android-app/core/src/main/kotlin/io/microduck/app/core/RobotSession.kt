@@ -90,7 +90,36 @@ class RobotSession(
          * 「did the central get this far 是客户端挂起时的第一个问题」。⇒ 失败必须带原因。
          */
         data class ConnectFailed(val stage: String, val reason: String) : Event()
+
+        /**
+         * `hello` 的版本探测服务（updaterd）不可达，但已按一手依据降级继续握手。
+         *
+         * 🔴 不是失败、也不是「假装成功」——如实告诉 UI：握手在继续，但**版本信息未取到**，
+         * 且该状态需在连接备注里可见，供排障/验收读取（项目铁律 UNVERIFIED != PASS）。
+         */
+        data class HelloDegraded(val reason: String) : Event()
     }
+
+    /**
+     * 判定一条 hello 错误是否属于「上游版本探测服务不可达」——唯一允许降级继续握手的情况。
+     *
+     * 一手依据（fanhao `hd1910-v167-trunk-imu-i2c` 全量源码，2026-11-18 核）：
+     *  - `duck-ipc-proto/src/lib.rs:858` — `Call::Hello(_) => (Updater, Prompt)`，hello 由 updaterd 应答；
+     *  - `btd/src/session.rs:163-166` —「hello is allowed through because it **only reports versions** —
+     *    the same information the GATT read already gives an unauthenticated client」；
+     *  - `btd/src/session.rs:218-221` — 上游 socket 不可达时回 `INTERNAL_ERROR(-32603)` +
+     *    `"{upstream:?} is not answering: {e}"`；`updaterd.sock` 不存在的 `e` 即 `os error 2`；
+     *  - 首启镜像 drop-in `zzzz-r17-manual.conf` **故意**把 updaterd 设为 disabled（见 SSH 面板注释），
+     *    所以「hello 报 Updater is not answering」是设计结果，不是故障；
+     *  - **授权/配网都不依赖 updaterd**：`system.authenticate` 由 btd 本地应答（PIN 从 configd 读），
+     *    `net.connect` 路由到 `Upstream::Config`（`lib.rs:931`），BLE 白名单放行（`route.rs:143`）。
+     *
+     * 判据绑定 btd 生成该消息的两段结构：错误码 `INTERNAL_ERROR` **且** message 含
+     * 「is not answering」。缺任一段即不降级（负对照：普通 INTERNAL_ERROR、契约错、权限错仍致命）。
+     */
+    internal fun isHelloDegradable(err: RpcError): Boolean =
+        err.code == RpcCode.INTERNAL_ERROR &&
+            err.message.contains("is not answering", ignoreCase = true)
 
     @Volatile
     var state: State = State.DISCONNECTED
@@ -157,6 +186,7 @@ class RobotSession(
     fun connect(target: ConnectTarget): Boolean {
         lastTarget = target
         lastConnectError = null
+        helloDegradedReason = null
         detachTransportCallbacks()
         val linked = transport.connect(target)
         if (linked.isFailure) {
@@ -181,6 +211,14 @@ class RobotSession(
     var lastConnectError: String? = null
         private set
 
+    /**
+     * hello 版本探测降级标志（真实原因供 UI/验收读取，绝不伪造 hello 成功）。
+     * 每次 connect() 重置；仅当 [isHelloDegradable] 命中时置位并发 [Event.HelloDegraded]。
+     */
+    @Volatile
+    var helloDegradedReason: String? = null
+        private set
+
     /** 握手 hello →（仅 BLE 时）system.authenticate → READY。成功即 afterReconnect（首次为空操作）。 */
     private fun handshake(): Boolean {
         transition(State.HELLO)
@@ -190,9 +228,18 @@ class RobotSession(
             lastConnectError = "hello: ${it.message ?: "request failed"}"
             return false
         }
+        // 🔴 首启板 updaterd 被镜像故意关掉，hello 由 btd 回「Updater is not answering」
+        //    (INTERNAL_ERROR)。它只报版本、不是授权前提（一手依据见 isHelloDegradable 注释），
+        //    故降级继续走 auth→READY，让 net.connect 配网链路可用。其余错误一律致命（负对照）。
         errorOf(helloResp)?.let {
-            lastConnectError = "hello: ${it.message}"
-            handleError(Method.HELLO, it); return false
+            if (isHelloDegradable(it)) {
+                helloDegradedReason = it.message
+                emit(Event.HelloDegraded(it.message))
+                // 不伪造版本/serial：readResult 为 null，下方 serial 保留旧值（首连为空）。
+            } else {
+                lastConnectError = "hello: ${it.message}"
+                handleError(Method.HELLO, it); return false
+            }
         }
         // 版本差异不硬拒：B 代 lib.rs:552 / fanhao lib.rs 顶注都写明「a version difference is
         // logged and served」，实测 App 发 api_version=40 给 API16 真 robotd 仍回 result(api_version=16)。

@@ -26,6 +26,7 @@ class MockTransport(
         val disconnectAfterRequest: Boolean = false,// 回完这条就断连
         val dropAndDisconnect: Boolean = false,     // 丢请求且断连（call 发到一半掉线）
         val errorOnMethod: Pair<String, Int>? = null, // 对指定方法返回指定错误码
+        val errorOnMethodMessage: String = "injected fault", // 该错误的 message（验 message 判据用）
         val delayMs: Long = 0,                      // 人为延迟
     )
 
@@ -112,7 +113,10 @@ class MockTransport(
                     return@synchronized RequestOutcome(null, fault.dropAndDisconnect)
                 }
                 if (fault.errorOnMethod?.first == req.method) {
-                    return@synchronized RequestOutcome(Result.success(err(fault.errorOnMethod.second, "injected fault")), fault.disconnectAfterRequest)
+                    return@synchronized RequestOutcome(
+                        Result.success(err(fault.errorOnMethod.second, fault.errorOnMethodMessage)),
+                        fault.disconnectAfterRequest,
+                    )
                 }
                 val resp = cannedResponseLocked(req)
                 RequestOutcome(resp, fault.disconnectAfterRequest)

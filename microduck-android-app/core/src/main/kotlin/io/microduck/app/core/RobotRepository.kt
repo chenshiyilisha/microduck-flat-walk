@@ -247,6 +247,8 @@ class RobotRepository(
         session = s
         kind = transport.kind.name
         note = when {
+            ok && s.helloDegradedReason != null ->
+                "已连接 · hello 版本探测降级（updaterd 未启动，配网/认证链路可用）：${s.helloDegradedReason!!.take(80)}"
             ok -> "已连接 $kind"
             transport.kind == TransportKind.BLE ->
                 "BLE 连接失败 · ${s.lastConnectError ?: "无原因（真 GATT 尚未上板验证）"}"

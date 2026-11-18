@@ -47,6 +47,92 @@ object CoreSelfTest {
         s.close(); s2.close()
     }
 
+    // ---- 1b. 首启 updaterd 关闭 ⇒ hello 降级继续握手（配网链路可用）；带 6 项负对照 ----
+    private fun testHelloDegrade() {
+        println("\n[1b] hello 版本探测降级（updaterd 未启动）→ 继续 auth→READY，配网可达")
+        val updaterDown = "Updater is not answering: No such file or directory (os error 2)"
+        val fault = MockTransport.Fault(
+            errorOnMethod = Method.HELLO to RpcCode.INTERNAL_ERROR,
+            errorOnMethodMessage = updaterDown,
+        )
+
+        // 正向 1：降级后仍完成握手 → READY；记录降级原因；发出 HelloDegraded 事件
+        val t = MockTransport()
+        t.injectFaults(fault.copy())
+        val degradeEvents = mutableListOf<String>()
+        val s = RobotSession(t, backoffBaseMs = 10)
+        val evDisposable = s.onEvent { e ->
+            if (e is RobotSession.Event.HelloDegraded) degradeEvents.add(e.reason)
+        }
+        val ok = s.connect(ConnectTarget.Mock)
+        check("降级:connect 仍进 READY", ok && s.state == RobotSession.State.READY) { "ok=$ok state=${s.state}" }
+        check("降级:hello 只发一次", t.countOf(Method.HELLO) == 1) { "log=${t.log()}" }
+        check("降级:auth 仍执行（授权链未跳过）", t.countOf(Method.SYSTEM_AUTHENTICATE) == 1) { "log=${t.log()}" }
+        check("降级:lastConnectError 不置失败", s.lastConnectError == null) { "err=${s.lastConnectError}" }
+        check("降级:降级原因如实记录", s.helloDegradedReason == updaterDown) { "reason=${s.helloDegradedReason}" }
+        check("降级:发 HelloDegraded 事件", degradeEvents.size == 1 && degradeEvents[0] == updaterDown) { "events=$degradeEvents" }
+        // 正向 2（关键目标）：降级后进 READY，net.connect 写操作能真正发出
+        val netResult = s.call(Method.NET_CONNECT, mapOf("ssid" to "Home"), replayable = false)
+        check("降级:net.connect 可发出", netResult.isSuccess) { "r=${netResult.exceptionOrNull()}" }
+        check("降级:net.connect 确实到达固件", t.countOf(Method.NET_CONNECT) == 1) { "log=${t.log()}" }
+
+        // 负对照 1：错 PIN 仍 FAILED（降级绝不放过认证失败）
+        val t2 = MockTransport(); t2.injectFaults(fault.copy())
+        val s2 = RobotSession(t2, pin = "999999", backoffBaseMs = 10)
+        val ok2 = s2.connect(ConnectTarget.Mock)
+        check("负对照:降级+错PIN 仍 FAILED", !ok2 && s2.state == RobotSession.State.FAILED) { "ok=$ok2 state=${s2.state}" }
+
+        // 注：hello 致命错误既有语义是「lastConnectError 置位 + return false」，state 停在 HELLO
+        //    （仅错 PIN 路径显式 transition(FAILED)）；故「致命」的稳健判据用返回码+错误文本+无降级标志。
+        val fatal: (Boolean, RobotSession) -> Boolean = { okr, sess ->
+            !okr && sess.lastConnectError?.startsWith("hello:") == true &&
+                sess.helloDegradedReason == null
+        }
+
+        // 负对照 2：普通 INTERNAL_ERROR（不含 is not answering）仍致命
+        val t3 = MockTransport(); t3.injectFaults(MockTransport.Fault(
+            errorOnMethod = Method.HELLO to RpcCode.INTERNAL_ERROR,
+            errorOnMethodMessage = "some other internal error",
+        ))
+        val s3 = RobotSession(t3, backoffBaseMs = 10)
+        val ok3 = s3.connect(ConnectTarget.Mock)
+        check("负对照:普通INTERNAL_ERROR 仍致命", fatal(ok3, s3)) { "ok=$ok3 err=${s3.lastConnectError}" }
+
+        // 负对照 3：契约错 INVALID_PARAMS（-32602）仍致命，即使 message 含 not answering
+        val t4 = MockTransport(); t4.injectFaults(MockTransport.Fault(
+            errorOnMethod = Method.HELLO to RpcCode.INVALID_PARAMS,
+            errorOnMethodMessage = updaterDown,
+        ))
+        val s4 = RobotSession(t4, backoffBaseMs = 10)
+        val ok4 = s4.connect(ConnectTarget.Mock)
+        check("负对照:INVALID_PARAMS 仍致命", fatal(ok4, s4)) { "ok=$ok4 err=${s4.lastConnectError}" }
+
+        // 负对照 4：版本 skew METHOD_NOT_FOUND（-32601）仍致命（能力降级路径不在这里）
+        val t5 = MockTransport(); t5.injectFaults(MockTransport.Fault(
+            errorOnMethod = Method.HELLO to RpcCode.METHOD_NOT_FOUND,
+            errorOnMethodMessage = updaterDown,
+        ))
+        val s5 = RobotSession(t5, backoffBaseMs = 10)
+        val ok5 = s5.connect(ConnectTarget.Mock)
+        check("负对照:METHOD_NOT_FOUND 仍致命", fatal(ok5, s5)) { "ok=$ok5 err=${s5.lastConnectError}" }
+
+        // 负对照 5：传输层丢 hello 请求（request failure）仍致命
+        val t6 = MockTransport(); t6.injectFaults(MockTransport.Fault(dropNextRequest = true))
+        val s6 = RobotSession(t6, backoffBaseMs = 10)
+        val ok6 = s6.connect(ConnectTarget.Mock)
+        check("负对照:hello 传输失败仍致命", !ok6 && s6.lastConnectError?.startsWith("hello:") == true && s6.helloDegradedReason == null) {
+            "ok=$ok6 err=${s6.lastConnectError}"
+        }
+
+        // 负对照 6：判定函数本身——两段判据缺一不可（直接测纯函数）
+        check("负对照:判据 错码不匹配", !s.isHelloDegradable(RpcError(RpcCode.INVALID_PARAMS, updaterDown)))
+        check("负对照:判据 错message不匹配", !s.isHelloDegradable(RpcError(RpcCode.INTERNAL_ERROR, "no such phrase here")))
+        check("判据 正确命中", s.isHelloDegradable(RpcError(RpcCode.INTERNAL_ERROR, updaterDown)))
+
+        evDisposable.dispose()
+        s.close(); s2.close(); s3.close(); s4.close(); s5.close(); s6.close()
+    }
+
     // ---- 2. 业务调用 + 只读方法返回真实结构 ----
     private fun testCall() {
         println("\n[2] 业务调用 robot.health / robot.state")
@@ -1950,6 +2036,7 @@ object CoreSelfTest {
         println("MicroDuck core 会话层自检  |  Kotlin 2.4.0 / JDK17 / jvm-target 17")
         println("=" * 60)
         testHandshake()
+        testHelloDegrade()
         testCall()
         testReconnect()
         testIdempotentReplay()
