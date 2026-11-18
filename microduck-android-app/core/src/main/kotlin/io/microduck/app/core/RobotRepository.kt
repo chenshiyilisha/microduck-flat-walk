@@ -84,6 +84,14 @@ class RobotRepository(
         val modelApiText: String,
         /** 板端自报 API_VERSION（仅 BLE）；null = 非 BLE 或未读。 */
         val peerApiVersion: Int?,
+        /** A3/A6/A7 只读诊断（系统信息/服务/日志、策略/模型、更新状态）；空快照=未读。 */
+        val diagnostics: DiagnosticsSnapshot,
+        /** A2 Wi-Fi 配网状态/扫描快照；空快照=未读。 */
+        val net: NetSnapshot,
+        /** A2 配网写操作进行中（按钮禁用 + UI 提示，防重复提交）。 */
+        val netBusy: Boolean,
+        /** A2 配网最近一次写操作结果文本；null=无。含明文风险警示的展示由 UI 负责。 */
+        val netResultText: String?,
     )
 
     private val lock = Any()
@@ -128,6 +136,10 @@ class RobotRepository(
         remoteSessionActive = remoteSessionActive,
         modelApiText = modelApiText,
         peerApiVersion = peerApiVersion,
+        diagnostics = diagnostics,
+        net = net,
+        netBusy = netBusy,
+        netResultText = netResultText,
     )
 
     /** 重建快照、存储、锁外回调监听者。 */
@@ -144,7 +156,8 @@ class RobotRepository(
         lastState = null, lastHealth = null, lastHealthOkMs = 0L, lastHealthError = null,
         monitorReport = null, stateFrameCount = 0, stateHz = 0.0, lastStateMs = 0L,
         batteryText = "— 未读到", remoteSessionActive = null, modelApiText = "—",
-        peerApiVersion = null,
+        peerApiVersion = null, diagnostics = DiagnosticsSnapshot(),
+        net = NetSnapshot(), netBusy = false, netResultText = null,
     )
 
     // ── 会话与订阅（唯一持有者）──
@@ -171,6 +184,10 @@ class RobotRepository(
     @Volatile private var remoteSessionActive: Boolean? = null
     @Volatile private var modelApiText = "—"
     @Volatile private var peerApiVersion: Int? = null
+    @Volatile private var diagnostics: DiagnosticsSnapshot = DiagnosticsSnapshot()
+    @Volatile private var net: NetSnapshot = NetSnapshot()
+    @Volatile private var netBusy = false
+    @Volatile private var netResultText: String? = null
 
     /** 由 `raw` 连接串解析并建链（Mock/TCP）；BLE/WebRTC 请用 [connectWith] 注入真实传输。 */
     fun connect(raw: String): Boolean {
@@ -219,6 +236,8 @@ class RobotRepository(
         lastState = null; stateFrameCount = 0; stateWindowFrames = 0
         stateWindowStartMs = System.currentTimeMillis(); stateHz = 0.0; lastStateMs = 0L
         batteryText = "— 未读到"
+        diagnostics = DiagnosticsSnapshot()   // 换链路 = 换数据源：旧诊断读数一律作废
+        net = NetSnapshot(); netBusy = false; netResultText = null   // 配网状态同理作废
 
         val s = RobotSession(transport)
         watchEvents(s)
@@ -373,9 +392,147 @@ class RobotRepository(
         }.start()
     }
 
+    /**
+     * A3/A6/A7：后台拉取全部只读诊断方法，合并进 [diagnostics] 快照。
+     *
+     * 🔴 与 refreshHealth 同构的三条铁律：
+     *  · Mock 不查（不是实机，查了会伪造读数）；未 READY 不查。
+     *  · 每个方法独立 try-catch：一个 -32601/-32602 只影响自己那个字段，不拖垮其余；
+     *    失败记对应 `xxxError`，界面如实回显「不支持/失败」，绝不填 0 或默认假值。
+     *  · 全部从 @Volatile 字段重建快照（[build]），不做增量 patch。
+     *
+     * system.logs 带 `LogsParams{unit,lines,boot}` 且 `deny_unknown_fields` ⇒ 键名精确、
+     * 不可多带；unit 取固件知道的 `robotd`（lib.rs:4263 注释：服务解析 robotd/robotd.service）。
+     */
+    fun refreshDiagnostics() {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            // 未连接/Mock：清空为未读快照，不沿用陈旧数据。
+            diagnostics = DiagnosticsSnapshot()
+            publish()
+            return
+        }
+        Thread {
+            // 先各自拉取，异常收敛到 error 字段；Result 非 null，直接 getOrNull()。
+            // runCatching 兜住任何意外抛出，单个方法失败不影响其余。
+            val info = runCatching { s.call(Method.SYSTEM_INFO).getOrNull() }.getOrNull()
+            val services = runCatching { s.call(Method.SYSTEM_SERVICES).getOrNull() }.getOrNull()
+            val logs = runCatching {
+                s.call(Method.SYSTEM_LOGS, mapOf("unit" to "robotd", "lines" to 80, "boot" to 0)).getOrNull()
+            }.getOrNull()
+            val policies = runCatching { s.call(Method.ROBOT_POLICIES).getOrNull() }.getOrNull()
+            val model = runCatching { s.call(Method.ROBOT_MODEL).getOrNull() }.getOrNull()
+            val status = runCatching { s.call(Method.UPDATE_STATUS).getOrNull() }.getOrNull()
+            val installed = runCatching { s.call(Method.UPDATE_LIST_INSTALLED).getOrNull() }.getOrNull()
+
+            val infoParsed = DiagnosticsSnapshot.fromInfo(info)
+            val (logsUnit, logLines) = DiagnosticsSnapshot.parseLogs(logs)
+            diagnostics = DiagnosticsSnapshot(
+                robotName = infoParsed?.name,
+                serial = infoParsed?.serial,
+                uptimeSeconds = infoParsed?.uptimeSeconds,
+                simulated = infoParsed?.simulated,
+                services = DiagnosticsSnapshot.parseServices(services),
+                logs = logLines,
+                logsUnit = logsUnit,
+                policies = DiagnosticsSnapshot.parsePolicies(policies),
+                model = DiagnosticsSnapshot.parseModel(model),
+                updateStatus = DiagnosticsSnapshot.parseUpdateStatus(status),
+                installed = DiagnosticsSnapshot.parseInstalled(installed),
+                infoError = if (infoParsed == null) "system.info 未读到/不支持" else null,
+                servicesError = if (DiagnosticsSnapshot.parseServices(services).isEmpty()) "system.services 未读到/不支持" else null,
+                logsError = if (logLines.isEmpty()) "system.logs 未读到/不支持" else null,
+                policiesError = if (DiagnosticsSnapshot.parsePolicies(policies).isEmpty()) "robot.policies 未读到/不支持" else null,
+                modelError = if (DiagnosticsSnapshot.parseModel(model) == null) "robot.model 未读到/不支持" else null,
+                updateError = if (DiagnosticsSnapshot.parseUpdateStatus(status) == null) "update.status 未读到/不支持" else null,
+            )
+            publish()
+        }.start()
+    }
+
+    // ── A2 Wi-Fi 配网（net.status / net.scan 只读 + net.connect / net.forget 写）──
+    // 🔴 安全边界：Mock 不写真网络；psk 只进出站 JSON、不进日志/快照/UI 回显；
+    //    明文传输风险由 UI 的 PLAINTEXT_TRANSPORT_WARNING 强制展示，本层不软化。
+    //    固件端当前明文传密码（route.rs:139-155 / 原厂 §8.1 blocker），见
+    //    docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md。
+
+    /** 拉取 net.status + net.scan（只读，可重放）。Mock/未连接 → 清空为未读。 */
+    fun refreshNet() {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            net = NetSnapshot()
+            if (kind == "MOCK") netResultText = "演示模式：不查询真实网络"
+            publish()
+            return
+        }
+        netBusy = true; publish()
+        Thread {
+            val statusObj = runCatching { s.call(Method.NET_STATUS).getOrNull() }.getOrNull()
+            val scanObj = runCatching { s.call(Method.NET_SCAN).getOrNull() }.getOrNull()
+            val status = NetSnapshot.fromStatus(statusObj)
+            val scanned = NetSnapshot.parseScan(scanObj)
+            net = NetSnapshot(
+                state = status?.state, ssid = status?.ssid, signal = status?.signal,
+                ip4 = status?.ip4, ip6 = status?.ip6, mac = status?.mac, iface = status?.iface,
+                networks = scanned,
+                statusError = if (status == null) "net.status 未读到/不支持" else null,
+                scanError = if (scanned.isEmpty()) "net.scan 未读到/不支持" else null,
+            )
+            netBusy = false
+            publish()
+        }.start()
+    }
+
+    /**
+     * 连接 Wi-Fi（net.connect，写操作，不可自动重放）。psk 仅用于出站请求，不落任何日志/快照。
+     * 回执按 outcome 解析，用户提示由 [NetProvisioning.ConnectOutcome.userMessage] 生成。
+     */
+    fun connectWifi(ssid: String, psk: String?) {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            netResultText = if (kind == "MOCK") "演示模式：不写真实网络配置" else "未连接，无法配网"
+            publish()
+            return
+        }
+        if (netBusy) return
+        netBusy = true; publish()
+        Thread {
+            val params = NetProvisioning.connectParams(ssid, psk) // psk 只在这里出现，之后不保留引用
+            val result = runCatching {
+                s.call(Method.NET_CONNECT, params, replayable = false).getOrNull()
+            }.getOrNull()
+            val outcome = NetProvisioning.parseConnect(result)
+            netResultText = outcome.userMessage
+            netBusy = false
+            publish()
+            if (outcome.connected) refreshNet() // 连上后刷新状态
+        }.start()
+    }
+
+    /** 忘记已存 Wi-Fi（net.forget，写操作）。removed=false 如实回显，不假装删除。 */
+    fun forgetWifi(ssid: String) {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            netResultText = if (kind == "MOCK") "演示模式：不写真实网络配置" else "未连接，无法配网"
+            publish()
+            return
+        }
+        if (netBusy) return
+        netBusy = true; publish()
+        Thread {
+            val result = runCatching {
+                s.call(Method.NET_FORGET, NetProvisioning.forgetParams(ssid), replayable = false).getOrNull()
+            }.getOrNull()
+            val outcome = NetProvisioning.parseForget(result)
+            netResultText = if (outcome.removed) "已忘记网络 $ssid" else "未找到已存网络 $ssid（或已删除）"
+            netBusy = false
+            publish()
+            refreshNet()
+        }.start()
+    }
+
     /** 数据来源分层：没读到 health 一律 NONE（零告警），Mock 一律 MOCK_FIXTURE，其余 REAL_HEALTH。 */
-    fun monitorSource(): MonitorSource = when {
-        lastHealth == null -> MonitorSource.NONE
+    fun monitorSource(): MonitorSource = when {        lastHealth == null -> MonitorSource.NONE
         kind == "MOCK" -> MonitorSource.MOCK_FIXTURE
         else -> MonitorSource.REAL_HEALTH
     }

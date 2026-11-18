@@ -448,6 +448,8 @@ class RobotSession(
         Method.UPDATE_STATUS, Method.UPDATE_CHECK, Method.SYSTEM_LOGS,
         // A4：控制者归属只读查询，断链恢复后应可安全重放（replayable）。
         Method.ROBOT_REMOTE_SESSION_ACTIVE, Method.ROBOT_MODEL_API,
+        // A3/A6/A7：新增只读展示方法，断链恢复后同样可安全重放。
+        Method.SYSTEM_SERVICES, Method.UPDATE_LIST_INSTALLED, Method.UPDATE_LOG,
     )
 
     fun close() {

@@ -43,6 +43,9 @@ import com.google.android.material.textfield.TextInputLayout
 import io.microduck.app.ble.BleConnectPanel
 import io.microduck.app.core.MonitorReport
 import io.microduck.app.core.MonitorVerdict
+import io.microduck.app.core.DiagnosticsSnapshot
+import io.microduck.app.core.NetSnapshot
+import io.microduck.app.core.NetProvisioning
 import io.microduck.app.core.RobotPart
 import io.microduck.app.core.RobotParts
 import io.microduck.app.core.Severity
@@ -118,6 +121,13 @@ class MainActivity : AppCompatActivity() {
     // 2026-11-15 硬件监控：旋转仿真模型 + 告警 + 结构化状态卡片
     private lateinit var duckModelView: DuckModelView
     private lateinit var monitorAlertText: TextView
+    /** A3/A6/A7 只读诊断文本（健康页底部，点按钮刷新，缺数据显示「未读到」）。 */
+    private lateinit var diagnosticsText: TextView
+    /** A2 配网：状态/扫描结果文本 + SSID/密码输入（设置页，写操作需二次确认）。 */
+    private lateinit var netStatusText: TextView
+    private lateinit var netSsidEdit: EditText
+    private lateinit var netPskEdit: EditText
+    private lateinit var netResultText: TextView
     private lateinit var autoRefreshBox: CheckBox
     // 结构化状态卡片（电量/板级状态/舵机温度/总线/IMU/控制环）：值文本 + 状态色点。
     // 取代原先「原始 JSON 长文本 + 部位统计 + 告警 + 模型」四重重复呈现（用户反馈杂乱）。
@@ -770,6 +780,27 @@ class MainActivity : AppCompatActivity() {
         }
         // 原始读数（调试用）直接铺在末尾，不再单独套 ScrollView —— 避免嵌套滚动。
         col.addView(healthText, LinearLayout.LayoutParams(MATCH, WRAP))
+        // ── A3/A6/A7 只读诊断区（系统信息/服务/日志、策略/模型、更新状态）──
+        // 放在健康页视口下方：顶部两行门禁断言文本（healthSourceText 等）不受影响；
+        // 需主动点「刷新系统信息」才查（真 TCP/BLE 同步 I/O，ViewModel 已切后台线程）。
+        col.addView(TextView(this@MainActivity).apply {
+            text = "系统诊断（只读 · 点刷新才查 · 缺字段显示「未读到」）"
+            textSize = 11f; setTextColor(c(R.color.md_accent))
+            setPadding(0, dp(10), 0, dp(2))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        diagnosticsText = TextView(this@MainActivity).apply {
+            text = "尚未查询 · 点下方按钮拉取 system.info / 服务 / 日志 / 策略 / 更新状态"
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setTypeface(Typeface.MONOSPACE)
+            setPadding(0, dp(4), 0, dp(4)); maxLines = 40
+            contentDescription = "系统诊断只读信息"
+        }
+        col.addView(diagnosticsText, LinearLayout.LayoutParams(MATCH, WRAP))
+        col.addView(MaterialButton(this@MainActivity).apply {
+            text = "刷新系统信息"; minimumHeight = dp(48)
+            contentDescription = "刷新系统信息"
+            setOnClickListener { viewModel.onRefreshDiagnostics() }
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
         // 🔴 整页可滚动：模型放大后「15 舵机网格」第 3 行（ID 10–14 右腿）会被挤出视口，
         // 用户 2026-11-15 反馈「只有 20 到 34」。外层 ScrollView 保证 15 个 ID 都能滚到。
         // 顶部两行断言文本仍在最前，真机门禁 uiautomator dump 视口内节点不受影响。
@@ -974,6 +1005,109 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * A2 Wi-Fi 配网卡片（设置页）。
+     *
+     * 🔴 原厂 §8.1 pre-shipping blocker：目标固件明文传 Wi-Fi 密码（一手
+     *    btd/src/route.rs:139-155），故警示**常驻**且连接前**二次确认**，绝不软化成
+     *    「安全配网」。Mock 会话不写真网络（Repository 隔离）。加密能力预埋但默认不接入
+     *    （见 ProvisioningCrypto / 固件对接规格文档）。
+     */
+    private fun buildNetPanel() = LinearLayout(this@MainActivity).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(TextView(this@MainActivity).apply {
+            text = "Wi-Fi 配网（net.status / scan / connect / forget）"
+            textSize = 12f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+            letterSpacing = TRACKING_LABEL; setPadding(0, 0, 0, dp(4))
+        })
+        // 常驻明文风险警示（不可省略、不软化）
+        addView(TextView(this@MainActivity).apply {
+            text = "⚠ " + NetProvisioning.PLAINTEXT_TRANSPORT_WARNING
+            textSize = 11f; setTextColor(c(R.color.md_bad))
+            setPadding(0, 0, 0, dp(6))
+        })
+        netStatusText = TextView(this@MainActivity).apply {
+            text = "尚未查询 · 点「刷新网络」读取当前连接与附近网络"
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+        }
+        addView(netStatusText, LinearLayout.LayoutParams(MATCH, WRAP))
+        addView(MaterialButton(this@MainActivity).apply {
+            text = "刷新网络（只读）"; textSize = 12f; minimumHeight = dp(44)
+            cornerRadius = dp(CORNER_LARGE_DP)
+            contentDescription = "刷新网络状态"
+            setOnClickListener { viewModel.onRefreshNet() }
+        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+
+        netSsidEdit = EditText(this@MainActivity).apply {
+            hint = "网络名称（SSID）"; textSize = 12f
+            inputType = InputType.TYPE_CLASS_TEXT
+            contentDescription = "网络名称输入"
+            setSingleLine(true)
+        }
+        addView(netSsidEdit, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+        netPskEdit = EditText(this@MainActivity).apply {
+            hint = "密码（开放网络留空）"; textSize = 12f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            contentDescription = "Wi-Fi 密码输入"
+            setSingleLine(true)
+        }
+        addView(netPskEdit, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(4) })
+
+        addView(MaterialButton(this@MainActivity).apply {
+            text = "连接（写操作 · 明文）"; textSize = 12f; minimumHeight = dp(44)
+            cornerRadius = dp(CORNER_LARGE_DP)
+            contentDescription = "连接 Wi-Fi"
+            setOnClickListener { confirmConnectWifi() }
+        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+
+        addView(MaterialButton(this@MainActivity).apply {
+            text = "忘记该网络（写操作）"; textSize = 12f; minimumHeight = dp(44)
+            cornerRadius = dp(CORNER_LARGE_DP)
+            contentDescription = "忘记 Wi-Fi 网络"
+            setOnClickListener {
+                val ssid = netSsidEdit.text.toString().trim()
+                if (ssid.isEmpty()) {
+                    netResultText.setTextIfChanged("请先填写要忘记的网络名称（SSID）")
+                } else confirmForgetWifi(ssid)
+            }
+        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(4) })
+
+        netResultText = TextView(this@MainActivity).apply {
+            text = "—"; textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            contentDescription = "配网操作结果"
+        }
+        addView(netResultText, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+    }
+
+    /** 连接 Wi-Fi 前的二次确认：必须逐字展示明文警示，用户确认后才发请求。 */
+    private fun confirmConnectWifi() {
+        val ssid = netSsidEdit.text.toString().trim()
+        if (ssid.isEmpty()) {
+            netResultText.setTextIfChanged("请先填写网络名称（SSID）")
+            return
+        }
+        // 读密码到局部变量，确认回调后立即用；不写任何字段/日志。
+        val psk = netPskEdit.text.toString().ifEmpty { null }
+        AlertDialog.Builder(this)
+            .setTitle("连接 Wi-Fi（写操作 · 明文）")
+            .setMessage(NetProvisioning.PLAINTEXT_TRANSPORT_WARNING +
+                "\n\n目标网络：$ssid")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("仍要连接") { _, _ -> viewModel.onConnectWifi(ssid, psk) }
+            .show()
+    }
+
+    /** 忘记网络二次确认（写操作）。 */
+    private fun confirmForgetWifi(ssid: String) {
+        AlertDialog.Builder(this)
+            .setTitle("忘记网络（写操作）")
+            .setMessage("将向板端发送 net.forget，删除已存网络「$ssid」。\n\n" +
+                NetProvisioning.PLAINTEXT_TRANSPORT_WARNING)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确认忘记") { _, _ -> viewModel.onForgetWifi(ssid) }
+            .show()
+    }
+
     /** 设置页：所有参数写 SessionHolder，DriveActivity 启动时读取，避免「改了没生效」。 */
     private fun buildSettingsPage() = MaterialCardView(this).apply {
         radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
@@ -1079,6 +1213,10 @@ class MainActivity : AppCompatActivity() {
         // A1：BLE 运行时权限 + unfiltered 扫描 + 真 BleTransport 入口。
         // 放设置页最末尾，避免把上面的反转开关/滑杆挤出可见区（真机门禁靠 UI dump 定位）。
         col.addView(blePanel.buildView(), LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(16)
+        })
+        // A2：Wi-Fi 配网（明文风险常驻 + 写操作二次确认），放 BLE 面板之后、更新面板之前。
+        col.addView(buildNetPanel(), LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.topMargin = dp(16)
         })
         // GitHub Releases 自更新面板放**最末尾**：uiautomator 只 dump 视口内节点，
@@ -1307,6 +1445,77 @@ class MainActivity : AppCompatActivity() {
         healthText.setTextIfChanged(state.lastHealth?.summary() ?: "— 未读到 health")
     }
 
+    /**
+     * A3/A6/A7 只读诊断文本：把 [DiagnosticsSnapshot] 逐项铺开，缺数据一律「未读到」，
+     * 错误字段（不支持/失败）如实回显。用 setTextIfChanged 避免 1s tick 反复发无障碍事件。
+     */
+    private fun renderDiagnostics(d: DiagnosticsSnapshot) {
+        if (!::diagnosticsText.isInitialized) return
+        val text = if (d.isEmpty && d.infoError == null && d.servicesError == null) {
+            "尚未查询 · 点下方按钮拉取 system.info / 服务 / 日志 / 策略 / 更新状态"
+        } else buildString {
+            append("【系统信息 system.info】\n")
+            append("  名称：").append(d.robotName ?: "未读到").append("\n")
+            append("  序列号：").append(d.serial ?: "未读到").append("\n")
+            d.uptimeSeconds?.let { append("  运行时间：").append(it).append(" 秒\n") }
+                ?: append("  运行时间：未读到\n")
+            append("  仿真机：").append(d.simulated?.let { if (it) "是" else "否" } ?: "未读到")
+            d.infoError?.let { append("（").append(it).append("）") }; append("\n")
+
+            append("【守护服务 system.services】\n")
+            if (d.services.isEmpty()) append("  未读到").append(d.servicesError?.let { "（$it）" } ?: "").append("\n")
+            else d.services.forEach { append("  ").append(it.unit).append(" → ").append(it.state)
+                .append(it.identity?.let { " · $it" } ?: "").append("\n") }
+
+            append("【日志 system.logs").append(d.logsUnit?.let { " · $it" } ?: "").append("】\n")
+            if (d.logs.isEmpty()) append("  未读到").append(d.logsError?.let { "（$it）" } ?: "").append("\n")
+            else d.logs.takeLast(20).forEach { append("  ").append(it).append("\n") }
+
+            append("【策略 robot.policies】\n")
+            if (d.policies.isEmpty()) append("  未读到").append(d.policiesError?.let { "（$it）" } ?: "").append("\n")
+            else d.policies.forEach { append("  ").append(it).append("\n") }
+
+            append("【模型 robot.model】").append(d.model ?: "未读到")
+            d.modelError?.let { append("（$it）") }; append("\n")
+
+            append("【更新状态 update.status】").append(d.updateStatus ?: "未读到")
+            d.updateError?.let { append("（$it）") }; append("\n")
+            append("【已装组件 update.listInstalled】\n")
+            if (d.installed.isEmpty()) append("  未读到\n")
+            else d.installed.forEach { append("  ").append(it).append("\n") }
+        }
+        diagnosticsText.setTextIfChanged(text)
+    }
+
+    /** A2 配网渲染：状态/扫描/结果。ssid/signal/ip 缺字段一律「未读到」，不填 0/假 IP。 */
+    private fun renderNet(n: NetSnapshot, busy: Boolean, result: String?) {
+        if (!::netStatusText.isInitialized) return
+        val text = buildString {
+            append("【当前连接 net.status】\n")
+            if (n.isEmpty && n.statusError == null) {
+                append("  尚未查询 · 点「刷新网络」\n")
+            } else {
+                append("  状态：").append(n.state ?: "未读到").append("\n")
+                append("  SSID：").append(n.ssid ?: "未读到").append("\n")
+                append("  信号：").append(n.signal?.let { "$it/100" } ?: "未读到").append("\n")
+                append("  IPv4：").append(n.ip4 ?: "未读到").append("\n")
+                n.mac?.let { append("  MAC：").append(it).append("\n") }
+                n.statusError?.let { append("  （").append(it).append("）\n") }
+            }
+            append("【附近网络 net.scan】\n")
+            if (n.networks.isEmpty()) {
+                append("  未读到").append(n.scanError?.let { "（$it）" } ?: "").append("\n")
+            } else n.networks.take(12).forEach {
+                append("  ").append(it.ssid).append(" · ").append(it.signal).append("/100 · ")
+                    .append(it.security).append(if (it.saved) " · 已存" else "").append("\n")
+            }
+        }
+        netStatusText.setTextIfChanged(text)
+        netResultText.setTextIfChanged(
+            if (busy) "处理中…" else (result ?: "—")
+        )
+    }
+
     /** 只有内容真变了才写，避免 1s tick 持续发 AccessibilityEvent。 */
     private fun TextView.setTextIfChanged(s: CharSequence) {
         if (text.toString() != s.toString()) text = s
@@ -1393,6 +1602,8 @@ class MainActivity : AppCompatActivity() {
         renderSourceChip(state)
         renderRestResult(state.restResultText)
         renderHealthText(state)
+        renderDiagnostics(state.diagnostics)
+        renderNet(state.net, state.netBusy, state.netResultText)
         refreshModeUi(state)
         // 单行状态串：完整信息在来源标签 / 状态卡里，不再让 appBar 折成两行。
         // 三个目的地各持一套状态串，统一刷新，保证任何页面下连接/模式/帧数都可见。

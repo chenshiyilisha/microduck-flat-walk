@@ -1988,6 +1988,9 @@ object CoreSelfTest {
         testHoloRenderer()
         testRestController()
         testRobotRepository()
+        testDiagnostics()
+        testNetProvisioning()
+        testProvisioningCrypto()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
@@ -2365,6 +2368,168 @@ object CoreSelfTest {
                 py.contains("fp != EXPECTED_SIGNER_SHA256"))
         check("负对照:只打印不比对的假脚本会被上面这条判红",
             !"EXPECTED_SIGNER_SHA256 = \"x\"\nprint(signer)".contains("fp != EXPECTED_SIGNER_SHA256"))
+    }
+
+    /** A3/A6/A7 只读诊断解析：一手结构真跑 + 缺数据不造假负对照。 */
+    private fun testDiagnostics() {
+        println("\n[N] A3/A6/A7 系统诊断只读解析")
+        fun obj(s: String) = JsonParser.parseString(s).asJsonObject
+        val info = obj("""{"name":"Duck-01","serial":"abc123","uptime_seconds":3600,"simulated":true}""")
+        val parsed = DiagnosticsSnapshot.fromInfo(info)
+        check("system.info 名字", parsed?.name == "Duck-01")
+        check("system.info serial", parsed?.serial == "abc123")
+        check("system.info uptime", parsed?.uptimeSeconds == 3600L)
+        check("system.info simulated", parsed?.simulated == true)
+
+        // serial 是 Option，缺省保持 null，不造假
+        val infoNoSerial = obj("""{"name":"Duck-02","uptime_seconds":120}""")
+        val p2 = DiagnosticsSnapshot.fromInfo(infoNoSerial)
+        check("负对照:serial 缺失保持 null（不填假值）", p2?.serial == null && p2?.name == "Duck-02")
+        // 空对象不算读到
+        check("负对照:system.info 空对象视为未读到", DiagnosticsSnapshot.fromInfo(obj("{}")) == null)
+
+        // system.services 数组（state snake_case）+ identity 缺失
+        val services = obj("""{"services":[{"unit":"robotd.service","state":"active"},{"unit":"btd.service","state":"failed","identity":"v3"}]}""")
+        val ss = DiagnosticsSnapshot.parseServices(services)
+        check("system.services 两项", ss.size == 2)
+        check("system.services state 原样", ss[0].state == "active" && ss[1].state == "failed")
+        check("负对照:identity 缺失保持 null", ss[0].identity == null && ss[1].identity == "v3")
+        check("负对照:非数组返回空", DiagnosticsSnapshot.parseServices(obj("""{"services":"bad"}""")).isEmpty())
+
+        // system.logs：unit + lines[]（纯文本、保序）
+        val logs = obj("""{"unit":"robotd.service","lines":["boot","ready","-- new robotd process --"]}""")
+        val (unit, lines) = DiagnosticsSnapshot.parseLogs(logs)
+        check("system.logs unit", unit == "robotd.service")
+        check("system.logs 行保序", lines.size == 3 && lines[0] == "boot" && lines[2].contains("new robotd"))
+        check("负对照:日志缺 unit 保持 null", DiagnosticsSnapshot.parseLogs(obj("""{"lines":["x"]}""")).first == null)
+
+        // robot.policies / model、update.status / listInstalled
+        check("策略列表解析", DiagnosticsSnapshot.parsePolicies(obj("""{"policies":["walk","pick"]}""")) == listOf("walk", "pick"))
+        check("模型名解析", DiagnosticsSnapshot.parseModel(obj("""{"model":"alpha_walking"}""")) == "alpha_walking")
+        check("更新状态解析", DiagnosticsSnapshot.parseUpdateStatus(obj("""{"status":"idle"}""")) == "idle")
+        check("已装组件解析", DiagnosticsSnapshot.parseInstalled(obj("""{"installed":["robotd","btd"]}""")).size == 2)
+        check("负对照:模型缺字段不造假", DiagnosticsSnapshot.parseModel(obj("{}")) == null)
+
+        // 空快照语义：未查询前 isEmpty=true，UI 显示「尚未查询」而不是伪造全绿
+        check("空诊断快照 isEmpty", DiagnosticsSnapshot().isEmpty)
+        check("负对照:有任一读数即非空", !DiagnosticsSnapshot(robotName = "X").isEmpty)
+
+        // Mock 不查：refreshDiagnostics 在 Mock 下应清空快照（真跑 Repository）
+        val repo = RobotRepository()
+        check("Mock 连接", repo.connect("mock"))
+        repo.refreshDiagnostics()
+        check("Mock 下诊断保持空快照（不伪造实机读数）", repo.snapshot().diagnostics.isEmpty)
+    }
+
+    private fun testNetProvisioning() {
+        println("\n[N] A2 Wi-Fi 配网：net.status/scan 只读 + net.connect/forget 写路径")
+        fun obj(s: String) = JsonParser.parseString(s).asJsonObject
+
+        // net.status：一手 7 字段全读
+        val st = obj("""{"state":"connected","ssid":"Home","signal":72,"ip4":"10.0.0.7","ip6":"fe80::1","mac":"aa:bb","iface":"wlan0"}""")
+        val s = NetSnapshot.fromStatus(st)
+        check("net.status state", s?.state == "connected")
+        check("net.status ssid", s?.ssid == "Home")
+        check("net.status signal 是 0-100", s?.signal == 72)
+        check("net.status ip4/ip6/mac/iface", s?.ip4 == "10.0.0.7" && s?.ip6 == "fe80::1" && s?.mac == "aa:bb" && s?.iface == "wlan0")
+        check("net.status isConnected 严格等于 state", s?.isConnected == true)
+
+        // 未连接：state 之外全缺是正常（不填 0 / 假 IP）
+        val disc = NetSnapshot.fromStatus(obj("""{"state":"disconnected"}"""))
+        check("负对照:未连接时 ssid/signal/ip4 保持 null（不填 0/假值）",
+            disc?.ssid == null && disc?.signal == null && disc?.ip4 == null && disc?.isConnected == false)
+        check("负对照:net.status 缺 state 视为未读到", NetSnapshot.fromStatus(obj("""{"ssid":"x"}""")) == null)
+        check("空配网快照 isEmpty", NetSnapshot().isEmpty)
+        check("负对照:有 state 即非空", !NetSnapshot(state = "connected").isEmpty)
+
+        // net.scan：security 原样、saved、保序；未知 security 不猜成 open
+        val scan = obj("""{"networks":[{"ssid":"A","signal":90,"security":"wpa_psk","saved":true},{"ssid":"B","signal":40,"security":"weird_new","saved":false}]}""")
+        val nets = NetSnapshot.parseScan(scan)
+        check("net.scan 两项且保序", nets.size == 2 && nets[0].ssid == "A" && nets[1].ssid == "B")
+        check("net.scan security 原样", nets[0].security == "wpa_psk" && nets[0].saved)
+        check("负对照:未知 security 原样保留不猜 open", nets[1].security == "weird_new" && !nets[1].saved)
+        check("负对照:net.scan 非数组返回空", NetSnapshot.parseScan(obj("""{"networks":"bad"}""")).isEmpty())
+        check("负对照:scan 缺 ssid 的条目跳过", NetSnapshot.parseScan(obj("""{"networks":[{"signal":50,"security":"open","saved":false}]}""")).isEmpty())
+
+        // 请求构造：deny_unknown_fields —— 只带 ssid/psk；开放网络不带 psk 键
+        val secured = NetProvisioning.connectParams("Home", "s3cret")
+        check("net.connect 参数仅 ssid+psk", secured.size == 2 && secured["ssid"] == "Home" && secured["psk"] == "s3cret")
+        val open = NetProvisioning.connectParams("Cafe", null)
+        check("负对照:开放网络不写 psk 键", open.size == 1 && open.containsKey("ssid") && !open.containsKey("psk"))
+        check("空密码同开放网络（不写 psk）", !NetProvisioning.connectParams("Cafe", "").containsKey("psk"))
+        check("net.forget 参数仅 ssid", NetProvisioning.forgetParams("Old") == mapOf("ssid" to "Old"))
+
+        // ConnectResult tag 枚举解析
+        val ok = NetProvisioning.parseConnect(obj("""{"outcome":"connected","ssid":"Home","ip4":"10.0.0.7"}"""))
+        check("net.connect connected 回执", ok.connected && ok.ssid == "Home" && ok.ip4 == "10.0.0.7")
+        check("connected 用户提示含 ssid/ip", ok.userMessage.contains("Home") && ok.userMessage.contains("10.0.0.7"))
+        val badKey = NetProvisioning.parseConnect(obj("""{"outcome":"failed","reason":"bad_key","detail":"auth rejected"}"""))
+        check("net.connect failed bad_key", !badKey.connected && badKey.failure == "bad_key")
+        check("bad_key 用户提示=密码错误（分类正确）", badKey.userMessage.contains("密码错误"))
+        check("负对照:缺 outcome 不伪造成功", !NetProvisioning.parseConnect(obj("""{"ssid":"Home"}""")).connected)
+        check("负对照:未知 reason 归为未知不猜", NetProvisioning.parseConnect(obj("""{"outcome":"failed","reason":"mystery"}""")).failure == "mystery")
+
+        // ForgetResult
+        check("net.forget removed=true", NetProvisioning.parseForget(obj("""{"removed":true}""")).removed)
+        check("负对照:removed 缺失视为 false（未读到）", !NetProvisioning.parseForget(obj("{}")).removed)
+
+        // 安全交付：明文警示常量必须存在且点名 §8.1 阻塞（门禁据此核对 UI 不得省略）
+        check("明文传输警示含 pre-shipping blocker 语义",
+            NetProvisioning.PLAINTEXT_TRANSPORT_WARNING.contains("明文") &&
+            NetProvisioning.PLAINTEXT_TRANSPORT_WARNING.contains("8.1"))
+    }
+
+    private fun testProvisioningCrypto() {
+        println("\n[N] A2' 配网加密能力预埋（KAT 权威向量 + INTEROP_UNVERIFIED 边界）")
+        val C = ProvisioningCrypto
+
+        // KAT-1: RFC 7748 §6.1 X25519 共享密钥
+        val sharedAlice = C.x25519(C.hexDecode(ProvisioningCrypto.Rfc7748.ALICE_PRIV), C.hexDecode(ProvisioningCrypto.Rfc7748.BOB_PUB))
+        check("RFC7748 X25519 共享密钥 K", sharedAlice != null && C.hexEncode(sharedAlice) == ProvisioningCrypto.Rfc7748.SHARED)
+        // KAT-2: 对称性（Bob(priv) × Alice(pub) 同一 K）
+        val sharedBob = C.x25519(C.hexDecode(ProvisioningCrypto.Rfc7748.BOB_PRIV), C.hexDecode(ProvisioningCrypto.Rfc7748.ALICE_PUB))
+        check("RFC7748 双方对称得到同一 K", sharedBob != null && C.hexEncode(sharedBob) == ProvisioningCrypto.Rfc7748.SHARED)
+
+        // KAT-3: RFC 5869 §A.1 TC1 HKDF-SHA256
+        val okm = C.hkdfSha256(
+            C.hexDecode(ProvisioningCrypto.Rfc5869Tc1.IKM), C.hexDecode(ProvisioningCrypto.Rfc5869Tc1.SALT),
+            C.hexDecode(ProvisioningCrypto.Rfc5869Tc1.INFO), 42)
+        check("RFC5869 TC1 HKDF-SHA256 OKM", C.hexEncode(okm) == ProvisioningCrypto.Rfc5869Tc1.OKM)
+        check("RFC5869 TC1 OKM 长度 42", okm.size == 42)
+
+        // KAT-4: AES-256-GCM roundtrip + 完整性负对照
+        val key = C.hexDecode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+        val pt = "ssid=Home;psk=s3cret".toByteArray(Charsets.UTF_8)
+        val blob = C.seal(key, pt)
+        check("AES-256-GCM 解封 roundtrip", C.open(key, blob).contentEquals(pt))
+        check("GCM blob = nonce(12)+ct+tag", blob.size == 12 + pt.size + 16)
+        val tampered = blob.copyOf(); tampered[tampered.lastIndex] = (tampered[tampered.lastIndex].toInt() xor 1).toByte()
+        val rejected = try { C.open(key, tampered); false } catch (e: Exception) { true }
+        check("负对照:篡改密文 GCM tag 校验失败", rejected)
+        val wrongAad = try { C.open(key, blob, "net.forget"); false } catch (e: Exception) { true }
+        check("负对照:AAD 不符解封失败", wrongAad)
+
+        // 会话密钥派生确定性（双方同输入 → 同 key），且含 transcript
+        val salt = C.hexDecode("000102030405060708090a0b0c")
+        val k1 = C.deriveSessionKey(sharedAlice!!, C.hexDecode(ProvisioningCrypto.Rfc7748.ALICE_PUB), C.hexDecode(ProvisioningCrypto.Rfc7748.BOB_PUB), salt)
+        val k2 = C.deriveSessionKey(sharedBob!!, C.hexDecode(ProvisioningCrypto.Rfc7748.ALICE_PUB), C.hexDecode(ProvisioningCrypto.Rfc7748.BOB_PUB), salt)
+        check("deriveSessionKey 双方确定一致", k1.contentEquals(k2) && k1.size == 32)
+        val kOther = C.deriveSessionKey(sharedAlice, C.hexDecode(ProvisioningCrypto.Rfc7748.BOB_PUB), C.hexDecode(ProvisioningCrypto.Rfc7748.ALICE_PUB), salt)
+        check("负对照:transcript 顺序变 → key 变", !k1.contentEquals(kOther))
+
+        // 低阶点防护：全零共享密钥必须拒绝（RFC 7748 §7）。构造小阶点公钥（全 0 的 u 坐标编码）。
+        val lowOrder = C.x25519(C.hexDecode(ProvisioningCrypto.Rfc7748.ALICE_PRIV), ByteArray(32))
+        check("负对照:低阶点公钥产生全零密钥被拒", lowOrder == null)
+
+        // 交付边界：INTEROP_UNVERIFIED 恒真（防止谁误改成 PASS）
+        check("INTEROP_UNVERIFIED 恒为 true（未与真固件对拍）", C.INTEROP_UNVERIFIED)
+        check("默认配网仍走明文（加密未接入 NetProvisioning）",
+            NetProvisioning.connectParams("x", "pw").containsKey("psk") &&
+            !NetProvisioning.PLAINTEXT_TRANSPORT_WARNING.contains("已加密"))
+        // 临时密钥对每会话新鲜（两次生成不同）
+        val e1 = C.generateEphemeral(); val e2 = C.generateEphemeral()
+        check("临时密钥对每次新鲜（前向保密）", !e1.first.contentEquals(e2.first))
+        check("临时密钥 raw 长度 32", e1.first.size == 32 && e1.second.size == 32)
     }
 
     private operator fun String.times(n: Int) = repeat(n)

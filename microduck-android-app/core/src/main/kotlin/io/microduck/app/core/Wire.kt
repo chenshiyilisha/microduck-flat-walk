@@ -29,7 +29,15 @@ object Wire {
 object Method {
     const val HELLO = "hello"
     const val SYSTEM_AUTHENTICATE = "system.authenticate"
+    /** 系统信息（名字 / serial / uptime / simulated）。一手：fanhao 副本 lib.rs:829。只读。 */
     const val SYSTEM_INFO = "system.info"
+    /** 各守护单元状态（systemd state + 运行中的 release）。一手：lib.rs:831。只读。 */
+    const val SYSTEM_SERVICES = "system.services"
+    /**
+     * 日志尾部。params 是 `LogsParams{unit, lines, boot}`，`#[serde(deny_unknown_fields)]`
+     * ⇒ 键名必须精确、不可多带。一手：lib.rs:833 / 4261-4287。只读。
+     */
+    const val SYSTEM_LOGS = "system.logs"
     const val ROBOT_HEALTH = "robot.health"
     const val ROBOT_STATE = "robot.state"
     const val ROBOT_SUBSCRIBE = "robot.subscribe"
@@ -64,9 +72,14 @@ object Method {
     const val NET_STATUS = "net.status"
     const val NET_SCAN = "net.scan"
     const val NET_CONNECT = "net.connect"
+    /** 忘记已存 Wi-Fi。一手：fanhao 副本 lib.rs `NET_FORGET`；BLE 白名单放行。写类，不自动重放。 */
+    const val NET_FORGET = "net.forget"
     const val UPDATE_CHECK = "update.check"
     const val UPDATE_STATUS = "update.status"
-    const val SYSTEM_LOGS = "system.logs"
+    /** 已安装组件清单。一手：lib.rs `UPDATE_LIST_INSTALLED`。只读。 */
+    const val UPDATE_LIST_INSTALLED = "update.listInstalled"
+    /** 更新日志尾部。一手：lib.rs `UPDATE_LOG`；route.rs:99 标注 read-only 且 BLE 放行。只读。 */
+    const val UPDATE_LOG = "update.log"
 }
 
 /** JSON-RPC 错误码（lib.rs `pub mod code`）。会话层按这三类做不同处理。 */

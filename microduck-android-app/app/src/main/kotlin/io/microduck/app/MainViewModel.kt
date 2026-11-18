@@ -3,16 +3,19 @@ package io.microduck.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.microduck.app.core.ConnectTarget
+import io.microduck.app.core.DiagnosticsSnapshot
 import io.microduck.app.core.HealthSnapshot
 import io.microduck.app.core.LinkState
 import io.microduck.app.core.MonitorReport
 import io.microduck.app.core.MonitorSource
+import io.microduck.app.core.NetSnapshot
 import io.microduck.app.core.RobotRepository
 import io.microduck.app.core.RobotSession
 import io.microduck.app.core.RestController
 import io.microduck.app.core.StateSnapshot
 import io.microduck.app.core.RobotTransport
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -76,6 +79,12 @@ class MainViewModel(
         val remoteSessionActive: Boolean? = null,
         val modelApiText: String = "—",
         val peerApiVersion: Int? = null,
+        // ── A3/A6/A7 只读诊断（来自 RobotRepository.Snapshot，用户点刷新驱动）──
+        val diagnostics: DiagnosticsSnapshot = DiagnosticsSnapshot(),
+        // ── A2 Wi-Fi 配网（来自 RobotRepository.Snapshot，用户操作驱动）──
+        val net: NetSnapshot = NetSnapshot(),
+        val netBusy: Boolean = false,
+        val netResultText: String? = null,
         // ── 驱动参数（来自 SessionHolder，用户输入驱动）──
         val mode: ControlMode = ControlMode.MANUAL,
         val channelIndex: Int = 0,
@@ -127,6 +136,10 @@ class MainViewModel(
                     remoteSessionActive = snap.remoteSessionActive,
                     modelApiText = snap.modelApiText,
                     peerApiVersion = snap.peerApiVersion,
+                    diagnostics = snap.diagnostics,
+                    net = snap.net,
+                    netBusy = snap.netBusy,
+                    netResultText = snap.netResultText,
                 )
             }
         }
@@ -152,17 +165,34 @@ class MainViewModel(
 
     // ── 事件：连接 ──
 
-    /** 由地址栏连接（Mock/TCP）；BLE 请用 [onConnectWith]。 */
+    /**
+     * 由地址栏连接（Mock/TCP）；BLE 请用 [onConnectWith]。
+     *
+     * 🔴 ANR 修复（2026-11-17 skill 审计）：调用方 [MainActivity.connectFromUi] 在**主线程**
+     * （onCreate / 按钮点击）调用本方法，而 `robotRepository.connect()` 内部
+     * `connectWith()` → `RobotSession.connect()` → `TcpTransport.connect()`（socket
+     * connect 超时 2s）+ `handshake()`（每请求 latch.await 5s）是**同步阻塞 I/O**。
+     * 若在主线程直调，地址栏填真实 TCP 地址时最坏卡住主线程约 7s ⇒ ANR。
+     * ⇒ 必须在 [Dispatchers.IO] 建链；结果经快照流（[snapshotDisposable]）回推，
+     * UI 的 `connectFromUi()` 不依赖本方法返回值（它本来就忽略返回值）。
+     */
     fun onConnect(raw: String) {
-        robotRepository.connect(raw)
+        viewModelScope.launch(Dispatchers.IO) {
+            robotRepository.connect(raw)
+        }
     }
 
-    /** 注入真实传输建链（BLE/TCP 共用）；[onDone] 在主线程回调连接结果。 */
+    /**
+     * 注入真实传输建链（BLE/TCP 共用）；[onDone] 在主线程回调连接结果。
+     *
+     * 与 [onConnect] 同因：`connectWith(transport, target)` 同步阻塞（socket + handshake），
+     * 必须在 IO 线程执行；[onDone] 显式切回 [Dispatchers.Main] 供 UI 改 View。
+     */
     fun onConnectWith(transport: RobotTransport, target: ConnectTarget, onDone: (Boolean) -> Unit) {
-        robotRepository.connectWith(transport, target)
-        // RobotRepository.connectWith 同步返回结果，但订阅在后台线程启动；
-        // 连接结果经快照流反映，这里直接回调同步结果供 UI 即时回显。
-        onDone(robotRepository.snapshot().connected)
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = robotRepository.connectWith(transport, target)
+            withContext(Dispatchers.Main) { onDone(ok) }
+        }
     }
 
     /** 主动断开并释放会话。 */
@@ -175,6 +205,36 @@ class MainViewModel(
     /** 拉取 robot.health（只读）；结果经快照流反映到 UiState。 */
     fun onRefreshHealth() {
         robotRepository.refreshHealth()
+    }
+
+    /**
+     * A3/A6/A7：拉取全部只读诊断（system.info/services/logs、robot.policies/model、
+     * update.status/listInstalled）；结果经快照流反映到 UiState.diagnostics。
+     * Repository 内部已放后台线程，这里直接转发。缺数据保持「未读到」，绝不造假。
+     */
+    fun onRefreshDiagnostics() {
+        robotRepository.refreshDiagnostics()
+    }
+
+    // ── 事件：A2 Wi-Fi 配网 ──
+
+    /** 拉取 net.status + net.scan（只读）。缺数据保持「未读到」。 */
+    fun onRefreshNet() {
+        robotRepository.refreshNet()
+    }
+
+    /**
+     * 连接 Wi-Fi（net.connect，写操作，明文传输）。
+     * 🔴 调用前 UI 必须先展示 [NetProvisioning.PLAINTEXT_TRANSPORT_WARNING] 并取得用户确认；
+     *    本层不重复弹窗，只负责转发。psk 不进 UiState、不进日志。
+     */
+    fun onConnectWifi(ssid: String, psk: String?) {
+        robotRepository.connectWifi(ssid, psk)
+    }
+
+    /** 忘记已存 Wi-Fi（net.forget，写操作）。 */
+    fun onForgetWifi(ssid: String) {
+        robotRepository.forgetWifi(ssid)
     }
 
     // ── 事件：休息 / 恢复站立 ──
