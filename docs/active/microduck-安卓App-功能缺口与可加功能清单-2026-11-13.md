@@ -1,6 +1,7 @@
 # MicroDuck 安卓 App — 功能缺口与可加功能清单（资料支撑版）
 
-_2026-11-13。用户要求：「看看还缺什么功能，还有什么功能可以加上，找找资料」。_
+_2026-11-13 建档。用户要求：「看看还缺什么功能，还有什么功能可以加上，找找资料」。_
+_**2026-11-18 更新**：§5 落地状态已刷新（A2/A2'/A3/A6/A7 已落地、A8 明确不做），并新增 §5.1 原厂 9 屏逐方法对照、§5.2 原厂 §7 欠账归属。§0/§2 保留 11-13 历史盘点原貌（当时 A2–A8 全未做），**以 §5 为准**。_
 _本文件**只做盘点与依据核对，不改功能代码**。每条建议挂一手来源；_
 _术语严格遵循 `docs/active/microduck-来源术语约定-2026-11-13.md`：**「原厂 / 官方」只指 Pollen Robotics 原厂**。_
 _整机未落地 ⇒ 交付判定仍为「不可交付」；未验证不等于通过。_
@@ -142,23 +143,68 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 
 ---
 
-## 5. 落地状态（2026-11-13 17:00 更新）
+## 5. 落地状态（2026-11-18 更新）
 
-用户「你决定，按照最优的来」⇒ 按 §4 顺序落地 **A1 / A4 / A5**，本轮**真正改了功能代码**，不再是纯盘点。
+**分两批落地，均为用户「你决定，按最优的来」/「都做，按最优的来」授权：**
+
+- 11-13 批次：A1 / A4 / A5（BLE 前台服务、控制者归属、断链即停显性化）。
+- 11-18 批次：A2 / A2' / A3 / A6 / A7（配网、加密能力预埋、系统信息日志、策略只读、升级只读）。提交 `f6d4d07` 已 push origin/main。**A8 用户明确不做**（留空地址栏已是 Mock 入口，不另加显式按钮）。
+
+### 5.0 逐项状态
 
 | 项 | 状态 | 实现 | 证据 |
 |---|---|---|---|
-| A1 | ✅ 已落地 | 新增 `DuckBleService`（`connectedDevice` 前台服务，持 GATT 引用、通知带「断开」action）、Manifest 三项权限 + `<service>` 声明、`BleConnectPanel` 在连接成功回调（Activity 可见）启动 FGS、权限集合统一下沉到 core `BleForegroundPolicy`（JVM 自检与真机共用同一判据） | `selftest.sh` **283/283**；真负对照「把权限名改成 `_BROKEN`」→ **281/2 红**、恢复后 283/0；`assembleDebug` BUILD SUCCESSFUL；真机门禁 59/59 |
-| A4 | ✅ 已落地 | `Wire` 加 `robot.remoteSessionActive` / `robot.modelApi`（一手 `lib.rs:589/587`）、纳入 `RobotSession.isReadOnly`、`SessionHolder.refreshSessionInfo()` null-safe 读回（**Mock 不查**、缺字段保持「未知」）、HUD `signalRow` 显示「遥在场 有/无/未知」 | 门禁输出可见「链路 无 · 状态 — Hz · 遥在场 未知」；自检对方法名与只读归属各带负对照 |
-| A5 | ✅ 已落地（机制本就有，只做显性化） | 断链恢复 READY 时横幅显示「驾驶不自动续动，需重新主动接管」，4s 后由 `tick` 清除；`renderLinkBanner` 改差异更新，避免再次触发 `could not get idle state` | 门禁 59/59；⚠️ **真机断链→恢复场景未复验**（`UNVERIFIED`） |
-| A2 / A2' / A3 / A6 / A7 / A8 | ⏳ 未做 | 配网要写 Wi-Fi 密码，须先拍板 Q3 加密；只读屏与演示入口待后续 | — |
-| A9 / B / C | 维持不做 / 等整机 | 见 §3、§4 | — |
+| A1 | ✅ 已落地（11-13） | 新增 `DuckBleService`（`connectedDevice` 前台服务，持 GATT 引用、通知带「断开」action）、Manifest 三项权限 + `<service>` 声明、`BleConnectPanel` 在连接成功回调（Activity 可见）启动 FGS、权限集合统一下沉到 core `BleForegroundPolicy`（JVM 自检与真机共用同一判据） | `selftest.sh` **283/283**；真负对照「把权限名改成 `_BROKEN`」→ **281/2 红**、恢复后 283/0；`assembleDebug` BUILD SUCCESSFUL；真机门禁 59/59 |
+| A4 | ✅ 已落地（11-13） | `Wire` 加 `robot.remoteSessionActive` / `robot.modelApi`（一手 `lib.rs:589/587`）、纳入 `RobotSession.isReadOnly`、`SessionHolder.refreshSessionInfo()` null-safe 读回（**Mock 不查**、缺字段保持「未知」）、HUD `signalRow` 显示「遥在场 有/无/未知」 | 门禁输出可见「链路 无 · 状态 — Hz · 遥在场 未知」；自检对方法名与只读归属各带负对照 |
+| A5 | ✅ 已落地（11-13，机制本就有，只做显性化） | 断链恢复 READY 时横幅显示「驾驶不自动续动，需重新主动接管」，4s 后由 `tick` 清除；`renderLinkBanner` 改差异更新，避免再次触发 `could not get idle state` | 门禁 59/59；⚠️ **真机断链→恢复场景未复验**（`UNVERIFIED`） |
+| ANR 修复 | ✅ 已落地（11-18，审计追加） | `MainViewModel.onConnect/onConnectWith` 建链从主线程移到 IO 协程、回调切主线程；地址栏 TCP 同步阻塞最坏 ~7s 的 ANR 源消除 | `tools/check_no_mainthread_blocking.py` **5/5 + 5 负对照** |
+| A3 | ✅ 已落地（11-18） | `DiagnosticsSnapshot` 纯 JVM 只读解析（缺字段 null / 空列表、不造假），`RobotRepository.refreshDiagnostics()` 后台拉取，健康页只读展示；Wire/RobotSession 只读白名单登记 | `tools/check_diagnostics_readonly.py` **6/6 + 负对照**；core 自检 |
+| A6 | ✅ 已落地（11-18，只读） | `robot.policies`/`robot.model` 纳入诊断快照只读展示（**不做启停**，AUTO 零驾驶帧防假启动） | core 自检 + 只读门禁 |
+| A7 | ✅ 已落地（11-18，只读） | `update.status`/`update.listInstalled`/`update.log` 纳入诊断快照（**不做 apply/rollback/select**，mutating 等整机） | core 自检 + 只读门禁 |
+| A2 | ✅ 已落地（11-18，仅内测） | `NetSnapshot`（net.status/net.scan 解析）+ `NetProvisioning`（net.connect/net.forget 请求构造，严格 deny_unknown_fields 键集，**psk 只进出站 JSON 不落日志**）；设置页配网卡片（Mock 隔离、明文风险常驻警示、连接二次确认） | `tools/check_net_provisioning.py` **9/9 + 9 负对照**；core 自检 |
+| A2' | 🟡 能力预埋（11-18，**默认不接入配网路径**） | `ProvisioningCrypto` 纯 JVM 参考实现（X25519/HKDF-SHA256/AES-GCM）+ RFC7748/5869 权威向量 KAT + 低阶点负对照。不接入理由：固件端零加密实现、minSdk26 无稳定 X25519 API ⇒ 接入即假绿。规格见 `docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md` | core KAT 真跑通过；门禁约束「加密默认不接入」 |
+| A8 | ⛔ 明确不做（用户 11-18 拍板） | 地址栏留空进 Mock 已是可用入口，`sourceRow` LIVE/DEMO 标签已齐，不另加显式按钮 | — |
+| A9 / B / C | 维持不做 / 等整机 | 见 §3、§4、§5.1、§5.2 | — |
 
-**过程中两个真实踩坑（已修，留档防复发）**
-1. **裸子串扫描假绿**：新增的 Manifest 声明自检原用 `xml.contains(权限名)`；真负对照把权限名改成 `..._BROKEN` 后原串仍是子串，自检 **283/0 假绿**。改为正则提取所有 `android:name` 完整值做集合包含后，负对照正确变红（281/2，exit 1）。
-2. **vivo 安装拦截**：Manifest 新增运行时权限后 `adb install -r` 报 `INSTALL_FAILED_ABORTED: User rejected permissions`（资料：设备端 USB 安装确认 / 新权限确认）。`adb install -r -g`（自动授予运行时权限）成功。
+### 5.1 原厂 9 屏逐方法覆盖对照（2026-11-18 读代码核对）
 
-⚠️ 边界：真 GATT 上板、**后台保活的真机行为**、断链恢复提示显示均**未验证**；整机落地前 `ship_verdict=NOT_SHIPPABLE`。
+一手：原厂 `mobile-app.md` §1 屏幕×调用表（fanhao 副本，清单 §1 已核对与原厂仅差 §7 一行）。核对方式：Grep `Wire.Method` 常量 + `Method.*` 实际调用点，不照规划抄。
+
+| 原厂屏 | 原厂调用 | 当前覆盖 |
+|---|---|---|
+| pick a robot | 广告名+IPv4 → `hello`/`system.authenticate` | ✅ BLE 扫描/握手/认证 |
+| the robot | `system.info`/`robot.health`/`system.services` +（mutating）`system.setName`/`system.reboot`/`robot.init`/`robot.enable`/`robot.rebootMotors` | 🟡 只读三项齐（A3）；mutating 侧 `robot.init`/`robot.enable` 有，**改名/重启/舵机重启未做**（等整机） |
+| drive | WebRTC 视频 + `robot.move` + `robot.subscribe` | 🟡 驾驶有；**真视频 WebRTC 未接**（B 类，依赖整机 + 需拍板重型依赖） |
+| moves | `robot.skills`/`robot.do`/`robot.policies`/`robot.loadPolicy` + `policy.check/search/fetch/install` | 🟡 `do`/`policies`/`loadPolicy` 有、只读模型有（A6）；**`robot.skills` + 原厂 Hub 策略流程未做**（C 类：自有训练模型优先，明确不做） |
+| wifi | `net.status`/`net.scan`/`net.connect`/`net.forget` | ✅ A2 四项全做（明文仅内测） |
+| update | `check`/`status`/`listInstalled`/`log` +（mutating）`apply`/`subscribe`/`rollback`/`select` | 🟡 只读四项齐（A7）；**apply/rollback/select 未做**（mutating，等整机） |
+| logs | `system.logs` | ✅ A3 |
+| account | `account.login`/`status`/`logout` | ❌ 未做（无对应后端，C 类明确不做） |
+
+**连常量都没有、且仍属"可做但低价值"的边角**：`robot.safeToRestart`（重启前安全确认）、`robot.skills`（只读技能表）。二者是「the robot / moves」屏边角，未排期，非遗漏。
+
+### 5.2 原厂 §7「机器人欠 App 的」归属判定（不在 App 仓可解）
+
+一手：原厂 `mobile-app.md` §7 表 + §8 Open。这些是**原厂自己承认的固件/硬件欠账**，不是我们少写界面：
+
+| 欠账 | 判定 |
+|---|---|
+| **加密**（§5.5/§8.1） | 交付前头号 blocker；本轮已判决：固件明文传 Wi-Fi 密码、固件端零加密实现 ⇒ App 单侧加密无法互操作。见配网加密规格文档 |
+| **identify / 每台机器人 PIN / 出厂重置 / 绑定注销** | 原厂 §7 明列 "robot still owes the app"；要改固件或等硬件（打印 PIN、清 `configd`、注销 API） |
+| **pad 在手机连接时重连** | 固件限制（peripheral 占用），原厂称无 daemon 修复 |
+| §8 Open：PIN 屏 / 手柄从手机配对 / 双机器人一 App / UI kit | 原厂列为开放问题，非功能缺口；本项目维持不做 |
+
+### 5.3 过程中真实踩坑（留档防复发）
+
+1. **裸子串扫描假绿**（11-13）：新增的 Manifest 声明自检原用 `xml.contains(权限名)`；真负对照把权限名改成 `..._BROKEN` 后原串仍是子串，自检 **283/0 假绿**。改为正则提取所有 `android:name` 完整值做集合包含后，负对照正确变红（281/2，exit 1）。
+2. **vivo 安装拦截**（11-13）：Manifest 新增运行时权限后 `adb install -r` 报 `INSTALL_FAILED_ABORTED: User rejected permissions`。`adb install -r -g`（自动授予运行时权限）成功。
+3. **门禁全绿照不出编译错误**（11-18）：core 613/613 + 12 项门禁 ALL_PASS，但 `assembleDebug` 报 `MainViewModel.kt:84 Unresolved reference 'NetSnapshot'`（app 模块漏 import）。⇒ 新增 core 数据类被 app 引用后必须真跑 assembleDebug/Release，不能只靠门禁。
+4. **注入式负对照抓出门禁自身 typo**（11-18）：`check_net_provisioning.py` 的 UI 警示负对照用 `variant(act=...)`，但 evaluate 读的 key 是 `activity`，导致该负对照"改坏后仍绿"。修 key 名后 9/9 真红。⇒ 负对照"改坏没变红"时先怀疑替换未命中/key 名错。
+5. **build_duck_mesh.py 依赖 mujoco**（11-18）：统一门禁用 `sys.executable`，系统 Python 缺 mujoco ⇒ `NOT_PASS` 是环境噪声非回归；用项目自带 `.venv-mjlab/Scripts/python.exe`（mujoco 3.7.0）跑即 ALL_PASS。
+
+**11-18 批次验证汇总**：core **613/613**；统一门禁 **ALL_PASS**（12 项）；`assembleDebug` + `assembleRelease` **PASS**；提交 `f6d4d07` 已 push（local==remote）。
+
+⚠️ 边界：真 GATT 上板、后台保活真机行为、断链恢复提示显示、配网真机写密码均**未验证**；整机落地前 `ship_verdict=NOT_SHIPPABLE`。
 
 ---
 
