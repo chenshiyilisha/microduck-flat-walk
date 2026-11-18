@@ -207,7 +207,7 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 
 **11-18 批次验证汇总**：core **613/613**；统一门禁 **ALL_PASS**（12 项）；`assembleDebug` + `assembleRelease` **PASS**；提交 `f6d4d07` 已 push（local==remote）。
 
-⚠️ 边界：真 GATT 上板、后台保活真机行为、断链恢复提示显示均**未验证**；配网**11-18 晚真机打通 BLE 握手→READY→configd→net.status/scan 只读链路**，但**真写密码 net.connect 未做**（明文风险 + 无用户授权，UI 强制 §8.1 警示常驻）——真换 WiFi 需用户在配网卡片输入 SSID/密码点连接。整机落地前 `ship_verdict=NOT_SHIPPABLE`。
+⚠️ 边界：真 GATT 上板、后台保活真机行为、断链恢复提示显示均**未验证**；配网 **11-18 晚真机端到端换 WiFi 成功**（用户输入凭据授权后真发 net.connect：板子 SSID 从 Microduck-kissqy 切到 DS1002、拿到 IPv4 192.168.0.55、凭据「已存」，板子自报 net.status + 外部 ping/ARP 三观测面互证）。明文传输仍是交付前 blocker（§8.1），对外交付必须固件端加密。整机落地前 `ship_verdict=NOT_SHIPPABLE`。
 
 ### 5.4 hello 握手死锁修复（2026-11-18 晚，A2 配网链路的前置解锁）
 
@@ -217,6 +217,7 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 - **为什么能降级**：btd 注释 `session.rs:163-166` 明说 hello「only reports versions」；`system.authenticate` 是 btd 本地应答、`net.connect → Upstream::Config`（configd），都不经过 updaterd。版本探测服务不可达 ≠ 授权/配网不可用。
 - **判据（严，带负对照）**：仅 `code==INTERNAL_ERROR(-32603) && message 含 "is not answering"` 才降级；错 PIN / 普通 INTERNAL_ERROR / -32602 / -32601 / 传输失败全部仍致命。降级如实记录原因、不伪造 hello 成功/serial。
 - **真机证据**（vivo V2338A 无线 adb）：BLE 连 `duck-6a07` 后 UI 显示「已连接·hello 版本探测降级（updaterd 未启动，配网/认证链路可用）：Updater is not answering… · READY」；点刷新读到 `net.status`（SSID=Microduck-kissqy / 10.42.0.1 / MAC=CC:C8:37:E3:F2:1A）与 `net.scan`（DS1002 等真实网络）。⇒ A2 换 WiFi 链路具备可用会话通道。
+- **端到端换 WiFi 成功**（用户授权凭据后真发 net.connect）：二次确认弹窗（§8.1 警示 + 目标 DS1002）→「仍要连接」→ 板子自报 net.status 变为 SSID=**DS1002** / IPv4=**192.168.0.55** / MAC=CC:C8:37:E3:F2:1A（同板）/ DS1002「已存」（凭据持久化）；外部 WlanScan（首启 AP 消失）+ ping 192.168.0.55（0% 丢包）+ ARP（MAC 一致）三观测面互证。⇒ **A2「通过 App 更换主板 WiFi」真机验收通过**。凭据仅进程内存用一次，未落任何文件/日志/git。
 
 ---
 
