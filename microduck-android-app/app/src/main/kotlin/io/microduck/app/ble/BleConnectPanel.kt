@@ -8,7 +8,6 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -117,6 +116,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         })
         addView(TextView(activity).apply {
             text = "扫描不做 service UUID 硬件过滤，全量接收后软件判别；" +
+                "列表只列 MicroDuck 候选，非目标（含无名）设备不显示，数量在状态行如实回显。\n" +
                 "身份按 serial，地址只是缓存，RSSI 只用于排序。\n" +
                 "⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。"
             textSize = 10f; setTextColor(activity.getColor(R.color.md_text_dim))
@@ -284,30 +284,53 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         return why to (uuidHit || nameHit || bonded)
     }
 
+    /**
+     * 呈现层只列 MicroDuck 候选，隐藏「附近设备」（用户反馈：无名蓝牙不该出现在列表里）。
+     *
+     * 🔴 扫描层**仍全量接收**，绝不加硬件 UUID 过滤或按设备名筛：原厂
+     *    `app-path-design.md` §3.3 明确 bonded peripheral 常以空 service list 广播，
+     *    硬件过滤会让它「not reported at all」；这类无名真板子靠「已绑定」判为候选。
+     *    所以过滤只绑一手判别字段 [Candidate.matchedBy]（服务 UUID / 广播名 / 已绑定），
+     *    隐藏的是 `matchedBy == "附近设备"` 的非目标项，不是「没有名字」的设备。
+     *    状态行仍如实报「附近 N 台 / 候选 M 台 / 已隐藏 K 台」，不假装没扫到。
+     */
     private fun renderCandidates() {
         val col = listCol ?: return
-        val sorted = found.values.sortedWith(
-            compareByDescending<Candidate> { it.matchedBy != "附近设备" }.thenByDescending { it.rssi }
-        )
+        val candidates = found.values.filter { it.matchedBy != "附近设备" }
+            .sortedWith(compareByDescending<Candidate> { it.rssi })
+        val hidden = found.size - candidates.size
+        val tail = if (candidates.size > 8) " · 仅列前 8 台" else ""
         setStatus("收到 $broadcasts 条广播 · 附近 ${found.size} 台 · " +
-            "MicroDuck 候选 ${found.count { it.value.matchedBy != "附近设备" }} 台" +
+            "MicroDuck 候选 ${candidates.size} 台$tail · 非目标 $hidden 台已隐藏" +
             if (scanning) "\n扫描中（每 0.5s 刷新，不做一次性快照）" else "")
         col.removeAllViews()
-        sorted.take(8).forEach { c ->
-            val duck = c.matchedBy != "附近设备"
+        if (candidates.isEmpty()) {
             col.addView(TextView(activity).apply {
-                text = "${if (duck) "● " else "○ "}${c.name.ifEmpty { "(无名)" }} · ${c.address}\n" +
+                text = "未发现 MicroDuck 候选设备 · " +
+                    (if (found.isEmpty()) "尚未收到广播，请确认板子已通电并靠近"
+                     else "$hidden 台非目标设备未列出")
+                textSize = 10.5f
+                setTextColor(activity.getColor(R.color.md_text_dim))
+                setPadding(dp(8), dp(5), dp(8), dp(5))
+                contentDescription = "无 MicroDuck 候选"
+            })
+            return
+        }
+        candidates.take(8).forEach { c ->
+            col.addView(TextView(activity).apply {
+                // 候选若未广播名称，明确写「未广播名称」而非杂项的「(无名)」，
+                // 避免把真候选和用户想隐藏的无名非目标设备混为一谈。
+                val shownName = c.name.ifEmpty { "(未广播名称)" }
+                text = "● $shownName · ${c.address}\n" +
                     "${c.rssi} dBm · 判别=${c.matchedBy} · 地址仅作缓存"
                 textSize = 10.5f
-                setTextColor(if (duck) activity.getColor(R.color.md_accent)
-                else activity.getColor(R.color.md_text_dim))
-                background = card(if (duck) activity.getColor(R.color.md_card)
-                else Color.TRANSPARENT)
+                setTextColor(activity.getColor(R.color.md_accent))
+                background = card(activity.getColor(R.color.md_card))
                 setPadding(dp(8), dp(5), dp(8), dp(5))
                 minimumHeight = dp(40)
                 gravity = Gravity.CENTER_VERTICAL
-                if (duck) setOnClickListener { connect(c) }
-                contentDescription = if (duck) "连接 BLE 设备 ${c.name}" else "非候选设备"
+                setOnClickListener { connect(c) }
+                contentDescription = "连接 BLE 设备 ${c.name}"
             })
         }
     }

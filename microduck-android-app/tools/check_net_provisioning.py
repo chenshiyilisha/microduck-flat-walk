@@ -168,6 +168,19 @@ def evaluate(src: dict[str, str], quiet: bool = False) -> tuple[str, list[str]]:
         need(re.search(rf"fun {ev}\(", vm) is not None, f"MainViewModel 缺事件 {ev}")
     need("netStatusText" in act and "netResultText" in act, "MainActivity 缺配网状态/结果展示")
 
+    # ⑩ SSID 必须「可从 net.scan 结果点选」，而非只能手录
+    # 一手依据 configd/src/nm.rs:567 —— connect() 先 scan() 找 SSID，扫不到必 NotFound，
+    # 故点选扫描项是固件唯一保证能找到网络的输入方式；手输仍须保留兜底（扫描为空）。
+    need("netScanList" in act, "MainActivity 缺扫描列表容器（SSID 又被改回只能手录）")
+    need("选择网络" in act, "扫描项缺 contentDescription（真机/无障碍无法定位点选项）")
+    scan_body = body_of(act, "fun rebuildNetScanList")
+    need("setOnClickListener" in scan_body, "扫描列表项无点击监听（点选不能填入 SSID）")
+    sel_body = body_of(act, "fun selectScannedSsid")
+    need("netSsidEdit.setText" in sel_body, "点选处理未把 SSID 填入输入框")
+    need("netPskEdit" not in sel_body, "点选处理碰了密码框（会覆盖用户已输入的密码）")
+    need("netSsidEdit = EditText" in act, "手输 SSID 兜底被删（扫描为空时无法配网）")
+    need("netScanSignature" in act, "扫描列表缺 tick 节流签名（1s tick 会持续重建 View/发事件）")
+
     verdict = "NOT_PASS" if errs else "OK"
     if not quiet:
         print(f"VERDICT = {verdict}")
@@ -214,6 +227,15 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
         ("负对照:Repository 误接入加密原语必红",
          variant(repo=repo.replace("class RobotRepository(",
                                    "class RobotRepository(\n    private val cryptoRef = ProvisioningCrypto.INTEROP_UNVERIFIED,"))),
+        ("负对照:扫描项删点击监听必红",
+         variant(activity=act.replace("setOnClickListener { selectScannedSsid(net.ssid) }", ""))),
+        ("负对照:点选误清空密码框必红",
+         variant(activity=act.replace("fun selectScannedSsid(ssid: String) {",
+                                       "fun selectScannedSsid(ssid: String) {\n        netPskEdit.setText(\"\")"))),
+        ("负对照:扫描列表去掉 tick 节流必红",
+         variant(activity=act.replace("netScanSignature", "netScanSigUnused"))),
+        ("负对照:删掉手输 EditText 必红",
+         variant(activity=act.replace("netSsidEdit = EditText(this@MainActivity).apply {", ""))),
     ]
 
     out: list[tuple[str, bool]] = []

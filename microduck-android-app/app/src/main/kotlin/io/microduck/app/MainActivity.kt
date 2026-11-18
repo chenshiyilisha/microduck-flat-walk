@@ -123,8 +123,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var monitorAlertText: TextView
     /** A3/A6/A7 只读诊断文本（健康页底部，点按钮刷新，缺数据显示「未读到」）。 */
     private lateinit var diagnosticsText: TextView
-    /** A2 配网：状态/扫描结果文本 + SSID/密码输入（设置页，写操作需二次确认）。 */
+    /** A2 配网：状态文本 + 扫描结果可点选列表 + SSID/密码输入（设置页，写操作需二次确认）。 */
     private lateinit var netStatusText: TextView
+    /** net.scan 结果的可点选列表容器：点一项自动填 SSID，取代手录（手输仍保留兜底）。 */
+    private lateinit var netScanList: LinearLayout
+    /** 上次渲染的扫描签名：renderAll 每 1s tick 都调 renderNet，内容没变不重建 View。 */
+    private var netScanSignature: String? = null
     private lateinit var netSsidEdit: EditText
     private lateinit var netPskEdit: EditText
     private lateinit var netResultText: TextView
@@ -1038,6 +1042,28 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { viewModel.onRefreshNet() }
         }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
 
+        // net.scan 结果做成「可点选列表」：点一项自动填 SSID，取代手录。
+        // 一手依据 configd/src/nm.rs:567 —— connect() 内部先 scan() 找该 SSID，扫不到直接
+        // NotFound；隐藏 SSID / 802.1X 也不支持。所以「从扫描结果里选」比手录更不易错，
+        // 且是固件唯一保证能找到网络的输入方式。手输 EditText 仍保留（扫描为空时的兜底）。
+        addView(TextView(this@MainActivity).apply {
+            text = "附近网络（net.scan · 点选填入 SSID）"
+            textSize = 11f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(2))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        // 如实回显固件边界，不软化成「已存网络免密」：configd/src/nm.rs:585 明确
+        // 非开放网络 psk.is_none() 一律 Failed{Unsupported,"this network needs a passphrase"}，
+        // 即便该网络是 saved；每次 net.connect 都必须显式带 psk。
+        addView(TextView(this@MainActivity).apply {
+            text = "已存网络仍需填密码 · 802.1X 网络不支持连接（configd/nm.rs:585）"
+            textSize = 10f; setTextColor(c(R.color.md_text_dim))
+            setPadding(0, 0, 0, dp(4))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        netScanList = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        addView(netScanList, LinearLayout.LayoutParams(MATCH, WRAP))
+
         netSsidEdit = EditText(this@MainActivity).apply {
             hint = "网络名称（SSID）"; textSize = 12f
             inputType = InputType.TYPE_CLASS_TEXT
@@ -1487,9 +1513,9 @@ class MainActivity : AppCompatActivity() {
         diagnosticsText.setTextIfChanged(text)
     }
 
-    /** A2 配网渲染：状态/扫描/结果。ssid/signal/ip 缺字段一律「未读到」，不填 0/假 IP。 */
+    /** A2 配网渲染：当前连接走文本，附近网络走可点选列表。缺字段一律「未读到」，不填 0/假 IP。 */
     private fun renderNet(n: NetSnapshot, busy: Boolean, result: String?) {
-        if (!::netStatusText.isInitialized) return
+        if (!::netStatusText.isInitialized || !::netScanList.isInitialized) return
         val text = buildString {
             append("【当前连接 net.status】\n")
             if (n.isEmpty && n.statusError == null) {
@@ -1502,18 +1528,56 @@ class MainActivity : AppCompatActivity() {
                 n.mac?.let { append("  MAC：").append(it).append("\n") }
                 n.statusError?.let { append("  （").append(it).append("）\n") }
             }
-            append("【附近网络 net.scan】\n")
-            if (n.networks.isEmpty()) {
-                append("  未读到").append(n.scanError?.let { "（$it）" } ?: "").append("\n")
-            } else n.networks.take(12).forEach {
-                append("  ").append(it.ssid).append(" · ").append(it.signal).append("/100 · ")
-                    .append(it.security).append(if (it.saved) " · 已存" else "").append("\n")
-            }
         }
         netStatusText.setTextIfChanged(text)
-        netResultText.setTextIfChanged(
-            if (busy) "处理中…" else (result ?: "—")
-        )
+        // 1s tick 节流：扫描内容没变就不重建 View（否则持续发 AccessibilityEvent、列表抖动）。
+        val sig = n.networks.take(10).joinToString("|") {
+            "${it.ssid}/${it.signal}/${it.security}/${it.saved}"
+        } + "/" + (n.scanError ?: "")
+        if (sig != netScanSignature) {
+            netScanSignature = sig
+            rebuildNetScanList(n)
+        }
+        netResultText.setTextIfChanged(if (busy) "处理中…" else (result ?: "—"))
+    }
+
+    /** 依 net.scan 重建可点选列表；每项点一下把 SSID 填进输入框（取代手录）。 */
+    private fun rebuildNetScanList(n: NetSnapshot) {
+        netScanList.removeAllViews()
+        if (n.networks.isEmpty()) {
+            netScanList.addView(TextView(this@MainActivity).apply {
+                text = "  未读到" + (n.scanError?.let { "（$it）" } ?: "") + " · 可手动填写 SSID"
+                textSize = 11f; setTextColor(c(R.color.md_text_dim))
+                setPadding(0, dp(2), 0, dp(2))
+            }, LinearLayout.LayoutParams(MATCH, WRAP))
+            return
+        }
+        n.networks.take(10).forEach { net ->
+            val label = buildString {
+                append(net.ssid).append(" · ").append(net.signal).append("/100 · ").append(net.security)
+                if (net.saved) append(" · 已存")
+                if (net.security.equals("enterprise", ignoreCase = true)) append(" · 802.1X 不可连")
+            }
+            netScanList.addView(TextView(this@MainActivity).apply {
+                text = label
+                textSize = 12f; setTextColor(c(R.color.md_text))
+                minHeight = dp(44)
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                contentDescription = "选择网络 ${net.ssid}"
+                isClickable = true; isFocusable = true
+                setOnClickListener { selectScannedSsid(net.ssid) }
+            }, LinearLayout.LayoutParams(MATCH, WRAP))
+        }
+    }
+
+    /**
+     * 点选扫描项：只写 SSID 输入框，绝不碰密码框（用户可能已输入密码，覆盖即丢失）。
+     * 反馈就是输入框里出现该名称；不写 netResultText——它会被 renderNet 每 tick 覆盖成「—」。
+     */
+    private fun selectScannedSsid(ssid: String) {
+        netSsidEdit.setText(ssid)
+        netSsidEdit.setSelection(ssid.length)
     }
 
     /** 只有内容真变了才写，避免 1s tick 持续发 AccessibilityEvent。 */

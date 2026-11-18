@@ -3,7 +3,9 @@
 _2026-11-13 建档。用户要求：「看看还缺什么功能，还有什么功能可以加上，找找资料」。_
 _**2026-11-18 更新**：§5 落地状态已刷新（A2/A2'/A3/A6/A7 已落地、A8 明确不做），并新增 §5.1 原厂 9 屏逐方法对照、§5.2 原厂 §7 欠账归属。§0/§2 保留 11-13 历史盘点原貌（当时 A2–A8 全未做），**以 §5 为准**。_
 
-_**2026-11-18 晚更新**：新增 §5.4 —— 一手定位并修复 hello 握手死锁（updaterd 默认关闭导致的 `Updater is not answering`），**真机打通 BLE→READY→configd→net.status/scan 配网链路**；A2 从「链路不通」升级为「只读链路真机可用、写密码待用户操作」。_
+_**2026-11-18 晚更新**：新增 §5.4 —— 一手定位并修复 hello 握手死锁（updaterd 默认关闭导致的 `Updater is not answering`），**真机打通 BLE→READY→configd→net.status/scan 配网链路**并端到端换 WiFi 成功；A2 从「链路不通」升级为「真机验收通过」。_
+
+_**2026-11-18 中午补充**：新增 §5.5 —— 用户反馈驱动的两处 UX 改进：`net.scan` SSID 可点选（取代手录）、BLE 扫描列表只列 MicroDuck 候选（无名非目标设备隐藏）；均带门禁负对照与真机验证。_
 _本文件**只做盘点与依据核对，不改功能代码**。每条建议挂一手来源；_
 _术语严格遵循 `docs/active/microduck-来源术语约定-2026-11-13.md`：**「原厂 / 官方」只指 Pollen Robotics 原厂**。_
 _整机未落地 ⇒ 交付判定仍为「不可交付」；未验证不等于通过。_
@@ -163,7 +165,7 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 | A3 | ✅ 已落地（11-18） | `DiagnosticsSnapshot` 纯 JVM 只读解析（缺字段 null / 空列表、不造假），`RobotRepository.refreshDiagnostics()` 后台拉取，健康页只读展示；Wire/RobotSession 只读白名单登记 | `tools/check_diagnostics_readonly.py` **6/6 + 负对照**；core 自检 |
 | A6 | ✅ 已落地（11-18，只读） | `robot.policies`/`robot.model` 纳入诊断快照只读展示（**不做启停**，AUTO 零驾驶帧防假启动） | core 自检 + 只读门禁 |
 | A7 | ✅ 已落地（11-18，只读） | `update.status`/`update.listInstalled`/`update.log` 纳入诊断快照（**不做 apply/rollback/select**，mutating 等整机） | core 自检 + 只读门禁 |
-| A2 | ✅ 已落地（11-18，仅内测；11-18 晚真机打通配网链路） | `NetSnapshot`（net.status/net.scan 解析）+ `NetProvisioning`（net.connect/net.forget 请求构造，严格 deny_unknown_fields 键集，**psk 只进出站 JSON 不落日志**）；设置页配网卡片（Mock 隔离、明文风险常驻警示、连接二次确认）。11-18 晚修复 hello 握手死锁（见 §5.4）：仅「上游版本探测服务不可达」降级继续握手，net.connect 链路真机可用 | `tools/check_net_provisioning.py` **9/9 + 9 负对照**；core 自检 629/629（A2 段 16 项含 7 负对照）；**真机 BLE→READY→configd→net.status/scan 全链路打通**（读到板子 SSID=Microduck-kissqy / IPv4=10.42.0.1 与附近真实网络）；⚠️ 真写密码 net.connect 未做（明文风险，待用户操作） |
+| A2 | ✅ 已落地（11-18，仅内测；11-18 晚真机打通配网链路） | `NetSnapshot`（net.status/net.scan 解析）+ `NetProvisioning`（net.connect/net.forget 请求构造，严格 deny_unknown_fields 键集，**psk 只进出站 JSON 不落日志**）；设置页配网卡片（Mock 隔离、明文风险常驻警示、连接二次确认）。11-18 晚修复 hello 握手死锁（见 §5.4）：仅「上游版本探测服务不可达」降级继续握手，net.connect 链路真机可用 | `tools/check_net_provisioning.py` **13/13（含 4 项新增负对照）**、`tools/check_ble_candidate_filter.py` **7/7**；core 自检 629/629；统一门禁 13 项 ALL_PASS；**真机端到端换 WiFi 成功**（Microduck-kissqy→DS1002 / IPv4 192.168.0.55 / 凭据已存 / 三观测面互证，§5.4）；**SSID 可点选 + BLE 候选过滤真机验证通过**（§5.5） |
 | A2.1 | ✅ 已落地（11-18 晚，hello 握手死锁修复） | 一手定位：hello→updaterd 而首启镜像故意关 updaterd ⇒ btd 回 `Updater is not answering`（INTERNAL_ERROR）；但 authorize/配网都走 configd，不经 updaterd。`isHelloDegradable` 仅该消息两段结构命中才降级继续 auth→READY，如实记录 `helloDegradedReason` + `Event.HelloDegraded`（不伪造 hello 成功），其余错误仍致命 | core `testHelloDegrade` 16 项（8 正向含 net.connect 能发出 + 7 负对照 + 判据）；统一门禁 ALL_PASS；Debug/Release 编译 PASS；**真机 UI 逐字抓到「已连接·hello 版本探测降级…READY」+ net.status/scan 实读** |
 | A2' | 🟡 能力预埋（11-18，**默认不接入配网路径**） | `ProvisioningCrypto` 纯 JVM 参考实现（X25519/HKDF-SHA256/AES-GCM）+ RFC7748/5869 权威向量 KAT + 低阶点负对照。不接入理由：固件端零加密实现、minSdk26 无稳定 X25519 API ⇒ 接入即假绿。规格见 `docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md` | core KAT 真跑通过；门禁约束「加密默认不接入」 |
 | A8 | ⛔ 明确不做（用户 11-18 拍板） | 地址栏留空进 Mock 已是可用入口，`sourceRow` LIVE/DEMO 标签已齐，不另加显式按钮 | — |
@@ -218,6 +220,22 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 - **判据（严，带负对照）**：仅 `code==INTERNAL_ERROR(-32603) && message 含 "is not answering"` 才降级；错 PIN / 普通 INTERNAL_ERROR / -32602 / -32601 / 传输失败全部仍致命。降级如实记录原因、不伪造 hello 成功/serial。
 - **真机证据**（vivo V2338A 无线 adb）：BLE 连 `duck-6a07` 后 UI 显示「已连接·hello 版本探测降级（updaterd 未启动，配网/认证链路可用）：Updater is not answering… · READY」；点刷新读到 `net.status`（SSID=Microduck-kissqy / 10.42.0.1 / MAC=CC:C8:37:E3:F2:1A）与 `net.scan`（DS1002 等真实网络）。⇒ A2 换 WiFi 链路具备可用会话通道。
 - **端到端换 WiFi 成功**（用户授权凭据后真发 net.connect）：二次确认弹窗（§8.1 警示 + 目标 DS1002）→「仍要连接」→ 板子自报 net.status 变为 SSID=**DS1002** / IPv4=**192.168.0.55** / MAC=CC:C8:37:E3:F2:1A（同板）/ DS1002「已存」（凭据持久化）；外部 WlanScan（首启 AP 消失）+ ping 192.168.0.55（0% 丢包）+ ARP（MAC 一致）三观测面互证。⇒ **A2「通过 App 更换主板 WiFi」真机验收通过**。凭据仅进程内存用一次，未落任何文件/日志/git。
+
+### 5.5 配网 / 扫描列表两处 UX 改进（2026-11-18 中午，用户反馈驱动）
+
+用户两句反馈：「SSID 不能选吗，必须手录？」「按理说无名蓝牙不应该显示出来」。两处都先查一手源码再动手，**并否决了一个想顺手做的增强**：
+
+- `configd/src/nm.rs:585`：非开放网络 `psk.is_none()` 一律 `Failed{Unsupported,"this network needs a passphrase"}`，**即便该网络是 saved**；每次 `net.connect` 都得显式带 psk ⇒ 「点选已存网络免密直连」不成立，不做，UI 常驻如实提示「已存网络仍需填密码」。
+- `configd/src/nm.rs:567`：`connect()` 内部先 `scan()` 找 SSID，扫不到直接 `NotFound`，隐藏 SSID / 802.1X 都不支持 ⇒ **从 `net.scan` 结果点选是固件唯一保证能找到网络的输入方式**（手录串框的坑已踩过）。
+
+| 改动 | 实现 | 一手依据 |
+| --- | --- | --- |
+| SSID 可点选 | `net.scan` 结果由只读纯文本改为可点选列表（每项 `选择网络 <ssid>`），点一下填 `netSsidEdit`；**只写 SSID、绝不碰密码框**；`netScanSignature` 签名节流防 1s tick 重建 View / 持续发事件；手输 EditText 保留兜底 | 上面两行 `nm.rs` |
+| BLE 列表只列候选 | 呈现层只列 `matchedBy != "附近设备"` 的候选，隐藏非目标（含无名）设备；状态行如实回显「附近 N 台 / 候选 M 台 / 非目标 K 台已隐藏」；候选未广播名称显示「(未广播名称)」而非杂项「(无名)」 | 原厂 `app-path-design.md` §3.3 + DuckLink 0.9.25：硬件 UUID 过滤会漏掉以空 service list 广播的 bonded 设备 ⇒ 扫描层仍 `startScan(null)` 全量接收，**过滤只绑一手判别字段 `matchedBy`（服务 UUID/广播名/已绑定），绝不按设备名筛**（否则误筛掉已绑定但无名的真板子） |
+
+**门禁**：`check_net_provisioning.py` 9/9 → **13/13**（新增 4 条负对照：删点击监听 / 点选误清空密码框 / 去掉 tick 节流 / 删手输 EditText 必红）；新建 `tools/check_ble_candidate_filter.py` **7/7**（6 条负对照：加硬件 filters / 删候选过滤 / 退化成按名字筛 / 删已绑定兜底 / 删隐藏数量回显 / 删点击监听 必红）；统一门禁自动发现纳入，13 项 ALL_PASS；core 629/629；Debug+Release BUILD SUCCESSFUL。
+
+**真机**（vivo V2338A 无线 adb，11:35 新包，显式授予 `BLUETOOTH_SCAN/CONNECT`）：① BLE `收到 1898 条广播 · 附近 75 台 · 候选 1 台 · 非目标 74 台已隐藏`，列表只剩 `● duck-6a07 · -36 dBm · 判别=服务 UUID`，`(无名)` / `○` 全消失，扫描层仍统计到 75 台；② `net.scan` 渲染出 9 个可点选项，点「选择网络 DS1002」⇒ SSID 框自动填入 `DS1002`；先在密码框放占位串再点「选择网络 ChinaNet-7ZyE」⇒ SSID 变更且**占位串原样保留**（证明点选不清空已输入密码）。本轮未输入任何真实 WiFi 密码、未点连接；`ship_verdict=NOT_SHIPPABLE` 不变。
 
 ---
 
