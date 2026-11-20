@@ -69,6 +69,16 @@ object Method {
     /** 该固件实现的 model API 版本；仅供只读展示，不用于硬拒（A9 维持不做）。
      *  一手：lib.rs:587 `ROBOT_MODEL_API`。 */
     const val ROBOT_MODEL_API = "robot.modelApi"
+    /**
+     * 头部 ToF 8×8 深度流。一手：ft1910 `duck-ipc-proto/src/lib.rs:917` `TOF_STREAM`、
+     * 帧通知 `:934` `TOF_FRAME`。
+     * ⚠️ **BLE 不可达**：`btd/src/route.rs:489-494` 明确拒绝（64 格×15Hz 塞不进 20B 管道），
+     * 唯一真机路径是 `mediad` 的 WebRTC datachannel（`mediad/src/route.rs:210-215`）。
+     * UI 不得把 Mock 帧当实机读数。
+     */
+    const val TOF_STREAM = "tof.stream"
+    /** 一帧 ToF 深度的通知 method（无 id）。一手：lib.rs:934 / :1949-1965。 */
+    const val TOF_FRAME = "tof.frame"
     const val NET_STATUS = "net.status"
     const val NET_SCAN = "net.scan"
     const val NET_CONNECT = "net.connect"

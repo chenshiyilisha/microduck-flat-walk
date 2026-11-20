@@ -68,6 +68,8 @@ class RobotRepository(
         val lastHealthOkMs: Long,
         /** 最近一次 health 失败原因；null = 无错误。 */
         val lastHealthError: String?,
+        /** 最近一帧 `tof.frame` 8×8 深度；null = 未收到（绝不填 0 假绿）。 */
+        val tof: TofSnapshot?,
         /** 由一手读数派生的监控报告；null = 从未评估。 */
         val monitorReport: MonitorReport?,
         /** 收到的状态帧计数（遥测活性，非实机帧证据）。 */
@@ -128,6 +130,7 @@ class RobotRepository(
         lastHealth = lastHealth,
         lastHealthOkMs = lastHealthOkMs,
         lastHealthError = lastHealthError,
+        tof = tof,
         monitorReport = monitorReport,
         stateFrameCount = stateFrameCount,
         stateHz = stateHz,
@@ -154,6 +157,7 @@ class RobotRepository(
         kind = "—", sessionState = "NONE", connected = false, note = "",
         linkStatus = "", linkLevel = 0, linkState = LinkState.UNKNOWN, connectError = "",
         lastState = null, lastHealth = null, lastHealthOkMs = 0L, lastHealthError = null,
+        tof = null,
         monitorReport = null, stateFrameCount = 0, stateHz = 0.0, lastStateMs = 0L,
         batteryText = "— 未读到", remoteSessionActive = null, modelApiText = "—",
         peerApiVersion = null, diagnostics = DiagnosticsSnapshot(),
@@ -163,6 +167,7 @@ class RobotRepository(
     // ── 会话与订阅（唯一持有者）──
     private var session: RobotSession? = null
     private var stateSub: Disposable? = null
+    private var tofSub: Disposable? = null
     private var eventSub: Disposable? = null
     @Volatile private var kind = "—"
     @Volatile private var note = ""
@@ -174,6 +179,7 @@ class RobotRepository(
     @Volatile private var lastHealth: HealthSnapshot? = null
     @Volatile private var lastHealthOkMs = 0L
     @Volatile private var lastHealthError: String? = null
+    @Volatile private var tof: TofSnapshot? = null
     @Volatile private var monitorReport: MonitorReport? = null
     @Volatile private var stateFrameCount = 0
     @Volatile private var stateWindowFrames = 0
@@ -227,11 +233,13 @@ class RobotRepository(
         // 先摘旧监听再 close，避免旧会话的 DISCONNECTED 事件污染新会话。
         eventSub?.dispose(); eventSub = null
         stateSub?.dispose(); stateSub = null
+        tofSub?.dispose(); tofSub = null
         session?.close()
         // 换链路 = 换数据源：旧读数/旧报告/旧成功时间一律清空，绝不沿用陈旧遥测。
         linkStatus = ""; linkLevel = 0
         peerApiVersion = null
         lastHealth = null; lastHealthOkMs = 0L; lastHealthError = null
+        tof = null   // 换链路 = 换数据源：旧 ToF 帧作废，绝不沿用陈旧深度
         monitorReport = null; linkState = LinkState.CONNECTING
         lastState = null; stateFrameCount = 0; stateWindowFrames = 0
         stateWindowStartMs = System.currentTimeMillis(); stateHz = 0.0; lastStateMs = 0L
@@ -314,6 +322,16 @@ class RobotRepository(
             stateWindowFrames++
             lastStateMs = System.currentTimeMillis()
             publish()
+        }
+        // ToF 8×8 深度流。Mock 路径推夹具帧；真机路径只有 mediad WebRTC 才会真回帧
+        // （btd 的 BLE/TCP 会拒 tof.stream，route.rs:494）——无帧就保持 tof=null，UI 显示「未读到」。
+        // 一手订阅动作 = tof.stream，通知 method = tof.frame（lib.rs:917/934），分开传不能混。
+        tofSub = s.subscribe(Method.TOF_STREAM, emptyMap(),
+            streamMethod = Method.TOF_FRAME) { o ->
+            TofSnapshot.from(o)?.let {
+                tof = it
+                publish()
+            }
         }
     }
 
@@ -543,10 +561,12 @@ class RobotRepository(
     fun disconnect() {
         eventSub?.dispose(); eventSub = null
         stateSub?.dispose(); stateSub = null
+        tofSub?.dispose(); tofSub = null
         session?.close(); session = null
         kind = "—"; note = ""; linkStatus = ""; linkLevel = 0
         linkState = LinkState.UNKNOWN; connectError = ""
         lastState = null; lastHealth = null; lastHealthOkMs = 0L; lastHealthError = null
+        tof = null   // 换链路 = 换数据源：旧 ToF 帧作废（负对照抓到的回灌 bug）
         monitorReport = null; stateFrameCount = 0; stateHz = 0.0; lastStateMs = 0L
         batteryText = "— 未读到"; remoteSessionActive = null; modelApiText = "—"; peerApiVersion = null
         publish()

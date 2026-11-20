@@ -18,10 +18,10 @@ import android.view.View
 internal class PreviewPlaceholderView(ctx: Context) : View(ctx) {
     private val den = ctx.resources.displayMetrics.density
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER; textSize = 13f * den; color = Color.argb(150, 0xEA, 0xF4, 0xFF)
+        textAlign = Paint.Align.CENTER; textSize = 13f * den; color = Color.argb(160, 0xE8, 0xE6, 0xDF)
     }
     private val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER; textSize = 10f * den; color = Color.argb(120, 0x8F, 0xA9, 0xC4)
+        textAlign = Paint.Align.CENTER; textSize = 10f * den; color = Color.argb(130, 0x9C, 0x97, 0x8C)
     }
     init { contentDescription = "摄像头取景框占位：视频通道未接入" }
 

@@ -1,0 +1,15 @@
+[package]
+name = "fw-crypto-probe"
+version = "0.1.0"
+# 对齐 kissqy 固件 workspace 约束：edition 2024 / rust-version 1.99（rust-toolchain.toml channel=1.99.0）。
+# 目的是让本探针的编译条件与目标固件一致；改回 2021/低版本会被 run_probe.sh 的契约校验判红。
+edition = "2024"
+rust-version = "1.99"
+
+[dependencies]
+# §4 wire 三原语；版本取自 crates.io sparse index 一手核对
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+aes-gcm = "0.10"
+sha2 = "0.10"
+hex = "0.4"

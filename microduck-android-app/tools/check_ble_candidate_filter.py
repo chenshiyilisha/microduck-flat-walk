@@ -147,8 +147,12 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
                                      "found.values.filter { it.name.isNotEmpty() }"))),
         ("负对照:判别删掉已绑定兜底必红",
          variant(panel=panel.replace("bondedDevices", "noBondedLookup"))),
+        # renderCandidates 有两处隐藏数量回显：状态行 + 空列表兜底文案。
+        # 只删第一处时第二处仍满足判据，负对照会「假绿」（2026-11-20 实测）⇒ 两处都删。
         ("负对照:状态行删掉隐藏数量回显必红",
-         variant(panel=panel.replace(" · 非目标 $hidden 台已隐藏", ""))),
+         variant(panel=panel
+                 .replace(" · 非目标 $hidden 台已隐藏", "")
+                 .replace('"$hidden 台非目标已隐藏"', '"确认板子已通电并靠近后重扫"'))),
         ("负对照:候选删掉点击连接监听必红",
          variant(panel=panel.replace("setOnClickListener { connect(c) }", ""))),
     ]

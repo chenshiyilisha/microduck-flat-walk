@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- M3 OutlinedBox.Dense 文本框：配网 SSID / 密码用。与 widget_exposed_dropdown 同色板。 -->
+<com.google.android.material.textfield.TextInputLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+    app:boxBackgroundColor="@color/md_card"
+    app:boxStrokeColor="@color/md_outline"
+    app:boxStrokeWidth="@dimen/m3_stroke_hairline"
+    app:boxStrokeWidthFocused="@dimen/m3_stroke_hairline"
+    app:boxCornerRadiusTopStart="@dimen/m3_corner_large"
+    app:boxCornerRadiusTopEnd="@dimen/m3_corner_large"
+    app:boxCornerRadiusBottomStart="@dimen/m3_corner_large"
+    app:boxCornerRadiusBottomEnd="@dimen/m3_corner_large"
+    app:hintTextColor="@color/md_text_dim">
+
+    <com.google.android.material.textfield.TextInputEditText
+        android:id="@+id/field_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:singleLine="true"
+        android:textColor="@color/md_text"
+        android:textColorHint="@color/md_text_dim"
+        android:textSize="13sp" />
+
+</com.google.android.material.textfield.TextInputLayout>

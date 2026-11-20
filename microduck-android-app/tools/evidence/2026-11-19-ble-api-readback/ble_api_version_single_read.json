@@ -1,0 +1,440 @@
+{
+  "probe": "ble_api_version_single_read",
+  "allowed_writes": 0,
+  "app_api_version": 40,
+  "started_at": "2026-11-19T09:22:11+0800",
+  "scan": {
+    "devices_seen": 64,
+    "devices": [
+      {
+        "address": "12:5D:DC:28:76:3F",
+        "name": "",
+        "uuids": [],
+        "rssi": -92
+      },
+      {
+        "address": "28:16:88:A3:B0:4B",
+        "name": "",
+        "uuids": [],
+        "rssi": -85
+      },
+      {
+        "address": "16:75:CB:56:BF:46",
+        "name": "",
+        "uuids": [],
+        "rssi": -88
+      },
+      {
+        "address": "40:E5:FF:ED:86:6E",
+        "name": "NZT5Q9pNNcJ8oIYA6rNXjILg0",
+        "uuids": [],
+        "rssi": -92
+      },
+      {
+        "address": "D3:15:13:DA:34:2A",
+        "name": "",
+        "uuids": [],
+        "rssi": -88
+      },
+      {
+        "address": "CA:74:1A:1F:A3:EC",
+        "name": "",
+        "uuids": [],
+        "rssi": -74
+      },
+      {
+        "address": "2D:3B:A3:95:01:DE",
+        "name": "",
+        "uuids": [],
+        "rssi": -68
+      },
+      {
+        "address": "19:60:59:F8:2B:43",
+        "name": "",
+        "uuids": [],
+        "rssi": -69
+      },
+      {
+        "address": "CC:C8:37:E3:7C:90",
+        "name": "duck-6a07",
+        "uuids": [
+          "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019"
+        ],
+        "rssi": -45
+      },
+      {
+        "address": "7D:16:F7:AE:BE:84",
+        "name": "",
+        "uuids": [],
+        "rssi": -86
+      },
+      {
+        "address": "75:DE:6F:CC:FC:AA",
+        "name": "",
+        "uuids": [],
+        "rssi": -84
+      },
+      {
+        "address": "14:57:90:A5:35:A5",
+        "name": "U-AC35A4",
+        "uuids": [],
+        "rssi": -88
+      },
+      {
+        "address": "7C:8D:89:0B:CA:E2",
+        "name": "",
+        "uuids": [],
+        "rssi": -95
+      },
+      {
+        "address": "27:20:C3:57:89:28",
+        "name": "",
+        "uuids": [],
+        "rssi": -92
+      },
+      {
+        "address": "00:60:37:4C:4F:74",
+        "name": "BYD BLE3",
+        "uuids": [
+          "42594420-4155-544f-e0a9-e50e24dcca9e"
+        ],
+        "rssi": -92
+      },
+      {
+        "address": "06:CE:26:9B:BA:4C",
+        "name": "",
+        "uuids": [],
+        "rssi": -73
+      },
+      {
+        "address": "17:49:98:72:97:FA",
+        "name": "",
+        "uuids": [],
+        "rssi": -84
+      },
+      {
+        "address": "1D:E0:88:AD:D8:53",
+        "name": "",
+        "uuids": [],
+        "rssi": -69
+      },
+      {
+        "address": "3B:5C:F0:06:AF:0B",
+        "name": "",
+        "uuids": [],
+        "rssi": -69
+      },
+      {
+        "address": "02:13:CF:02:A4:83",
+        "name": "",
+        "uuids": [],
+        "rssi": -82
+      },
+      {
+        "address": "22:D7:5C:8C:46:AE",
+        "name": "",
+        "uuids": [],
+        "rssi": -89
+      },
+      {
+        "address": "AC:72:DD:58:64:41",
+        "name": "midea",
+        "uuids": [],
+        "rssi": -97
+      },
+      {
+        "address": "28:53:1C:FF:35:A0",
+        "name": "",
+        "uuids": [],
+        "rssi": -88
+      },
+      {
+        "address": "DA:66:A9:AD:5C:57",
+        "name": "",
+        "uuids": [],
+        "rssi": -70
+      },
+      {
+        "address": "AC:72:DD:59:8B:FD",
+        "name": "midea",
+        "uuids": [
+          "0000ff90-0000-1000-8000-00805f9b34fb",
+          "0000ff80-0000-1000-8000-00805f9b34fb"
+        ],
+        "rssi": -90
+      },
+      {
+        "address": "E4:01:A7:A4:79:D2",
+        "name": "MiCar82A7A479D2",
+        "uuids": [
+          "0000fcd1-0000-1000-8000-00805f9b34fb",
+          "0000fff1-0000-1000-8000-00805f9b34fb"
+        ],
+        "rssi": -92
+      },
+      {
+        "address": "53:4E:5D:97:44:0A",
+        "name": "",
+        "uuids": [],
+        "rssi": -70
+      },
+      {
+        "address": "4C:3D:56:88:05:5E",
+        "name": "",
+        "uuids": [],
+        "rssi": -94
+      },
+      {
+        "address": "3D:8D:1D:73:16:39",
+        "name": "",
+        "uuids": [],
+        "rssi": -72
+      },
+      {
+        "address": "E3:B7:68:62:64:85",
+        "name": "",
+        "uuids": [],
+        "rssi": -72
+      },
+      {
+        "address": "3E:0D:50:BF:06:A6",
+        "name": "",
+        "uuids": [],
+        "rssi": -88
+      },
+      {
+        "address": "24:A9:54:44:E9:91",
+        "name": "",
+        "uuids": [],
+        "rssi": -64
+      },
+      {
+        "address": "75:2B:09:74:E7:32",
+        "name": "魔术终端",
+        "uuids": [
+          "0000180a-0000-1000-8000-00805f9b34fb",
+          "005eb7ca-6b46-0301-0100-2cf875b73dbf"
+        ],
+        "rssi": -90
+      },
+      {
+        "address": "51:FF:52:B9:ED:C8",
+        "name": "",
+        "uuids": [],
+        "rssi": -75
+      },
+      {
+        "address": "13:A2:FD:61:D2:9D",
+        "name": "",
+        "uuids": [],
+        "rssi": -88
+      },
+      {
+        "address": "00:BA:F2:0E:1B:81",
+        "name": "",
+        "uuids": [],
+        "rssi": -93
+      },
+      {
+        "address": "20:32:B6:29:F1:9E",
+        "name": "",
+        "uuids": [],
+        "rssi": -86
+      },
+      {
+        "address": "CF:00:92:A5:B9:04",
+        "name": "",
+        "uuids": [],
+        "rssi": -94
+      },
+      {
+        "address": "18:A7:F1:FC:D8:2B",
+        "name": "U-ACD82A",
+        "uuids": [],
+        "rssi": -95
+      },
+      {
+        "address": "2E:15:50:0E:EB:5E",
+        "name": "",
+        "uuids": [],
+        "rssi": -77
+      },
+      {
+        "address": "7B:FA:72:3F:08:40",
+        "name": "",
+        "uuids": [],
+        "rssi": -79
+      },
+      {
+        "address": "3A:60:5D:6D:00:83",
+        "name": "",
+        "uuids": [],
+        "rssi": -52
+      },
+      {
+        "address": "32:6B:8B:45:BD:EB",
+        "name": "",
+        "uuids": [],
+        "rssi": -96
+      },
+      {
+        "address": "65:BF:F4:3B:77:C9",
+        "name": "",
+        "uuids": [],
+        "rssi": -84
+      },
+      {
+        "address": "36:85:8C:3F:08:17",
+        "name": "",
+        "uuids": [],
+        "rssi": -85
+      },
+      {
+        "address": "43:90:C4:AF:EB:E4",
+        "name": "",
+        "uuids": [],
+        "rssi": -64
+      },
+      {
+        "address": "2D:EF:52:9E:B8:4A",
+        "name": "",
+        "uuids": [],
+        "rssi": -85
+      },
+      {
+        "address": "74:4F:82:B3:90:53",
+        "name": "",
+        "uuids": [],
+        "rssi": -94
+      },
+      {
+        "address": "4F:FB:AE:47:D1:8B",
+        "name": "",
+        "uuids": [],
+        "rssi": -79
+      },
+      {
+        "address": "2F:ED:8D:2A:BF:54",
+        "name": "",
+        "uuids": [],
+        "rssi": -90
+      },
+      {
+        "address": "53:BF:52:D3:3B:6A",
+        "name": "NZEwJOS/m71wBSl8sFGtaOCaM",
+        "uuids": [],
+        "rssi": -84
+      },
+      {
+        "address": "C8:EE:CD:C9:F4:F9",
+        "name": "",
+        "uuids": [],
+        "rssi": -61
+      },
+      {
+        "address": "E1:0A:72:C8:59:02",
+        "name": "",
+        "uuids": [],
+        "rssi": -64
+      },
+      {
+        "address": "AC:72:DD:58:71:EF",
+        "name": "midea",
+        "uuids": [],
+        "rssi": -95
+      },
+      {
+        "address": "62:73:3A:31:AF:28",
+        "name": "",
+        "uuids": [],
+        "rssi": -93
+      },
+      {
+        "address": "43:EA:17:A3:29:E1",
+        "name": "",
+        "uuids": [
+          "0000fdaa-0000-1000-8000-00805f9b34fb"
+        ],
+        "rssi": -93
+      },
+      {
+        "address": "C6:92:15:A0:FE:6D",
+        "name": "",
+        "uuids": [],
+        "rssi": -74
+      },
+      {
+        "address": "60:F4:30:40:EE:2B",
+        "name": "EDIFIER BLE",
+        "uuids": [
+          "00002600-0000-1000-8000-00805f9b34fb"
+        ],
+        "rssi": -93
+      },
+      {
+        "address": "79:72:82:2D:99:9B",
+        "name": "",
+        "uuids": [],
+        "rssi": -81
+      },
+      {
+        "address": "64:33:D2:96:50:F4",
+        "name": "",
+        "uuids": [],
+        "rssi": -99
+      },
+      {
+        "address": "47:D1:1A:C2:C0:A5",
+        "name": "",
+        "uuids": [],
+        "rssi": -65
+      },
+      {
+        "address": "01:11:15:10:4E:7C",
+        "name": "",
+        "uuids": [],
+        "rssi": -89
+      },
+      {
+        "address": "7F:BD:B4:7F:A9:59",
+        "name": "",
+        "uuids": [],
+        "rssi": -94
+      },
+      {
+        "address": "53:71:77:FB:48:E3",
+        "name": "",
+        "uuids": [],
+        "rssi": -96
+      }
+    ],
+    "independent_devices": 63
+  },
+  "candidates": [
+    {
+      "address": "CC:C8:37:E3:7C:90",
+      "name": "duck-6a07",
+      "uuids": [
+        "6f5d2a10-3b47-4c8e-9a1f-2d7e8c4b6019"
+      ],
+      "rssi": -45
+    }
+  ],
+  "negative_control_absent_peer": {
+    "address": "00:00:00:00:00:00",
+    "connected": false,
+    "error": "BleakDeviceNotFoundError",
+    "as_expected": true
+  },
+  "connected": true,
+  "read_bytes_hex": "25",
+  "read_len": 1,
+  "api_version_read": 37,
+  "negative_control_absent_char": {
+    "errored": true,
+    "error": "BleakCharacteristicNotFoundError",
+    "as_expected": true
+  },
+  "api_version_matches_app": false,
+  "verdict": "API_VERSION_MISMATCH"
+}

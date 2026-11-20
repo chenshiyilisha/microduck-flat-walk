@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 底部导航·健康：心形轮廓线（Material favorite_border 同一笔形）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path
+        android:pathData="M12,20.3l-1.1-1C6.2,15.2 4,13.2 4,10.4 4,8 5.9,6.1 8.3,6.1c1.4,0 2.8,0.7 3.7,1.8 0.9-1.1 2.3-1.8 3.7-1.8 2.4,0 4.3,1.9 4.3,4.3 0,2.8-2.2,4.8-6.9,8.9l-1.1,1z"
+        android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent" />
+</vector>

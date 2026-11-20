@@ -10,8 +10,21 @@
   },
   "scope": {
     "live_hardware_accessed": false,
-    "not_proof_of": ["整机可签收", "策略可上真机", "轮滑版能走", "500k 位宽 / R3", "人人 HUB 几何与载流", "左右腿文字定义", "真机对时变命令的跟随能力（E3 只判了仿真侧 PATH_3）"],
-    "known_gaps": ["robotd --sim 验不了总线驱动/BLE/ISP+rkaiq 3A/NPU/编码器+RGA", "本地 28 个上游仓源码可读不等于我们的板已验证", "fanhao 20261023c 自动识别只做到伪串口 + 镜像离线核验", "C1 扩展扫描仍只覆盖显式白名单根，非全仓 rglob；新交付目录需先登记进 SCAN_ROOTS"]
+    "not_proof_of": [
+      "整机可签收",
+      "策略可上真机",
+      "轮滑版能走",
+      "500k 位宽 / R3",
+      "人人 HUB 几何与载流",
+      "左右腿文字定义",
+      "真机对时变命令的跟随能力（E3 只判了仿真侧 PATH_3）"
+    ],
+    "known_gaps": [
+      "robotd --sim 验不了总线驱动/BLE/ISP+rkaiq 3A/NPU/编码器+RGA",
+      "本地 28 个上游仓源码可读不等于我们的板已验证",
+      "fanhao 20261023c 自动识别只做到伪串口 + 镜像离线核验",
+      "C1 扩展扫描仍只覆盖显式白名单根，非全仓 rglob；新交付目录需先登记进 SCAN_ROOTS"
+    ]
   },
   "contracts": [
     {
@@ -19,13 +32,32 @@
       "status": "UNVERIFIED",
       "summary": "人人可做机器人 ¥80 IMU（电商名 IMU / 技术名 imu_to_dxl）能否被 fanhao 复刻镜像 live 认板，以及 15 关节实际 ID 表",
       "why_open": "kissqy 只认总线 ID200 + FT6 身份字节 06 00 00 00 F2；fanhao 的 imu_protocol=auto 只做过伪串口 + 镜像离线核验，真实小板未上机",
-      "evidence_kind": ["上机 identify 串口日志原文", "回读 ID200 身份字节的截图", "15 关节逐颗 ID 表与方向/零位记录"],
+      "evidence_kind": [
+        "上机 identify 串口日志原文",
+        "回读 ID200 身份字节的截图",
+        "15 关节逐颗 ID 表与方向/零位记录"
+      ],
       "verification_boundary": "只认 ID 数字与回读值；左右文字标签由 INCONCLUSIVE_LR_LABEL 单独闭环",
-      "local_verified": ["三块运动 IMU 板电商名/技术名/店家/价格已由 probe_out.txt 行44-47 钉死", "fanhao 20261023c 自动识别的离线核验记录已读"],
-      "board_acceptance_required": ["上板跑 identify，逐颗回读 15 个 ID 并记录 direction/zero_ticks", "接上人人 ¥80 IMU，确认 ID200 与身份字节被镜像读到", "断开 IMU 再跑一次，确认门禁变红（负对照）", "先卸力、机器人有支撑再上电"],
-      "still_owed": ["kissqy R1 是否认人人/fanhao ¥80 板", "control.43/.44 与 V167/V164 中控的实际配对回读"],
+      "local_verified": [
+        "三块运动 IMU 板电商名/技术名/店家/价格已由 probe_out.txt 行44-47 钉死",
+        "fanhao 20261023c 自动识别的离线核验记录已读"
+      ],
+      "board_acceptance_required": [
+        "上板跑 identify，逐颗回读 15 个 ID 并记录 direction/zero_ticks",
+        "接上人人 ¥80 IMU，确认 ID200 与身份字节被镜像读到",
+        "断开 IMU 再跑一次，确认门禁变红（负对照）",
+        "先卸力、机器人有支撑再上电"
+      ],
+      "still_owed": [
+        "kissqy R1 是否认人人/fanhao ¥80 板",
+        "control.43/.44 与 V167/V164 中控的实际配对回读"
+      ],
       "negative_control": "拔掉 IMU 或把 ID 改成非 200 后，认板检查必须失败；若仍报绿则本契约不得闭合",
-      "blocked_actions": ["写死 15 关节 ID 表", "宣布镜像可直接刷整机", "把离线核验升级为实机签收"],
+      "blocked_actions": [
+        "写死 15 关节 ID 表",
+        "宣布镜像可直接刷整机",
+        "把离线核验升级为实机签收"
+      ],
       "source_refs": [
         "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正㉔/㉕",
         ".upstream/replica/docs/HD1910-20261023-总线IMU自动识别.md",
@@ -33,100 +65,192 @@
         "docs/active/microduck-开源参考索引-2026-11-09.md §J.2.2 / §J.3.1"
       ],
       "signoff": "待上机实测；当前无人可签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "OFFLINE",
+      "verification_tier_note": "三块 IMU 板电商名/价格 probe 已钉死 + fanhao 伪串口离线核验；真实小板未上机"
     },
     {
       "id": "INCONCLUSIVE_DIMENSION",
       "status": "UNVERIFIED",
       "summary": "人人 HUB 分线板 ¥36（作取电板）的板框几何、双铜柱是否正对 NP-F550 电池孔、是否属 34mm 安装族、banana_pcb_locker 能否沿用",
       "why_open": "只有商品名与价格一手，无任何几何一手；fanhao POGO_PIN STEP 与 community-kit banana_pcb kicad 不能外推到人人板",
-      "evidence_kind": ["到手卡尺实测照片与数值", "板框/孔位 STEP 或 3MF 对照", "与 NP-F550 实物电池孔的装配试配"],
+      "evidence_kind": [
+        "到手卡尺实测照片与数值",
+        "板框/孔位 STEP 或 3MF 对照",
+        "与 NP-F550 实物电池孔的装配试配"
+      ],
       "verification_boundary": "34mm 安装族与 banana_pcb_locker 是两件独立待量项，不得由其中一件推断另一件",
-      "local_verified": ["POGO_PIN_1V0A STEP 39.18x6.78x1.60mm / 两端孔中心距 33.8mm 已读", "banana_pcb kicad 39.19x6.79mm / Ø1.7x2 已读", "power_support STL 54x17x83mm 与 21mm 厚夹座口径已读"],
-      "board_acceptance_required": ["到手卡尺量人人 HUB 板框、孔径、孔距、铜柱间距", "与唯卓仕 NP-F550 2200mAh 实物正负凹孔试插", "量 HAT 四角金色孔位与官方 KiCad 0 MountingHole 的矛盾", "按实物重打 power_support / banana_pcb_locker，不套 fanhao STEP"],
-      "still_owed": ["金属结构件（共 7 个）到底对应哪 7 件打印受力件", "418MB SolidWorks 包内 PCB 3D 模型未下载核验"],
+      "local_verified": [
+        "POGO_PIN_1V0A STEP 39.18x6.78x1.60mm / 两端孔中心距 33.8mm 已读",
+        "banana_pcb kicad 39.19x6.79mm / Ø1.7x2 已读",
+        "power_support STL 54x17x83mm 与 21mm 厚夹座口径已读"
+      ],
+      "board_acceptance_required": [
+        "到手卡尺量人人 HUB 板框、孔径、孔距、铜柱间距",
+        "与唯卓仕 NP-F550 2200mAh 实物正负凹孔试插",
+        "量 HAT 四角金色孔位与官方 KiCad 0 MountingHole 的矛盾",
+        "按实物重打 power_support / banana_pcb_locker，不套 fanhao STEP"
+      ],
+      "still_owed": [
+        "金属结构件（共 7 个）到底对应哪 7 件打印受力件",
+        "418MB SolidWorks 包内 PCB 3D 模型未下载核验"
+      ],
       "negative_control": "把 25.5mm 厚壳电池塞进 21mm 夹座的装配检查必须失败；若通过则尺寸判据失效（Pass97 拓普赛电池否决同型）",
-      "blocked_actions": ["按 fanhao STEP 直接打印取电板固定位", "宣布人人 HUB 与腾壶/驭芯 banana pwr 兼容", "把几何写进 BOM 规格"],
+      "blocked_actions": [
+        "按 fanhao STEP 直接打印取电板固定位",
+        "宣布人人 HUB 与腾壶/驭芯 banana pwr 兼容",
+        "把几何写进 BOM 规格"
+      ],
       "source_refs": [
         "docs/active/microduck-选型与打印位决策-官方HAT一手-2026-11-10.md 文首索引块",
         "docs/active/microduck-开源参考索引-2026-11-09.md §I.2",
         "docs/active/.MicroDuck-采购BOM对比整合-2026-11-10.ref/probe_out.txt 行44-47"
       ],
       "signoff": "待到手卡尺；当前无人可签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "SOURCE_ONLY",
+      "verification_tier_note": "仅商品名/价格与 STEP/STL 一手可读，无机实物卡尺实测"
     },
     {
       "id": "INCONCLUSIVE_CURRENT",
       "status": "UNVERIFIED",
       "summary": "腾壶/藤壶舱内取电顶针的持续载流能力（未选、不进 BOM，仅在若未来启用时需要）",
       "why_open": "背面金属片可焊线只能证明可出线，不能证明能扛 15 颗舵机峰值；商品标示不是实测连续输出能力",
-      "evidence_kind": ["带载压降曲线", "温升实测", "持续电流 ≥8A 的一手实测记录"],
+      "evidence_kind": [
+        "带载压降曲线",
+        "温升实测",
+        "持续电流 ≥8A 的一手实测记录"
+      ],
       "verification_boundary": "充电器的 800mA 输出是充电电流，不是电池持续放电能力；电压无关量才是真值，载流属电压/热相关量",
-      "local_verified": ["用户一手：藤壶舱内有针柱、背面金属片可焊线", "与 A 族互斥理由已记：顶针占电池孔，双铜柱插不进同一对孔"],
-      "board_acceptance_required": ["若启用：接 15 路满载测压降与温升", "核对接插件与线径的持续载流", "确认有 soft-latch 或断载机制"],
-      "still_owed": ["无任何载流实测"],
+      "local_verified": [
+        "用户一手：藤壶舱内有针柱、背面金属片可焊线",
+        "与 A 族互斥理由已记：顶针占电池孔，双铜柱插不进同一对孔"
+      ],
+      "board_acceptance_required": [
+        "若启用：接 15 路满载测压降与温升",
+        "核对接插件与线径的持续载流",
+        "确认有 soft-latch 或断载机制"
+      ],
+      "still_owed": [
+        "无任何载流实测"
+      ],
       "negative_control": "用『只量到有电压』或『充电器标 800mA』当作载流证据的断言必须红",
-      "blocked_actions": ["把腾壶写进 BOM", "把腾壶当作 A 族取电板的等价替代"],
+      "blocked_actions": [
+        "把腾壶写进 BOM",
+        "把腾壶当作 A 族取电板的等价替代"
+      ],
       "source_refs": [
         ".workbuddy/memory/MEMORY.md 订正㉒",
         "docs/active/microduck-选型与打印位决策-官方HAT一手-2026-11-10.md 文首索引块",
         ".upstream/replica-kit/hardware/CURRENT_HARDWARE.md 行10/14（商品标示非实测）"
       ],
       "signoff": "未选件；不启用则无需签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "SOURCE_ONLY",
+      "verification_tier_note": "用户一手描述 + 商品标示，无任何带载实测"
     },
     {
       "id": "INCONCLUSIVE_RATE_MISMATCH",
       "status": "UNVERIFIED",
       "summary": "R3：500k 零应答是波特率不匹配还是适配器根本没发；1M PASS 20/20 但 115200/250k/400k/500k 全零应答",
       "why_open": "驱动接受不等于芯片真发；无第三方观测者时『没发』与『听不懂』不可区分；robotd --sim 验不了总线驱动",
-      "evidence_kind": ["示波器量 500k 位宽", "真上板 500k 实测", "另备能发 500k 的适配器做解耦回滚"],
+      "evidence_kind": [
+        "示波器量 500k 位宽",
+        "真上板 500k 实测",
+        "另备能发 500k 的适配器做解耦回滚"
+      ],
       "verification_boundary": "软件只能准备解耦回滚脚本，不能消除该悬案；轮3 不切 reg6、保 1M、零 EEPROM 写",
-      "local_verified": ["URT-2 = CH343P 1A86:55D3 + TNOW 硬件方向脚已核", "轮2 实跑 ID10@4.6V reg6 实读 0（1M），1M RTT p50 0.2532ms", "drain() 提前 40-130ms 切向截断尾字节已复现"],
-      "board_acceptance_required": ["示波器量 500k 位宽并存档波形", "真上板跑 500k 并回读", "用另一适配器复跑以解耦回滚"],
-      "still_owed": ["三条闭环一条都没做"],
+      "local_verified": [
+        "URT-2 = CH343P 1A86:55D3 + TNOW 硬件方向脚已核",
+        "轮2 实跑 ID10@4.6V reg6 实读 0（1M），1M RTT p50 0.2532ms",
+        "drain() 提前 40-130ms 切向截断尾字节已复现"
+      ],
+      "board_acceptance_required": [
+        "示波器量 500k 位宽并存档波形",
+        "真上板跑 500k 并回读",
+        "用另一适配器复跑以解耦回滚"
+      ],
+      "still_owed": [
+        "三条闭环一条都没做"
+      ],
       "negative_control": "把『驱动 accept』或『仿真通过』当作 500k 可用的证据，检查必须红",
-      "blocked_actions": ["切 reg6 到 500k", "宣布 45Hz 回滚可用", "用仿真通过作实机签收"],
+      "blocked_actions": [
+        "切 reg6 到 500k",
+        "宣布 45Hz 回滚可用",
+        "用仿真通过作实机签收"
+      ],
       "source_refs": [
         "docs/active/microduck-Pi4B-完整部署方案-feetech_hls-2026-11-09.md 行299",
         "docs/active/microduck-仿真鸭移植-robotd--sim-2026-11-09.md §9.6",
         ".workbuddy/memory/MEMORY.md 台架先验/R3"
       ],
       "signoff": "待示波器/上板；当前无人可签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "OFFLINE",
+      "verification_tier_note": "URT-2 芯片已核、1M 轮2 台架读值与 drain 截断已复现；500k 位宽未示波器量"
     },
     {
       "id": "INCONCLUSIVE_LR_LABEL",
       "status": "UNVERIFIED",
       "summary": "三来源对 10-14 / 20-24 哪边是左腿的文字定义 2:1 冲突（JieJie-H 与 Ley-WL 一致、janauto 相反且自注按机器人自身定义）",
       "why_open": "很可能是机器人视角 vs 观察者视角的镜像差异；ID 数字集合三来源完全一致，只有文字冲突",
-      "evidence_kind": ["上机 identify 后的逐关节方向记录", "明确写出采用哪一套视角定义"],
+      "evidence_kind": [
+        "上机 identify 后的逐关节方向记录",
+        "明确写出采用哪一套视角定义"
+      ],
       "verification_boundary": "装配/标定只认 ID 数字，不认左/右文字；fanhao 训练前清单给出左右腿 pitch/knee/ankle 轴向符号相反的镜像装配解释",
-      "local_verified": ["55 项一手证据核验通过，含 4 组负对照（抹平冲突检测器翻绿、混入 B 代 ID1-15 翻红）", "三来源 ID 数字集合 10-14/20-24/30-34 完全一致"],
-      "board_acceptance_required": ["上机逐颗回读方向并与 ID 表对齐", "在记录里写明视角定义后再使用左右文字"],
-      "still_owed": ["未上机，视角定义未定"],
+      "local_verified": [
+        "55 项一手证据核验通过，含 4 组负对照（抹平冲突检测器翻绿、混入 B 代 ID1-15 翻红）",
+        "三来源 ID 数字集合 10-14/20-24/30-34 完全一致"
+      ],
+      "board_acceptance_required": [
+        "上机逐颗回读方向并与 ID 表对齐",
+        "在记录里写明视角定义后再使用左右文字"
+      ],
+      "still_owed": [
+        "未上机，视角定义未定"
+      ],
       "negative_control": "只用文字左右、不核 ID 数字就生成关节映射的断言必须红",
-      "blocked_actions": ["在装配/标定文档里写死左右文字", "生成只按左右命名的 ID 表"],
+      "blocked_actions": [
+        "在装配/标定文档里写死左右文字",
+        "生成只按左右命名的 ID 表"
+      ],
       "source_refs": [
         "docs/active/microduck-开源参考索引-2026-11-09.md §J.2.2",
         ".upstream/replica/docs/HD-1910训练前数据清单.md 行51",
         "C:/Users/hejih/.wb_tmp/pass101_sw_evidence.py"
       ],
       "signoff": "待上机 identify；当前无人可签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "OFFLINE",
+      "verification_tier_note": "55 项一手证据 + 4 组负对照的离线核验；未上机 identify"
     },
     {
       "id": "INCONCLUSIVE_PRICE",
       "status": "CLOSED",
       "summary": "订正㉓遗留的 ¥140 HAT 店铺归属 / 驭芯 HAT 价格未定；已由订正㉔/㉕ 一手 SKU 全部钉死",
       "why_open": "历史标记，已被后续订正覆盖；此条保留作史料，防止重复打开",
-      "evidence_kind": ["用户一手 SKU 清单", "商品页 probe_out.txt", "SSOT 订正㉔/㉕ 回写"],
+      "evidence_kind": [
+        "用户一手 SKU 清单",
+        "商品页 probe_out.txt",
+        "SSOT 订正㉔/㉕ 回写"
+      ],
       "verification_boundary": "闭环只针对价格与店家归属，不扩及几何/认板等实物项",
-      "local_verified": ["人人 HAT ¥140 / IMU ¥80 / HUB ¥36 / 金属件 ¥45 四样同商品页 id=1095772009248", "驭芯 HAT ¥165 / 带喇叭 ¥168 / IMU2DXL ¥89 / 6V6A 电源板 ¥28", "kissqy IMU TO DXL ¥99 / HAT ¥119 / HUB ¥69", "带负对照核验 13/13 PASS（TPU 件排除、四样 SKU 逐行坐实）"],
-      "board_acceptance_required": ["不适用：价格已由一手 SKU 闭环，无上板动作"],
+      "local_verified": [
+        "人人 HAT ¥140 / IMU ¥80 / HUB ¥36 / 金属件 ¥45 四样同商品页 id=1095772009248",
+        "驭芯 HAT ¥165 / 带喇叭 ¥168 / IMU2DXL ¥89 / 6V6A 电源板 ¥28",
+        "kissqy IMU TO DXL ¥99 / HAT ¥119 / HUB ¥69",
+        "带负对照核验 13/13 PASS（TPU 件排除、四样 SKU 逐行坐实）"
+      ],
+      "board_acceptance_required": [
+        "不适用：价格已由一手 SKU 闭环，无上板动作"
+      ],
       "still_owed": [],
       "negative_control": "把人人 ¥80 板叫成 IMU2DXL、或把 ¥46 规格页选中价当成 HAT 单价的断言必须红",
-      "blocked_actions": ["重新打开价格悬案", "恢复用户手删的 3 行采购项"],
+      "blocked_actions": [
+        "重新打开价格悬案",
+        "恢复用户手删的 3 行采购项"
+      ],
       "source_refs": [
         "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正㉔/㉕ 行107",
         "docs/active/.MicroDuck-采购BOM对比整合-2026-11-10.ref/probe_out.txt 行44-47",
@@ -137,20 +261,52 @@
         "probe_out.txt 行44-47：人人四样 SKU 与价，同一商品页 id=1095772009248",
         "用户 2026-11-10 一手三家 SKU 清单（人人/驭芯/kissqy）",
         "SSOT 订正㉕ 价格基准行与整机预算 ≈¥2,500–2,579"
-      ]
+      ],
+      "verification_tier": "SOURCE_ONLY",
+      "verification_tier_note": "一手 SKU 清单 + 商品页 probe，价格域已 CLOSED，无上板动作"
     },
     {
       "id": "INCONCLUSIVE_ROLLER_POLICY",
       "status": "UNVERIFIED",
       "summary": "轮滑版 roller 策略能否在路① R17→V167 中控镜像上加载/切换、action_scale 真值；官方 XL330 权重不可直接用，kissqy V167 的 HD1910 滑轮策略只有目录级证据",
       "why_open": "用户 2026-11-11 拍板『本项目也做轮滑版』，机械清单已可执行，但软件/策略侧零上板证据。🔴 C1 同轮查全订正：本地上游训练台 pretrained_models.json 实读 20 条，其中官方 XL330 roller 仅 2 条（official-v8-roller / official-v8-roller_crouch），另有 4 条 kissqy V167 / HD1910 专用滑轮 ONNX（swizzle / crouch / spin / standup，带 sha256 与 R17 固件发布包路径），其 verification 明写『作者 V167 审计记录 QEMU ARM64 推理通过，hardware_tested=false』⇒ 『有没有 HD1910 策略』由全盲收窄为『目录已有』，但中控实机能否列出/加载/切换仍未验。11-06 §6 说的 5 个 roller 名字来自另一份来源，不把两套清单混算。eval_roller_onnx.py 头部明写官方 ONNX 只作跨 plant 对照，train_roller.sh 是 hd1910_kp8 从零训。action_scale 两来源冲突：11-06 §6 引 hardware-teardown.en.md:564 记 walk 0.9 / roller 0.8，本项目 SSOT 行 365 记 1.0；两者都不是本项目整机的轮滑实机验收值。",
-      "evidence_kind": ["R17 V167 中控策略清单与切换日志原文", "策略加载字段/形状回读", "镜像内 action_scale 配置回读", "换装后位移跨度（非『请求已发』）实测记录", "ckpt→ONNX→中控加载路径的逐段证据"],
+      "evidence_kind": [
+        "R17 V167 中控策略清单与切换日志原文",
+        "策略加载字段/形状回读",
+        "镜像内 action_scale 配置回读",
+        "换装后位移跨度（非『请求已发』）实测记录",
+        "ckpt→ONNX→中控加载路径的逐段证据"
+      ],
       "verification_boundary": "机械打印/装配清单可执行 ≠ 轮滑版能跑；obs61 / act14 / 50Hz 跨线共享契约不变，但 roller 多 4 个被动轮（passive_{L,R}{F,R}wheel）与轴承摩擦课程，实机姿态须实测。部署链以 SSOT 订正⑬ 为准：R17→V167 中控，非 11-06 §6 写的 uv run publish → robotctl policy load（B 代链，已作废）。细节由 roller_policy_contract.json 单独承载，本条只管『是否闭合』。",
-      "local_verified": ["11-02 版 3mf 内嵌 source_file 一手钉死轮滑 8 件与仅走路 6 件，四组互斥、两版合计 34 个不同打印件", "11-06 变体计划 §6 与 SSOT 行 365 的 action_scale 冲突已逐字核对（0.8 vs 1.0）", "train_roller.sh / eval_roller_onnx.py 头部关于 plant 与跨 plant 对照的声明已读", "训练台 pretrained_models.json 20 条逐条实读：官方 2 条 XL330 + kissqy 4 条 HD1910/V167，sha256 / size_bytes / model_file / task_id 已由 check_roller_policy.py --verify-sources 实算一致", "打印包 10- §4 的文档级 INCONCLUSIVE_ROLLER_POLICY 已由 C1 正式登记为本契约，扫描白名单覆盖 out/deliverables"],
-      "board_acceptance_required": ["R17 V167 中控读回可用策略清单，确认目录里那 4 个 kissqy roller 条目是否真的出现且可切换", "尝试加载/切换并回读字段与形状，失败须如实记录（不得用 B 代 publish 链替代）", "回读镜像内 action_scale 真实配置，不照抄 0.8 或 1.0", "换装轮滑件后按位移跨度判据实测前进/侧移/跌倒率，含负对照（策略未加载时不得判绿）", "先卸力、机器人有支撑、低增益起步"],
-      "still_owed": ["Microduck-Robotd-FT6-R17.tar.gz 未本地下载，4 个 ONNX 的 sha256 未实算（目录记录 ≠ 文件到手）", "R17 V167 中控在本项目整机上能否列出/加载/切换 roller 策略", "hardware_tested=false 未由实机证据推翻", "HD-1910 plant 的 roller 策略从零训与评估", "action_scale 真值", "ROLLER_STAND_Z=0.138 台架漂移与 TPU 轮胎轴孔过盈实测"],
+      "local_verified": [
+        "11-02 版 3mf 内嵌 source_file 一手钉死轮滑 8 件与仅走路 6 件，四组互斥、两版合计 34 个不同打印件",
+        "11-06 变体计划 §6 与 SSOT 行 365 的 action_scale 冲突已逐字核对（0.8 vs 1.0）",
+        "train_roller.sh / eval_roller_onnx.py 头部关于 plant 与跨 plant 对照的声明已读",
+        "训练台 pretrained_models.json 20 条逐条实读：官方 2 条 XL330 + kissqy 4 条 HD1910/V167，sha256 / size_bytes / model_file / task_id 已由 check_roller_policy.py --verify-sources 实算一致",
+        "打印包 10- §4 的文档级 INCONCLUSIVE_ROLLER_POLICY 已由 C1 正式登记为本契约，扫描白名单覆盖 out/deliverables"
+      ],
+      "board_acceptance_required": [
+        "R17 V167 中控读回可用策略清单，确认目录里那 4 个 kissqy roller 条目是否真的出现且可切换",
+        "尝试加载/切换并回读字段与形状，失败须如实记录（不得用 B 代 publish 链替代）",
+        "回读镜像内 action_scale 真实配置，不照抄 0.8 或 1.0",
+        "换装轮滑件后按位移跨度判据实测前进/侧移/跌倒率，含负对照（策略未加载时不得判绿）",
+        "先卸力、机器人有支撑、低增益起步"
+      ],
+      "still_owed": [
+        "Microduck-Robotd-FT6-R17.tar.gz 未本地下载，4 个 ONNX 的 sha256 未实算（目录记录 ≠ 文件到手）",
+        "R17 V167 中控在本项目整机上能否列出/加载/切换 roller 策略",
+        "hardware_tested=false 未由实机证据推翻",
+        "HD-1910 plant 的 roller 策略从零训与评估",
+        "action_scale 真值",
+        "ROLLER_STAND_Z=0.138 台架漂移与 TPU 轮胎轴孔过盈实测"
+      ],
       "negative_control": "把『官方 roller.onnx 在仿真里跑通』『上游目录里有 kissqy roller 条目』『作者 QEMU ARM64 推理通过』『机械换装完成』或『3mf 里有轮滑件』当作轮滑版已能走的证据，检查必须红；若仍报绿则本契约不得闭合",
-      "blocked_actions": ["宣布轮滑版已跑通 / 可签收", "照抄 0.8 或 1.0 任一个 action_scale 进配置", "照抄 11-06 §6 的 publish→robotctl 部署链给路①", "把官方 XL330 roller ONNX 当本项目整机策略"],
+      "blocked_actions": [
+        "宣布轮滑版已跑通 / 可签收",
+        "照抄 0.8 或 1.0 任一个 action_scale 进配置",
+        "照抄 11-06 §6 的 publish→robotctl 部署链给路①",
+        "把官方 XL330 roller ONNX 当本项目整机策略"
+      ],
       "source_refs": [
         "docs/hardware/microduck-两版轮滑变体组件与装配计划-2026-11-06.md §0/§2.1/§6/§7",
         "docs/hardware/microduck-最优方案-价格硬件软件-2026-11-06.md 订正⑬ 行22 / action_scale 行365",
@@ -160,7 +316,9 @@
         "microduck-software/.upstream/replica/software/training-studio/training_studio/pretrained_models.json"
       ],
       "signoff": "待 R17 V167 上机实测；当前无人可签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "OFFLINE",
+      "verification_tier_note": "pretrained_models.json 20 条 sha256 本地实算一致；R17 固件包未下载、hardware_tested=false"
     },
     {
       "id": "INCONCLUSIVE_LIVE_TRACKING",
@@ -207,7 +365,9 @@
         "docs/active/microduck-阶段3-自动跟随.md §4/§8"
       ],
       "signoff": "待真机按 E3 同协议实测；当前无人可签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "SIM",
+      "verification_tier_note": "E3 只在本机 MuJoCo/mjlab 完成，真机零证据"
     },
     {
       "id": "INCONCLUSIVE_LIVE_STATE_STREAM",
@@ -251,7 +411,38 @@
         "docs/active/microduck-V112镜像-按开发规范审查与优化候选-2026-11-14.md（App 适配维度）"
       ],
       "signoff": "待整机 + Android 真机上板联调；当前无人可签字",
-      "evidence": []
+      "evidence": [],
+      "verification_tier": "SIM",
+      "verification_tier_note": "C2+ 只在台架仿真固件 + body_server；C2 真固件 11/11 属工具链级，非整机 GATT"
     }
-  ]
+  ],
+  "verification_tiers": {
+    "schema_version": 1,
+    "owner": "verification_tiers 定义每条 INCONCLUSIVE_* 证据到达的最高层级；与 closure_contract.json 同主人，不另立权威。",
+    "rule": "层级只升不跳：SOURCE/OFFLINE/SIM/MOCK/SBC_LIVE 均不构成 HARDWARE_FULL；只有整机（15 关节+IMU+结构）一手实测可标 HARDWARE_FULL，且必须与 scope.live_hardware_accessed=true 同时成立。",
+    "borrowed_from": "joeynyc/awesome-microduck（社区第三方清单，非官方）Ecosystem Status 的 *Sim-only.* 标注纪律；非技术源，仅治理机制借鉴。",
+    "levels": {
+      "SOURCE_ONLY": "只有上游源码/文档/商品页可读；COLLECTED != PASS",
+      "OFFLINE": "本机离线实算/静态核验（sha、镜像核验、目录级）；未上板",
+      "SIM": "MuJoCo/mjlab/台架仿真体（含 body_server :7801）；robotd --sim 验不了总线/BLE/NPU",
+      "MOCK": "Mock 后端 / 假 transport；只验 UI 与数据流形状，不验硬件",
+      "SBC_LIVE": "真 SBC 主板 SSH 只读登录/观测；不是整机，live_hardware_accessed 语义见 scope",
+      "HARDWARE_FULL": "整机 15 关节+IMU+结构活体实测；需 scope.live_hardware_accessed=true 且有 evidence"
+    },
+    "ordered_weak_to_strong": [
+      "SOURCE_ONLY",
+      "OFFLINE",
+      "SIM",
+      "MOCK",
+      "SBC_LIVE",
+      "HARDWARE_FULL"
+    ],
+    "not_equivalent": [
+      "SIM != HARDWARE_FULL",
+      "MOCK != HARDWARE_FULL",
+      "SBC_LIVE != HARDWARE_FULL（登 SBC 主板不是整机）",
+      "OFFLINE sha 实算 != 上板验收",
+      "COLLECTED != PASS"
+    ]
+  }
 }

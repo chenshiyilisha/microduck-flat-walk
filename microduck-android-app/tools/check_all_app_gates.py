@@ -45,6 +45,13 @@ P_RATIO = re.compile(r"(\d+)\s*/\s*(\d+)\s+passed")
 P_PASSFAIL = re.compile(r"RESULT:\s*(\d+)\s+passed,\s*(\d+)\s+failed")
 P_ERRORS = re.compile(r"RESULT:\s*(\d+)\s+errors")
 
+# 🔴 发现用「正向声明」而非裸子串（准则 8：裸子串扫描会反噬）。
+# 只认 argparse 真实注册的 add_argument("--selftest"...) —— 注释/字符串里提到 --selftest
+# 的工具不该被发现。裸子串会让「注释提了一句但用 parse_known_args 吞参数还打印 passed」的
+# 脚本被误纳为真绿（已用 fixture 复现）。正则要容忍单/双引号与换行前的任意前缀。
+P_SELFTEST_DECL = re.compile(
+    r"add_argument\(\s*['\"]--selftest['\"]", re.MULTILINE)
+
 
 def discover(tools_dir: Path) -> list[Path]:
     found = []
@@ -55,7 +62,8 @@ def discover(tools_dir: Path) -> list[Path]:
             src = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if "--selftest" in src:
+        # 正向断言：必须真实声明 --selftest 入口，注释里提到不算。
+        if P_SELFTEST_DECL.search(src):
             found.append(f)
     return found
 
@@ -137,13 +145,25 @@ def artifact_isolation() -> dict:
 
 def selftest() -> list[tuple[str, bool]]:
     """用真实的子进程夹具验证 classify/run_one，不是拿字符串自己比自己。"""
+    def decl(body: str) -> str:
+        """给夹具补一个真实 --selftest 声明，使其可被正向发现逻辑纳入。"""
+        return ("import argparse\np = argparse.ArgumentParser()\n"
+                "p.add_argument('--selftest', action='store_true')\np.parse_known_args()\n" + body)
+
     fixtures = {
-        "fixture_good.py": "# --selftest\nprint('SELFTEST: 5/5 passed')\n",
-        "fixture_degraded_rc0.py": "# --selftest\nprint('SELFTEST: 1/5 passed')\n",
-        "fixture_rc1.py": "# --selftest\nimport sys\nprint('SELFTEST: 5/5 passed')\nsys.exit(1)\n",
-        "fixture_silent.py": "# --selftest\npass\n",
-        "fixture_precond.py": "# --selftest\nprint('PRECONDITION_FAIL: no env')\nprint('SELFTEST: 5/5 passed')\n",
-        "fixture_errors.py": "# --selftest\nprint('RESULT: 2 errors')\n",
+        "fixture_good.py": decl("print('SELFTEST: 5/5 passed')\n"),
+        "fixture_degraded_rc0.py": decl("print('SELFTEST: 1/5 passed')\n"),
+        "fixture_rc1.py": decl("import sys\nprint('SELFTEST: 5/5 passed')\nsys.exit(1)\n"),
+        "fixture_silent.py": decl("pass\n"),
+        "fixture_precond.py": decl("print('PRECONDITION_FAIL: no env')\nprint('SELFTEST: 5/5 passed')\n"),
+        "fixture_errors.py": decl("print('RESULT: 2 errors')\n"),
+        # 发现机制负对照（准则 8）：注释提到 --selftest 但无真实 add_argument 声明 ->
+        # 不得被发现；否则就是"裸子串误纳"假绿路径。
+        "fixture_comment_only.py":
+            "# this tool mentions --selftest in a comment but does not declare it\n"
+            "import argparse\np = argparse.ArgumentParser()\n"
+            "p.add_argument('--real')\np.parse_known_args()\n"
+            "print('SELFTEST: 5/5 passed')\n",
     }
     out: list[tuple[str, bool]] = []
     with tempfile.TemporaryDirectory(prefix="md_app_gates_") as td:
@@ -151,8 +171,13 @@ def selftest() -> list[tuple[str, bool]]:
         for name, body in fixtures.items():
             (d / name).write_text(body, encoding="utf-8")
         found = discover(d)
-        out.append(("发现逻辑抓到全部夹具且不含 runner 自身",
-                    len(found) == len(fixtures) and all(f.name != SELF for f in found)))
+        found_names = {f.name for f in found}
+        declared_expected = {n for n in fixtures if n != "fixture_comment_only.py"}
+        out.append(("发现集合不含 runner 自身", SELF not in found_names))
+        out.append(("发现=真实声明集合，注释提及的 fixture 不被发现",
+                    found_names == declared_expected))
+        out.append(("负对照:注释里提到 --selftest 但无声明 → 不被发现",
+                    "fixture_comment_only.py" not in found_names))
         got = {f.name: run_one(f, ["--selftest"], cwd=d) for f in found}
         out.append(("负对照:rc=0 但 1/5 passed 必红", not got["fixture_degraded_rc0.py"]["ok"]))
         out.append(("负对照:rc=1 必红", not got["fixture_rc1.py"]["ok"]))

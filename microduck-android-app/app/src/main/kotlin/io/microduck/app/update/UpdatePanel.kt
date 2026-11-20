@@ -1,6 +1,5 @@
 package io.microduck.app.update
 
-import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -54,27 +53,21 @@ class UpdatePanel(
     private fun color(res: Int) = ContextCompat.getColor(activity, res)
 
     init {
+        // 2026-11-19 去乱：撤自带圆角卡底（外层已用细分隔线分区），标题由
+        // 「版本与更新 · GitHub Releases」收为「版本与更新」——外层原「软件更新·GitHub Releases」
+        // 套娃标题已删，来源收进下方说明行，不再三层同义标题。
         view = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(color(R.color.md_card))
-                cornerRadius = activity.resources.getDimension(R.dimen.m3_corner_large)
-                setStroke(
-                    activity.resources.getDimensionPixelSize(R.dimen.m3_stroke_hairline),
-                    color(R.color.md_outline_variant),
-                )
-            }
-            val p = dp(12)
-            setPadding(p, dp(10), p, dp(10))
+            setPadding(dp(2), dp(4), dp(2), dp(4))
         }
         view.addView(TextView(activity).apply {
-            text = "版本与更新 · GitHub Releases"
-            textSize = 13f; setTextColor(color(R.color.md_text))
+            text = "版本与更新"
+            textSize = 12f; setTextColor(color(R.color.md_text))
             setTypeface(null, android.graphics.Typeface.BOLD)
             letterSpacing = 0.05f
         })
         view.addView(TextView(activity).apply {
-            text = "手动检查 · 不做后台轮询（GitHub REST API 未认证 60 次/小时）"
+            text = "GitHub Releases · 手动检查，不做后台轮询"
             textSize = 10f; setTextColor(color(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
         })
@@ -120,10 +113,17 @@ class UpdatePanel(
         }
     }
 
-    private fun actionButton(label: String, onClick: () -> Unit) = MaterialButton(activity).apply {
+    /** 次级按钮统一描边（2026-11-19 去乱）：原来默认填充态在设置页里是唯一亮蓝块，
+     *  与 BLE/BLE-Wi-Fi/恢复默认等描边按钮不同层级。本项目每屏只保留一个主填充按钮。 */
+    private fun actionButton(label: String, onClick: () -> Unit) = MaterialButton(activity, null,
+        com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
         text = label; textSize = 11f; minimumHeight = dp(44)
         contentDescription = label
         gravity = Gravity.CENTER
+        cornerRadius = activity.resources.getDimensionPixelSize(R.dimen.m3_corner_large)
+        strokeWidth = activity.resources.getDimensionPixelSize(R.dimen.m3_stroke_hairline)
+        strokeColor = android.content.res.ColorStateList.valueOf(color(R.color.md_outline))
+        setTextColor(color(R.color.md_text))
         setOnClickListener { onClick() }
     }
 

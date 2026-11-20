@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MicroDuck App · 界面设计稿（DeepSeek 全量稿·纠偏版）</title>
+<style>
+  :root{
+    /* 极致的深空灰与色彩规范 */
+    --bg: #090A0C;
+    --surface: #14161A;
+    --surface-hover: #1D2026;
+    --surface-glass: rgba(20, 22, 26, 0.65);
+    
+    --text: #F2F4F8;
+    --text-dim: #9BA1B0;
+    --text-muted: #5E6474;
+    
+    --primary: #4A8BFF;
+    --primary-glow: rgba(74, 139, 255, 0.25);
+    --warn: #FFB020;
+    --warn-bg: rgba(255, 176, 32, 0.15);
+    --ok: #34C759;
+    --bad: #FF453A;
+    --bad-bg: rgba(255, 69, 58, 0.15);
+    
+    --line: rgba(255, 255, 255, 0.08);
+    --line-highlight: rgba(255, 255, 255, 0.15);
+    
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+    
+    --radius-sm: 12px;
+    --radius-md: 16px;
+    --radius-lg: 24px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#000;color:var(--text);font-family:var(--sans);
+       line-height:1.5;padding:40px 20px 100px;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1240px;margin:0 auto;}
+  h1{font-size:28px;font-weight:800;letter-spacing:-0.02em;margin:0 0 8px;}
+  .sub{color:var(--text-dim);font-size:14px;margin:0 0 10px;}
+  
+  /* 布局网格 */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:40px 32px;}
+  .panel h2{font-size:16px;font-weight:700;letter-spacing:0.02em;color:var(--text);
+            margin:0 0 8px;display:flex;align-items:center;gap:12px;}
+  .panel .tag{font:12px var(--mono);color:var(--primary);border:1px solid var(--primary-glow);
+              padding:2px 8px;border-radius:6px;background:rgba(74,139,255,0.1);}
+  .panel .cap{font-size:13px;color:var(--text-dim);margin:0 0 20px;min-height:38px;line-height:1.6;}
+  
+  /* 手机外壳 */
+  .stage{background:#000;border:1px solid #222;border-radius:40px;padding:12px;
+         box-shadow:0 32px 64px rgba(0,0,0,0.8), inset 0 0 0 1px rgba(255,255,255,0.05);
+         width:100%;max-width:390px;margin:0 auto;}
+  .phone{background:var(--bg);border-radius:28px;overflow:hidden;position:relative;height: 100%; min-height: 640px; display: flex; flex-direction: column;}
+  
+  /* 顶部导航 */
+  .chrome{padding:16px 20px 12px;border-bottom:1px solid var(--line);
+          background:linear-gradient(to bottom, var(--surface), var(--bg)); flex-shrink: 0;}
+  .chrome-top{display:flex;align-items:center;justify-content:space-between;}
+  .chrome-top .brand{font-size:18px;font-weight:700;letter-spacing:-0.01em;}
+  .pill{font:12px var(--mono);padding:4px 10px;border-radius:20px;display:flex;align-items:center;gap:6px;font-weight:600;}
+  .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor;}
+  .pill.mock{color:var(--warn);background:var(--warn-bg);}
+  .pill.real{color:var(--ok);background:rgba(52,199,89,0.15);}
+  .chrome-sub{font-size:12px;color:var(--text-dim);margin-top:4px;font-family:var(--mono);}
+
+  .body{padding:20px; flex: 1; overflow-y: auto;}
+  .sec{margin-bottom:24px;}
+  .sec-t{font-size:14px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;color:var(--text);}
+  .sec-t .act{font-size:13px;color:var(--primary);font-weight:500;cursor:pointer;}
+  
+  /* 通用按钮与卡片 */
+  .btn{border-radius:var(--radius-md);font-size:15px;text-align:center;padding:14px;border:none;
+       cursor:pointer;user-select:none;transition:all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+       display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600;}
+  .btn:active{transform:scale(0.96);}
+  .btn.primary{background:var(--primary);color:#fff;box-shadow:0 8px 24px var(--primary-glow);}
+  .btn.secondary{background:var(--surface-hover);color:var(--text);border:1px solid var(--line);}
+  .btn-row{display:flex;gap:12px;}
+  .btn-row .btn{flex:1;}
+
+  .rows{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .row{display:flex;flex-direction:column;gap:6px;padding:16px;background:var(--surface);border-radius:var(--radius-md);border:1px solid var(--line);}
+  .row .k{font-size:12px;color:var(--text-dim);font-weight:500;}
+  .row .v{font:16px var(--mono);color:var(--text);font-weight:600;}
+  .row .v.na{color:var(--text-muted);font-weight:400;}
+
+  .fold{display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:500;
+        color:var(--text-dim);padding:16px;background:var(--surface);border-radius:var(--radius-md);
+        cursor:pointer;border:1px solid var(--line);}
+
+
+  /* 健康页 - 3D模型与呼吸灯 */
+  .model-container{background:radial-gradient(circle at center, #1E2229 0%, var(--surface) 100%);
+                   border-radius:var(--radius-lg);height:180px;position:relative;
+                   display:flex;align-items:center;justify-content:center;margin-bottom:20px;
+                   border:1px solid var(--line);overflow:hidden;}
+  .duck{width:64px;height:80px;position:relative;}
+  
+  .duck .head, .duck .body, .duck .leg { border:2px solid var(--primary); transition: all 0.3s; }
+  .duck .head{position:absolute;top:0;left:14px;width:36px;height:30px;border-radius:12px;}
+  .duck .body{position:absolute;top:32px;left:10px;width:44px;height:32px;border-radius:10px;}
+  .duck .leg{position:absolute;top:62px;width:12px;height:18px;border-radius:6px;}
+  .duck .l{left:14px;}.duck .r{right:14px;}
+  
+  .duck .joint{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok); transition: all 0.3s;}
+  .duck .j1{top:38px;left:11px;}.duck .j2{top:38px;right:11px;}
+  .duck .j3{top:68px;left:16px;}.duck .j4{top:68px;right:16px;}
+  
+  @keyframes pulse-head {
+    0% { border-color: var(--warn); box-shadow: inset 0 0 10px var(--warn-bg); }
+    50% { border-color: var(--bad); box-shadow: inset 0 0 20px var(--bad-bg), 0 0 15px rgba(255,69,58,0.4); }
+    100% { border-color: var(--warn); box-shadow: inset 0 0 10px var(--warn-bg); }
+  }
+  @keyframes pulse-joint {
+    0% { background: var(--warn); box-shadow: 0 0 10px var(--warn); transform: scale(1); }
+    50% { background: var(--bad); box-shadow: 0 0 20px var(--bad); transform: scale(1.3); }
+    100% { background: var(--warn); box-shadow: 0 0 10px var(--warn); transform: scale(1); }
+  }
+  
+  .duck.warn-head .head { animation: pulse-head 1.5s infinite ease-in-out; border-width: 2px; }
+  .duck.warn-head .jw { animation: pulse-joint 1.5s infinite ease-in-out; }
+  .duck .jw { top:14px; left:28px; }
+  
+  .duck.warn-leg-l .l { border-color: var(--bad); box-shadow: 0 0 15px var(--bad-bg); }
+  .duck.warn-leg-l .j3 { background: var(--bad); box-shadow: 0 0 15px var(--bad); }
+  .model-hint{position:absolute;bottom:12px;font-size:11px;color:var(--text-muted);font-weight:500;}
+
+  .grp{display:flex;align-items:center;justify-content:space-between;padding:16px;background:var(--surface);border-radius:var(--radius-md);margin-bottom:10px;font-size:15px;font-weight:500;border:1px solid var(--line);}
+  .grp .badge{font:12px var(--mono);color:var(--ok);padding:4px 8px;border-radius:8px;background:rgba(52,199,89,0.1);font-weight:600;}
+  .grp.warn{background:linear-gradient(90deg, var(--surface), var(--warn-bg));border-color:rgba(255,176,32,0.3);}
+  .grp.warn .badge{color:var(--warn);background:rgba(255,176,32,0.15);}
+
+  /* ToF 网格 */
+  .tofs{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin-top:16px;padding:8px;background:var(--surface);border-radius:var(--radius-md);border:1px solid var(--line);}
+  .tofs i{aspect-ratio:1;border-radius:4px;display:block;}
+  .legend{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text-dim);margin-top:12px;font-weight:500;}
+  .legend .bar{height:8px;flex:1;border-radius:4px;background:linear-gradient(90deg,#FF453A,#FFB020,#4A8BFF,#2E4A57);}
+
+  /* 设置页 - 阈值滑块 */
+  .banner{background:var(--bad-bg);border:1px solid rgba(255,69,58,0.3);border-radius:var(--radius-md);
+          padding:16px;font-size:13px;color:#FF9A94;display:flex;gap:12px;margin-bottom:16px;line-height:1.5;font-weight:500;}
+  
+  .setrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 0;border-bottom:1px solid var(--line);font-size:15px;font-weight:500;}
+  /* 固定标签列宽：门禁串「方向摇杆死区」(6字)最长，不固定会把它那行滑块挤歪、各行起点对不齐 */
+  .setrow > span:first-child{flex:0 0 100px;white-space:nowrap;}
+  .setrow:last-child{border-bottom:none;padding-bottom:0;}
+  
+  .slider-container{flex:1;display:flex;align-items:center;margin:0 2px;position:relative;}
+  .slider-container::before{content:"";position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:6px;border-radius:4px;
+    background:linear-gradient(90deg, var(--primary) 0%, var(--primary) 70%, var(--bad) 70%, var(--bad) 100%);opacity:0.3;}
+  
+  .slider{width:100%;height:6px;background:transparent;position:relative;}
+  .slider::after{content:"";position:absolute;left:65%;top:50%;transform:translate(-50%,-50%);width:20px;height:20px;
+          border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.4), 0 0 0 3px var(--surface);cursor:pointer;transition:transform 0.1s;z-index:2;}
+  .val{font:14px var(--mono);color:var(--primary);min-width:64px;text-align:right;font-weight:600;}
+  
+  .seg{display:flex;background:var(--surface-hover);border-radius:12px;padding:4px;}
+  .seg span{flex:1;text-align:center;padding:8px 16px;font-size:14px;color:var(--text-dim);border-radius:8px;cursor:pointer;transition:all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);font-weight:600;}
+  .seg span.on{background:#fff;color:#000;box-shadow:0 2px 8px rgba(0,0,0,0.2);}
+
+  /* 终端页 - 悬浮滑动 */
+  .term-wrapper { display: flex; flex-direction: column; height: 450px; background:#0D1117; border-radius:var(--radius-md); border:1px solid var(--line); position: relative; overflow: hidden;}
+  .term-output { flex: 1; padding:16px; font:13px/1.7 var(--mono); color:#C9D1D9; overflow-y: auto; padding-bottom: 100px;}
+  .term-output .p{color:var(--ok);font-weight:600;}
+  .term-output .g{color:#8B949E;}
+  
+  .term-bottom { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(13, 17, 23, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #21262D; display: flex; flex-direction: column; }
+  
+  .term-shortcuts { display: flex; gap: 8px; padding: 10px 16px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .term-shortcuts::-webkit-scrollbar { display: none; }
+  .term-shortcuts span { background:#21262D; color:#C9D1D9; padding:8px 14px; border-radius:8px; font:12px var(--mono); flex-shrink: 0; cursor:pointer; }
+  .term-shortcuts span:active { background:#30363D; }
+  
+  .term-input-bar { display:flex; align-items:center; padding:10px 16px; border-top:1px solid #21262D; gap:12px; }
+  .term-input-bar input { flex:1; background:transparent; border:none; color:#fff; font:14px var(--mono); outline:none; }
+  .term-input-bar .btn { padding:8px 20px; font-size:13px; border-radius:8px; background:var(--primary); color:#fff; border:none; font-weight:600;}
+
+  /* 横屏遥控页 */
+  .stage.wide{grid-column:1/-1; max-width: 100%; border-radius: 32px; padding: 12px;}
+  .land{background:#000;border-radius:24px;overflow:hidden;position:relative;width:100%; aspect-ratio: 16/9; border:1px solid #222;}
+  .video-bg{position:absolute;inset:0;background:#0C0E12;display:flex;align-items:center;justify-content:center; color:var(--text-muted);}
+  
+  .hud{position:absolute;top:20px;right:20px;display:flex;flex-direction:column;gap:10px;align-items:flex-end;}
+  .dcard{background:var(--surface-glass);backdrop-filter:blur(16px);border:1px solid var(--line-highlight);border-radius:12px;padding:8px 16px;display:flex;justify-content:space-between;gap:20px;min-width:150px;}
+  .dcard .k{font-size:12px;color:var(--text-dim);}
+  .dcard .v{font:14px var(--mono);color:var(--text);font-weight:600;}
+  .dcard .v.na{color:var(--text-muted);}
+
+  .hud-left{position:absolute;top:20px;left:20px;}
+  .back-btn{width:36px;height:36px;background:var(--surface-glass);backdrop-filter:blur(16px);border:1px solid var(--line-highlight);border-radius:10px;display:flex;align-items:center;justify-content:center;}
+
+  .center-status{position:absolute;top:45%;left:50%;transform:translate(-50%,-50%);text-align:center;}
+  .center-status .big{font:800 42px var(--mono);letter-spacing:0.08em;color:var(--ok);text-shadow:0 0 32px rgba(52,199,89,0.4);}
+  .center-status .small{font-size:13px;color:var(--text-dim);margin-top:8px;}
+
+  /* 摇杆发光 */
+  @keyframes safe-pulse {
+    0% { box-shadow: 0 0 10px rgba(52,199,89,0.1), inset 0 0 10px rgba(52,199,89,0.05); border-color: var(--line); }
+    50% { box-shadow: 0 0 20px rgba(52,199,89,0.3), inset 0 0 20px rgba(52,199,89,0.15); border-color: rgba(52,199,89,0.3); }
+    100% { box-shadow: 0 0 10px rgba(52,199,89,0.1), inset 0 0 10px rgba(52,199,89,0.05); border-color: var(--line); }
+  }
+
+  .joystick{position:absolute;bottom:24px;width:116px;height:116px;border-radius:50%;
+       background:rgba(20,22,26,0.6);backdrop-filter:blur(8px);
+       animation: safe-pulse 3s infinite ease-in-out; transition: all 0.2s;}
+       
+  .joystick::before{content:"";position:absolute;inset:22%;border:2px dashed rgba(255,255,255,0.1);border-radius:50%;}
+  .joystick::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%);
+       border-radius:50%;background:linear-gradient(135deg, #3A404D, #232730);border:1px solid var(--line-highlight);box-shadow:0 6px 16px rgba(0,0,0,0.5);}
+  .joystick .lbl{position:absolute;bottom:-28px;left:0;right:0;text-align:center;font-size:13px;color:var(--text-dim);font-weight:600;}
+  
+  .joystick.left{left:32px;}
+  .joystick.right{right:32px;}
+
+  /* 摇杆激活=中性高亮：颜色只留给警示。去左蓝/右橙双色（评审稿一致要求，用户首轮也批过）
+     ⚠️ 呼吸/发光为设计稿演示效果；真机不做动画（uiautomator 1000ms 静默窗），改静态高亮。 */
+  .joystick.left:active, .joystick.right:active {
+    animation: none;
+    border-color: rgba(242,244,248,0.7);
+    box-shadow: 0 0 24px rgba(242,244,248,0.18), inset 0 0 18px rgba(242,244,248,0.12);
+  }
+
+
+  .note{font-size:13px;color:var(--text-dim);margin-top:20px;line-height:1.6;}
+  .note b{color:var(--primary);}
+  .footer{margin-top:64px;border-top:1px solid var(--line);padding-top:32px;font-size:13px;color:var(--text-muted);text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MicroDuck App · 界面设计稿（纠偏版）</h1>
+  <p class="sub">基于 DeepSeek 全量稿 v6.5 · 保留交互亮点（终端悬浮栏 / 3D 联动 / 滑块阈值） · 修正门禁硬串、安全文案与去 AI 味配色</p>
+  <p class="sub" style="font-size:12px">已纠偏：摇杆中性激活、门禁文案逐字回写、Mock 诚实标注、动画仅设计稿演示（真机用静态高亮）</p>
+
+  <div class="grid">
+    <!-- 状态页 -->
+    <div class="panel">
+      <h2>状态 <span class="tag">P1</span></h2>
+      <p class="cap">核心控制区：主按钮「进入遥控」，一键休息 / 恢复站立为次级；实机状态缺字段用 --，不造数。</p>
+      <div class="stage"><div class="phone">
+        <div class="chrome">
+          <div class="chrome-top"><span class="brand">MicroDuck</span><span class="pill mock">MOCK</span></div>
+          <div class="chrome-sub">● MOCK 演示夹具 · 手动 · 0 帧</div>
+        </div>
+        <div class="body">
+          <div class="sec">
+            <div class="sec-t">控制模式</div>
+            <div class="seg" style="margin-bottom:20px;"><span class="on">手动模式</span><span>自动模式</span></div>
+            <div class="btn primary">进入遥控</div>
+            <div style="height:12px"></div>
+            <div class="btn-row">
+              <div class="btn secondary">一键休息</div>
+              <div class="btn secondary">恢复站立</div>
+            </div>
+          </div>
+          
+          <div class="sec" style="margin-top:32px;">
+            <div class="sec-t">实机状态 <span class="act">刷新</span></div>
+            <div class="rows">
+              <div class="row"><span class="k">控制环</span><span class="v">50 Hz</span></div>
+              <div class="row"><span class="k">策略</span><span class="v">Stand</span></div>
+              <div class="row"><span class="k">电流</span><span class="v na">--</span></div>
+              <div class="row"><span class="k">航向</span><span class="v na">--</span></div>
+            </div>
+          </div>
+          
+          <div class="sec" style="margin-top:24px;">
+            <div class="fold">App 本地遥测（非实机） <span class="act">展开 ▸</span></div>
+          </div>
+        </div>
+      </div></div>
+      <div class="note"><b>主次分明：</b>每页唯一主填充按钮「进入遥控」，休息/站立为描边次级；状态格缺字段显示 <code>--</code>，不默认 0/绿（UNVERIFIED ≠ PASS）。</div>
+    </div>
+
+    <!-- 健康页 -->
+    <div class="panel">
+      <h2>健康 · 模型联动 <span class="tag">P1</span></h2>
+      <p class="cap">出现故障警告时，3D 模型对应区块会呈现纯 CSS 驱动的呼吸闪烁，一眼定位问题。</p>
+      <div class="stage"><div class="phone">
+        <div class="chrome">
+          <div class="chrome-top"><span class="brand">MicroDuck</span><span class="pill mock">MOCK</span></div>
+          <div class="chrome-sub">● MOCK 演示夹具 · 手动 · 0 帧</div>
+        </div>
+        <div class="body">
+          <div class="model-container">
+            <!-- 模型容器添加 warn-head 类名，头部闪烁 -->
+            <div class="duck warn-head">
+              <div class="head"></div><div class="body"></div>
+              <div class="leg l"></div><div class="leg r"></div>
+              <i class="joint jw"></i><i class="joint j1"></i><i class="joint j2"></i><i class="joint j3"></i><i class="joint j4"></i>
+            </div>
+            <span class="model-hint">头部异常 · 呼吸警告中</span>
+          </div>
+          
+          <div class="sec">
+            <div class="sec-t">硬件状态</div>
+            <div class="grp warn">颈·头·喙 (30-34) <span class="badge">▲ 警告 1</span></div>
+            <div class="grp">左腿 (20-24) <span class="badge">● 良好</span></div>
+            <div class="grp">右腿 (10-14) <span class="badge">● 良好</span></div>
+          </div>
+          
+          <div class="sec" style="margin-top:32px;">
+            <div class="sec-t">头部 ToF · 8×8 <span class="act">等待帧</span></div>
+            <div class="tofs">
+              <i style="background:#2e4a57"></i><i style="background:#2e4a57"></i><i style="background:#6b8a95"></i><i style="background:#b07a3a"></i><i style="background:#8e3b39"></i><i style="background:#b07a3a"></i><i style="background:#6b8a95"></i><i style="background:#2e4a57"></i>
+              <i style="background:#2e4a57"></i><i style="background:#6b8a95"></i><i style="background:#b07a3a"></i><i style="background:#8e3b39"></i><i style="background:#8e3b39"></i><i style="background:#8e3b39"></i><i style="background:#b07a3a"></i><i style="background:#6b8a95"></i>
+              <i style="background:#6b8a95"></i><i style="background:#b07a3a"></i><i style="background:#8e3b39"></i><i style="background:#2e2a25"></i><i style="background:#2e2a25"></i><i style="background:#8e3b39"></i><i style="background:#b07a3a"></i><i style="background:#6b8a95"></i>
+              <i style="background:#2e4a57"></i><i style="background:#6b8a95"></i><i style="background:#b07a3a"></i><i style="background:#6b8a95"></i><i style="background:#2e4a57"></i><i style="background:#6b8a95"></i><i style="background:#b07a3a"></i><i style="background:#2e4a57"></i>
+            </div>
+            <div class="legend">近 <span class="bar"></span> 远</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="note"><b>实现方式：</b>通过 CSS `@keyframes` 及类名控制，头部部位和关节呈现高亮呼吸反馈。</div>
+    </div>
+
+    <!-- 设置页 -->
+    <div class="panel">
+      <h2>设置 · 阈值可视化 <span class="tag">P1</span></h2>
+      <p class="cap">滑块加入危险阈值可视化。超过安全值区域轨道变红，参数调整更直观。</p>
+      <div class="stage"><div class="phone">
+        <div class="chrome">
+          <div class="chrome-top"><span class="brand">MicroDuck</span><span class="pill mock">MOCK</span></div>
+          <div class="chrome-sub">● MOCK 演示夹具 · 手动 · 0 帧</div>
+        </div>
+        <div class="body">
+          <div class="sec">
+            <div class="sec-t">遥控参数</div>
+            <div class="setrow">
+              <span>控制链路</span>
+              <span style="font:14px var(--mono);color:var(--text-dim)">JSON-RPC（TCP/仿真）▾</span>
+            </div>
+            <div class="setrow">
+              <span>前进上限</span>
+              <div class="slider-container">
+                <div class="slider"></div>
+              </div>
+              <span class="val">0.35 m/s</span>
+            </div>
+            <div class="setrow">
+              <span>转向上限</span>
+              <div class="slider-container">
+                <div class="slider"></div>
+              </div>
+              <span class="val">1.20 rad/s</span>
+            </div>
+            <div class="setrow">
+              <span>方向摇杆死区</span>
+              <div class="slider-container">
+                <div class="slider"></div>
+              </div>
+              <span class="val">0.08</span>
+            </div>
+            <div class="setrow">
+              <span>反转 Y 轴</span><span class="seg" style="width:100px"><span class="on">开</span><span>关</span></span>
+            </div>
+          </div>
+          
+          <div class="sec" style="margin-top:32px;">
+            <div class="sec-t">连接与配网</div>
+            <div class="setrow">
+              <span>BLE 连接</span><div class="btn secondary" style="padding:8px 16px;font-size:13px;border-radius:10px;">扫描附近 BLE 设备</div>
+            </div>
+            <div class="banner" style="margin-top:16px;">
+              <span style="font-size:18px;">⚠️</span>
+              <span>当前 Wi-Fi 密码以明文传输，仅在可信网络使用（受固件限制）。</span>
+            </div>
+            <div class="btn-row" style="margin-top:16px">
+              <div class="btn secondary">连接 · 明文</div>
+              <div class="btn secondary" style="color:var(--text-muted)">忘记网络</div>
+            </div>
+          </div>
+        </div>
+      </div></div>
+      <div class="note"><b>预警可视化：</b>滑块右侧超过 70% 的区域底色变红，提示操作者此区间的高风险。</div>
+    </div>
+
+    <!-- 终端页 -->
+    <div class="panel">
+      <h2>终端 · 悬浮滑动 <span class="tag">P2</span></h2>
+      <p class="cap">输入框和快捷键栏彻底固定于底部。快捷键单行排列，横向滑动不换行，让终端输出区永远最大化。</p>
+      <div class="stage"><div class="phone">
+        <div class="chrome">
+          <div class="chrome-top"><span class="brand">MicroDuck</span><span class="pill real">REAL</span></div>
+          <div class="chrome-sub">已连接 · 手动 · 48 帧</div>
+        </div>
+        <div class="body" style="padding: 12px;">
+          
+          <div class="term-wrapper">
+            <div class="term-output">
+              <div><span class="p">$</span> robotctl health --json</div>
+              <div class="g">{ "ok": true, "joints": 15, "imu": "ok" }</div>
+              <div><span class="p">$</span> systemctl is-active updaterd</div>
+              <div class="g">inactive</div>
+              <div><span class="p">$</span> tail -f /var/log/syslog</div>
+              <div class="g">Nov 20 08:44:12 microduck kernel: [ 12.34] motor init ok...</div>
+              <div class="g">Nov 20 08:44:15 microduck systemd[1]: Started Update Daemon.</div>
+              <div><span class="p">&gt;</span> <span style="color:#fff">_</span></div>
+            </div>
+            
+            <div class="term-bottom">
+              <div class="term-shortcuts">
+                <span>Esc</span><span>Ctrl</span><span>Tab</span><span>↑</span><span>↓</span><span>←</span><span>→</span><span>|</span><span>~</span><span>/</span><span>-</span>
+              </div>
+              <div class="term-input-bar">
+                <span style="color:var(--ok);font:14px var(--mono);font-weight:bold;">&gt;</span>
+                <input type="text" placeholder="输入命令..." readonly>
+                <div class="btn">执行</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div></div>
+      <div class="note"><b>键盘追随：</b>底部操作区独立悬浮，快捷键使用 `overflow-x: auto` 实现丝滑横向滑动。</div>
+    </div>
+
+    <!-- 横屏遥控页 -->
+    <div class="panel" style="grid-column: 1 / -1;">
+      <h2>横屏遥控 · P0 保命手感 <span class="tag">P0 核心</span></h2>
+      <p class="cap">摇杆平时中性灰、按下才统一高亮；视频未接入用占位不铺黑；HUD 半透明数据牌、缺值用 --；松手即停。</p>
+      <div class="stage wide"><div class="land">
+        <div class="video-bg">
+          <span>摄像头画面未接入</span>
+        </div>
+        
+        <div class="hud-left">
+          <div class="back-btn">←</div>
+        </div>
+        
+        <div class="hud">
+          <div class="dcard"><span class="k">电池</span><span class="v na">--</span></div>
+          <div class="dcard"><span class="k">实际速度</span><span class="v">0.35 m/s</span></div>
+          <div class="dcard"><span class="k">状态帧</span><span class="v">48 · 50Hz</span></div>
+        </div>
+
+        <div class="center-status">
+          <div class="big">READY</div>
+          <div class="small">松手即停 · 无操作自动归零</div>
+        </div>
+
+        <!-- 摇杆：中性灰，按下统一高亮（颜色只留给警示） -->
+        <div class="joystick left"><span class="lbl">方向</span></div>
+        <div class="joystick right"><span class="lbl">头部</span></div>
+
+      </div></div>
+      <div class="note"><b>按下体验：</b>摇杆平时中性灰、按下统一中性高亮（去蓝/橙双色，颜色只传达警示）；松手即停由 <code>DriveController</code> 归零 + 发 <code>robot.move</code> 全零帧保证。⚠️ 呼吸/发光为设计稿演示，真机改静态高亮（uiautomator 1000ms 静默窗）。</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    设计稿（纠偏版）· 保留全量稿的交互亮点，修正门禁硬串 / 安全文案 / Mock 诚实标注 / 摇杆配色。<br>
+    这是设计稿，非已落地代码。落地按 P0→P1→P2 分阶段，每阶段跑 core 自检 + check_all_app_gates + assembleDebug + device_ui_check 59/59 + 真机目视。<br>
+    呼吸/发光动画仅为设计稿演示；真机实现用静态高亮与触觉反馈（uiautomator 静默窗 + 去 AI 味决策）。整机落地前 ship_verdict = NOT_SHIPPABLE。
+  </div>
+</div>
+</body>
+</html>

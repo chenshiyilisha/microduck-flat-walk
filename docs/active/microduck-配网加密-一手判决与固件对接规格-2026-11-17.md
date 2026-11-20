@@ -5,6 +5,59 @@ _本文只做**技术判决 + 跨端对接契约**，不改固件源码、不宣
 _术语遵循 `docs/active/microduck-来源术语约定-2026-11-13.md`：「原厂/官方」只指 Pollen Robotics。_
 _整机未落地 ⇒ `ship_verdict=NOT_SHIPPABLE` 不变；`UNVERIFIED != PASS`。_
 
+> **2026-11-18 一手更新（跨版本翻案证据，不改下方原判决）**：原厂 `pollen-robotics/microduck@main`
+> 的 `btd` **已经把默认加密做了进去**，技术路线从「应用层封密」转向「**链路层加密 + setup-code PSK**」：
+> - 源码一手：`btd/src/main.rs:123` = `let require_pairing = args.require_pairing || !args.insecure_no_pairing;`
+>   ⇒ **默认 require_pairing=true**（`--insecure-no-pairing` 变成显式的 bench-only 退路）；
+>   `main.rs:44-46,128-152` 引入 `secure_psk_file` / systemd 导入的 `ble-psk` credential /
+>   `btd::secure::Config::load(&path, id)`，`id` = `robotd_params::serial::this_first_name()`（SoC 序列派生的
+>   "first name"，与 QR 上的 setup-code 同源）；`btd/src/bluez.rs` 有 `NoInputNoOutput` headless agent +
+>   `encrypt_read/encrypt_write = require_pairing`。
+> - 文档一手：`docs/design/app-path-design.md` 顶部 "Security update (production candidate)" +
+>   §5.5 正文已改写：2026-11-08 真 Android 手机对 CI 候选镜像配对成功，加密 GATT read / pre-PIN 拒绝 /
+>   post-PIN `system.info` 都成功。
+> - **但关键边界仍全部挂着**：仍是 **just-works 未认证**（机器人无法比对数字，配对时的主动攻击者仍在
+>   威胁模型内）；**iPhone、Wi-Fi provisioning、最终生产镜像全未测**；文档明写启动时的 agent 修复
+>   "still needs end-to-end Android and iPhone validation"，且 `000000` factory PIN 必须被替换。
+> - **🔴 2026-11-18 晚一手订正（读 `secure.rs`/`agent.rs`/`duck-auth/lib.rs`，上面「已把默认加密做进去」表述过头）**：
+>   原厂默认加密的准确含义 = **just-works 链路加密（防被动嗅探、未认证）+ `000000` PIN 门**。`agent.rs` 明写
+>   配对确认「does **not** authenticate the link」；真正能认证机器人的 `duck_auth` Noise
+>   （`Noise_NNpsk0_25519_ChaChaPoly_SHA256` + per-robot 64hex PSK）`lib.rs:1-5` 自述 **"not wired into either
+>   endpoint … Candidate … needs an independent protocol review"**，`secure.rs` 明写 **"must not be enabled by
+>   default yet"**，且 `main.rs` 仅当 `psk_file` 存在（显式 flag / systemd `ImportCredential=ble-psk`）才启用 ⇒
+>   **Noise 会话是未接线的候选原型，不是已交付的默认安全**。三方格局（原厂 Noise 原型 / kissqy 明文 /
+>   Reachy 应用层已上线但自承 MITM）与路线裁决见
+>   `docs/active/microduck-原厂Noise加密一手核证-三方格局与路线裁决-2026-11-18.md`。
+> - **对本 App 的判定**：本 App 实际对接 fanhao fork（API40），本地同源副本
+>   （`.upstream/DuckBuddy-main` / `ft1910` `btd/src/main.rs:123`）= `if !args.require_pairing { warn }`
+>   ⇒ **默认仍不加密**，与下面 §1 原判决一致，原判决对当前对接目标**继续有效**。
+> - **🔴 2026-11-18 晚一手翻案（纠正上面两处，源码已拉到本地）**：已把 `kissqy/Microduck-kissqy@main`
+>   整包拉到本地（`/tmp/kissqy-src/Microduck-kissqy-main`，318MB gzip 校验通过、4903 文件），这才是本 App
+>   对接的固件线（记忆里 `hd1910-v167-trunk-imu-i2c` 实为 `microduck-hd1910/firmware/`，版本 0.15.1 /
+>   HD1910 control.43 / `API_VERSION=40` / R17 V167）。一手核证改写上面两条：
+>   - **fanhao/kissqy 是否默认加密 = 已证实「不加密」，不再是 UNVERIFIED**：主线、
+>     `versions/v167/`、`versions/v260/` 三份 `btd/src/main.rs` **sha256 完全相同**
+>     （`181535f6...`），都是 `if !args.require_pairing { warn("...PIN and any wifi passphrase cross
+>     this link in clear...") }`，且全仓 `grep secure_psk|setup_code|btd::secure` **零命中** ⇒ 它没有吸收
+>     上面原厂 main 的链路层加密改动。原判决 §1「目标固件明文传密码、零加解密实现」**被一手源码直接坐实**。
+>   - **§4 的 X25519 应用层方案不是「过时」，而是被对口项目验证过的正选之一（纠正上轮误判）**：
+>     kissqy 自己的 `firmware/docs/design/app-path-design.md` §5.5 记录 **Reachy Mini 用
+>     `x25519-hkdf-sha256-aesgcm`（ephemeral ECDH + PIN 作 HKDF salt + SSID 作 AAD）在两大手机平台生产在用、
+>     过 App Review**，专防被动嗅探；§8.1 现列**三候选**（① 修链路层 ② 应用层封密 ③ **封整个会话**：
+>     `hello` 后一次建 crypto 覆盖其后所有帧、唯一能覆盖 `system.authenticate`）。§5.5 还给出
+>     2026-09-14 iPhone A/B 新证据：**手机上 CoreBluetooth 会发起 SMP、弹出配对提示（笔记本 macOS 才 hang）**，
+>     故「默认不加密」的 mac hang 理由在手机侧不成立，但加密 read 是否完成仍未测。
+>   - **裁决**：路线取舍仍需用户拍板 + 真机对拍（被动嗅探威胁下 ②/③ 可用、主动 MITM 三者都挡不住）；
+>     §4 正文一字不改。完整一手核证见
+>     `docs/active/microduck-kissqy源码核证-加密路线一手判决-2026-11-18.md`。
+>   - **🔴 2026-11-18 晚再补（一手读 Reachy 源码，纠正上面措辞的可能误读）**：上面「生产在用、过 App Review」
+>     只是**部署事实，不是安全证据**。一手读 `pollen-robotics/reachy_mini` 的
+>     `wifi_config.py`/`BLE_WIFI_PROVISIONING.md` 发现：该方案**自承挡不住主动 MITM**（5 字符 PIN 可被离线爆破），
+>     并明确把早先「active MITM can't derive the key without the PIN」宣称判为 **wrong 且已删除**，fix=PAKE(CPace/SPAKE2)
+>     列为 follow-up。⇒ 不能因「Reachy 生产在用」就把它（或本 §4 同构方案）当成「安全已解决」；本 §4 用随机 salt 而非
+>     PIN 更强，但链路未认证的根本面仍在，正式安全评审前不得对外称安全配网。逐项比对见
+>     `docs/active/microduck-Reachy加密一手核证-与本项目方案比对-2026-11-18.md`。
+
 ---
 
 ## 0. 一句话结论

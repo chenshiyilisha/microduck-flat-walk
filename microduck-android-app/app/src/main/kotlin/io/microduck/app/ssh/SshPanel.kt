@@ -2,6 +2,7 @@ package io.microduck.app.ssh
 
 import android.app.AlertDialog
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.text.InputType
@@ -91,6 +92,29 @@ class SshPanel(
     private var terminal = TerminalEmulator(cols = 80, rows = 40) { }
     private var snapshotDisposable: Disposable? = null
 
+    /**
+     * 11-20 视觉落地：Ghost 描边按钮（两份评审稿共识 + 设计稿精神）。
+     * 原快捷命令=蓝实心、启动 updaterd=黄实心，评审稿批「颜色杂乱、深色底上刺眼，
+     * 低频/危险操作不该比主 CTA 抢眼」。改为 1dp 描边 + 透明底 + 中性/警示文字：
+     *  · neutral：md_outline 描边 + md_text_dim 文字（只读快捷命令）
+     *  · warning：md_warn 描边 + md_warn 文字（写操作 updaterd，保留警示语义但不做高饱和块）
+     * 🔴 只改样式；按钮文案、contentDescription、命令全文一字不动（真机门禁硬串）。
+     */
+    private fun ghostButton(label: String, desc: String, warning: Boolean = false,
+                            onClick: () -> Unit) =
+        MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = label; textSize = 10.5f; minimumHeight = dp(38)
+            contentDescription = desc
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+            cornerRadius = dp(10)
+            strokeWidth = dp(1)
+            val tint = context.getColor(if (warning) R.color.md_warn else R.color.md_outline)
+            strokeColor = ColorStateList.valueOf(tint)
+            backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+            setTextColor(context.getColor(if (warning) R.color.md_warn else R.color.md_text))
+            setOnClickListener { onClick() }
+        }
+
     /** 快捷只读命令：不编造控制命令，只放一手实机依据或 Linux 平台通用只读命令。
      *  🔴 标签控制在 ≤2 字：4 个按钮均分窄屏宽度（实测 vivo V2338A 每个约 62dp），
      *  4 字标签在 MaterialButton 默认 inset + 字距下被截成「健…/更…」省略号
@@ -120,23 +144,24 @@ class SshPanel(
             "启动后请点「更新服务状态」复核 is-active=active（负对照：启动前为 inactive）。"
 
     init {
-        radius = dp(20).toFloat(); cardElevation = 0f
-        strokeWidth = dp(1); setStrokeColor(context.getColor(R.color.md_outline_variant))
-        setCardBackgroundColor(context.getColor(R.color.md_card))
-        setContentPadding(dp(12), dp(10), dp(12), dp(10))
+        // 安静仪表盘：外层 MaterialCardView 扁平成页内容（无 elevation / 无描边浮卡感）。
+        radius = 0f; cardElevation = 0f
+        strokeWidth = 0
+        setCardBackgroundColor(context.getColor(R.color.md_bg))
+        setContentPadding(dp(4), dp(4), dp(4), dp(8))
 
         val root = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 
         root.addView(TextView(context).apply {
             text = "SSH 远程终端 · 主板命令行"
-            textSize = 13f; setTypeface(null, Typeface.BOLD)
+            textSize = 12f; setTypeface(null, Typeface.BOLD)
             setTextColor(context.getColor(R.color.md_text))
         })
         root.addView(TextView(context).apply {
             text = "凭据默认不保存 · 主机指纹需肉眼核对 · 只读快捷命令"
             textSize = 10.5f; setTextColor(context.getColor(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, dp(2), 0, dp(6))
+            setPadding(0, dp(2), 0, dp(8))
         })
 
         // ── 凭据区（2×2）──
@@ -169,10 +194,16 @@ class SshPanel(
         val btnRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         connectBtn = MaterialButton(context).apply {
             text = "连接"; textSize = 12f; minimumHeight = dp(44)
+            cornerRadius = dp(8)
             setOnClickListener { connect() }
         }
-        disconnectBtn = MaterialButton(context).apply {
+        disconnectBtn = MaterialButton(context, null,
+            com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "断开"; textSize = 12f; minimumHeight = dp(44)
+            cornerRadius = dp(8)
+            strokeWidth = dp(1)
+            strokeColor = ColorStateList.valueOf(context.getColor(R.color.md_outline))
+            setTextColor(context.getColor(R.color.md_text))
             isEnabled = false
             setOnClickListener { disconnect() }
         }
@@ -201,14 +232,7 @@ class SshPanel(
         // ── 快捷只读命令 ──
         val quickRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         quickCommands.forEachIndexed { idx, (cmd, label) ->
-            val b = MaterialButton(context).apply {
-                text = label; textSize = 10.5f; minimumHeight = dp(38)
-                contentDescription = "快捷命令 $label"
-                // 🔴 防折行：单行 + 末尾省略号。长命令的全文由 contentDescription 承载，
-                // 按钮可视文本永不换行（否则窄屏均分时按钮被撑高变形）。
-                maxLines = 1; ellipsize = TextUtils.TruncateAt.END
-                setOnClickListener { runCommand(cmd) }
-            }
+            val b = ghostButton(label, "快捷命令 $label") { runCommand(cmd) }
             quickRow.addView(b, LinearLayout.LayoutParams(0, WRAP, 1f).also {
                 if (idx > 0) it.marginStart = dp(4)
             })
@@ -216,18 +240,15 @@ class SshPanel(
         root.addView(quickRow)
 
         // ── 写操作：启动 updaterd（默认被关），必须二次确认，绝不自动执行 ──
-        // 单独一行 + 警示色，与上面的只读快捷命令区视觉隔离，避免误触。
+        // 单独一行 + 警示描边（11-20 去高饱和黄实心：低频写操作不该最抢眼）；
+        // 与上面的只读快捷命令区视觉隔离，避免误触。
         // 🔴 按钮文字只留「启动 updaterd」（用户 2026-11-16：长文本在窄屏折行、
         // 按钮被撑变形）；「默认关闭 · 需确认」的警示语义由下方说明文字承载，
         // 二次确认对话框里也完整展示，不丢信息。
-        val writeBtn = MaterialButton(context).apply {
-            text = "启动 updaterd"
-            textSize = 11f; minimumHeight = dp(40)
-            contentDescription = "写操作 启动 updaterd（默认关闭，需二次确认）"
-            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
-            setBackgroundColor(context.getColor(R.color.md_warn))
-            setTextColor(context.getColor(R.color.md_bg))
-            setOnClickListener { confirmStartUpdaterd() }
+        // 11-20 配色：md_warn 描边 + md_warn 文字（保留警示语义，不做高饱和实心块）。
+        val writeBtn = ghostButton("启动 updaterd",
+            "写操作 启动 updaterd（默认关闭，需二次确认）", warning = true) {
+            confirmStartUpdaterd()
         }
         root.addView(writeBtn, LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.topMargin = dp(6)
@@ -261,15 +282,15 @@ class SshPanel(
         })
         root.addView(cmdRow, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
 
-        // ── 输出区（等宽 + 可滚动）──
+        // 输出区：等宽 + 暖近黑终端底（与安静仪表盘暖调一致，非冷蓝 #0A1626）。
         outputText = TextView(context).apply {
             text = ""; textSize = 10.5f
             setTypeface(Typeface.MONOSPACE)
-            setTextColor(Color.parseColor("#E6EDF3"))
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setTextColor(context.getColor(R.color.md_text))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
         }
         outputScroll = ScrollView(context).apply {
-            setBackgroundColor(Color.parseColor("#0A1626"))
+            background = roundedCard(context.getColor(R.color.md_card), 8)
             addView(outputText, LinearLayout.LayoutParams(MATCH, WRAP))
         }
         root.addView(outputScroll, LinearLayout.LayoutParams(MATCH, 0, 1f).also {
@@ -309,7 +330,7 @@ class SshPanel(
         terminal.write("\u001b[2J\u001b[H")
         terminal.write(s.lastOutput)
         outputText.text = terminal.render()
-        outputText.setTextColor(Color.parseColor("#E6EDF3"))
+        outputText.setTextColor(context.getColor(R.color.md_text))
         outputScroll.post { outputScroll.fullScroll(View.FOCUS_DOWN) }
     }
 

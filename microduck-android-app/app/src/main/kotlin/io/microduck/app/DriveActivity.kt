@@ -134,6 +134,10 @@ class DriveActivity : AppCompatActivity() {
     private lateinit var exitButton: ImageButton
     private lateinit var autoNotice: TextView
     private lateinit var counterText: TextView
+    /** 中央安全态 READY；操作中淡化，守 FPV「中心留空」。 */
+    private lateinit var centerStatus: TextView
+    private lateinit var centerStatusSub: TextView
+    private lateinit var centerBlock: LinearLayout
     private lateinit var sourceRow: TextView
     private lateinit var signalRow: TextView
     /** 控制接管/已停/挂起 状态药丸（Teach-pendant enabling 状态可见化 + TechnoLynx 读序#4）。 */
@@ -188,10 +192,16 @@ class DriveActivity : AppCompatActivity() {
         hudStack.addView(sourceRow, LinearLayout.LayoutParams(WRAP, WRAP).also { it.topMargin = dp(2) })
         hudStack.addView(signalRow, LinearLayout.LayoutParams(WRAP, WRAP).also { it.topMargin = dp(2) })
         root.addView(hudStack, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.START))
-        // 右上角：驾驶读数（实际速度/命令→实际/头部°/电量/状态帧率）——避开左上角的控制组
+        // 右上角：半透明数据牌贴边（FPV OSD：中心留空、遥测贴角）。
         rightTop = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         cells.subList(1, 6).forEach { v ->
-            rightTop.addView(v, LinearLayout.LayoutParams(WRAP, WRAP).also { it.topMargin = dp(2) })
+            v.background = GradientDrawable().apply {
+                setColor(Color.argb(150, 0x1E, 0x1C, 0x19))
+                cornerRadius = dp(8).toFloat()
+                setStroke(dp(1), Color.argb(70, 0x3A, 0x37, 0x31))
+            }
+            v.setPadding(dp(10), dp(6), dp(10), dp(6))
+            rightTop.addView(v, LinearLayout.LayoutParams(WRAP, WRAP).also { it.topMargin = dp(4) })
         }
         root.addView(rightTop, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.END))
         // 顶部中央：链路横幅 + 告警（垂直堆叠，触发时横跨，平时 GONE 不占位）
@@ -206,6 +216,31 @@ class DriveActivity : AppCompatActivity() {
         autoNotice = buildAutoNotice()
         root.addView(autoNotice, FrameLayout.LayoutParams(
             minOf(dp(420), (screenW * 0.62f).toInt()), WRAP, Gravity.CENTER))
+
+        // 中央安全态：无发光晕（安静仪表盘）；接管中淡化以守 FPV 中心留空。
+        centerBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        centerStatus = TextView(this).apply {
+            text = "READY"; textSize = 28f; setTypeface(null, Typeface.BOLD)
+            setTextColor(c(R.color.md_ok)); gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            paint.setShadowLayer(3f, 1f, 1f, Color.argb(180, 0, 0, 0))
+        }
+        centerStatusSub = TextView(this).apply {
+            text = "松手即停 · 无操作自动归零"; textSize = 11f
+            setTextColor(c(R.color.md_text_dim)); gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
+            paint.setShadowLayer(2f, 1f, 1f, Color.argb(180, 0, 0, 0))
+        }
+        centerBlock.addView(centerStatus)
+        centerBlock.addView(centerStatusSub)
+        root.addView(centerBlock, FrameLayout.LayoutParams(WRAP, WRAP,
+            Gravity.CENTER or Gravity.CENTER_HORIZONTAL).also {
+            it.topMargin = -dp(48)
+        })
+        if (!manual) centerBlock.visibility = View.GONE
 
         // 手动接管入口 —— 取自 OpenBot「R1 触发键重新取得控制」原文（网络运行时
         // 「the game controller is disabled ... toggle this switch with the R1 trigger button
@@ -239,9 +274,9 @@ class DriveActivity : AppCompatActivity() {
             Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
 
         if (manual) {
-            leftOverlay = joystickOverlay(colorId = R.color.md_accent, label = "方向", drive = true,
+            leftOverlay = joystickOverlay(colorId = R.color.md_text_dim, label = "方向", drive = true,
                 deadzone = SessionHolder.driveDeadzone)
-            rightOverlay = joystickOverlay(colorId = R.color.md_warn, label = "头部", drive = false,
+            rightOverlay = joystickOverlay(colorId = R.color.md_text_dim, label = "头部", drive = false,
                 deadzone = SessionHolder.headDeadzone)
             root.addView(leftOverlay, FrameLayout.LayoutParams(joySize, WRAP,
                 Gravity.START or Gravity.BOTTOM))
@@ -505,7 +540,7 @@ class DriveActivity : AppCompatActivity() {
         setTextColor(c(R.color.md_warn))
         gravity = Gravity.CENTER
         setLineSpacing(0f, 1.4f)
-        background = roundedCard(Color.argb(238, 0x0D, 0x10, 0x15), 12)
+        background = roundedCard(Color.argb(238, 0x12, 0x11, 0x10), 12)
         setPadding(dp(14), dp(10), dp(14), dp(10))
         contentDescription = "自动模式说明：仅监测，App不发送驾驶命令"
     }
@@ -685,9 +720,15 @@ class DriveActivity : AppCompatActivity() {
             armedPill.text = armedText
             armedPill.setTextColor(armedColor)
             armedPill.background = borderedCard(
-                Color.argb(70, 0x0D, 0x10, 0x15), armedColor, 8)
+                Color.argb(70, 0x14, 0x13, 0x11), armedColor, 8)
         }
         armedPill.visibility = View.VISIBLE
+
+        // 中央 READY：接管中淡化，守 FPV 中心留空（无制动键）。
+        if (::centerBlock.isInitialized && state.mode == ControlMode.MANUAL) {
+            centerBlock.visibility = View.VISIBLE
+            centerBlock.alpha = if (state.heartbeatRunning) 0.22f else 1f
+        }
 
         // ---- 组合告警行（Falcon：失败/停滞是第一态，必须立刻可见）----
         val alerts = mutableListOf<String>()

@@ -13,6 +13,7 @@ import io.microduck.app.core.RobotRepository
 import io.microduck.app.core.RobotSession
 import io.microduck.app.core.RestController
 import io.microduck.app.core.StateSnapshot
+import io.microduck.app.core.TofSnapshot
 import io.microduck.app.core.RobotTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,6 +74,7 @@ class MainViewModel(
         val lastStateMs: Long = 0L,
         // ── 健康 / 监控（来自 RobotRepository.Snapshot）──
         val lastHealth: HealthSnapshot? = null,
+        val tof: TofSnapshot? = null,   // ToF 8×8 深度；null=未读到（Mock 夹具非实机）
         val monitorReport: MonitorReport? = null,
         val batteryText: String = "— 未读到",
         val monitorSource: MonitorSource = MonitorSource.NONE,
@@ -130,6 +132,7 @@ class MainViewModel(
                     stateHz = snap.stateHz,
                     lastStateMs = snap.lastStateMs,
                     lastHealth = snap.lastHealth,
+                    tof = snap.tof,
                     monitorReport = snap.monitorReport,
                     batteryText = snap.batteryText,
                     monitorSource = robotRepository.monitorSource(),

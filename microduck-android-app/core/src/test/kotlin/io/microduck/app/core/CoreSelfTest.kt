@@ -1996,6 +1996,17 @@ object CoreSelfTest {
             "before=$before after=${repo.snapshot().stateFrameCount}"
         }
 
+        // 正向：ToF 订阅后 Mock 夹具帧到达快照（8×8 三态）
+        check("ToF 订阅后快照收到帧( Mock 夹具非实机)", waitFor(2000) { repo.snapshot().tof != null }) {
+            "tof=${repo.snapshot().tof}"
+        }
+        check("ToF 快照 8×8=64 格", repo.snapshot().tof?.zones?.size == 64) {
+            "zones=${repo.snapshot().tof?.zones?.size}"
+        }
+        check("ToF 夹具含有效量程物体(Mock)", (repo.snapshot().tof?.validCount ?: 0) >= 9) {
+            "valid=${repo.snapshot().tof?.validCount}"
+        }
+
         // 正向：tick 推进速率窗口
         repo.tick()
         check("tick 后快照仍自洽", repo.snapshot().connected) { "s=${repo.snapshot()}" }
@@ -2005,6 +2016,7 @@ object CoreSelfTest {
         val after = repo.snapshot()
         check("disconnect 后未连接", !after.connected && after.sessionState == "NONE") { "s=$after" }
         check("负对照:disconnect 后 health 清空", after.lastHealth == null) { "h=${after.lastHealth}" }
+        check("负对照:disconnect 后 ToF 清空(不沿陈旧深度)", after.tof == null) { "tof=${after.tof}" }
         check("负对照:disconnect 后 monitorSource=NONE",
             repo.monitorSource() == MonitorSource.NONE) { "src=${repo.monitorSource()}" }
 
@@ -2078,6 +2090,7 @@ object CoreSelfTest {
         testDiagnostics()
         testNetProvisioning()
         testProvisioningCrypto()
+        testTofSnapshot()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
@@ -2608,6 +2621,51 @@ object CoreSelfTest {
         val lowOrder = C.x25519(C.hexDecode(ProvisioningCrypto.Rfc7748.ALICE_PRIV), ByteArray(32))
         check("负对照:低阶点公钥产生全零密钥被拒", lowOrder == null)
 
+        // ── KAT-5: 跨语言 golden vector（Python cryptography 加密 → Kotlin JCA 解密）──
+        // 判据来自独立实现（Python），不是本类自己算的：任一步拼接顺序/AAD/info/salt 错都会红。
+        val G = ProvisioningCrypto.WireGolden
+        val gShared = C.x25519(C.hexDecode(G.CLIENT_PRIV), C.hexDecode(G.ROBOT_PUB))
+        check("跨语言KAT: X25519 shared 与 Python/RFC7748 一致",
+            gShared != null && C.hexEncode(gShared) == G.SHARED)
+        val gKey = C.deriveSessionKey(gShared!!, C.hexDecode(G.CLIENT_PUB), C.hexDecode(G.ROBOT_PUB), C.hexDecode(G.SALT))
+        check("跨语言KAT: 会话 key = Python HKDF（含 transcript 拼接）", C.hexEncode(gKey) == G.KEY)
+        val gPlain = C.open(gKey, C.hexDecode(G.BLOB))
+        check("跨语言KAT: Kotlin 解开 Python 密文 = 原 plaintext",
+            String(gPlain, Charsets.UTF_8) == G.PLAINTEXT)
+        // 负对照 1：篡改 Python 密文末字节 → Kotlin 必须解封失败（GCM 完整性）
+        val gTampered = C.hexDecode(G.BLOB); gTampered[gTampered.lastIndex] = (gTampered[gTampered.lastIndex].toInt() xor 1).toByte()
+        val gRejected = try { C.open(gKey, gTampered); false } catch (e: Exception) { true }
+        check("负对照:跨语言篡改 Python 密文被 Kotlin 拒绝", gRejected)
+        // 负对照 2：换 salt → key 变 → 解不开同一 blob
+        val gWrongKey = C.deriveSessionKey(gShared, C.hexDecode(G.CLIENT_PUB), C.hexDecode(G.ROBOT_PUB), C.hexDecode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1e"))
+        val gWrongRejected = try { C.open(gWrongKey, C.hexDecode(G.BLOB)); false } catch (e: Exception) { true }
+        check("负对照:跨语言错误 salt 派生 key 解不开 blob", gWrongRejected)
+
+        // ── KAT-6: 跨语言 golden vector 反向 —— Kotlin 加密 = Python 加密（锁定 App 发送方向）──
+        // 判据来自 Python 独立实现生成的 WireGolden.BLOB：Kotlin 作为加密发送方，用同一
+        // key/plaintext/nonce 封出的 blob 必须逐字节等于它。这个方向是真机互通的核心前提
+        // （固件要解的是 App seal 的输出），KAT-5 只测了解密方向、照不出 seal 的 wire 语义差。
+        val gSealed = C.sealWithNonce(gKey, G.PLAINTEXT.toByteArray(Charsets.UTF_8), C.hexDecode(G.NONCE))
+        check("跨语言KAT:Kotlin 加密输出逐字节 = Python BLOB（发送方向）",
+            C.hexEncode(gSealed) == G.BLOB)
+        // 自环：Kotlin 封的 blob 能被 Kotlin 自己解开（seal/open 同一 wire）
+        check("跨语言KAT:Kotlin 封的 blob 可被 open 解回 plaintext",
+            String(C.open(gKey, gSealed), Charsets.UTF_8) == G.PLAINTEXT)
+        // 负对照 1：nonce 末字节改 → 封出 blob 必变（证明 nonce 真进了 wire，不是摆设）
+        val gNonceBad = C.hexDecode(G.NONCE); gNonceBad[gNonceBad.lastIndex] = (gNonceBad[gNonceBad.lastIndex].toInt() xor 1).toByte()
+        val gSealedBadNonce = C.sealWithNonce(gKey, G.PLAINTEXT.toByteArray(Charsets.UTF_8), gNonceBad)
+        check("负对照:nonce 变 → Kotlin 封出 blob 变（nonce 进了 wire）",
+            C.hexEncode(gSealedBadNonce) != G.BLOB)
+        // 负对照 2：plaintext 变 → 封出 blob 必变（证明 plaintext 真被封进去）
+        val gSealedBadPt = C.sealWithNonce(gKey, "TAMPERED".toByteArray(Charsets.UTF_8), C.hexDecode(G.NONCE))
+        check("负对照:plaintext 变 → Kotlin 封出 blob 变", C.hexEncode(gSealedBadPt) != G.BLOB)
+        // 负对照 3：AAD 变 → 封出 blob 必变（证明 AAD=net.connect 绑定进了 tag）
+        val gSealedBadAad = C.sealWithNonce(gKey, G.PLAINTEXT.toByteArray(Charsets.UTF_8), C.hexDecode(G.NONCE), "net.forget")
+        check("负对照:AAD 变 → Kotlin 封出 blob 变", C.hexEncode(gSealedBadAad) != G.BLOB)
+
+        // 边界：golden vector 通过 ≠ 真机互通，INTEROP_UNVERIFIED 仍恒定
+        check("golden vector 通过不等于 interop（INTEROP_UNVERIFIED 仍恒真）", C.INTEROP_UNVERIFIED)
+
         // 交付边界：INTEROP_UNVERIFIED 恒真（防止谁误改成 PASS）
         check("INTEROP_UNVERIFIED 恒为 true（未与真固件对拍）", C.INTEROP_UNVERIFIED)
         check("默认配网仍走明文（加密未接入 NetProvisioning）",
@@ -2617,6 +2675,53 @@ object CoreSelfTest {
         val e1 = C.generateEphemeral(); val e2 = C.generateEphemeral()
         check("临时密钥对每次新鲜（前向保密）", !e1.first.contentEquals(e2.first))
         check("临时密钥 raw 长度 32", e1.first.size == 32 && e1.second.size == 32)
+    }
+
+    // ---- ToF 8×8 深度帧解析（golden vector 逐字对齐 Rust Frame::zone，带负对照）----
+    private fun testTofSnapshot() {
+        println("\n[ToF] tof.frame 三态解析 + golden vector")
+        val Z = TofSnapshot
+        fun obj(s: String) = JsonParser.parseString(s).asJsonObject
+
+        // golden vector 直接搬自 Rust tof/src/lib.rs:138-149 的 test
+        check("ToF KAT: status5 + 1234mm → 1.234m",
+            Z.zone(5, 1234) is TofZone.Range && abs((Z.zone(5, 1234) as TofZone.Range).meters - 1.234) < 1e-9)
+        check("ToF KAT: status9 + 500mm → 0.5m",
+            Z.zone(9, 500) is TofZone.Range && abs((Z.zone(9, 500) as TofZone.Range).meters - 0.5) < 1e-9)
+        check("ToF KAT: status255 → NoTarget（空空间，不是 0）", Z.zone(255, 0) === TofZone.NoTarget)
+        check("ToF KAT: status4 + 900mm → Unusable(4)（不是量程）",
+            Z.zone(4, 900) == TofZone.Unusable(4))
+        check("ToF KAT: status5 + 负距离 → Unusable(5)（失败收敛非量程）",
+            Z.zone(5, -3) == TofZone.Unusable(5))
+        // 负对照：status 决定含义——同一个 1234mm 换 status 就变义
+        check("负对照:同距离不同 status → 不同三态（status 真参与判定）",
+            Z.zone(5, 1234) is TofZone.Range && Z.zone(255, 1234) === TofZone.NoTarget &&
+            Z.zone(4, 1234) == TofZone.Unusable(4))
+        // 负对照：缺 status / 缺 distance 不猜 0
+        check("负对照:缺 status → NoTarget（不默认是量程）", Z.zone(null, 1234) === TofZone.NoTarget)
+        check("负对照:有效 status 缺 distance → Unusable（不填 0）", Z.zone(5, null) == TofZone.Unusable(5))
+
+        // 整帧解析：8×8 全 5/1234mm → 64 格全有效
+        val full = obj("""{"seq":7,"at_us":1234,"t_ns":987654321,"rows":8,"cols":8,"distance_mm":[${Array(64) { "1234" }.joinToString(",")}],"status":[${Array(64) { "5" }.joinToString(",")}]}""")
+        val snap = Z.from(full)
+        check("ToF 整帧:64 格全解析", snap != null && snap.zones.size == 64 && snap.validCount == 64)
+        check("ToF 整帧:seq/at_us/t_ns 原样", snap?.seq == 7L && snap?.atUs == 1234L && snap?.tNs == 987654321L)
+        check("ToF 整帧:hasFrame=true", snap?.hasFrame() == true)
+
+        // ragged 帧（Rust tof/src/lib.rs:160-170）：distance 3 项 / status 2 项 → 越界格 NoTarget
+        val ragged = obj("""{"rows":8,"cols":8,"distance_mm":[1000,1000,1000],"status":[5,5]}""")
+        val rs = Z.from(ragged)
+        check("ToF ragged:第0格仍 Range", rs?.zones?.get(0) is TofZone.Range)
+        check("ToF ragged:缺 status 的第2格 → NoTarget（不 panic）", rs?.zones?.get(2) === TofZone.NoTarget)
+        check("ToF ragged:valid_count 只数真量程", rs?.validCount == 2)
+
+        // 负对照：整帧缺数组 → null（UI 显示「未读到」，不是空 8×8 假绿）
+        check("负对照:缺 distance_mm 数组 → null", Z.from(obj("""{"rows":8,"cols":8,"status":[5,5]}""")) == null)
+        check("负对照:缺 status 数组 → null", Z.from(obj("""{"rows":8,"cols":8,"distance_mm":[1,2]}""")) == null)
+        check("负对照:非法 rows=0 → null", Z.from(obj("""{"rows":0,"cols":8,"distance_mm":[1],"status":[5]}""")) == null)
+        // 负对照：validCount 随状态变（不是恒真）——把一格 status 改 255，计数必须 -1
+        val oneBad = obj("""{"rows":8,"cols":8,"distance_mm":[${Array(64) { "1234" }.joinToString(",")}],"status":[${Array(64) { "5" }.joinToString(",").replaceFirst("5", "255")}]}""")
+        check("负对照:一格 status 255 → valid_count=63（计数随数据动）", Z.from(oneBad)?.validCount == 63)
     }
 
     private operator fun String.times(n: Int) = repeat(n)

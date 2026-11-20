@@ -96,8 +96,53 @@ EXCLUDED_REASON = ("史料与第三方文档不是活的契约；全仓 rglob �
 REQUIRED = ("id", "status", "summary", "why_open", "evidence_kind",
             "verification_boundary", "local_verified",
             "board_acceptance_required", "still_owed", "negative_control",
-            "blocked_actions", "source_refs", "signoff", "evidence")
+            "blocked_actions", "source_refs", "signoff", "evidence",
+            "verification_tier", "verification_tier_note")
 VALID_STATUS = {"UNVERIFIED", "PASS", "CLOSED", "FAIL"}
+
+
+def tier_names(data: dict) -> set[str]:
+    """Level names declared by the single-source vocabulary in the contract."""
+    return set((data.get("verification_tiers") or {}).get("levels") or {})
+
+
+def validate_tiers(data: dict, p: list[str]) -> None:
+    """Evidence-tier discipline borrowed from awesome-microduck's Sim-only marking.
+
+    A tier says how far the evidence actually reached -- it is NOT a target.
+    The load-bearing rule: HARDWARE_FULL may appear only when the contract's
+    own scope says live_hardware_accessed=true. Without that, sim/mock/offline
+    results can never be laundered into "the whole robot was accepted" just by
+    relabelling a field. Every other tier must be a declared vocabulary name,
+    and free-text tier_note must be present so the claim is auditable.
+    """
+    vocab = data.get("verification_tiers") or {}
+    levels = vocab.get("levels") or {}
+    if vocab.get("schema_version") != 1:
+        p.append("verification_tiers.schema_version must be 1")
+    if not levels or not isinstance(levels, dict):
+        p.append("verification_tiers.levels missing or empty")
+        return
+    ordered = (vocab.get("ordered_weak_to_strong") or [])
+    if set(ordered) != set(levels):
+        p.append("verification_tiers.ordered_weak_to_strong must list every level exactly once")
+    if "COLLECTED != PASS" not in " ".join(str(x) for x in vocab.get("not_equivalent", [])):
+        p.append("verification_tiers.not_equivalent must state COLLECTED != PASS")
+    hf = bool((data.get("scope") or {}).get("live_hardware_accessed"))
+    for c in data.get("contracts") or []:
+        cid = c.get("id", "<no id>")
+        t = c.get("verification_tier")
+        if t not in levels:
+            p.append("%s invalid verification_tier %r" % (cid, t))
+            continue
+        if not str(c.get("verification_tier_note") or "").strip():
+            p.append("%s empty verification_tier_note" % cid)
+        if t == "HARDWARE_FULL" and not hf:
+            p.append("%s claims HARDWARE_FULL while scope.live_hardware_accessed=false" % cid)
+        # A closed contract with real closing evidence at hardware tier must be
+        # paired with actually-live scope; otherwise evidence and tier disagree.
+        if t == "HARDWARE_FULL" and c.get("status") in ("UNVERIFIED", "FAIL"):
+            p.append("%s is %s but claims HARDWARE_FULL evidence tier" % (cid, c.get("status")))
 
 
 def load(path: Path = CONTRACT) -> dict:
@@ -183,6 +228,7 @@ def validate(data: dict, doc_marks: set[str] | None = None) -> list[str]:
                 p.append("%s UNVERIFIED must list what is still owed" % cid)
         if st in ("PASS", "CLOSED") and not (c.get("evidence") or []):
             p.append("%s is %s without evidence" % (cid, st))
+    validate_tiers(data, p)
     return p
 
 
@@ -250,6 +296,45 @@ def selftest() -> int:
               lambda d: d["scope"].update({"live_hardware_accessed": True}))
     ck("负对照：docs 出现未登记标记必红",
        bool(validate(data, marks | {"INCONCLUSIVE_GHOST_MARKER"})))
+
+    # --- Tier discipline: injected negative controls, never touch the disk ---
+    ck("层级词汇表有 6 级且每契约都有已达层级",
+       len(tier_names(data)) == 6
+       and all(c.get("verification_tier") in tier_names(data) for c in data["contracts"]))
+    ck("正对照：当前 9 条层级均非 HARDWARE_FULL（未碰整机）",
+       all(c["verification_tier"] != "HARDWARE_FULL" for c in data["contracts"]))
+
+    def bad_tier(name: str, mutate) -> None:
+        bad = copy.deepcopy(data)
+        mutate(bad)
+        ck(name, bool(validate(bad, marks)))
+
+    bad_tier("负对照：单条改成未知层级必红",
+             lambda d: d["contracts"][0].update({"verification_tier": "FAKE_TIER"}))
+    bad_tier("负对照：删 verification_tier 字段必红",
+             lambda d: d["contracts"][0].pop("verification_tier", None))
+    bad_tier("负对照：空 tier_note 必红",
+             lambda d: d["contracts"][0].update({"verification_tier_note": "  "}))
+    bad_tier("负对照：scope=false 却标 HARDWARE_FULL 必红",
+             lambda d: d["contracts"][0].update({"verification_tier": "HARDWARE_FULL"}))
+    bad_tier("负对照：删掉层级词汇表必红",
+             lambda d: d.pop("verification_tiers", None))
+    bad_tier("负对照：词汇表漏列一个层级必红",
+             lambda d: d["verification_tiers"]["levels"].pop("SIM", None))
+    bad_tier("负对照：顺序表与词汇表不一致必红",
+             lambda d: d["verification_tiers"].update({"ordered_weak_to_strong": ["MOCK"]}))
+    bad_tier("负对照：抹掉 COLLECTED != PASS 声明必红",
+             lambda d: d["verification_tiers"].update({"not_equivalent": ["SIM != HARDWARE_FULL"]}))
+    # Complementary positive control: with live scope flipped, HARDWARE_FULL
+    # on a CLOSED+evidence contract must be ACCEPTED (so the gate isn't just
+    # "any HARDWARE_FULL is always red" -- it is bound to the scope field).
+    live = copy.deepcopy(data)
+    live["scope"]["live_hardware_accessed"] = True
+    for c in live["contracts"]:
+        if c["id"] == "INCONCLUSIVE_PRICE":
+            c["verification_tier"] = "HARDWARE_FULL"
+    ck("正对照：scope=true 时 CLOSED 契约标 HARDWARE_FULL 不被层级判据拒绝",
+       not [x for x in validate(live, marks) if "HARDWARE_FULL" in x])
 
     # --- C1: prove the widened scan really walks extra roots -----------------
     roots = default_scan_roots()
@@ -345,8 +430,11 @@ def selftest() -> int:
 def report(data: dict, problems: list[str], marks: set[str],
            roots: list[Path] | None = None) -> dict:
     counts: dict[str, int] = {}
+    tier_counts: dict[str, int] = {}
     for c in data.get("contracts") or []:
         counts[c.get("status", "?")] = counts.get(c.get("status", "?"), 0) + 1
+        t = c.get("verification_tier", "<missing>")
+        tier_counts[t] = tier_counts.get(t, 0) + 1
     walked = default_scan_roots() if roots is None else roots
     walked_names = []
     for r in walked:
@@ -363,6 +451,11 @@ def report(data: dict, problems: list[str], marks: set[str],
         "doc_markers": sorted(marks),
         "contract_ids": [c["id"] for c in data["contracts"]],
         "status_counts": counts,
+        "verification_tier_counts": tier_counts,
+        "verification_tier_vocabulary": sorted(tier_names(data)),
+        "highest_tier_reached": next(
+            (t for t in reversed((data.get("verification_tiers") or {}).get("ordered_weak_to_strong") or [])
+             if tier_counts.get(t, 0) > 0), None),
         "problems": problems,
         "structure_verdict": "PASS" if not problems else "FAIL",
         "ship_verdict": overall_verdict(data),
@@ -560,6 +653,9 @@ def main() -> int:
         print("scan roots = %s" % ", ".join(rep["scan_roots"]))
         print("doc markers = %d  contract ids = %d" % (len(marks), len(rep["contract_ids"])))
         print("status counts = " + json.dumps(rep["status_counts"], ensure_ascii=False))
+        print("verification tiers = " + json.dumps(rep["verification_tier_counts"], ensure_ascii=False)
+              + "  (highest reached = %s; HARDWARE_FULL requires live_hardware_accessed=true)"
+              % rep["highest_tier_reached"])
         for x in problems:
             print("  [FAIL] " + x)
         print("structure_verdict = " + rep["structure_verdict"])

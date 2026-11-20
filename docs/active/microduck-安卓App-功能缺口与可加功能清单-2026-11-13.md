@@ -6,6 +6,8 @@ _**2026-11-18 更新**：§5 落地状态已刷新（A2/A2'/A3/A6/A7 已落地�
 _**2026-11-18 晚更新**：新增 §5.4 —— 一手定位并修复 hello 握手死锁（updaterd 默认关闭导致的 `Updater is not answering`），**真机打通 BLE→READY→configd→net.status/scan 配网链路**并端到端换 WiFi 成功；A2 从「链路不通」升级为「真机验收通过」。_
 
 _**2026-11-18 中午补充**：新增 §5.5 —— 用户反馈驱动的两处 UX 改进：`net.scan` SSID 可点选（取代手录）、BLE 扫描列表只列 MicroDuck 候选（无名非目标设备隐藏）；均带门禁负对照与真机验证。_
+
+_**2026-11-18 晚补充（用户「软件这块还能做什么」→「都做，照最优的来，记得查资料」）**：不新增 App 功能（不依赖整机的功能已做尽），转做三件准备：① `deploy_import_checklist.md` 新增 H14–H16（DuckBuddy 借鉴的 IMU 握手/SYNC_READ 错误率/reg46 联写三条判据，全标 UNVERIFIED）；② 新建 WebRTC 接入准备文档（依赖替换查实为 `stream-webrtc-android`，但:**机器人侧信令零鉴权 ⇒ 接入前必须安全拍板**，不引依赖不改 gradle）；③ 加密规格文档顶部加一手更新：**原厂 btd 已默认链路层加密 + setup-code PSK**（`main.rs:123`），本 App 对接的 fanhao 线默认仍不加密，原判决继续有效、但 §4 应用层方案不再是唯一最优。三处均只改文档，未写功能代码，`ship_verdict` 不变。详见 §5.6。_
 _本文件**只做盘点与依据核对，不改功能代码**。每条建议挂一手来源；_
 _术语严格遵循 `docs/active/microduck-来源术语约定-2026-11-13.md`：**「原厂 / 官方」只指 Pollen Robotics 原厂**。_
 _整机未落地 ⇒ 交付判定仍为「不可交付」；未验证不等于通过。_
@@ -236,6 +238,21 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 **门禁**：`check_net_provisioning.py` 9/9 → **13/13**（新增 4 条负对照：删点击监听 / 点选误清空密码框 / 去掉 tick 节流 / 删手输 EditText 必红）；新建 `tools/check_ble_candidate_filter.py` **7/7**（6 条负对照：加硬件 filters / 删候选过滤 / 退化成按名字筛 / 删已绑定兜底 / 删隐藏数量回显 / 删点击监听 必红）；统一门禁自动发现纳入，13 项 ALL_PASS；core 629/629；Debug+Release BUILD SUCCESSFUL。
 
 **真机**（vivo V2338A 无线 adb，11:35 新包，显式授予 `BLUETOOTH_SCAN/CONNECT`）：① BLE `收到 1898 条广播 · 附近 75 台 · 候选 1 台 · 非目标 74 台已隐藏`，列表只剩 `● duck-6a07 · -36 dBm · 判别=服务 UUID`，`(无名)` / `○` 全消失，扫描层仍统计到 75 台；② `net.scan` 渲染出 9 个可点选项，点「选择网络 DS1002」⇒ SSID 框自动填入 `DS1002`；先在密码框放占位串再点「选择网络 ChinaNet-7ZyE」⇒ SSID 变更且**占位串原样保留**（证明点选不清空已输入密码）。本轮未输入任何真实 WiFi 密码、未点连接；`ship_verdict=NOT_SHIPPABLE` 不变。
+
+---
+
+## 5.6 软件剩余价值三方向落地（2026-11-18 晚）
+
+用户「软件这块还能做什么」→ 判定：**不依赖整机的 App 功能已做尽**（A1–A9 + ANR + hello 降级 + 两处 UX 全有结论），
+剩余价值不在"加功能"而在三件准备。用户「都做，照最优的来，记得查资料」⇒ 三件全做，全程先一手查资料：
+
+| 方向 | 落地 | 验证 / 边界 |
+|---|---|---|
+| ① 体检判据 | `microduck-software/tools/hd1910/deploy_import_checklist.md` H 段新增 **H14**（IMU ID200 型号 `0x16D6`=5846/标志3/融合90–150Hz/\|q\|≈1/静止陀螺<1dps/零偏<5dps）、**H15**（SYNC_READ 错误率≤0.5%）、**H16**（写目标 42..47 联写否则 HD1910 零电流卡住）。来源 `Animan-AI/DuckBuddy` bringup 文档（社区非官方），三条均标 **UNVERIFIED**（非我方实测，上板先读实际寄存器） | 正负对照证明搜索模式有效（远端命中、本地 0 命中）后才认定"真新增"；`BIT15`/reg31/reg19/750k/ID 体系本地已有更深记录，明确**不借**；改后 `check_closure --check` rc=0、`check_contract_status`/`line_contract` --check 全 PASS、9 markers==9 ids |
+| ② WebRTC 视频 | 新建 `docs/active/microduck-安卓App-WebRTC视频接入准备-2026-11-18.md`。一手查实：`google-webrtc:1.0.32006` 停维且 JCenter 关闭后无法解析 → `io.getstream:stream-webrtc-android`（Maven Central、Apache-2.0、**保留 `org.webrtc.*` 包名**、有 BOM 锁 ABI）；机器人侧 `mediad` 进程内自带信令（`ws://127.0.0.1:8443`、绑所有网卡、H.264 constrained-baseline、control+teleop 双 datachannel）；**🔴 信令端口零鉴权**（社区作者明写"a decision not an oversight"，LAN 靠共享 `000000` PIN、远程靠 bridge OAuth，端口转发直暴露无任何保护） | **只做准备，未引依赖/未改 gradle/未写代码**。接入闸门 = 先拍板安全边界（受控 LAN / 加 `system.authenticate` 门 / 走 OAuth bridge），三者未定前接视频=制造假安全。所有固件契约社区一手、非我方实测 ⇒ UNVERIFIED |
+| ③ 配网加密 | `docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md` 顶部加一手更新（**不改原判决正文**）：原厂 `btd@main` **已默认链路层加密 + setup-code PSK** —— `main.rs:123` `require_pairing = args.require_pairing \|\| !args.insecure_no_pairing`、`secure_psk_file`/`ble-psk` credential/`btd::secure::Config`、`NoInputNoOutput` agent；2026-11-08 真 Android 配对成功。但**仍 just-works 未认证、iPhone/Wi-Fi 配网/生产镜像全未测** | **跨版本翻案**：本 App 对接 fanhao(API40) 本地同源副本 `main.rs:123` 仍 `if !args.require_pairing {warn}`（默认不加密）⇒ 原判决对当前目标**继续有效**；fanhao 源码本轮不在本地（`/tmp/fanhao` 空）⇒ 它是否已吸收原厂改动 **UNVERIFIED**。原 §4 X25519 应用层方案**不再唯一最优**（原厂走了 §8.1 第一行 Fix the link layer），两路线取舍需用户拍板+真机对拍，本轮不替用户选 |
+
+⚠️ 三方向均**只改文档、未写功能代码**，未碰 xlsx/采购/契约状态/grable；`ship_verdict=NOT_SHIPPABLE`、`live_hardware_accessed=false` 不变。
 
 ---
 

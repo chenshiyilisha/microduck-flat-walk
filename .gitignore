@@ -114,3 +114,16 @@ Thumbs.db
 workbuddy-history/*
 !workbuddy-history/memory/
 !workbuddy-history/memory/**
+
+# --- 2026-11-20 工作区整理：本机临时件 / 手工采购表（不入库）---
+# 采购/硬件表格是本机手改的活文件：禁止重跑，也不入库（唯一权威是 docs/active/*.md）。
+# docs/active 下历史上零个已跟踪 xlsx；docs/archive 已有的那个已跟踪，忽略规则不影响它。
+docs/active/*.xlsx
+docs/archive/*.xlsx
+# 表格生成中间态：.tmp.xlsx 快照、.ref/ 历史版本目录、.bak_before_* 改稿前备份。
+docs/**/.*.tmp.*
+docs/**/.*.ref/
+docs/**/*.bak_before_*.md
+# 会话级临时脚本 / R8 分析产物 / uidesign 里的 .bak 与 .orig 稿（基准稿另存 docs/active）。
+microduck-android-app/.scratch/
+microduck-android-app/tmp/

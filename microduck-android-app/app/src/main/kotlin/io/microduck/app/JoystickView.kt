@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.Shader
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -50,8 +52,17 @@ class JoystickView @JvmOverloads constructor(
     /** 松手 / 手势被取消 / 生命周期停止：调用方必须发零帧。 */
     var onRelease: (() -> Unit)? = null
 
-    /** 主色：左摇杆（方向）用青蓝，右摇杆（头部）用琥珀，一眼区分两条通道。 */
-    var accent: Int = Color.rgb(0x4F, 0xD1, 0xFF)
+    /**
+     * 通道色（11-20 起**仅用于语义标签文字**，不再驱动摇杆本体配色）。
+     *
+     * 🔴 2026-11-20 照最终 HTML 稿去左蓝/右橙双色：
+     *   设计稿 `.joystick` 明确「摇杆平时中性灰、按下统一中性高亮，颜色只留给警示」，
+     *   且真机截图（build/device/shots/c_drive3.png）证实旧版左青蓝/右琥珀与稿不符。
+     *   故摇杆底盘/环/旋钮/按下高亮一律中性灰阶（见 [rebuildPaints]），与 accent 解耦；
+     *   保留本字段仅供 DriveActivity 给「方向/头部」标签着色（通道辨识降级到文字层），
+     *   行为/回调/类名 `android.view.View`（门禁定位用）一字未改。
+     */
+    var accent: Int = Color.rgb(0x9F, 0xA6, 0xB4)
         set(value) { field = value; rebuildPaints(); invalidate() }
 
     /** 画在摇杆下方的短标签（如「方向 / 头部视角」）。 */
@@ -119,16 +130,18 @@ class JoystickView @JvmOverloads constructor(
 
     init { rebuildPaints() }
 
+    /**
+     * 中性暖灰配色（安静仪表盘 2026-11-20）。
+     * 对齐 styles.md_card / md_text_dim；左右摇杆同色，颜色只留给警示。
+     */
     private fun rebuildPaints() {
-        val a = accent
-        trackPaint.color = Color.argb(26, Color.red(a), Color.green(a), Color.blue(a))
-        ringPaint.color = Color.argb(190, Color.red(a), Color.green(a), Color.blue(a))
-        dashPaint.color = Color.argb(110, Color.red(a), Color.green(a), Color.blue(a))
-        crossPaint.color = Color.argb(70, 0x8F, 0xA9, 0xC4)
-        deadzonePaint.color = Color.argb(110, 0x8F, 0xA9, 0xC4)
-        knobPaint.color = a
-        labelPaint.color = Color.rgb(0x8F, 0xA9, 0xC4)
-        // 户外/亮画面可读性：摇杆标签加投影（FPV OSD / sunlight-readability 文献：高对比+描边）。
+        trackPaint.color = Color.argb(160, 0x1C, 0x1B, 0x19)
+        ringPaint.color = Color.argb(50, 0xE8, 0xE6, 0xDF)
+        dashPaint.color = Color.argb(28, 0xE8, 0xE6, 0xDF)
+        crossPaint.color = Color.argb(50, 0x9C, 0x97, 0x8C)
+        deadzonePaint.color = Color.argb(70, 0x9C, 0x97, 0x8C)
+        knobPaint.color = Color.rgb(0x30, 0x2E, 0x28)
+        labelPaint.color = Color.rgb(0x9C, 0x97, 0x8C)
         labelPaint.setShadowLayer(2f * density, 1f, 1f, Color.argb(180, 0, 0, 0))
     }
 
@@ -226,17 +239,23 @@ class JoystickView @JvmOverloads constructor(
         canvas.drawLine(cx - radius, cy, cx + radius, cy, crossPaint)
         canvas.drawLine(cx, cy - radius, cx, cy + radius, crossPaint)
         canvas.drawLine(cx, cy, knobX, knobY, crossPaint)
-        canvas.drawCircle(knobX, knobY, radius * 0.24f, knobPaint)
+        // knob：暖灰渐变（左上亮→右下暗），对齐安静仪表盘色板。
+        val kr = radius * 0.24f
+        knobPaint.shader = LinearGradient(knobX - kr, knobY - kr, knobX + kr, knobY + kr,
+            Color.rgb(0x3E, 0x3B, 0x34), Color.rgb(0x26, 0x24, 0x1F), Shader.TileMode.CLAMP)
+        canvas.drawCircle(knobX, knobY, kr, knobPaint)
         canvas.drawCircle(knobX - radius * 0.07f, knobY - radius * 0.07f,
             radius * 0.09f, knobGlossPaint)
-        // 死区边界环：标示「推到多小算没动」，半径 = 摇杆半径 × 死区比例
         if (deadzoneFraction > 0f && deadzoneFraction < 1f) {
             canvas.drawCircle(cx, cy, radius * deadzoneFraction, deadzonePaint)
         }
-        // 握持发光环：触控中亮起，明确「已激活」——户外/强光下比仅靠 knob 位移更易察觉。
+        // 握持高亮：中性微光环（无霓虹），明确「已激活」。
         if (engaged) {
-            glowPaint.color = Color.argb(95, Color.red(accent), Color.green(accent), Color.blue(accent))
-            canvas.drawCircle(cx, cy, radius + 5f * density, glowPaint)
+            glowPaint.color = Color.argb(70, 0xE8, 0xE6, 0xDF)
+            canvas.drawCircle(cx, cy, radius + 4f * density, glowPaint)
+            ringPaint.color = Color.argb(140, 0xE8, 0xE6, 0xDF)
+            canvas.drawCircle(cx, cy, radius, ringPaint)
+            ringPaint.color = Color.argb(50, 0xE8, 0xE6, 0xDF)
         }
         if (label.isNotEmpty()) {
             canvas.drawText(label, cx, cy + radius + 18f * density, labelPaint)

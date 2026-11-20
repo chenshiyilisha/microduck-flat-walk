@@ -153,6 +153,21 @@ class MockTransport(
                 activeLanes.add(req.method)   // Set：重复订阅不叠加（robotd:4759）
                 ok(mapOf("accepted" to true, "walk" to "p8head_2999.onnx"))
             }
+            // ToF 订阅：Mock 推一帧 8×8 深度夹具（明确非实机），供 UI 展示三态着色。
+            // 一手：ft1910 lib.rs:917 TOF_STREAM，帧结构 lib.rs:4838-4865。
+            // ⚠️ 真机 tof.stream 走 mediad WebRTC（btd 拒绝，route.rs:494）；Mock 夹具不是实机证据。
+            Method.TOF_STREAM -> {
+                activeLanes.add(req.method)
+                Thread {
+                    Thread.sleep(60) // 让订阅回调先挂上再推帧
+                    pushFrame(gson.toJson(mapOf(
+                        "jsonrpc" to "2.0",
+                        "method" to Method.TOF_FRAME,
+                        "params" to tofFixture(),
+                    )))
+                }.start()
+                ok(mapOf("accepted" to true))
+            }
             Method.ROBOT_HEALTH -> ok(healthFixture())
             Method.ROBOT_STATE -> ok(stateFixture())
             // 一键休息 / 恢复站立：对齐 ft1910 `IntentResult{accepted, reason}`（lib.rs:3738）。
@@ -205,6 +220,34 @@ class MockTransport(
     private fun stateFixture(): Map<String, Any?> = mapOf(
         "vx" to 0.31, "vy" to 0.0, "vyaw" to 0.0, "policy" to "walk", "tilt_deg" to 2.1,
     )
+
+    /**
+     * ToF 8×8 演示夹具（**非实机**）。造一个「正前方有物体、边缘空、个别测量失败」的场景，
+     * 让三态着色（Range / NoTarget / Unusable）都能在 UI 上看到。
+     * - status 5/9 + 正距离 → Range（近处物体用较小 mm）；
+     * - status 255 → NoTarget（空空间）；
+     * - status 4 → Unusable（测量失败，带原始码）。
+     * 一手格式：ft1910 lib.rs:4838-4865；三态判据 tof/src/lib.rs:74-108。
+     */
+    private fun tofFixture(): Map<String, Any?> {
+        val rows = TofSnapshot.ROWS; val cols = TofSnapshot.COLS
+        val dist = MutableList(rows * cols) { 0 }
+        val status = MutableList(rows * cols) { TofSnapshot.STATUS_NO_TARGET }
+        // 正前方中央 3×3 有个约 0.6m 的物体（status 5 有效）
+        for (r in 2..4) for (cc in 2..4) {
+            val i = r * cols + cc
+            dist[i] = 600 + (r - 2) * 45 + (cc - 2) * 30
+            status[i] = 5
+        }
+        // 两格测量失败（status 4），展示 Unusable 告警色
+        status[1 * cols + 6] = 4; dist[1 * cols + 6] = 800
+        status[6 * cols + 1] = 4; dist[6 * cols + 1] = 750
+        return mapOf(
+            "seq" to 1L, "at_us" to 66_000L, "t_ns" to 66_000_000L,
+            "rows" to rows, "cols" to cols,
+            "distance_mm" to dist, "status" to status,
+        )
+    }
 
     private fun ok(result: Map<String, Any?>): String {
         val o = JsonObject().apply {

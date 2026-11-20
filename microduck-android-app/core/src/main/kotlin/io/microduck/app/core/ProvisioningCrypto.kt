@@ -65,6 +65,33 @@ object ProvisioningCrypto {
         const val OKM = "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
     }
 
+    /**
+     * 跨语言 golden vector（2026-11-18）——以上 §4 wire 的**端到端确定性向量**。
+     *
+     * 来源：由 Python `cryptography` 50.0.2（独立实现，非本类）按同一 wire 全链生成：
+     *   shared = X25519(client_priv, robot_pub)  [= RFC7748 §6.1 权威 K，已独立核对]
+     *   key    = HKDF-SHA256(shared || client_pub || robot_pub, salt, HKDF_INFO, 32)
+     *   blob   = nonce(12) || AES-256-GCM(key, plaintext, aad=net.connect)
+     * 私钥/公钥取 RFC7748 §6.1；salt=32B 递增、nonce=12B 递增；plaintext 是**测试凭据
+     * "TestPass123"**（非用户真实密码，凭据不落库原则）。固件端按同一 wire 实现后，
+     * 应能用 robot_priv 复现 shared/key，并用 key 解开 blob 得到 plaintext —— 这是互操作对拍金标准。
+     *
+     * 🔴 边界：本向量证明「算法实现在两条独立代码路径上一致」，**不等于真机互通**；
+     *   固件端零 crypto 依赖的现状未变，INTEROP_UNVERIFIED 恒 true。谁把它当 interop PASS 即为假绿。
+     */
+    object WireGolden {
+        const val CLIENT_PRIV = "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"
+        const val ROBOT_PRIV = "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb"
+        const val CLIENT_PUB = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+        const val ROBOT_PUB = "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
+        const val SALT = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        const val NONCE = "000102030405060708090a0b"
+        const val SHARED = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+        const val KEY = "9d9a6c54ea37a599ec06d5b920d376bc6010335484e4b2f5a8ce8478bde57121"
+        const val PLAINTEXT = "{\"ssid\":\"DS1002\",\"psk\":\"TestPass123\"}"
+        const val BLOB = "000102030405060708090a0bf3165fffb4218ea434859831a0c65bd7fb9865ee6114dbcd566814208a0f4b7c8eb32d46b1a2606e4ec505decb302f170292594d50"
+    }
+
     // ---- hex 工具（纯 JVM，无 Gson 依赖）----
     fun hexDecode(s: String): ByteArray {
         require(s.length % 2 == 0) { "HEX_ODD_LENGTH" }
@@ -149,9 +176,30 @@ object ProvisioningCrypto {
     fun deriveSessionKey(shared: ByteArray, clientPub: ByteArray, robotPub: ByteArray, salt: ByteArray): ByteArray =
         hkdfSha256(concat(shared, clientPub, robotPub), salt, HKDF_INFO.toByteArray(Charsets.US_ASCII), 32)
 
-    /** AES-256-GCM 封密；返回 nonce(12) || ciphertext||tag。 */
+    /**
+     * AES-256-GCM 封密；返回 nonce(12) || ciphertext||tag。
+     *
+     * 用不可预测随机 nonce —— 生产路径必须用这个（每次调用输出不同）。
+     * wire 与 [sealWithNonce] 完全相同，区别仅在 nonce 来源。
+     */
     fun seal(key: ByteArray, plaintext: ByteArray, aad: String = AAD_METHOD): ByteArray {
         val nonce = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
+        return sealWithNonce(key, plaintext, nonce, aad)
+    }
+
+    /**
+     * 确定性封密（可注入 nonce）—— 专供跨语言 golden vector 对拍，锁定「App 作为加密发送方」方向。
+     *
+     * 为什么需要：昨天 WireGolden 只验证了「Python 加密 → Kotlin [open]」单向；但 App 真实运行时
+     * 是加密方，固件要解的正是 [seal] 的输出。若 seal 的 wire（nonce 拼接头 / tag 长度 / AAD 编码 /
+     * 拼接顺序）与 Python 独立实现有语义差，单向 KAT 全绿也照不出来。本函数与 [seal] 共用同一实现，
+     * 固定 nonce 后输出必须是确定值 —— 用 WireGolden 的 key/plaintext/nonce 封出的 blob 应逐字节
+     * 等于 Python 独立生成的 WireGolden.BLOB，从而把「Kotlin 加密发送」方向也锁进 golden vector。
+     *
+     * 🔴 仅供测试夹具使用；生产禁止调用（注入可预测 nonce 会破坏 GCM 的 nonce 唯一性安全前提）。
+     */
+    fun sealWithNonce(key: ByteArray, plaintext: ByteArray, nonce: ByteArray, aad: String = AAD_METHOD): ByteArray {
+        require(nonce.size == 12) { "GCM_NONCE_LEN" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
         cipher.updateAAD(aad.toByteArray(Charsets.US_ASCII))

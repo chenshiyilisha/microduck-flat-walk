@@ -16,7 +16,6 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
@@ -103,46 +102,53 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         setColor(fill); cornerRadius = dp(10).toFloat()
     }
 
-    /** 生成可插入设置页的 View。放在设置页末尾，避免把既有控件挤出可见区。 */
+    /**
+     * 生成可插入设置页的 View。
+     * 2026-11-20 IA 对照 Android Settings + M3 Lists（见 docs/active/…连接配网UI设计依据）：
+     * 标题 → 状态 → 一句 supporting → 扫描 CTA → 两行列表项；
+     * **去掉内嵌 ScrollView**（父设置页已滚，嵌套曾导致门禁滚屏坑）。
+     * 门禁硬串「BLE 连接」「扫描附近 BLE 设备」原样保留。
+     */
     fun buildView(): View = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(10), dp(8), dp(10), dp(8))
-        background = card(activity.getColor(R.color.md_card_alt))
+        setPadding(0, 0, 0, 0)
 
         addView(TextView(activity).apply {
-            text = "BLE 连接（运行时权限 · 真 GATT 未上板验证）"
-            textSize = 12f; setTypeface(null, Typeface.BOLD)
+            text = "BLE 连接"
+            textSize = 14f; setTypeface(null, Typeface.BOLD)
             setTextColor(activity.getColor(R.color.md_text))
         })
+        statusText = TextView(activity).apply {
+            text = "未扫描 · 需要先授予「附近的设备」权限"
+            textSize = 12f; setTextColor(activity.getColor(R.color.md_text_dim))
+            setPadding(0, dp(4), 0, dp(2))
+        }
+        addView(statusText)
         addView(TextView(activity).apply {
-            text = "扫描不做 service UUID 硬件过滤，全量接收后软件判别；" +
-                "列表只列 MicroDuck 候选，非目标（含无名）设备不显示，数量在状态行如实回显。\n" +
-                "身份按 serial，地址只是缓存，RSSI 只用于排序。\n" +
-                "⚠ 真机固件未联调：连接失败会如实报错，不会显示「已连接」。"
-            textSize = 10f; setTextColor(activity.getColor(R.color.md_text_dim))
-            setPadding(0, dp(4), 0, dp(6))
+            text = "只列 MicroDuck 候选 · 身份按 serial · 真 GATT 未上板联调（失败如实报）"
+            textSize = 11f; setTextColor(activity.getColor(R.color.md_text_dim))
+            setPadding(0, 0, 0, dp(10))
         })
 
-        scanButton = MaterialButton(activity).apply {
-            text = "扫描附近 BLE 设备"; textSize = 12f; minimumHeight = dp(48)
+        scanButton = MaterialButton(activity, null,
+            com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = "扫描附近 BLE 设备"; textSize = 13f; minimumHeight = dp(48)
             contentDescription = "扫描附近 BLE 设备"
-            setTextColor(activity.getColor(R.color.md_bg))
+            cornerRadius = dp(12)
+            strokeWidth = dp(1)
+            strokeColor = android.content.res.ColorStateList.valueOf(activity.getColor(R.color.md_outline))
+            setTextColor(activity.getColor(R.color.md_text))
             setOnClickListener { onScanClicked() }
         }
         addView(scanButton, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
-        statusText = TextView(activity).apply {
-            text = "未扫描 · 需要先授予「附近的设备」权限"
-            textSize = 11f; setTextColor(activity.getColor(R.color.md_text_dim))
-            setPadding(0, dp(6), 0, dp(4))
+        listCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, 0)
         }
-        addView(statusText)
-
-        listCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(activity).apply { addView(listCol) }
-        addView(scroll, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(160)))
+        addView(listCol, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 
     private fun setStatus(s: String) { statusText?.text = s }
@@ -306,34 +312,58 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         col.removeAllViews()
         if (candidates.isEmpty()) {
             col.addView(TextView(activity).apply {
-                text = "未发现 MicroDuck 候选设备 · " +
-                    (if (found.isEmpty()) "尚未收到广播，请确认板子已通电并靠近"
-                     else "$hidden 台非目标设备未列出")
-                textSize = 10.5f
+                text = "未发现 MicroDuck 候选 · " +
+                    (if (found.isEmpty()) "确认板子已通电并靠近后重扫"
+                     else "$hidden 台非目标已隐藏")
+                textSize = 12f
                 setTextColor(activity.getColor(R.color.md_text_dim))
-                setPadding(dp(8), dp(5), dp(8), dp(5))
+                setPadding(dp(4), dp(10), dp(4), dp(10))
                 contentDescription = "无 MicroDuck 候选"
             })
             return
         }
-        candidates.take(8).forEach { c ->
-            col.addView(TextView(activity).apply {
-                // 候选若未广播名称，明确写「未广播名称」而非杂项的「(无名)」，
-                // 避免把真候选和用户想隐藏的无名非目标设备混为一谈。
-                val shownName = c.name.ifEmpty { "(未广播名称)" }
-                text = "● $shownName · ${c.address}\n" +
-                    "${c.rssi} dBm · 判别=${c.matchedBy} · 地址仅作缓存"
-                textSize = 10.5f
-                setTextColor(activity.getColor(R.color.md_accent))
-                background = card(activity.getColor(R.color.md_card))
-                setPadding(dp(8), dp(5), dp(8), dp(5))
-                minimumHeight = dp(40)
-                gravity = Gravity.CENTER_VERTICAL
-                setOnClickListener { connect(c) }
-                contentDescription = "连接 BLE 设备 ${c.name}"
+        candidates.take(8).forEachIndexed { i, c ->
+            // M3 Lists 两行：headline=名，supporting=RSSI·判别；地址非身份，降到 supporting。
+            val shownName = c.name.ifEmpty { "(未广播名称)" }
+            col.addView(deviceRow(
+                headline = shownName,
+                supporting = "${c.rssi} dBm · ${c.matchedBy} · 地址仅缓存",
+                first = i == 0,
+            ).also { row ->
+                row.setOnClickListener { connect(c) }
+                row.contentDescription = "连接 BLE 设备 ${c.name}"
             })
         }
     }
+
+    /** M3 两行列表项：56dp 触控；表面略抬升，扫描列表可扫。 */
+    private fun deviceRow(headline: String, supporting: String, first: Boolean): LinearLayout =
+        LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            minimumHeight = dp(56)
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true; isFocusable = true
+            background = card(activity.getColor(R.color.md_card_alt))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).also { if (!first) it.topMargin = dp(6) }
+            addView(TextView(activity).apply {
+                text = headline
+                textSize = 14f
+                setTextColor(activity.getColor(R.color.md_text))
+                setTypeface(null, Typeface.BOLD)
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            addView(TextView(activity).apply {
+                text = supporting
+                textSize = 11f
+                setTextColor(activity.getColor(R.color.md_text_dim))
+                setPadding(0, dp(2), 0, 0)
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+        }
 
     @SuppressLint("MissingPermission")
     private fun stopScan() {

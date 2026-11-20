@@ -178,7 +178,18 @@ def evaluate(src: dict[str, str], quiet: bool = False) -> tuple[str, list[str]]:
     sel_body = body_of(act, "fun selectScannedSsid")
     need("netSsidEdit.setText" in sel_body, "点选处理未把 SSID 填入输入框")
     need("netPskEdit" not in sel_body, "点选处理碰了密码框（会覆盖用户已输入的密码）")
-    need("netSsidEdit = EditText" in act, "手输 SSID 兜底被删（扫描为空时无法配网）")
+    # 手输兜底：允许两种等价构造（直接 EditText(...) / inflate 布局后 findViewById），
+    # 但必须真实把 netSsidEdit 绑定成 EditText。2026-11-20 实测：SSID 框改成
+    # widget_outlined_field 布局后，裸字面量 "netSsidEdit = EditText" 假红，
+    # 而旧负对照因注入不命中变成「假绿」——故改语义判据 + 动态注入（见 selftest）。
+    ssid_assign = re.search(r"netSsidEdit\s*=\s*([^\n]+)", act)
+    need(ssid_assign is not None,
+         "手输 SSID 兜底被删（netSsidEdit 从未赋值，扫描为空时无法配网）")
+    ssid_rhs = ssid_assign.group(1).strip() if ssid_assign else ""
+    need("EditText(" in ssid_rhs or "findViewById" in ssid_rhs,
+         f"netSsidEdit 未绑定到 EditText（赋值 {ssid_rhs!r}；扫描为空时无法配网）")
+    need(re.search(r"var\s+netSsidEdit\s*:\s*EditText", act) is not None,
+         "netSsidEdit 未声明为 EditText 类型（手输兜底类型不保）")
     need("netScanSignature" in act, "扫描列表缺 tick 节流签名（1s tick 会持续重建 View/发事件）")
 
     verdict = "NOT_PASS" if errs else "OK"
@@ -200,6 +211,12 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
             return repo_src
         broken = raw.replace('kind == "MOCK"', 'kind == "NO_MOCK"')
         return repo_src.replace(raw, broken, 1)
+
+    def break_ssid_fallback(act_src: str) -> str:
+        """动态定位当前真实赋值行再删：SSID 框的构造方式换过（inflate 布局），
+        写死旧字面量的注入会静默不命中 → 负对照假绿。改法变了，注入必须跟着变。"""
+        m = re.search(r"netSsidEdit\s*=\s*[^\n]+", act_src)
+        return act_src.replace(m.group(0), "/* 手输兜底被删 */", 1) if m else act_src
 
     wire = src.get("wire", "")
     session = src.get("session", "")
@@ -235,7 +252,7 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
         ("负对照:扫描列表去掉 tick 节流必红",
          variant(activity=act.replace("netScanSignature", "netScanSigUnused"))),
         ("负对照:删掉手输 EditText 必红",
-         variant(activity=act.replace("netSsidEdit = EditText(this@MainActivity).apply {", ""))),
+         variant(activity=break_ssid_fallback(act))),
     ]
 
     out: list[tuple[str, bool]] = []

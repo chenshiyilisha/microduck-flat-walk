@@ -3,6 +3,7 @@ package io.microduck.app
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -50,6 +51,8 @@ import io.microduck.app.core.RobotPart
 import io.microduck.app.core.RobotParts
 import io.microduck.app.core.Severity
 import io.microduck.app.core.StateSnapshot
+import io.microduck.app.core.TofSnapshot
+import io.microduck.app.core.TofZone
 import io.microduck.app.core.HealthSnapshot
 import io.microduck.app.core.HwThresholds
 import io.microduck.app.monitor.DuckModelView
@@ -142,6 +145,13 @@ class MainActivity : AppCompatActivity() {
     // 缺失=红、在线=绿、无数据=灰，绝不造数、不默认绿。
     private val servoCells = mutableListOf<LinearLayout>()
     private lateinit var servoGridCard: View
+    // 11-20 参照设计稿 .grp：三组「部位整体健康度」徽章（左腿/颈头喙/右腿），
+    // 从 missingIds 真实派生，缺字段=未读到不造数。渐进式披露：先看组，再看逐点网格。
+    private val partBadges = mutableListOf<TextView>()
+    // ToF 8×8 深度网格（头部测距雷达）：64 格 TextView，三态着色（量程/空/失败）。
+    // 数据来源 tof.frame：Mock 夹具非实机、真机需 mediad WebRTC（btd 拒 tof.stream）。
+    private val tofCells = mutableListOf<TextView>()
+    private lateinit var tofSourceText: TextView
     // M3 exposed dropdown menu：不再是 android.widget.Spinner（平台老式弹窗）。
     // 持有 MaterialAutoCompleteTextView 以便 restoreSettingsUi() 用 setText(text, false) 回写选中值。
     private lateinit var channelDropdown: MaterialAutoCompleteTextView
@@ -168,7 +178,11 @@ class MainActivity : AppCompatActivity() {
     private val sshRepository = SshRepository()
     private val stateValues = mutableListOf<TextView>()
     private val telemetryValues = mutableListOf<TextView>()
-    private val tabButtons = mutableListOf<MaterialButton>()
+    // 2026-11-19 去卡片化：底部导航从「MaterialButton 填充块」改为「图标+文字文本标签」，
+    // 容器类型随之从 MaterialButton 改为 TextView（uiautomator 仍按 content-desc 定位）。
+    private val tabButtons = mutableListOf<View>()
+    /** 底部导航每格的 2px 选中指示条（未选中透明），与文字/图标同色。 */
+    private val tabIndicators = mutableListOf<View>()
     private var currentPage = 0
     private val ui = Handler(Looper.getMainLooper())
 
@@ -216,8 +230,10 @@ class MainActivity : AppCompatActivity() {
         // 只承载会话级状态，页面专属内容各自独立，避免三页顶部/底部同款卡片重复。
         chrome = PageChrome(
             titleText = TextView(this).apply {
+                // 安静仪表盘：标题 16sp，不做营销级 22sp hero（M3 Expressive：hero 留给主动作）。
                 textSize = 16f; setTextColor(c(R.color.md_text))
-                setTypeface(null, Typeface.BOLD); letterSpacing = TRACKING_TITLE
+                setTypeface(null, Typeface.BOLD); letterSpacing = 0.02f
+                setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
             },
             statusText = TextView(this).apply {
                 textSize = 11f; setTextColor(c(R.color.md_text_dim))
@@ -225,9 +241,12 @@ class MainActivity : AppCompatActivity() {
                 fontFeatureSettings = TABULAR_FIGURES
             },
             sourceChip = TextView(this).apply {
-                text = "● 演示会话"; textSize = 11f; setTextColor(c(R.color.md_warn))
-                background = roundedCard(c(R.color.md_card_alt), CORNER_LARGE_DP)
-                setPadding(dp(8), dp(4), dp(8), dp(4))
+                // 状态 pill：小圆角 + 细描边；Mock=警示 / Real=绿。文案由 renderSourceChip 写入。
+                text = "● 演示会话"; textSize = 11f
+                setTypeface(null, Typeface.BOLD)
+                fontFeatureSettings = TABULAR_FIGURES
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = roundedCard(c(R.color.md_card_alt), CORNER_CHIP_DP, stroked = true)
             },
             linkBanner = buildLinkBanner(),
         )
@@ -251,7 +270,7 @@ class MainActivity : AppCompatActivity() {
         section(buildTabRow())
         root.addView(content, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        topScrim = View(this).apply { setBackgroundColor(Color.argb(190, 0x0D, 0x10, 0x15)) }
+        topScrim = View(this).apply { setBackgroundColor(Color.argb(190, 0x14, 0x13, 0x11)) }
         root.addView(topScrim, FrameLayout.LayoutParams(MATCH, 0, Gravity.TOP))
         setContentView(root)
 
@@ -298,17 +317,7 @@ class MainActivity : AppCompatActivity() {
     private fun buildPage(index: Int): View {
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         when (index) {
-            0 -> {
-                page.addView(buildConnectionRow(), LinearLayout.LayoutParams(MATCH, WRAP).also {
-                    it.topMargin = dp(8)
-                })
-                page.addView(buildControlCard(), LinearLayout.LayoutParams(MATCH, WRAP).also {
-                    it.topMargin = dp(8)
-                })
-                page.addView(buildStatePage(), LinearLayout.LayoutParams(MATCH, 0, 1f).also {
-                    it.topMargin = dp(8)
-                })
-            }
+            0 -> page.addView(buildStatePage(), LinearLayout.LayoutParams(MATCH, MATCH))
             1 -> page.addView(buildHealthPage(), LinearLayout.LayoutParams(MATCH, MATCH).also {
                 it.topMargin = dp(8)
             })
@@ -325,17 +334,26 @@ class MainActivity : AppCompatActivity() {
         return page
     }
 
+    /**
+     * 顶部标题区 —— 安静仪表盘（2026-11-20）：
+     * 无营销方块 logo、无厚渐变；标题 + 状态行 + pill，底部分隔线。
+     * 依据：M3 Expressive「hero 留给关键动作」；standoutmcp 反对模板化品牌块。
+     * 标题/状态/chip 字段与刷新逻辑不变（门禁硬串零改动）。
+     */
     private fun buildAppBar(chrome: PageChrome) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
-        setPadding(dp(12), dp(10), dp(12), dp(10))
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(4), dp(8), dp(4), dp(10))
         addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(chrome.titleText)
-            addView(chrome.statusText)
-        }, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(12) })
-        addView(chrome.sourceChip)
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(chrome.titleText)
+                addView(chrome.statusText.apply { setPadding(0, dp(2), 0, 0) })
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(chrome.sourceChip)
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        addView(rule(top = 10))
     }
 
     /**
@@ -401,42 +419,37 @@ class MainActivity : AppCompatActivity() {
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                 textSize = 13f; minimumHeight = dp(48)
                 setTextColor(c(R.color.md_text)); setHintTextColor(c(R.color.md_text_dim))
-                background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = roundedCard(c(R.color.md_surface), CORNER_CELL_DP)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
                 layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
             }
             addView(hostEdit)
-            addView(MaterialButton(this@MainActivity).apply {
-                text = "连接"; textSize = 12f; minimumHeight = dp(48)
-                cornerRadius = dp(CORNER_LARGE_DP)
-                setOnClickListener { connectFromUi() }
-            }, LinearLayout.LayoutParams(WRAP, WRAP).also { it.marginStart = dp(8) })
+            // 次级按钮：描边而非填充（每屏只留「进入遥控」一个主填充按钮）。
+            addView(outlineButton("连接", "连接机器人", ::connectFromUi),
+                LinearLayout.LayoutParams(WRAP, WRAP).also { it.marginStart = dp(8) })
         }
         addView(connectionInputRow)
         // ② 摘要行（已连接且未展开时可见）：类型 + 修改入口
         connectionSummary = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
-            setPadding(dp(12), dp(8), dp(8), dp(8))
-            minimumHeight = dp(44)
+            // 去卡片化：已连接摘要只是一行文本 + 次级按钮，不再套整块圆角卡。
+            setPadding(dp(2), dp(8), dp(2), dp(8))
+            minimumHeight = dp(48)
             visibility = View.GONE
             connectionSummaryText = TextView(this@MainActivity).apply {
                 textSize = 13f; setTextColor(c(R.color.md_text))
                 layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
             }
             addView(connectionSummaryText)
-            addView(MaterialButton(this@MainActivity).apply {
-                text = "修改"; textSize = 12f; minimumHeight = dp(36)
-                cornerRadius = dp(CORNER_LARGE_DP)
-                setOnClickListener {
-                    connectionExpanded = true
-                    val s = viewModel.uiState.value
-                    renderConnectionRow(s.kind, s.connectError)
-                }
+            addView(outlineButton("修改", "修改连接地址") {
+                connectionExpanded = true
+                val s = viewModel.uiState.value
+                renderConnectionRow(s.kind, s.connectError)
             })
         }
         addView(connectionSummary)
+        addView(rule())
         val s = viewModel.uiState.value
         renderConnectionRow(s.kind, s.connectError)
     }
@@ -453,101 +466,78 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 控制卡片 —— 把「控制模式」与「进入遥控」合并为一张紧凑卡片，减少首屏独立区块数。
-     *
-     * 依据：M3 Expressive *connected button group* 用于单选切换（替代 segmented button）。
-     * ⚠️ 如实标注：本项目用 MDC **1.12.0（baseline）**，不含 Expressive 组件，**不能**直接用
-     * 官方 button group，这里借鉴其「单选按钮紧凑并排」的思路，用现有 MaterialButton 实现，
-     * 不声称用了官方组件。模式按钮保留门禁断言文本「手动模式 / 自动模式」。
+     * 控制区 —— M3 Usability「每屏一个主任务」+ Color roles「surfaceContainer 分组」：
+     * 整块放在 surfaceContainer 里；模式=分段；**唯一 filled = 进入遥控**（hero）；
+     * 休息=outlined 次级，不抢主 CTA。门禁「手动/自动/进入遥控界面」硬串不动。
      */
-    private fun buildControlCard() = MaterialCardView(this).apply {
-        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
-        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
-        setCardBackgroundColor(c(R.color.md_card))
-        setContentPadding(dp(16), dp(12), dp(16), dp(12))
-        val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(TextView(this@MainActivity).apply {
-            text = "控制模式"; textSize = 13f; setTextColor(c(R.color.md_text))
-            setTypeface(null, Typeface.BOLD)
-        })
+    private fun buildControlCard() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedCard(c(R.color.md_surface), CORNER_LARGE_DP, stroked = true)
+        setPadding(dp(14), dp(14), dp(14), dp(14))
+        addView(sectionTitle("控制"))
         val row = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
+            background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP, stroked = false)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) }
         }
-        modeManual = MaterialButton(this@MainActivity).apply {
-            text = "手动模式"; textSize = 12f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_LARGE_DP)
+        modeManual = MaterialButton(this@MainActivity, null,
+            com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = "手动模式"; textSize = 13f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_CELL_DP)
             contentDescription = "手动模式"
             setOnClickListener { switchMode(ControlMode.MANUAL) }
         }
-        modeAuto = MaterialButton(this@MainActivity).apply {
-            text = "自动模式"; textSize = 12f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_LARGE_DP)
+        modeAuto = MaterialButton(this@MainActivity, null,
+            com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = "自动模式"; textSize = 13f; minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_CELL_DP)
             contentDescription = "自动模式"
             setOnClickListener { switchMode(ControlMode.AUTO) }
         }
         row.addView(modeManual, LinearLayout.LayoutParams(0, WRAP, 1f))
-        row.addView(modeAuto, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(8) })
-        col.addView(row)
+        row.addView(modeAuto, LinearLayout.LayoutParams(0, WRAP, 1f))
+        addView(row)
         modeHint = TextView(this@MainActivity).apply {
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(8), 0, 0)
             maxLines = 2; ellipsize = TextUtils.TruncateAt.END
-            setLineSpacing(0f, 1.2f)
+            setLineSpacing(0f, 1.25f)
         }
-        col.addView(modeHint)
-        // 进入遥控按钮并入同一张卡片（原独立启动行），减少一个区块。
+        addView(modeHint)
+        // M3 Expressive / Usability：主 CTA 是本屏 hero（尺寸与 primary 填充强调）。
         launchButton = MaterialButton(this@MainActivity).apply {
-            textSize = 14f; minimumHeight = dp(52)
+            textSize = 15f; minimumHeight = dp(52)
             cornerRadius = dp(CORNER_LARGE_DP)
-            // 主 CTA 亮底必须配深字；主题默认 colorOnPrimary 偏暗紫，真机截图对比度不足。
             setTextColor(c(R.color.md_bg))
             contentDescription = "进入遥控界面"
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) }
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(14) }
             setOnClickListener { startActivity(Intent(this@MainActivity, DriveActivity::class.java)) }
         }
-        col.addView(launchButton)
-        // 一键休息 / 恢复站立：robot.rest / robot.init（无参离散请求，见 Wire.ROBOT_REST KDoc）。
-        // 两按钮并排；下方常驻回显关节 limp 状态（robot.state.safety.limp，不造数），
-        // 结果行只在点击后更新，失败（含 BLE 通道的 PERMISSION_DENIED=14）如实回显。
-        col.addView(divider())
-        col.addView(TextView(this@MainActivity).apply {
-            text = "一键休息（卸力省电）"; textSize = 13f; setTextColor(c(R.color.md_text))
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, dp(4), 0, 0)
-        })
+        addView(launchButton)
+        addView(rule(top = 16, bottom = 12))
+        addView(sectionTitle("一键休息"))
         val restRow = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) }
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) }
         }
-        restButton = MaterialButton(this@MainActivity).apply {
-            text = "一键休息"; textSize = 12f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_LARGE_DP)
-            contentDescription = "一键休息：让机器人坐下卸力省电"
-            setOnClickListener { confirmRest() }
-        }
-        wakeButton = MaterialButton(this@MainActivity).apply {
-            text = "恢复站立"; textSize = 12f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_LARGE_DP)
-            contentDescription = "恢复站立：结束休息，重新上电回 home 姿态"
-            setOnClickListener { confirmWake() }
-        }
+        restButton = outlineButton("一键休息", "一键休息：让机器人坐下卸力省电", ::confirmRest)
+        wakeButton = outlineButton("恢复站立", "恢复站立：结束休息，重新上电回 home 姿态", ::confirmWake)
         restRow.addView(restButton, LinearLayout.LayoutParams(0, WRAP, 1f))
         restRow.addView(wakeButton, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(8) })
-        col.addView(restRow)
+        addView(restRow)
         restLimpText = TextView(this@MainActivity).apply {
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(8), 0, 0)
             maxLines = 2; ellipsize = TextUtils.TruncateAt.END
         }
-        col.addView(restLimpText)
+        addView(restLimpText)
         restResultText = TextView(this@MainActivity).apply {
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
             maxLines = 2; ellipsize = TextUtils.TruncateAt.END
             setLineSpacing(0f, 1.2f)
         }
-        col.addView(restResultText)
-        addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
+        addView(restResultText)
     }
 
     /** 常驻回显关节 limp 状态（robot.state.safety.limp）；无帧时不造数。 */
@@ -589,139 +579,233 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 三个顶层目的地 + SSH 终端（M3 允许 3–5 个 destinations），固定位置、不滚动。 */
+    /**
+     * M3 Navigation bar（compact）：3–5 destinations、底栏固定不滚动、
+     * 容器用 surfaceContainer；选中态 = primary 圆角指示 pill 衬在图标后
+     * （m3.material.io/components/navigation-bar/guidelines）。
+     * content-desc 仍为「标签页X」，门禁零改动。
+     */
     private fun buildTabRow() = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        background = roundedCard(c(R.color.md_card), CORNER_LARGE_DP)
-        setPadding(dp(4), dp(4), dp(4), dp(4))
-        listOf("状态", "健康", "设置", "终端").forEachIndexed { i, label ->
-            val b = MaterialButton(this@MainActivity).apply {
-                text = label; textSize = 12f; minimumHeight = dp(48)
-                cornerRadius = dp(CORNER_NAV_DP)
-                contentDescription = "标签页$label"
-                setOnClickListener { showPage(i) }
-            }
-            tabButtons.add(b)
-            addView(b, LinearLayout.LayoutParams(0, WRAP, 1f).also {
-                if (i > 0) it.marginStart = dp(4)
-            })
+        orientation = LinearLayout.VERTICAL
+        background = GradientDrawable().apply {
+            setColor(c(R.color.md_surface))
         }
+        addView(rule())
+        val tabs = listOf(
+            "状态" to R.drawable.ic_tab_state,
+            "健康" to R.drawable.ic_tab_health,
+            "设置" to R.drawable.ic_tab_settings,
+            "终端" to R.drawable.ic_tab_terminal,
+        )
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(6), 0, dp(4))
+            tabs.forEachIndexed { i, (label, iconRes) ->
+                val cell = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    minimumHeight = dp(56)
+                    contentDescription = "标签页$label"
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { showPage(i) }
+                }
+                // 图标叠在选中指示 pill 上（FrameLayout），符合 M3 active indicator。
+                val iconWrap = FrameLayout(this@MainActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(64), dp(32))
+                }
+                val indicator = View(this@MainActivity).apply {
+                    layoutParams = FrameLayout.LayoutParams(dp(56), dp(28), Gravity.CENTER)
+                    background = roundedCard(Color.TRANSPARENT, 16, stroked = false)
+                }
+                tabIndicators.add(indicator)
+                iconWrap.addView(indicator)
+                val icon = ImageView(this@MainActivity).apply {
+                    setImageResource(iconRes)
+                    imageTintList = ColorStateList.valueOf(c(R.color.md_text_dim))
+                    layoutParams = FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)
+                }
+                iconWrap.addView(icon)
+                cell.addView(iconWrap)
+                val tv = TextView(this@MainActivity).apply {
+                    text = label
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setTextColor(c(R.color.md_text_dim))
+                    setPadding(0, dp(2), 0, 0)
+                    layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+                }
+                cell.addView(tv)
+                cell.tag = Pair(icon, tv)
+                tabButtons.add(cell)
+                addView(cell, LinearLayout.LayoutParams(0, WRAP, 1f))
+            }
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
     }
 
-    /** 状态页：实机 robot.state 8 项 + App 本地遥测 6 项，标题写死数据来源。 */
-    private fun buildStatePage() = MaterialCardView(this).apply {
-        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
-        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
-        setCardBackgroundColor(c(R.color.md_card))
-        setContentPadding(dp(16), dp(12), dp(16), dp(12))
-        contentDescription = "监测数据卡：实机状态帧与App本地遥测"
-        val scroll = ScrollView(this@MainActivity)
-        val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+    /**
+     * 状态页 —— 2026-11-19 用户反馈「底部信息还要在那么一小块区域滑动，不合理」。
+     *
+     * 🔴 根因：旧版把「实机状态 + 遥测」塞进一个 weight=1f 的小 ScrollView，
+     * 其余（连接/控制）在滚动区外 —— 形成「页面里套一个滚动小窗」的割裂交互。
+     * 一手依据 Android 官方 ScrollView 文档「Never add a scrollable view inside another
+     * scroll view」(developer.android.com/reference/android/widget/ScrollView) 与
+     * Material scrolling patterns：一个目的地就是**一个连续滚动面**，内容从上到下自然流动。
+     *
+     * 修法：整页单一 ScrollView，连接 / 控制 / 实机状态 / 遥测依次铺在同一个滚动列里，
+     * 不再有内层小滚动窗。门禁首屏断言（手动/自动、进入遥控、实机状态帧）与「遥测需滚动
+     * 才可见」的负对照保持不变：遥测组仍位于自然折叠线以下，滚动整页即可读到。
+     */
+    private fun buildStatePage() = ScrollView(this).apply {
+        contentDescription = "状态页：连接、控制与监测数据"
+        val col = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(2), dp(6), dp(2), dp(10))
+        }
+        // M3 Usability：主任务（控制）在前；连接次之；监测只读；本地遥测压到折线下。
+        // 门禁：首屏须含手动/自动、进入遥控、实机状态帧；遥测须滚动才见。
+        col.addView(buildControlCard(), LinearLayout.LayoutParams(MATCH, WRAP))
+        col.addView(sectionTitle("连接").also { it.setPadding(0, dp(16), 0, dp(4)) })
+        col.addView(buildConnectionRow(), LinearLayout.LayoutParams(MATCH, WRAP))
+        col.addView(rule(top = 8, bottom = 4))
+        // 🔴 标题含门禁硬串「实机状态帧」——写在 stateSourceText，本节不再套冗长副标题。
         stateSourceText = TextView(this@MainActivity).apply {
-            textSize = 12f; setTextColor(c(R.color.md_accent))
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = TRACKING_LABEL     // HUD 微排版：小标签字距
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            letterSpacing = TRACKING_LABEL
             fontFeatureSettings = TABULAR_FIGURES
             maxLines = 2; ellipsize = TextUtils.TruncateAt.END
             setLineSpacing(0f, 1.2f)
+            setPadding(0, dp(8), 0, dp(4))
         }
         col.addView(stateSourceText)
-        // 🔴 截图实测：4 列×11sp 把「命令→实际」「航向·时间」挤成折行、行高不齐；
-        // 改 2 列并给每格独立表面色（M3 surface container 层级表达），label/value 分色分层。
-        // 🔴 真机门禁硬约束：vivo/Android 的 uiautomator 只 dump 视口内节点（off-screen
-        // 不吐，与 OEM 无关，是 uiautomator 固有行为）。状态页若用 2 列(8 行 ≈ 480dp)
-        // 会超出 ~370dp 的可用高度，遥测区被推到折叠线以下 ⇒ 门禁读不到「本地刷新」。
-        // 改 4 列(4 行 ≈ 240dp)让全部内容单屏可见；每格仍保留独立表面色 + label/value
-        // 分色分层（A4 的层级表达保留），只是更紧凑 —— 这是窄屏单屏容纳全部监测指标的
-        // 通用高密度做法（Material 3 compact window < 600dp + 信息密度权衡），并非退回旧版挤成一团。
-        col.addView(metricGrid(4, STATE_LABELS, stateValues),
-            LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) })
-        col.addView(divider())
-        col.addView(TextView(this@MainActivity).apply {
-            text = "App 本地遥测（非实机数据 · 会话/心跳/输入计数）"
-            textSize = 12f; setTextColor(c(R.color.md_warn))
-            setTypeface(null, Typeface.BOLD)
-            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
-        })
-        col.addView(metricGrid(4, TELEMETRY_LABELS, telemetryValues),
-            LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) })
-        scroll.addView(col)
-        addView(scroll, FrameLayout.LayoutParams(MATCH, MATCH))
+        col.addView(metricGrid(2, STATE_LABELS, stateValues),
+            LinearLayout.LayoutParams(MATCH, WRAP))
+        col.addView(sectionTitle("App 本地遥测（非实机数据 · 会话/心跳/输入计数）",
+            R.color.md_warn).also { it.setPadding(0, dp(16), 0, dp(4)) })
+        col.addView(metricGrid(2, TELEMETRY_LABELS, telemetryValues),
+            LinearLayout.LayoutParams(MATCH, WRAP))
+        addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
     }
 
     private fun metricCell(label: String, value: String) = TextView(this).apply {
         gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = dp(40)          // 4 列紧凑栅格：单屏容下全部 15 项
-        background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP)
-        setPadding(dp(8), dp(4), dp(8), dp(4))
+        minimumHeight = dp(48)
+        setPadding(dp(2), dp(8), dp(6), dp(8))
         setLineSpacing(0f, 1.1f)
         maxLines = 2; ellipsize = TextUtils.TruncateAt.END
-        // 🔑 等宽数字（tabular figures）：状态帧/帧率/计数每秒刷新，比例数字会让
-        // 「9 → 10」时宽度跳动、整格左右晃动。一手依据：
-        //  · Android 平台 TextView.setFontFeatureSettings / android:fontFeatureSettings
-        //    支持 `tnum` OpenType 特性；
-        //  · AndroidX `LayoutElementBuilders.FontSetting.tabularNum()` 官方 API 文档 +
-        //    cs.android.com 一手源码原文：「all numeral characters will have the same width.
-        //    This corresponds to tnum OpenType feature.」
-        // ⚠️ 2026-11-13 纠偏：上一版这里挂了「Falcon 控制站排版文献」并附一句引文，
-        //    复核 falcon.so/resources/design-basics/real-time-design 原文**没有**该句
-        //    （该文献讲「make loss visible immediately / frozen value」，用于 DriveActivity
-        //    的状态停滞告警，不是数字排版）⇒ 删除张冠李戴的引文，只留可逐字核验的源码。
-        // 只影响字形宽度，不改文本 ⇒ 真机门禁 59/59 断言文本零改动。
         fontFeatureSettings = TABULAR_FIGURES
         setMetric(this, label, value)
     }
 
-    /** label 小字 dim / value 大字近白加粗：M3 type scale 的层级，靠 Span 而非堆 TextView。 */
+    /**
+     * label 安静 / value 才是主角（Oura / Linear 仪器面板：数字是 headline）。
+     * 空态「未读到」降字号降对比，避免整屏被占位字抢眼；文案本身门禁硬串不动。
+     */
     private fun setMetric(v: TextView, label: String, value: String) {
         val full = "$label\n$value"
         val sp = SpannableString(full)
         val cut = label.length + 1
         val flags = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-        // 4 列格宽 ~49dp：label 9dp / value 12dp 在窄格里不被挤换行（"命令→实际" 5 字 ≈ 45dp）。
-        sp.setSpan(AbsoluteSizeSpan(dp(9)), 0, label.length, flags)
+        val empty = value.contains("未读到") || value == "—"
+        sp.setSpan(AbsoluteSizeSpan(dp(11)), 0, label.length, flags)
         sp.setSpan(ForegroundColorSpan(c(R.color.md_text_dim)), 0, label.length, flags)
-        sp.setSpan(AbsoluteSizeSpan(dp(12)), cut, full.length, flags)
-        sp.setSpan(ForegroundColorSpan(c(R.color.md_text)), cut, full.length, flags)
-        sp.setSpan(StyleSpan(Typeface.BOLD), cut, full.length, flags)
+        sp.setSpan(AbsoluteSizeSpan(dp(if (empty) 14 else 18)), cut, full.length, flags)
+        sp.setSpan(ForegroundColorSpan(
+            c(if (empty) R.color.md_text_dim else R.color.md_text)), cut, full.length, flags)
+        if (!empty) sp.setSpan(StyleSpan(Typeface.BOLD), cut, full.length, flags)
         v.text = sp
     }
 
+    /** HTML `.rows`：2 列圆角卡网格，gap 12dp；无竖线、无行分隔线（卡片自身描边即分组）。 */
     private fun metricGrid(cols: Int, labels: List<String>, sink: MutableList<TextView>) =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            labels.chunked(cols).forEachIndexed { rowIdx, chunk ->
+            val rows = labels.chunked(cols)
+            rows.forEachIndexed { rowIdx, chunk ->
                 val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
                 chunk.forEachIndexed { colIdx, label ->
                     val v = metricCell(label, "— 未读到")
                     sink.add(v)
                     row.addView(v, LinearLayout.LayoutParams(0, WRAP, 1f).also {
-                        if (colIdx > 0) it.marginStart = dp(4)
+                        if (colIdx > 0) it.marginStart = dp(12)
                     })
                 }
                 repeat(cols - chunk.size) {
-                    row.addView(View(this@MainActivity), LinearLayout.LayoutParams(0, WRAP, 1f))
+                    row.addView(View(this@MainActivity),
+                        LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(12) })
                 }
-                addView(row, LinearLayout.LayoutParams(MATCH, WRAP).also {
-                    if (rowIdx > 0) it.topMargin = dp(4)
-                })
+                addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
+                addView(rule())
             }
         }
 
-    private fun divider() = View(this).apply {
-        // M3 `outlineVariant` = borders & dividers 的语义角色（不再用临时拼的半透明色）。
+    private fun divider() = rule(top = 12, bottom = 8)
+
+    /**
+     * 1px 分隔线 —— 去卡片化后**替代层层卡边框**建立分组节奏。
+     * 一手依据 standoutmcp「Group with whitespace and 1px rules. Cards only for real elevation」
+     * 与 skillcraft「Borders > shadows」；颜色取 M3 `outlineVariant` 语义角色。
+     */
+    private fun rule(top: Int = 0, bottom: Int = 0) = View(this).apply {
         setBackgroundColor(c(R.color.md_outline_variant))
         layoutParams = LinearLayout.LayoutParams(MATCH, dp(STROKE_HAIRLINE_DP)).also {
-            it.topMargin = dp(16); it.bottomMargin = dp(12)
+            it.topMargin = dp(top)
+            it.bottomMargin = dp(bottom)
         }
     }
 
-    private fun buildHealthPage() = MaterialCardView(this).apply {
-        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
-        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
-        setCardBackgroundColor(c(R.color.md_card))
-        setContentPadding(dp(10), dp(8), dp(10), dp(8))
-        val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+    /**
+     * 次级按钮用 MDC **官方 outlined 样式**：1px 描边 + 文字色，不做填充块。
+     * 每屏只保留一个填充主按钮（进入遥控），解决旧版「6 个填充按钮抢同一层级」。
+     */
+    private fun outlineButton(label: String, desc: String, onClick: () -> Unit) =
+        MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = label
+            textSize = 12f
+            minimumHeight = dp(44)
+            cornerRadius = dp(CORNER_CELL_DP)
+            contentDescription = desc
+            strokeWidth = dp(STROKE_HAIRLINE_DP)
+            strokeColor = ColorStateList.valueOf(c(R.color.md_outline))
+            setTextColor(c(R.color.md_text))
+            setOnClickListener { onClick() }
+        }
+
+    /**
+     * 分段：选中 = 表面最高阶 + 近白字；未选中 = 透明 + dim（Linear 少色、靠 luminance）。
+     * 门禁「手动模式/自动模式」文案 / content-desc 不动。
+     */
+    private fun styleSegment(b: MaterialButton, selected: Boolean, accent: Int) {
+        b.strokeWidth = 0
+        b.backgroundTintList = ColorStateList.valueOf(
+            if (selected) c(R.color.md_surface_highest) else Color.TRANSPARENT)
+        b.setTextColor(if (selected) c(R.color.md_text) else c(R.color.md_text_dim))
+        b.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+    }
+
+    /**
+     * 分区标题：小字 + 字距，无彩条（Oura domain label 安静；彩条易显模板）。
+     * 文本原样保留（门禁硬串）。
+     */
+    private fun sectionTitle(label: String, colorRes: Int = R.color.md_text_dim) =
+        TextView(this).apply {
+            text = label
+            textSize = 11f
+            setTextColor(c(colorRes))
+            setTypeface(null, Typeface.BOLD)
+            letterSpacing = 0.06f
+            setPadding(0, dp(10), 0, dp(4))
+        }
+
+    /** 健康页：robot.health 字段 + 3D 模型 + 15 舵机 + 只读诊断。
+     *  2026-11-19 去卡片化：外层大卡撤掉，页内改分区标题 + 1px 分隔线；
+     *  顶部两行门禁断言文本（healthSourceText / robot.health 声明）位置保持不变。 */
+    private fun buildHealthPage() = ScrollView(this).apply {
+        isFillViewport = true
+        val col = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(2), dp(6), dp(2), dp(4))
+        }
         healthSourceText = TextView(this@MainActivity).apply {
             textSize = 12f; setTextColor(c(R.color.md_warn))
         }
@@ -737,36 +821,83 @@ class MainActivity : AppCompatActivity() {
         // 真机门禁 uiautomator 只 dump 视口内节点，插到它们前面会把断言挤红。
         // 🔴 「模型区域被文字遮挡」修复：声明/图例从 Canvas drawText 移到卡片外的
         // 独立 TextView；DuckModelView 现在只画几何，模型可用全高（净绘图区 +8%）。
+        // 11-20 照 HTML `.model-container`：模型套渐变圆角底座（视觉锚点）。
+        // DuckModelView 只画几何，容器负责渐变背景/圆角，模型可用全高不变。
         duckModelView = DuckModelView(this@MainActivity).apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH, dp(240))
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
         }
-        col.addView(duckModelView)
+        col.addView(modelContainer(duckModelView, 216).also {
+            it.layoutParams = LinearLayout.LayoutParams(MATCH, dp(216)).also { lp ->
+                lp.topMargin = dp(6)
+            }
+        })
         col.addView(TextView(this@MainActivity).apply {
             text = "真实外观网格 · 15 舵机状态点 · 非运动学解算 · 左右拖动旋转"
             textSize = 10f; setTextColor(c(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(2), 0, dp(2))
         }, LinearLayout.LayoutParams(MATCH, WRAP))
-        // ── 结构化状态卡片：6 项子系统，每项一张小卡带状态色点 ──
-        // 取代原先「原始 JSON 长文本 + 部位统计 + 告警 + 模型」四重重复呈现（用户反馈杂乱）。
-        col.addView(buildHealthCards(), LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(8)
+        // ── 11-20 照 HTML 健康页：模型之后直接进「硬件状态」三组 .grp（颈/左/右）──
+        col.addView(sectionTitle("硬件状态 · robot.health 字段").apply {
+            setPadding(0, dp(10), 0, dp(8))
         })
-        // 15 舵机逐点状态网格：聚合温度在「舵机温度」卡片，逐点缺失/在线状态在此网格。
+        col.addView(buildPartGroups(), LinearLayout.LayoutParams(MATCH, WRAP))
+        // 5 项子系统状态卡（电量/主板/舵机温度/总线/IMU）——本项目真实数据，保留在分组徽章之后。
+        col.addView(View(this@MainActivity).apply { layoutParams = LinearLayout.LayoutParams(MATCH, dp(12)) })
+        col.addView(buildHealthCards(), LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(2)
+        })
+        // 15 舵机逐点状态网格：聚合温度在「舵机温度」行，逐点缺失/在线状态在此网格。
         servoGridCard = buildServoGrid()
         col.addView(servoGridCard, LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(8)
+            it.topMargin = dp(10)
         })
+        // ── ToF 8×8 深度网格（头部测距雷达 · tof.frame）──
+        col.addView(rule(top = 12))
+        col.addView(sectionTitle("头部 ToF · 8×8 深度（tof.frame）"))
+        tofSourceText = TextView(this@MainActivity).apply {
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, 0, 0, dp(6))
+        }
+        col.addView(tofSourceText)
+        col.addView(buildTofGrid(), LinearLayout.LayoutParams(MATCH, WRAP))
+        col.addView(TextView(this@MainActivity).apply {
+            text = "色阶：近(暖)→远(冷) · 空空间=暗格 · 测量失败=告警格(带码) · <10cm 不可信 · 原始斜距非重投影"
+            textSize = 10f; setTextColor(c(R.color.md_text_dim))
+            maxLines = 2; setLineSpacing(0f, 1.15f)
+            setPadding(0, dp(4), 0, dp(2))
+        })
+        // 11-20 参照设计稿 .legend：近[渐变bar]远，渐变色带直观解读 8×8 网格颜色。
+        col.addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(4))
+            addView(TextView(this@MainActivity).apply {
+                text = "近"; textSize = 10f; setTextColor(c(R.color.md_text_dim))
+            }, LinearLayout.LayoutParams(WRAP, WRAP))
+            addView(View(this@MainActivity).apply {
+                val near = Color.parseColor("#C56E66")
+                val mid = Color.parseColor("#C7A052")
+                val farBlue = Color.parseColor("#C9904A")
+                val dark = Color.parseColor("#2A2218")
+                background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                    intArrayOf(near, mid, farBlue, dark)).apply { cornerRadius = dp(4).toFloat() }
+            }, LinearLayout.LayoutParams(0, dp(8), 1f).also {
+                it.marginStart = dp(8); it.marginEnd = dp(8)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "远"; textSize = 10f; setTextColor(c(R.color.md_text_dim))
+            }, LinearLayout.LayoutParams(WRAP, WRAP))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
         monitorAlertText = TextView(this@MainActivity).apply {
             textSize = 12f; setTextColor(c(R.color.md_text))
             setPadding(0, dp(4), 0, dp(4)); maxLines = 6
         }
         col.addView(monitorAlertText)
         val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(MaterialButton(this@MainActivity).apply {
-            text = "刷新"; minimumHeight = dp(48)
-            setOnClickListener { refreshHealth() }
-        })
+        row.addView(outlineButton("刷新", "刷新健康数据", ::refreshHealth),
+            LinearLayout.LayoutParams(WRAP, WRAP))
         autoRefreshBox = CheckBox(this@MainActivity).apply {
             text = "每秒自动刷新"; minimumHeight = dp(48)
             setTextColor(c(R.color.md_text_dim))
@@ -800,19 +931,13 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "系统诊断只读信息"
         }
         col.addView(diagnosticsText, LinearLayout.LayoutParams(MATCH, WRAP))
-        col.addView(MaterialButton(this@MainActivity).apply {
-            text = "刷新系统信息"; minimumHeight = dp(48)
-            contentDescription = "刷新系统信息"
-            setOnClickListener { viewModel.onRefreshDiagnostics() }
+        col.addView(outlineButton("刷新系统信息", "刷新系统信息") {
+            viewModel.onRefreshDiagnostics()
         }, LinearLayout.LayoutParams(MATCH, WRAP))
         // 🔴 整页可滚动：模型放大后「15 舵机网格」第 3 行（ID 10–14 右腿）会被挤出视口，
         // 用户 2026-11-15 反馈「只有 20 到 34」。外层 ScrollView 保证 15 个 ID 都能滚到。
         // 顶部两行断言文本仍在最前，真机门禁 uiautomator dump 视口内节点不受影响。
-        val outerScroll = ScrollView(this@MainActivity).apply {
-            isFillViewport = true
-            addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
-        }
-        addView(outerScroll, FrameLayout.LayoutParams(MATCH, MATCH))
+        addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
     }
 
     /**
@@ -827,25 +952,29 @@ class MainActivity : AppCompatActivity() {
     private fun buildHealthCards() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         val labels = listOf("电量", "主板状态", "舵机温度", "总线/舵机", "IMU")
-        labels.chunked(2).forEach { chunk ->
+        val rows = labels.chunked(2)
+        rows.forEachIndexed { rowIdx, chunk ->
             val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
             chunk.forEachIndexed { i, label ->
                 val card = healthCard(label)
                 row.addView(card, LinearLayout.LayoutParams(0, WRAP, 1f).also {
-                    if (i > 0) it.marginStart = dp(8)
+                    if (i > 0) it.marginStart = dp(12)
                 })
             }
-            addView(row, LinearLayout.LayoutParams(MATCH, WRAP).also {
-                if (labels.chunked(2).indexOf(chunk) > 0) it.topMargin = dp(8)
-            })
+            addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
+            if (rowIdx < rows.size - 1) {
+                addView(View(this@MainActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(MATCH, dp(10))
+                })
+            }
         }
     }
 
-    /** 单张状态卡片：左侧状态色点 + 标题 + 数值（数值按 severity 着色）。 */
+    /** 健康读数行：色点 + 标题 + 数值；ruled 浅底，非 20dp 浮卡。 */
     private fun healthCard(label: String) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP)
-        setPadding(dp(10), dp(8), dp(10), dp(8))
+        background = roundedCard(c(R.color.md_surface), CORNER_CELL_DP, stroked = true)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
         val head = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
         head.gravity = Gravity.CENTER_VERTICAL
         val dot = View(this@MainActivity).apply {
@@ -860,8 +989,10 @@ class MainActivity : AppCompatActivity() {
         })
         addView(head)
         val v = TextView(this@MainActivity).apply {
-            textSize = 13f; setTextColor(c(R.color.md_text))
+            textSize = 16f; setTextColor(c(R.color.md_text))
             setTypeface(null, Typeface.BOLD); setPadding(0, dp(4), 0, 0)
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+            fontFeatureSettings = TABULAR_FIGURES
             text = "— 未读到"
         }
         addView(v)
@@ -884,12 +1015,126 @@ class MainActivity : AppCompatActivity() {
      *  - missing 字段未返回 → UNKNOWN 灰（没数据，不猜、不默认绿）
      * 温度列只显示聚合 maxC（协议只提供这个），不造逐舵机温度。
      */
-    private fun buildServoGrid() = MaterialCardView(this).apply {
-        radius = dp(CORNER_CELL_DP).toFloat(); cardElevation = 0f
-        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
-        setCardBackgroundColor(c(R.color.md_card))
-        setContentPadding(dp(10), dp(8), dp(10), dp(8))
-        val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+    /**
+     * ToF 8×8 深度网格：64 格 TextView（row-major），每格显示距离米数。
+     * 三态着色在 [renderToF]：Range 近暖远冷 / NoTarget 暗格 / Unusable 告警格。
+     * 无帧时全部显示「·」+ 暗格，绝不默认绿或填 0（UNVERIFIED != PASS）。
+     */
+    private fun buildTofGrid() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        tofCells.clear()
+        val grid = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedCard(c(R.color.md_surface), CORNER_CELL_DP, stroked = true)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        for (r in 0 until TofSnapshot.ROWS) {
+            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            for (col in 0 until TofSnapshot.COLS) {
+                val cell = TextView(this@MainActivity).apply {
+                    text = "·"; textSize = 10f; gravity = Gravity.CENTER
+                    setTextColor(c(R.color.md_text_dim))
+                    minHeight = dp(26)
+                    background = roundedCard(c(R.color.md_outline_variant), 4, stroked = false)
+                    fontFeatureSettings = TABULAR_FIGURES
+                }
+                tofCells.add(cell)
+                row.addView(cell, LinearLayout.LayoutParams(0, WRAP, 1f).also {
+                    if (col > 0) it.marginStart = dp(2)
+                })
+            }
+            grid.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).also {
+                if (r > 0) it.topMargin = dp(2)
+            })
+        }
+        addView(grid, LinearLayout.LayoutParams(MATCH, WRAP))
+    }
+
+    /**
+     * 把 ToF 帧填进 8×8 网格。只写文本变化，避免 1s tick 连发 AccessibilityEvent。
+     * 三态判据完全复用 core [TofSnapshot.zone]（status 决定含义），UI 不重造阈值。
+     */
+    private fun renderToF(state: MainViewModel.UiState) {
+        if (!::tofSourceText.isInitialized || tofCells.size != TofSnapshot.ZONES) return
+        val snap = state.tof
+        tofSourceText.text = when {
+            snap == null -> "未读到 ToF 帧 · 真机需 mediad WebRTC 链路（btd 拒绝 tof.stream）"
+            state.kind == "MOCK" -> "⚠ Mock 演示夹具 · 非实机 · 第 ${snap.seq ?: "?"} 帧 · 有效 ${snap.validCount}/64"
+            else -> "实机 tof.frame · 第 ${snap.seq ?: "?"} 帧 · 有效 ${snap.validCount}/64"
+        }
+        tofSourceText.setTextColor(c(if (snap != null && state.kind == "MOCK") R.color.md_warn
+            else if (snap != null) R.color.md_accent else R.color.md_text_dim))
+        val zones = snap?.zones
+        for (i in 0 until TofSnapshot.ZONES) {
+            val cell = tofCells[i]
+            val z = zones?.getOrNull(i)
+            val (txt, col) = when (z) {
+                is TofZone.Range -> {
+                    // 近=暖(ok/warn) 远=冷(accent)，纯定性色阶，具体距离写在格内
+                    val m = z.meters
+                    val color = if (m < 0.3) R.color.md_bad else if (m < 0.7) R.color.md_warn else R.color.md_accent
+                    "%.2f".format(m) to color
+                }
+                TofZone.NoTarget -> "·" to R.color.md_outline
+                is TofZone.Unusable -> "!" to R.color.md_bad
+                null -> "·" to R.color.md_outline_variant
+            }
+            cell.setTextIfChanged(txt)
+            cell.setTextColor(c(col))
+        }
+    }
+
+    /**
+     * 三组「部位整体健康度」徽章 —— 照 HTML 健康页 `.grp`（模型之后、硬件状态区）。
+     *
+     * 🔴 展示顺序 vs 存储顺序解耦（2026-11-20 重构，务必保持）：
+     *  - **展示**：HTML 稿顺序 = 颈·头·喙 / 左腿 / 右腿 ⇒ [DISPLAY_ORDER] = [1,0,2]。
+     *  - **存储**：[partBadges] 索引必须严格对齐 RobotParts.JOINT_IDS =
+     *    [左腿20–24, 颈头喙30–34, 右腿10–14]（各 5 个），因为 [updateServoGrid]
+     *    用 `ids.drop(g*5).take(5)` 派生每组缺失数。故先按索引建 badge 再按展示顺序 addView。
+     *  - 结果：用户看到的顺序贴稿，数据派生链一字未改，不造数。
+     */
+    private fun buildPartGroups() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        val groupNames = listOf("左腿 20–24", "颈·头·喙 30–34", "右腿 10–14")
+        val displayOrder = listOf(1, 0, 2)   // HTML：颈头喙 / 左腿 / 右腿；索引仍按 JOINT_IDS
+        val badges = arrayOfNulls<TextView>(groupNames.size)
+        val groups = arrayOfNulls<View>(groupNames.size)
+        groupNames.forEachIndexed { gi, gname ->
+            val badge = TextView(this@MainActivity).apply {
+                text = "— 未读到"; textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(c(R.color.md_text_dim))
+                fontFeatureSettings = TABULAR_FIGURES
+            }
+            badges[gi] = badge
+            groups[gi] = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                background = roundedCard(c(R.color.md_surface), CORNER_CELL_DP, stroked = true)
+                addView(TextView(this@MainActivity).apply {
+                    text = gname; textSize = 13f
+                    setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+                }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                addView(badge, LinearLayout.LayoutParams(WRAP, WRAP))
+            }
+        }
+        partBadges.addAll(badges.map { it!! })   // 存储顺序 = JOINT_IDS，供 updateServoGrid 派生
+        displayOrder.forEachIndexed { pos, gi ->
+            addView(groups[gi]!!, LinearLayout.LayoutParams(MATCH, WRAP).also {
+                it.topMargin = if (pos == 0) 0 else dp(10)
+            })
+        }
+    }
+
+    private fun buildServoGrid() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(2), dp(6), dp(2), dp(4))
+        val col = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
         col.addView(TextView(this@MainActivity).apply {
             text = "15 舵机状态（ID · 缺失=红 / 在线=绿 / 未读到=灰）"
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
@@ -899,8 +1144,7 @@ class MainActivity : AppCompatActivity() {
         val cols = 5
         val parts = RobotParts.JOINT_PARTS
         val ids = RobotParts.JOINT_IDS
-        // 三组各 5 个：左腿 20–24 / 颈头喙 30–34 / 右腿 10–14（严格对齐 lib.rs JOINT_IDS）。
-        // 标题显式写出 ID 范围，避免用户只看到前两组就以为缺了 10–14。
+        // 三组标题仍按 JOINT_IDS 顺序（左腿/颈头喙/右腿），与逐点网格 chunk 一一对应。
         val groupNames = listOf("左腿 20–24", "颈·头·喙 30–34", "右腿 10–14")
         parts.chunked(cols).forEachIndexed { groupIdx, chunk ->
             grid.addView(TextView(this@MainActivity).apply {
@@ -922,12 +1166,12 @@ class MainActivity : AppCompatActivity() {
         addView(col)
     }
 
-    /** 单个舵机格：状态色点 + 舵机 ID + 关节名。色点先置灰（没证据），刷新时才改色。 */
+    /** 单个舵机格：状态色点 + 舵机 ID + 关节名。色点先置灰（没证据），刷新时才改色。
+     *  去卡片化：无圆角小卡背景（updateServoGrid 依赖 getChildAt(0/1/2)，子节点数不变）。 */
     private fun servoCell(part: RobotPart, id: Int) = LinearLayout(this@MainActivity).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
-        background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP, stroked = false)
-        setPadding(dp(6), dp(6), dp(6), dp(6))
+        setPadding(dp(4), dp(6), dp(4), dp(6))
         val dot = View(this@MainActivity).apply {
             val s = dp(7); layoutParams = LinearLayout.LayoutParams(s, s)
             background = roundedCard(c(R.color.md_text_dim), s / 2)
@@ -968,6 +1212,22 @@ class MainActivity : AppCompatActivity() {
             dot.background = roundedCard(color, dp(4))
             // 温度列：协议只给聚合 maxC，不造逐舵机温度，故不在此格显示温度
             nameTv.setTextColor(if (sev == Severity.UNKNOWN) c(R.color.md_text_dim) else color)
+        }
+        // 11-20 三组整体徽章：组内缺失数>0=警告、missing 字段读到且无缺失=良好、否则未读到。
+        // 严格从 missingIds 派生（JOINT_IDS 顺序：左腿/颈头喙/右腿，各 5 个）。
+        val ids = RobotParts.JOINT_IDS
+        for (g in partBadges.indices) {
+            val groupIds = ids.drop(g * 5).take(5)
+            val missCount = groupIds.count { it in missing }
+            val (text, tone) = when {
+                !missingPresent -> "— 未读到" to R.color.md_text_dim
+                missCount > 0 -> "▲ 警告 $missCount" to R.color.md_warn
+                else -> "● 良好" to R.color.md_ok
+            }
+            if (partBadges[g].text != text) {
+                partBadges[g].text = text
+                partBadges[g].setTextColor(c(tone))
+            }
         }
     }
 
@@ -1014,89 +1274,93 @@ class MainActivity : AppCompatActivity() {
      *
      * 🔴 原厂 §8.1 pre-shipping blocker：目标固件明文传 Wi-Fi 密码（一手
      *    btd/src/route.rs:139-155），故警示**常驻**且连接前**二次确认**，绝不软化成
-     *    「安全配网」。Mock 会话不写真网络（Repository 隔离）。加密能力预埋但默认不接入
-     *    （见 ProvisioningCrypto / 固件对接规格文档）。
+     *    「安全配网」。Mock 会话不写真网络（Repository 隔离）。
+     *
+     * 2026-11-20 IA（docs/active/…连接配网UI设计依据）：
+     * 标题 → 紧凑状态 → Banner → 刷新 → 两行网络列表 → Outlined 输入 → 写操作。
+     * PLAINTEXT 常量 / 「Wi-Fi 配网」标题零改字。
      */
     private fun buildNetPanel() = LinearLayout(this@MainActivity).apply {
         orientation = LinearLayout.VERTICAL
         addView(TextView(this@MainActivity).apply {
-            text = "Wi-Fi 配网（net.status / scan / connect / forget）"
-            textSize = 12f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
-            letterSpacing = TRACKING_LABEL; setPadding(0, 0, 0, dp(4))
+            text = "Wi-Fi 配网"
+            textSize = 14f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, dp(4))
         })
-        // 常驻明文风险警示（不可省略、不软化）
+        // Android Settings：primary + secondary 状态，先于长说明。
+        netStatusText = TextView(this@MainActivity).apply {
+            text = "当前连接 · 尚未查询 · 点「刷新网络」"
+            textSize = 12f; setTextColor(c(R.color.md_text_dim))
+            setLineSpacing(0f, 1.15f)
+        }
+        addView(netStatusText, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.bottomMargin = dp(8)
+        })
+        // 明文风险 Banner：PLAINTEXT 常量逐字保留（门禁硬串）。
         addView(TextView(this@MainActivity).apply {
             text = "⚠ " + NetProvisioning.PLAINTEXT_TRANSPORT_WARNING
             textSize = 11f; setTextColor(c(R.color.md_bad))
-            setPadding(0, 0, 0, dp(6))
-        })
-        netStatusText = TextView(this@MainActivity).apply {
-            text = "尚未查询 · 点「刷新网络」读取当前连接与附近网络"
-            textSize = 11f; setTextColor(c(R.color.md_text_dim))
-        }
-        addView(netStatusText, LinearLayout.LayoutParams(MATCH, WRAP))
-        addView(MaterialButton(this@MainActivity).apply {
-            text = "刷新网络（只读）"; textSize = 12f; minimumHeight = dp(44)
-            cornerRadius = dp(CORNER_LARGE_DP)
-            contentDescription = "刷新网络状态"
-            setOnClickListener { viewModel.onRefreshNet() }
-        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(38, 0xCE, 0x6A, 0x63))
+                cornerRadius = dp(CORNER_CELL_DP).toFloat()
+                setStroke(dp(1), Color.argb(90, 0xCE, 0x6A, 0x63))
+            }
+            val bar = GradientDrawable().apply {
+                setColor(c(R.color.md_bad)); setSize(dp(3), dp(28))
+            }
+            setCompoundDrawablesWithIntrinsicBounds(bar, null, null, null)
+            compoundDrawablePadding = dp(10)
+        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.bottomMargin = dp(8) })
 
-        // net.scan 结果做成「可点选列表」：点一项自动填 SSID，取代手录。
-        // 一手依据 configd/src/nm.rs:567 —— connect() 内部先 scan() 找该 SSID，扫不到直接
-        // NotFound；隐藏 SSID / 802.1X 也不支持。所以「从扫描结果里选」比手录更不易错，
-        // 且是固件唯一保证能找到网络的输入方式。手输 EditText 仍保留（扫描为空时的兜底）。
-        addView(TextView(this@MainActivity).apply {
-            text = "附近网络（net.scan · 点选填入 SSID）"
-            textSize = 11f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(2))
+        addView(outlineButton("刷新网络（只读）", "刷新网络状态") {
+            viewModel.onRefreshNet()
         }, LinearLayout.LayoutParams(MATCH, WRAP))
-        // 如实回显固件边界，不软化成「已存网络免密」：configd/src/nm.rs:585 明确
-        // 非开放网络 psk.is_none() 一律 Failed{Unsupported,"this network needs a passphrase"}，
-        // 即便该网络是 saved；每次 net.connect 都必须显式带 psk。
+
+        // net.scan → 可点选列表（configd nm.rs:567：从扫描结果选比手录更稳）。
         addView(TextView(this@MainActivity).apply {
-            text = "已存网络仍需填密码 · 802.1X 网络不支持连接（configd/nm.rs:585）"
-            textSize = 10f; setTextColor(c(R.color.md_text_dim))
-            setPadding(0, 0, 0, dp(4))
+            text = "附近网络"
+            textSize = 12f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(14), 0, dp(2))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        addView(TextView(this@MainActivity).apply {
+            text = "点选填入 SSID · 已存仍需密码 · 802.1X 不支持"
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setPadding(0, 0, 0, dp(6))
         }, LinearLayout.LayoutParams(MATCH, WRAP))
         netScanList = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
         }
         addView(netScanList, LinearLayout.LayoutParams(MATCH, WRAP))
 
-        netSsidEdit = EditText(this@MainActivity).apply {
-            hint = "网络名称（SSID）"; textSize = 12f
-            inputType = InputType.TYPE_CLASS_TEXT
-            contentDescription = "网络名称输入"
-            setSingleLine(true)
-        }
-        addView(netSsidEdit, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
-        netPskEdit = EditText(this@MainActivity).apply {
-            hint = "密码（开放网络留空）"; textSize = 12f
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            contentDescription = "Wi-Fi 密码输入"
-            setSingleLine(true)
-        }
-        addView(netPskEdit, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(4) })
+        // M3 Outlined Dense 输入（与驾驶通道下拉同族）。
+        val ssidField = LayoutInflater.from(this@MainActivity)
+            .inflate(R.layout.widget_outlined_field, this, false) as TextInputLayout
+        ssidField.hint = "网络名称（SSID）"
+        netSsidEdit = ssidField.findViewById(R.id.field_input)
+        netSsidEdit.inputType = InputType.TYPE_CLASS_TEXT
+        netSsidEdit.contentDescription = "网络名称输入"
+        addView(ssidField, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(10) })
 
-        addView(MaterialButton(this@MainActivity).apply {
-            text = "连接（写操作 · 明文）"; textSize = 12f; minimumHeight = dp(44)
-            cornerRadius = dp(CORNER_LARGE_DP)
-            contentDescription = "连接 Wi-Fi"
-            setOnClickListener { confirmConnectWifi() }
-        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+        val pskField = LayoutInflater.from(this@MainActivity)
+            .inflate(R.layout.widget_outlined_field, this, false) as TextInputLayout
+        pskField.hint = "密码（开放网络留空）"
+        netPskEdit = pskField.findViewById(R.id.field_input)
+        netPskEdit.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        netPskEdit.contentDescription = "Wi-Fi 密码输入"
+        addView(pskField, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) })
 
-        addView(MaterialButton(this@MainActivity).apply {
-            text = "忘记该网络（写操作）"; textSize = 12f; minimumHeight = dp(44)
-            cornerRadius = dp(CORNER_LARGE_DP)
-            contentDescription = "忘记 Wi-Fi 网络"
-            setOnClickListener {
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(outlineButton("连接 · 明文", "连接 Wi-Fi", ::confirmConnectWifi),
+                LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(outlineButton("忘记网络", "忘记 Wi-Fi 网络") {
                 val ssid = netSsidEdit.text.toString().trim()
                 if (ssid.isEmpty()) {
                     netResultText.setTextIfChanged("请先填写要忘记的网络名称（SSID）")
                 } else confirmForgetWifi(ssid)
-            }
-        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(4) })
+            }, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(8) })
+        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(10) })
 
         netResultText = TextView(this@MainActivity).apply {
             text = "—"; textSize = 11f; setTextColor(c(R.color.md_text_dim))
@@ -1134,74 +1398,85 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 设置页：所有参数写 SessionHolder，DriveActivity 启动时读取，避免「改了没生效」。 */
-    private fun buildSettingsPage() = MaterialCardView(this).apply {
-        radius = dp(CORNER_LARGE_DP).toFloat(); cardElevation = 0f
-        strokeWidth = dp(STROKE_HAIRLINE_DP); setStrokeColor(c(R.color.md_outline_variant))
-        setCardBackgroundColor(c(R.color.md_card))
-        setContentPadding(dp(10), dp(8), dp(10), dp(8))
-        val scroll = ScrollView(this@MainActivity)
-        val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(TextView(this@MainActivity).apply {
-            text = "遥控参数（进入横屏遥控页时生效 · 已本地持久化）"
-            textSize = 12f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
-            letterSpacing = TRACKING_LABEL
-        })
-        // 完整依据：取自 ROS_Robot_Controller / ohho.apk 的 persistent preferences；
-        // 控制模式与连接地址刻意不持久化 —— 每次冷启动回手动，保留手动接管入口
-        // （安全原则见《首页界面设计依据》§10 与《功能缺口清单》）。
-        // 🔴 这里压成单行：真机 uiautomator 只 dump 视口内节点，两行说明会把下方
-        // 「方向摇杆死区」标签推出设置页首屏（门禁 59 条实测 FAIL），依据不丢只是移到注释。
-        col.addView(TextView(this@MainActivity).apply {
-            text = "取自 ROS_Robot_Controller / ohho.apk；模式与地址不持久化"
-            textSize = 10f; setTextColor(c(R.color.md_text_dim))
-            setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, 0, 0, dp(6))
-        })
+    /**
+     * 设置页整体重做（2026-11-20）—— 对照
+     * [Android Settings](https://developer.android.com/design/ui/mobile/guides/patterns/settings)：
+     * list + 分组标题/supporting、组用视觉 containment、滑块行 primary label + 右侧 status、
+     * 标签不复读 section 词、常用项靠前。
+     * 结构：① 遥控参数 → ② 速度与死区 → ③ 连接 → ④ 关于。
+     * 门禁：`已本地持久化` + `方向摇杆死区` 同处首屏；BLE/扫描硬串由子面板保留。
+     */
+    private fun buildSettingsPage() = ScrollView(this).apply {
+        val col = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(2), dp(4), dp(20))
+        }
+
+        // ── ① 遥控参数 ──
+        // 🔴 supporting 含门禁硬串「已本地持久化」，不可改写。
+        col.addView(settingsSectionHeader(
+            "遥控参数",
+            "已本地持久化（进入横屏遥控页生效）",
+            first = true,
+        ))
+        val driveGroup = settingsGroup()
         val (channelView, channelInput) =
-            buildDropdown(col, "驾驶通道", CHANNEL_ITEMS, SessionHolder.channelIndex) { pos ->
+            buildDropdown(driveGroup, "驾驶通道", CHANNEL_ITEMS, SessionHolder.channelIndex) { pos ->
                 SessionHolder.channelIndex = pos
                 persist()
             }
         channelDropdown = channelInput
-        col.addView(channelView, LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(4)
-        })
-
-        val (headRadView, headRadInput) = buildDropdown(col, "头部幅度", HEAD_RAD_ITEMS,
+        driveGroup.addView(channelView, LinearLayout.LayoutParams(MATCH, WRAP))
+        val (headRadView, headRadInput) = buildDropdown(driveGroup, "头部幅度", HEAD_RAD_ITEMS,
             SessionHolder.headRadIndex) { pos ->
             SessionHolder.headRadIndex = pos
             persist()
         }
         headRadDropdown = headRadInput
-        col.addView(headRadView, LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(4)
+        driveGroup.addView(headRadView, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(10)
         })
         invertBox = CheckBox(this@MainActivity).apply {
-            text = "反转前后（真机 R17 映射决定，客户端不硬编码）"
-            textSize = 11f; minimumHeight = dp(48)
-            setTextColor(c(R.color.md_text_dim))
+            text = "反转前后"
+            textSize = 14f; minimumHeight = dp(48)
+            setTextColor(c(R.color.md_text))
             isChecked = SessionHolder.invertY
             setOnCheckedChangeListener { _, checked -> SessionHolder.invertY = checked; persist() }
         }
-        col.addView(invertBox)
-        vxLabel = TextView(this@MainActivity).apply { textSize = 11f; setTextColor(c(R.color.md_text_dim)) }
-        yawLabel = TextView(this@MainActivity).apply { textSize = 11f; setTextColor(c(R.color.md_text_dim)) }
-        driveDzLabel = TextView(this@MainActivity).apply { textSize = 11f; setTextColor(c(R.color.md_text_dim)) }
-        headDzLabel = TextView(this@MainActivity).apply { textSize = 11f; setTextColor(c(R.color.md_text_dim)) }
+        driveGroup.addView(invertBox, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(6)
+        })
+        driveGroup.addView(TextView(this@MainActivity).apply {
+            text = "真机 R17 映射决定 · 客户端不硬编码"
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setPadding(dp(48), 0, 0, 0)
+        })
+        col.addView(driveGroup, LinearLayout.LayoutParams(MATCH, WRAP))
+
+        // ── ② 速度与死区（首屏须含「方向摇杆死区」）──
+        col.addView(settingsSectionHeader("速度与死区", "占位默认 · 待整机标定"))
+        vxLabel = TextView(this@MainActivity)
+        yawLabel = TextView(this@MainActivity)
+        driveDzLabel = TextView(this@MainActivity)
+        headDzLabel = TextView(this@MainActivity)
         vxBar = SeekBar(this@MainActivity).apply {
-            max = 80; progress = (SessionHolder.maxVx * 100).toInt(); minimumHeight = dp(36)
+            max = 80; progress = (SessionHolder.maxVx * 100).toInt()
         }
         yawBar = SeekBar(this@MainActivity).apply {
-            max = 250; progress = (SessionHolder.maxVyaw * 100).toInt(); minimumHeight = dp(36)
+            max = 250; progress = (SessionHolder.maxVyaw * 100).toInt()
         }
-        // 死区可调取自 ble-rc-controller 的 Settings「dead zone」；core 两个 Controller 本就有 deadzone 字段。
         driveDzBar = SeekBar(this@MainActivity).apply {
-            max = 30; progress = (SessionHolder.driveDeadzone * 100).toInt(); minimumHeight = dp(36)
+            max = 30; progress = (SessionHolder.driveDeadzone * 100).toInt()
         }
         headDzBar = SeekBar(this@MainActivity).apply {
-            max = 30; progress = (SessionHolder.headDeadzone * 100).toInt(); minimumHeight = dp(36)
+            max = 30; progress = (SessionHolder.headDeadzone * 100).toInt()
         }
+        val sliderGroup = settingsGroup()
+        // 组内用间距节奏，不用每条 1px 线（官方：Group with whitespace，避免三明治线）。
+        sliderGroup.addView(settingSliderRow("前进上限", "m/s", vxLabel, vxBar, false))
+        sliderGroup.addView(settingSliderRow("转向上限", "rad/s", yawLabel, yawBar, false))
+        sliderGroup.addView(settingSliderRow("方向摇杆死区", "", driveDzLabel, driveDzBar, false))
+        sliderGroup.addView(settingSliderRow("头部摇杆死区", "", headDzLabel, headDzBar, false))
         val listener = object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                 SessionHolder.maxVx = vxBar.progress / 100.0
@@ -1214,45 +1489,67 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         }
-        // 🔑 监听器注册在 progress 初值之后：setProgress 也会回调 onProgressChanged，
-        // 早注册会在 onCreate 里把刚 load 出来的用户设置又写回默认值。
-        vxBar.setOnSeekBarChangeListener(listener)
-        yawBar.setOnSeekBarChangeListener(listener)
-        driveDzBar.setOnSeekBarChangeListener(listener)
-        headDzBar.setOnSeekBarChangeListener(listener)
-        col.addView(vxLabel); col.addView(vxBar)
-        col.addView(yawLabel); col.addView(yawBar)
-        col.addView(driveDzLabel); col.addView(driveDzBar)
-        col.addView(headDzLabel); col.addView(headDzBar)
-        updateSettingLabels()
-        col.addView(MaterialButton(this@MainActivity).apply {
-            text = "恢复默认设置"; textSize = 12f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_LARGE_DP)
-            contentDescription = "恢复默认设置"
-            setOnClickListener {
-                SettingsStore.reset(applicationContext)
-                restoreSettingsUi()
-                updateSettingLabels()
-                viewModel.onResetDriveParams()
-            }
+        listOf(vxBar, yawBar, driveDzBar, headDzBar).forEach { it.setOnSeekBarChangeListener(listener) }
+        sliderGroup.addView(outlineButton("恢复默认设置", "恢复默认设置") {
+            SettingsStore.reset(applicationContext)
+            restoreSettingsUi()
+            updateSettingLabels()
+            viewModel.onResetDriveParams()
         }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) })
-        // A1：BLE 运行时权限 + unfiltered 扫描 + 真 BleTransport 入口。
-        // 放设置页最末尾，避免把上面的反转开关/滑杆挤出可见区（真机门禁靠 UI dump 定位）。
-        col.addView(blePanel.buildView(), LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(16)
+        col.addView(sliderGroup, LinearLayout.LayoutParams(MATCH, WRAP))
+        updateSettingLabels()
+
+        // ── ③ 连接（子面板自带「BLE 连接 / Wi-Fi 配网」，外层只写分组名）──
+        col.addView(settingsSectionHeader("连接", "先 BLE 连板，再配 Wi-Fi"))
+        col.addView(settingsGroup().also { g ->
+            g.addView(blePanel.buildView(), LinearLayout.LayoutParams(MATCH, WRAP))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        col.addView(settingsGroup().also { g ->
+            g.addView(buildNetPanel(), LinearLayout.LayoutParams(MATCH, WRAP))
+        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(10) })
+
+        // ── ④ 关于 ──
+        col.addView(settingsSectionHeader("关于", "版本与手动更新"))
+        col.addView(settingsGroup().also { g ->
+            g.addView(updatePanel.view, LinearLayout.LayoutParams(MATCH, WRAP))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
+
+        addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
+    }
+
+    /**
+     * Settings 分区头：title（onSurfaceVariant）+ 可选 supporting。
+     * 一手：[Android Settings] layout — headings between groups；supporting 给状态/生效说明。
+     */
+    private fun settingsSectionHeader(
+        title: String,
+        supporting: String? = null,
+        first: Boolean = false,
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(4), if (first) dp(6) else dp(18), dp(4), dp(8))
+        addView(TextView(this@MainActivity).apply {
+            text = title
+            textSize = 13f
+            setTextColor(c(R.color.md_text_dim))
+            setTypeface(null, Typeface.BOLD)
+            letterSpacing = 0.02f
         })
-        // A2：Wi-Fi 配网（明文风险常驻 + 写操作二次确认），放 BLE 面板之后、更新面板之前。
-        col.addView(buildNetPanel(), LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(16)
-        })
-        // GitHub Releases 自更新面板放**最末尾**：uiautomator 只 dump 视口内节点，
-        // 往上插会把「方向摇杆死区」推出首屏（门禁 59 条实测踩过）；门禁的
-        // scroll_until("扫描附近 BLE 设备") 在到达这里之前就停，也不受新增节点影响。
-        col.addView(updatePanel.view, LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.topMargin = dp(16)
-        })
-        scroll.addView(col)
-        addView(scroll, FrameLayout.LayoutParams(MATCH, MATCH))
+        if (!supporting.isNullOrEmpty()) {
+            addView(TextView(this@MainActivity).apply {
+                text = supporting
+                textSize = 11f
+                setTextColor(c(R.color.md_text_dim))
+                setPadding(0, dp(2), 0, 0)
+            })
+        }
+    }
+
+    /** Material Settings 分组容器：surfaceContainer + 细描边；组内项不再各自套卡。 */
+    private fun settingsGroup() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedCard(c(R.color.md_surface), CORNER_LARGE_DP, stroked = true)
+        setPadding(dp(16), dp(14), dp(16), dp(14))
     }
 
     /**
@@ -1326,11 +1623,101 @@ class MainActivity : AppCompatActivity() {
         headDzBar.progress = (SessionHolder.headDeadzone * 100).toInt()
     }
 
+    /**
+     * 单条设置滑块行（Material Settings 常见形态）：
+     * 上行 = 左 label（onSurfaceVariant）+ 右实时值（tabular onSurface）；
+     * 下行 = 全宽 SeekBar；组内用 1px 线分隔，不每项套卡。
+     * @param name 左侧固定名（可含门禁硬串，如「方向摇杆死区」）
+     * @param unit 右侧单位后缀；空串表示无单位
+     * @param valueView 只写数值的 TextView（由 [updateSettingLabels] 刷新）
+     */
+    private fun settingSliderRow(
+        name: String,
+        unit: String,
+        valueView: TextView,
+        bar: SeekBar,
+        showDivider: Boolean,
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(6), 0, dp(6))
+        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+        val head = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        head.addView(TextView(this@MainActivity).apply {
+            text = name
+            textSize = 14f
+            setTextColor(c(R.color.md_text))
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+        })
+        valueView.apply {
+            textSize = 13f
+            setTextColor(c(R.color.md_accent))
+            setTypeface(null, Typeface.BOLD)
+            fontFeatureSettings = TABULAR_FIGURES
+            gravity = Gravity.END
+            tag = unit
+        }
+        head.addView(valueView, LinearLayout.LayoutParams(WRAP, WRAP))
+        addView(head)
+        bar.apply {
+            minimumHeight = dp(28)
+            splitTrack = false
+            progressDrawable = accentSeekDrawable()
+            // 拇指：浅底 + 描边，避免与进度条同色「看不见把手」。
+            thumb = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(c(R.color.md_text))
+                setStroke(dp(2), c(R.color.md_accent))
+                setSize(dp(18), dp(18))
+            }
+            thumbOffset = dp(9)
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+        }
+        addView(bar, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(2) })
+        if (showDivider) addView(rule(top = 6))
+    }
+
+    /** 只刷新右侧数值；左侧名在 [settingSliderRow] 里固定（含门禁硬串）。 */
     private fun updateSettingLabels() {
-        vxLabel.text = "前进上限 %.2f m/s（占位，待整机标定）".format(SessionHolder.maxVx)
-        yawLabel.text = "转向上限 %.2f rad/s（占位，待整机标定）".format(SessionHolder.maxVyaw)
-        driveDzLabel.text = "方向摇杆死区 %.2f（占位，待整机标定）".format(SessionHolder.driveDeadzone)
-        headDzLabel.text = "头部摇杆死区 %.2f（占位，待整机标定）".format(SessionHolder.headDeadzone)
+        fun setVal(v: TextView, n: Double, digits: Int = 2) {
+            val unit = (v.tag as? String).orEmpty()
+            v.text = if (unit.isEmpty()) "%.${digits}f".format(n)
+            else "%.${digits}f %s".format(n, unit)
+        }
+        setVal(vxLabel, SessionHolder.maxVx)
+        setVal(yawLabel, SessionHolder.maxVyaw)
+        setVal(driveDzLabel, SessionHolder.driveDeadzone)
+        setVal(headDzLabel, SessionHolder.headDeadzone)
+    }
+
+    /** 细轨道 + primary 进度（高度约 4dp），拇指另设，避免「粗条无把手」发糊。 */
+    private fun accentSeekDrawable(): android.graphics.drawable.LayerDrawable {
+        val h = dp(4)
+        val track = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(c(R.color.md_outline_variant))
+            cornerRadius = (h / 2f)
+            setSize(-1, h)
+        }
+        val fill = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(c(R.color.md_accent))
+            cornerRadius = (h / 2f)
+            setSize(-1, h)
+        }
+        val clip = android.graphics.drawable.ClipDrawable(
+            fill, Gravity.START, android.graphics.drawable.ClipDrawable.HORIZONTAL)
+        return android.graphics.drawable.LayerDrawable(arrayOf(track, clip)).apply {
+            setId(0, android.R.id.background)
+            setId(1, android.R.id.progress)
+            // 轨道在垂直方向居中于 SeekBar 高度，拇指压在中间。
+            setLayerGravity(0, Gravity.CENTER_VERTICAL)
+            setLayerGravity(1, Gravity.CENTER_VERTICAL)
+            setLayerHeight(0, h)
+            setLayerHeight(1, h)
+        }
     }
 
     /**
@@ -1359,6 +1746,26 @@ class MainActivity : AppCompatActivity() {
             if (stroked) setStroke(dp(STROKE_HAIRLINE_DP), c(R.color.md_outline_variant))
         }
 
+    /** 3D 模型底座：暖近黑浅底 + 12dp 圆角（非 24dp 营销圆角）。 */
+    private fun modelContainer(child: View, heightDp: Int) = FrameLayout(this).apply {
+        background = roundedCard(c(R.color.md_surface), CORNER_LARGE_DP, stroked = true)
+        addView(child, FrameLayout.LayoutParams(MATCH, MATCH).also {
+            it.gravity = Gravity.CENTER
+            it.setMargins(dp(4), dp(4), dp(4), dp(4))
+        })
+        layoutParams = LinearLayout.LayoutParams(MATCH, dp(heightDp))
+    }
+
+    /**
+     * 状态 pill：小圆角 + 半透明同色底/描边（非全胶囊 999，避免模板 pill 感）。
+     * @param argb 实色（警示/成功/危险），由此派生底与描边。
+     */
+    private fun pillBackground(argb: Int) = GradientDrawable().apply {
+        setColor(argb and 0x00FFFFFF or 0x1F000000)
+        cornerRadius = dp(CORNER_CHIP_DP).toFloat()
+        setStroke(dp(1), argb and 0x00FFFFFF or 0x4D000000)
+    }
+
     /** 每次改动立刻落盘；不依赖 onStop，避免进程被杀丢设置。 */
     private fun persist() = SettingsStore.save(applicationContext)
 
@@ -1371,20 +1778,25 @@ class MainActivity : AppCompatActivity() {
         sshPage.visibility = if (i == 3) View.VISIBLE else View.GONE
         // 🔴 AppBar 全局唯一一份：标题随目的地变化，体现「当前在哪个页面」，
         // 而不是三页都印着同一个「控制台」造成重复（用户 2026-11-15 反馈）。
+        // 收简标题（11-20 融合裁决）：去「MicroDuck ·」前缀；门禁断言不依赖此串。
         chrome.titleText.text = when (i) {
-            0 -> "MicroDuck · 状态"
-            1 -> "MicroDuck · 健康"
-            2 -> "MicroDuck · 设置"
-            else -> "MicroDuck · 终端"
+            0 -> "状态"
+            1 -> "健康"
+            2 -> "设置"
+            else -> "终端"
         }
         tabButtons.forEachIndexed { idx, b ->
             val selected = idx == i
-            b.setBackgroundColor(if (selected) c(R.color.md_card_alt) else Color.TRANSPARENT)
-            // 🔴 MaterialButton 的文字色来自主题 colorOnPrimary(深色)，只换背景不换文字
-            // ⇒ 未选中态「深底 + 深字」几乎不可读（真机截图实测「健康/设置」发暗紫）。
-            // 选中/未选中都要显式给文字色：深底配浅字、选中态再用 accent 高亮。
-            b.setTextColor(if (selected) c(R.color.md_accent) else c(R.color.md_text_dim))
-            b.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            val color = c(if (selected) R.color.md_accent else R.color.md_text_dim)
+            @Suppress("UNCHECKED_CAST")
+            val (icon, label) = b.tag as Pair<ImageView, TextView>
+            icon.imageTintList = ColorStateList.valueOf(color)
+            label.setTextColor(color)
+            label.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            // M3 active indicator：选中 = primaryContainer 圆角 pill；未选中透明。
+            tabIndicators.getOrNull(idx)?.background = roundedCard(
+                if (selected) c(R.color.md_accent_container) else Color.TRANSPARENT,
+                16, stroked = false)
         }
     }
 
@@ -1394,16 +1806,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshModeUi(state: MainViewModel.UiState) {
         val manual = state.mode == ControlMode.MANUAL
-        modeManual.setBackgroundColor(if (manual) c(R.color.md_accent) else c(R.color.md_card_alt))
-        modeAuto.setBackgroundColor(if (!manual) c(R.color.md_warn) else c(R.color.md_card_alt))
-        // 亮底(accent/warn)配深字、深底(card_alt)配近白字；只用主题默认深色字会在
-        // 未选中态暗到看不清。与 showPage() 的 tab 配色同型修复。
-        modeManual.setTextColor(if (manual) c(R.color.md_bg) else c(R.color.md_text))
-        modeAuto.setTextColor(if (!manual) c(R.color.md_bg) else c(R.color.md_text))
+        // 去卡片化：模式不再用填充块切换，改 2px 描边 + 强调文字（单强调色）。
+        styleSegment(modeManual, manual, c(R.color.md_accent))
+        styleSegment(modeAuto, !manual, c(R.color.md_accent))
+        // 副文案缩短（M3：supporting text 短句）；门禁不依赖 modeHint 全文。
         modeHint.text = if (manual)
-            "手动：双摇杆连续发送 robot.move / robot.head；退出遥控页立即归零停车"
+            "手动：双摇杆发送 move/head · 退出即归零停车"
         else
-            "自动：App 零驾驶帧、只监测 robot.state；未验证策略启停，不等于已启动自主行走"
+            "自动：零驾驶帧 · 未验证策略启停，≠ 已启动自主行走"
+        // 🔴 冷启动门禁断言含「进入遥控驾驶」子串，手动态文案必须保留该短语。
         launchButton.text = if (manual) "进入遥控驾驶（横屏全屏）" else "进入监测视图（横屏全屏）"
         healthSourceText.text = if (state.kind == "MOCK")
             "⚠ 当前为 Mock 演示夹具，非实机读数" else "robot.health 实机应答"
@@ -1449,15 +1860,19 @@ class MainActivity : AppCompatActivity() {
         updateServoGrid(state.lastHealth)
     }
 
-    /** 来源标签（连接类型 / 地址无效 / 未连接），全局唯一一份。 */
+    /** 来源标签（连接类型 / 地址无效 / 未连接），全局唯一一份。
+     *  11-20 参照设计稿 .pill：Mock=琥珀警示、真实链路=绿、异常=红，胶囊底 + 实色文字。 */
     private fun renderSourceChip(state: MainViewModel.UiState) {
-        val chipText = when {
-            state.connected -> "● ${state.kind}"
-            state.connectError.isNotEmpty() -> "● 地址无效"
-            else -> "● 未连接"
+        val isMock = state.kind.contains("MOCK", ignoreCase = true)
+        val (chipText, tone) = when {
+            state.connectError.isNotEmpty() -> "● 地址无效" to c(R.color.md_bad)
+            state.connected && !isMock -> "● ${state.kind}" to c(R.color.md_ok)
+            isMock -> "● MOCK" to c(R.color.md_warn)
+            else -> "● 未连接" to c(R.color.md_bad)
         }
         chrome.sourceChip.text = chipText
-        chrome.sourceChip.setTextColor(c(if (state.connected) R.color.md_ok else R.color.md_bad))
+        chrome.sourceChip.setTextColor(tone)
+        chrome.sourceChip.background = pillBackground(tone)
     }
 
     /** 休息/恢复请求结果回显（来自 ViewModel 写操作，null = 无新结果不覆盖）。 */
@@ -1513,20 +1928,20 @@ class MainActivity : AppCompatActivity() {
         diagnosticsText.setTextIfChanged(text)
     }
 
-    /** A2 配网渲染：当前连接走文本，附近网络走可点选列表。缺字段一律「未读到」，不填 0/假 IP。 */
+    /** A2 配网渲染：状态用 Settings 式 primary+secondary；附近网络走两行列表。缺字段「未读到」。 */
     private fun renderNet(n: NetSnapshot, busy: Boolean, result: String?) {
         if (!::netStatusText.isInitialized || !::netScanList.isInitialized) return
-        val text = buildString {
-            append("【当前连接 net.status】\n")
-            if (n.isEmpty && n.statusError == null) {
-                append("  尚未查询 · 点「刷新网络」\n")
-            } else {
-                append("  状态：").append(n.state ?: "未读到").append("\n")
-                append("  SSID：").append(n.ssid ?: "未读到").append("\n")
-                append("  信号：").append(n.signal?.let { "$it/100" } ?: "未读到").append("\n")
-                append("  IPv4：").append(n.ip4 ?: "未读到").append("\n")
-                n.mac?.let { append("  MAC：").append(it).append("\n") }
-                n.statusError?.let { append("  （").append(it).append("）\n") }
+        val text = when {
+            n.isEmpty && n.statusError == null ->
+                "当前连接 · 尚未查询 · 点「刷新网络」"
+            else -> buildString {
+                append("当前连接 · ").append(n.state ?: "未读到")
+                append(" · ").append(n.ssid ?: "未读到")
+                append("\n")
+                append(n.signal?.let { "信号 $it/100" } ?: "信号 未读到")
+                append(" · ").append(n.ip4 ?: "IPv4 未读到")
+                n.mac?.let { append(" · MAC ").append(it) }
+                n.statusError?.let { append("\n（").append(it).append("）") }
             }
         }
         netStatusText.setTextIfChanged(text)
@@ -1541,34 +1956,57 @@ class MainActivity : AppCompatActivity() {
         netResultText.setTextIfChanged(if (busy) "处理中…" else (result ?: "—"))
     }
 
-    /** 依 net.scan 重建可点选列表；每项点一下把 SSID 填进输入框（取代手录）。 */
+    /** 依 net.scan 重建 M3 两行可点选列表；点选填 SSID（手输兜底仍保留）。 */
     private fun rebuildNetScanList(n: NetSnapshot) {
         netScanList.removeAllViews()
         if (n.networks.isEmpty()) {
             netScanList.addView(TextView(this@MainActivity).apply {
-                text = "  未读到" + (n.scanError?.let { "（$it）" } ?: "") + " · 可手动填写 SSID"
-                textSize = 11f; setTextColor(c(R.color.md_text_dim))
-                setPadding(0, dp(2), 0, dp(2))
+                text = "未读到" + (n.scanError?.let { "（$it）" } ?: "") + " · 可手动填写 SSID"
+                textSize = 12f; setTextColor(c(R.color.md_text_dim))
+                setPadding(dp(4), dp(8), dp(4), dp(8))
             }, LinearLayout.LayoutParams(MATCH, WRAP))
             return
         }
-        n.networks.take(10).forEach { net ->
-            val label = buildString {
-                append(net.ssid).append(" · ").append(net.signal).append("/100 · ").append(net.security)
+        n.networks.take(10).forEachIndexed { i, net ->
+            val supporting = buildString {
+                append(net.signal).append("/100 · ").append(net.security)
                 if (net.saved) append(" · 已存")
                 if (net.security.equals("enterprise", ignoreCase = true)) append(" · 802.1X 不可连")
             }
-            netScanList.addView(TextView(this@MainActivity).apply {
-                text = label
-                textSize = 12f; setTextColor(c(R.color.md_text))
-                minHeight = dp(44)
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(4), dp(10), dp(4))
-                contentDescription = "选择网络 ${net.ssid}"
-                isClickable = true; isFocusable = true
-                setOnClickListener { selectScannedSsid(net.ssid) }
-            }, LinearLayout.LayoutParams(MATCH, WRAP))
+            netScanList.addView(connectListRow(net.ssid, supporting, first = i == 0).also { row ->
+                row.contentDescription = "选择网络 ${net.ssid}"
+                row.setOnClickListener { selectScannedSsid(net.ssid) }
+            })
         }
+    }
+
+    /** M3 Lists 两行项：headline + supporting；56dp 触控。BLE/Wi‑Fi 共用节奏。 */
+    private fun connectListRow(
+        headline: String,
+        supporting: String,
+        first: Boolean,
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        minimumHeight = dp(56)
+        gravity = Gravity.CENTER_VERTICAL
+        isClickable = true; isFocusable = true
+        background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP, stroked = false)
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also {
+            if (!first) it.topMargin = dp(6)
+        }
+        addView(TextView(this@MainActivity).apply {
+            text = headline
+            textSize = 14f; setTextColor(c(R.color.md_text))
+            setTypeface(null, Typeface.BOLD)
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+        })
+        addView(TextView(this@MainActivity).apply {
+            text = supporting
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
+            setPadding(0, dp(2), 0, 0)
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+        })
     }
 
     /**
@@ -1629,9 +2067,16 @@ class MainActivity : AppCompatActivity() {
                 s.t?.let { "%.1fs".format(it) } ?: "—") } ?: "— 未读到",
         )
         stateValues.forEachIndexed { i, v -> setMetric(v, STATE_LABELS[i], vals[i]) }
-        stateSourceText.text = if (s == null)
-            "实机状态帧 · robot.state · 当前无状态帧\nMock 不推流 / 真机未连接，不伪造"
-        else "实机状态帧 · robot.state [$kind] · 第 $frameCount 帧"
+        if (s == null) {
+            stateSourceText.setTextColor(c(R.color.md_text_dim))
+            stateSourceText.setTypeface(null, Typeface.NORMAL)
+            stateSourceText.text =
+                "实机状态帧 · robot.state · 当前无状态帧\nMock 不推流 / 真机未连接，不伪造"
+        } else {
+            stateSourceText.setTextColor(c(R.color.md_accent))
+            stateSourceText.setTypeface(null, Typeface.BOLD)
+            stateSourceText.text = "实机状态帧 · robot.state [$kind] · 第 $frameCount 帧"
+        }
     }
 
     private fun renderTelemetry(state: MainViewModel.UiState) {
@@ -1666,6 +2111,7 @@ class MainActivity : AppCompatActivity() {
         renderSourceChip(state)
         renderRestResult(state.restResultText)
         renderHealthText(state)
+        renderToF(state)   // 独立于 monitorReport：即使 health 未读，ToF 帧仍要如实渲染/显示未读到
         renderDiagnostics(state.diagnostics)
         renderNet(state.net, state.netBusy, state.netResultText)
         refreshModeUi(state)
@@ -1727,10 +2173,16 @@ class MainActivity : AppCompatActivity() {
         // 🔴 不再把 20 / 1 / "tnum" 等字面量散落在十几个调用点：token 必须具名，
         //    改一处即可全局生效。XML 侧的 @dimen/m3_corner_large 与这里同源，
         //    数值改动须两处同步（见设计依据文档「token 单一真源」条目）。
-        const val CORNER_LARGE_DP = 20        // 主容器 / 按钮 / 输入框
-        const val CORNER_NAV_DP = 16          // 导航栏内层按钮
-        const val CORNER_CELL_DP = 12         // 遥测单元格
-        const val STROKE_HAIRLINE_DP = 1      // 细描边（Borders Over Fills）
+        // 2026-11-19 去卡片化：20dp 全屏圆润 → 12dp 主控件 / 8dp 单元格 / 6dp chip。
+        // 一手依据：skillcraft「Rounded-lg maximum ... 8px feels intentional」；
+        // standoutmcp「A card around everything → group with whitespace and 1px rules」。
+        // XML @dimen/m3_corner_large 与 CORNER_LARGE_DP 同源（均为 12），改动须两处同步。
+        const val CORNER_LARGE_DP = 12       // 主控件（主按钮 / 输入框）
+        const val CORNER_NAV_DP = 8          // 底部导航图标底
+        const val CORNER_CELL_DP = 8         // 数据单元格 / 次级按钮
+        const val CORNER_CHIP_DP = 6         // 状态 chip
+        const val STROKE_HAIRLINE_DP = 1      // 1px 分隔线 / 描边（Borders > Shadows）
+        const val STROKE_SELECTED_DP = 2      // 选中态描边
         const val TABULAR_FIGURES = "tnum"    // OpenType tabular figures
         const val TRACKING_TITLE = 0.08f      // 标题字距（HUD machine-stamped）
         const val TRACKING_LABEL = 0.05f      // 小标签字距
