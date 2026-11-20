@@ -2,10 +2,12 @@
 <!--
   M3 视觉 token（XML 侧）。
 
-  2026-11-19/20：主控件 12dp / 单元格 8dp；禁止 20dp 全屏圆润（skillcraft rounded-lg max）。
-  与 Kotlin CORNER_LARGE_DP / STROKE_HAIRLINE_DP 同源同值，改动须两处同步。
+  2026-11-20：对齐 HTML 基准稿 radius-sm/md/lg = 12 / 16 / 24 dp。
+  与 Kotlin CORNER_SM_DP / CORNER_LARGE_DP / CORNER_XL_DP 同源同值，改动须两处同步。
 -->
 <resources>
-    <dimen name="m3_corner_large">12dp</dimen>
+    <dimen name="m3_corner_sm">12dp</dimen>
+    <dimen name="m3_corner_large">16dp</dimen>
+    <dimen name="m3_corner_xl">24dp</dimen>
     <dimen name="m3_stroke_hairline">1dp</dimen>
 </resources>

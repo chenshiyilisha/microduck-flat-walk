@@ -24,16 +24,19 @@ import java.util.concurrent.atomic.AtomicInteger
 class FakeGattLink(
     /** 对端把每个响应切成这么大的 notification chunk（验客户端 for_replies 重组）。 */
     private val notifyChunkSize: Int = 20,
+    private val psk: ByteArray = TEST_PSK,
 ) : GattLink {
     private val gson = Gson()
     private val connected = AtomicBoolean(false)
     private val writtenChunks = ConcurrentLinkedQueue<ByteArray>()
     /** 对端观察到的客户端方法名序列（断连/重连断言用，对齐 LocalRelayServer.log）。 */
     private val methods = ConcurrentLinkedQueue<String>()
-    private val inbound = BleChunkCodec.Reassembler.forRequests()   // 对端收客户端请求用紧边界
+    private var inbound = BleChunkCodec.Reassembler.forRequests()   // 对端收客户端请求用紧边界
     private var handler: ((ByteArray) -> Unit)? = null
     private var disconnectCb: (() -> Unit)? = null
     private val apiVersion = AtomicInteger(Wire.API_VERSION)
+    private var secureSession: NoiseNnPsk0Session? = null
+    private var secureReady = false
 
     // 可编程故障
     @Volatile var failConnect: Boolean = false
@@ -48,6 +51,10 @@ class FakeGattLink(
 
     override fun connect(): Result<Int> {
         if (failConnect) { connected.set(false); return Result.failure(IOException("FAKE_GATT_CONNECT_FAIL")) }
+        secureSession?.close()
+        secureSession = null
+        secureReady = false
+        inbound = BleChunkCodec.Reassembler.forRequests()
         connected.set(true)
         return Result.success(notifyChunkSize * 3)   // 假装协商了个 MTU
     }
@@ -81,6 +88,39 @@ class FakeGattLink(
     }
 
     private fun replyTo(line: String) {
+        val frame = try { NoiseBleFrameCodec.decode(line) } catch (_: Exception) { return }
+        when (frame.type) {
+            NoiseBleFrameCodec.Type.INIT -> {
+                if (secureSession != null || secureReady) return
+                val responder = NoiseNnPsk0Session(psk, NoiseNnPsk0Session.Role.RESPONDER)
+                val response = try {
+                    responder.respond(frame.payload)
+                } catch (_: Exception) {
+                    responder.close()
+                    return
+                }
+                secureSession = responder
+                secureReady = true
+                emitFrame(NoiseBleFrameCodec.Type.REPLY, response)
+            }
+            NoiseBleFrameCodec.Type.DATA -> {
+                if (!secureReady) return
+                val plaintext = try { secureSession?.decrypt(frame.payload) } catch (_: Exception) { null } ?: return
+                val rpcLine = try {
+                    Charsets.UTF_8.newDecoder()
+                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                        .decode(java.nio.ByteBuffer.wrap(plaintext))
+                        .toString()
+                } catch (_: Exception) {
+                    return
+                }
+                replyToRpc(rpcLine)
+            }
+            NoiseBleFrameCodec.Type.REPLY -> return
+        }
+    }
+
+    private fun replyToRpc(line: String) {
         val o = try { gson.fromJson(line, JsonObject::class.java) } catch (_: Exception) { return } ?: return
         val id = if (o.has("id") && !o.get("id").isJsonNull) o.get("id").asLong else null
         val method = o.get("method")?.asString ?: return
@@ -109,7 +149,13 @@ class FakeGattLink(
      * request 超时卡 HELLO（首跑 [15] 抓到）。这反向证明「chunks 补换行」是 load-bearing 的。
      */
     private fun emitNotification(line: String) {
-        for (chunk in BleChunkCodec.chunks(line, notifyChunkSize)) {
+        val plaintext = line.toByteArray(Charsets.UTF_8)
+        val ciphertext = try { secureSession?.encrypt(plaintext) } catch (_: Exception) { null } ?: return
+        emitFrame(NoiseBleFrameCodec.Type.DATA, ciphertext)
+    }
+
+    private fun emitFrame(type: NoiseBleFrameCodec.Type, payload: ByteArray) {
+        for (chunk in BleChunkCodec.chunks(NoiseBleFrameCodec.encode(type, payload), notifyChunkSize)) {
             handler?.invoke(chunk)
         }
     }
@@ -133,7 +179,12 @@ class FakeGattLink(
 
     override fun mtu(): Int = if (connected.get()) notifyChunkSize * 3 else 0
     override fun onDisconnected(cb: () -> Unit) { disconnectCb = cb }
-    override fun close() { connected.set(false) }
+    override fun close() {
+        connected.set(false)
+        secureSession?.close()
+        secureSession = null
+        secureReady = false
+    }
     override fun isConnected(): Boolean = connected.get()
 
     private fun okLine(id: Long?, result: Map<String, Any?>): String = gson.toJson(JsonObject().apply {
@@ -147,4 +198,9 @@ class FakeGattLink(
         addProperty("method", method)
         add("params", gson.toJsonTree(params))
     })
+
+    companion object {
+        val TEST_PSK: ByteArray
+            get() = ByteArray(32) { (it + 1).toByte() }
+    }
 }

@@ -282,7 +282,7 @@ class SshPanel(
         })
         root.addView(cmdRow, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
 
-        // 输出区：等宽 + 暖近黑终端底（与安静仪表盘暖调一致，非冷蓝 #0A1626）。
+        // 输出区：等宽 + HTML 终端底 #0D1117（冷黑控制台，非暖石墨）。
         outputText = TextView(context).apply {
             text = ""; textSize = 10.5f
             setTypeface(Typeface.MONOSPACE)
@@ -290,7 +290,7 @@ class SshPanel(
             setPadding(dp(10), dp(10), dp(10), dp(10))
         }
         outputScroll = ScrollView(context).apply {
-            background = roundedCard(context.getColor(R.color.md_card), 8)
+            background = roundedCard(context.getColor(R.color.md_term_bg), 16)
             addView(outputText, LinearLayout.LayoutParams(MATCH, WRAP))
         }
         root.addView(outputScroll, LinearLayout.LayoutParams(MATCH, 0, 1f).also {
@@ -339,7 +339,7 @@ class SshPanel(
         textSize = 11f; setSingleLine(true); this.inputType = inputType
         setTextColor(context.getColor(R.color.md_text))
         setHintTextColor(context.getColor(R.color.md_text_dim))
-        background = roundedCard(context.getColor(R.color.md_card_alt), 12)
+        background = roundedCard(context.getColor(R.color.md_card_alt), 16)
         setPadding(dp(10), dp(8), dp(10), dp(8))
     }
 
@@ -348,6 +348,32 @@ class SshPanel(
             setColor(fill); cornerRadius = dp(radiusDp).toFloat()
             setStroke(dp(1), context.getColor(R.color.md_outline_variant))
         }
+
+    /**
+     * 配网成功后把固件回执的板子 IPv4 填进「主机地址」框（用户 11-20 需求：
+     * 通过 BLE 配网后自动回填终端 IP，IP 变了也不用手抄）。
+     *
+     * 🔴 保护语义（一次性事件，绝不反复覆盖）：
+     *  · [ip] 为空/空白 → 不写（固件允许省略 ip4，没回执就不猜）；
+     *  · 用户**正在编辑**该框（有焦点）或已手工改成与上次回填不同的值 → 不覆盖，
+     *    尊重用户输入优先；
+     *  · 只在值确实不同时 setText，避免 1s tick 触发无障碍事件（真机门禁 idle 死锁坑）。
+     * 调用方用序号去重（只在 seq 变化时调），本方法只负责「这一次值该不该写」。
+     */
+    fun applyProvisionedIp(ip: String?) {
+        if (ip.isNullOrBlank()) return
+        val target = ip.trim()
+        if (hostEdit.hasFocus()) return
+        if (hostEdit.text?.toString()?.trim() == target) return
+        // 非空且非上次回填值：只有框还是默认值 / 空 / 上一次回填的 IP 时才覆盖。
+        // 记录最近一次由本方法写入的值；用户手改后该值 != 框值，下次不再覆盖。
+        val current = hostEdit.text?.toString()?.trim().orEmpty()
+        if (current.isNotEmpty() && current != lastProvisionedIp) return
+        hostEdit.setText(target)
+        lastProvisionedIp = target
+    }
+
+    private var lastProvisionedIp: String? = null
 
     private fun currentCreds() = SshCredentialStore.Creds(
         host = hostEdit.text?.toString()?.trim().orEmpty(),

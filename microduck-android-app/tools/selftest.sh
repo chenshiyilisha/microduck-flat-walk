@@ -72,16 +72,26 @@ fi
 echo "kotlin compiler mode = $KC_MODE"
 [ -f "$GSON" ] || { echo "FAIL: 找不到 gson jar: $GSON"; exit 2; }
 
-echo "=== 1) 编译 core + harness → build/classes ==="
+echo "=== 1) 编译 vendored Java crypto primitives → build/classes ==="
 # 🔴 2026-11-14 修：两种模式统一编译成 class 目录，绝不用 -include-runtime。
 # embeddable CLI 没有 kotlin-home，-include-runtime 会抛
 # "Couldn't find kotlin-stdlib at <no_path>\lib\kotlin-stdlib.jar"（源码已编译完才炸），
 # 看起来像编译失败其实是打包失败。stdlib 改由第 2 步 fat 目录并入，语义等价且更可控。
 rm -rf build/classes && mkdir -p build/classes build/fat
+JAVA_SRC=$(find core/src/main/java -name '*.java' | tr '\n' ' ')
+if [ -n "$JAVA_SRC" ]; then
+  JAVA_HOME="$JDK17" PATH="$JDK17/bin:$PATH" "$JDK17/bin/javac.exe" \
+    -d build/classes $JAVA_SRC 2>&1
+  rc=$?
+  echo "javac_rc=$rc"
+  [ $rc -ne 0 ] && exit $rc
+fi
+
+echo "=== 2) 编译 core + harness → build/classes ==="
 SRC=$(find core/src/main/kotlin core/src/test/kotlin -name '*.kt' | tr '\n' ' ')
 if [ "$KC_MODE" = "cli" ]; then
   JAVA_HOME="$JDK17" PATH="$JDK17/bin:$PATH" "$KC" \
-    -jvm-target 17 -cp "$GSON" \
+    -jvm-target 17 -cp "$GSON;$(cygpath -w build/classes)" \
     $SRC -d build/classes 2>&1
 else
   # 同一套 Kotlin 2.4.0 编译器，走 embeddable 的 CLI 入口。
@@ -91,7 +101,7 @@ else
   K2_STDLIB="$(find /c/Users/hejih/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin \
                     -path '*2.4.0*' -name 'kotlin-stdlib-2.4.0.jar' 2>/dev/null | head -1)"
   [ -n "$K2_STDLIB" ] || { echo "FAIL: 缺 kotlin-stdlib-2.4.0.jar"; exit 2; }
-  KC_CP="$GSON;$(cygpath -w "$K2_STDLIB")"
+  KC_CP="$GSON;$(cygpath -w "$K2_STDLIB");$(cygpath -w build/classes)"
   JAVA_HOME="$JDK17" PATH="$JDK17/bin:$PATH" "$JAVAC" \
     -cp "$K2_CP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
     -jvm-target 17 -no-reflect -cp "$KC_CP" \
@@ -103,7 +113,7 @@ echo "compile_rc=$rc"
 K2_STDLIB="${K2_STDLIB:-$(find /c/Users/hejih/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin \
                     -path '*2.4.0*' -name 'kotlin-stdlib-2.4.0.jar' 2>/dev/null | head -1)}"
 
-echo "=== 2) 组装 fat 目录（selftest 类 + gson + stdlib + duck_mesh.bin，绕开 classpath 分隔符）==="
+echo "=== 3) 组装 fat 目录（selftest 类 + gson + stdlib + duck_mesh.bin，绕开 classpath 分隔符）==="
 rm -rf build/fat && mkdir -p build/fat
 cp -r build/classes/. build/fat/
 (cd build/fat && "$JAR" xf "$GSON")
@@ -120,6 +130,6 @@ fi
 [ -f build/fat/kotlin/Unit.class ] || { echo "FAIL: fat 目录缺 kotlin stdlib"; exit 2; }
 echo "fat 目录就绪 ($(find build/fat -name '*.class' | wc -l) classes)"
 
-echo "=== 3) 运行自检（负对照内建，任一失败 exit 1）==="
+echo "=== 4) 运行自检（负对照内建，任一失败 exit 1）==="
 "$JAVAC" -Dfile.encoding=UTF-8 -cp "build/fat" io.microduck.app.core.CoreSelfTest
 exit $?

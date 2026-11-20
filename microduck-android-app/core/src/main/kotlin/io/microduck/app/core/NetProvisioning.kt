@@ -92,6 +92,18 @@ object NetProvisioning {
         }
     }
 
+    /**
+     * 配网成功后可回填到 IP 输入框的地址（一次性事件真值）。
+     * 只有「connected 且固件回执带非空 ip4」才返回该 IP；失败 / 缺 ip4 / 空串一律 null。
+     *
+     * 🔴 一手：真实 `NetworkManager::connect`（configd/src/nm.rs:713-721）在 D-Bus 激活
+     * ACTIVATED 后用 `status().ip4` 回执——真实读到的 DHCP 地址；不是 FakeNet 测试桩
+     * 写死的 `192.168.50.63`（net.rs:164/231，仅 `--fake`/测试用）。故回执 ip4 可作回填真值。
+     * 纯函数、无副作用 ⇒ core 自检直接覆盖正/负对照。
+     */
+    fun backfillIp(outcome: ConnectOutcome): String? =
+        if (outcome.connected && !outcome.ip4.isNullOrBlank()) outcome.ip4!! else null
+
     /** 解析 net.forget 回执。removed 缺失 → false（未读到，不假装已删除）。 */
     fun parseForget(o: JsonObject?): ForgetOutcome {
         val removed = o?.takeIf { it.has("removed") && it.get("removed").isJsonPrimitive && it.get("removed").asJsonPrimitive.isBoolean }

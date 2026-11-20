@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.microduck.app.core.ConnectTarget
 import io.microduck.app.core.DiagnosticsSnapshot
+import io.microduck.app.core.FirmwareSnapshot
+import io.microduck.app.core.FirmwareUpdate
 import io.microduck.app.core.HealthSnapshot
 import io.microduck.app.core.LinkState
 import io.microduck.app.core.MonitorReport
@@ -87,6 +89,15 @@ class MainViewModel(
         val net: NetSnapshot = NetSnapshot(),
         val netBusy: Boolean = false,
         val netResultText: String? = null,
+        /**
+         * 配网成功经 BLE 回执拿到的板子 IPv4（一次性回填事件，来自 RobotRepository.Snapshot）。
+         * [provisionedIpSeq] 只在固件回执带真实 ip4 时自增；UI 据此判断「新的成功回填」，
+         * 避免 1s tick 反复覆盖用户在终端 IP 框的手工输入。缺/失败恒 null。
+         */
+        val provisionedIp: String? = null,
+        val provisionedIpSeq: Long = 0L,
+        // ── 固件 OTA（来自 RobotRepository.Snapshot，用户操作驱动）──
+        val firmware: FirmwareSnapshot = FirmwareSnapshot(),
         // ── 驱动参数（来自 SessionHolder，用户输入驱动）──
         val mode: ControlMode = ControlMode.MANUAL,
         val channelIndex: Int = 0,
@@ -143,6 +154,9 @@ class MainViewModel(
                     net = snap.net,
                     netBusy = snap.netBusy,
                     netResultText = snap.netResultText,
+                    provisionedIp = snap.provisionedIp,
+                    provisionedIpSeq = snap.provisionedIpSeq,
+                    firmware = snap.firmware,
                 )
             }
         }
@@ -217,6 +231,28 @@ class MainViewModel(
      */
     fun onRefreshDiagnostics() {
         robotRepository.refreshDiagnostics()
+    }
+
+    // ── 事件：固件 OTA（update.* JSON-RPC）──
+
+    /** 只读刷新固件状态（update.status/listInstalled/log）。 */
+    fun onRefreshFirmware() {
+        robotRepository.refreshFirmware()
+    }
+
+    /** 检查固件新版本（update.check）。结果经快照流反映到 UiState.firmware.check。 */
+    fun onCheckFirmware() {
+        robotRepository.checkFirmwareUpdate()
+    }
+
+    /** 触发安装（写操作）。UI 必须先二次确认再调。 */
+    fun onApplyFirmware(version: String?, dryRun: Boolean) {
+        robotRepository.applyFirmware(FirmwareUpdate.COMPONENT_DAEMON, version, dryRun)
+    }
+
+    /** 回滚到上一版本（写操作，UI 需二次确认）。 */
+    fun onRollbackFirmware() {
+        robotRepository.rollbackFirmware(FirmwareUpdate.COMPONENT_DAEMON)
     }
 
     // ── 事件：A2 Wi-Fi 配网 ──

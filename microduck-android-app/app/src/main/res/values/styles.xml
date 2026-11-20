@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Material 3 固定深色 · 官方清单落地（2026-11-20）。
+      科技感冷黑主题（2026-11-20 HTML 基准稿落地）。
 
-      一手：m3.material.io Color roles / Dark theme / Usability；
-      primary 仅服务主动作；surface* 表达层级；鸭橙 trim 作 primary（品牌，非装饰堆色）。
-      详见 docs/active/microduck-安卓App-M3官方清单对照落地-2026-11-20.md
+      色板对齐 docs/active/microduck-安卓App-最优界面设计-最后一版HTML基准稿-2026-11-20.html
+      :root —— bg #090A0C / surface #14161A / surface-hover #1D2026 /
+      primary #4A8BFF / warn #FFB020 / ok #34C759 / bad #FF453A /
+      圆角 12 / 16 / 24。
+
+      保留 M3 固定深色与五级 surface 角色，便于 Material 组件自动吃同一套色。
+      禁止呼吸 / 扫描动画（uiautomator 1000ms 静默窗）。门禁文案与健康页
+      3D 全息渲染器不受本色板影响。
     -->
     <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@color/md_bg</item>
@@ -14,13 +19,13 @@
         <item name="android:windowLightStatusBar">false</item>
 
         <item name="colorPrimary">@color/md_accent</item>
-        <item name="colorOnPrimary">@color/md_bg</item>
+        <item name="colorOnPrimary">@color/md_on_accent</item>
         <item name="colorPrimaryContainer">@color/md_accent_container</item>
         <item name="colorOnPrimaryContainer">@color/md_text</item>
         <item name="colorSecondary">@color/md_warn</item>
         <item name="colorTertiary">@color/md_ok</item>
         <item name="colorError">@color/md_bad</item>
-        <item name="colorOnError">@color/md_bg</item>
+        <item name="colorOnError">@color/md_on_accent</item>
 
         <item name="colorSurface">@color/md_surface</item>
         <item name="colorSurfaceVariant">@color/md_card_alt</item>
@@ -36,24 +41,27 @@
         <item name="colorOutlineVariant">@color/md_outline_variant</item>
     </style>
 
-    <!-- 暖石墨阶梯（非冷蓝黑） -->
-    <color name="md_bg">#141311</color>
-    <color name="md_card">#1E1C19</color>
-    <color name="md_card_alt">#282521</color>
+    <!-- 冷黑阶梯（HTML bg / surface / surface-hover） -->
+    <color name="md_bg">#090A0C</color>
+    <color name="md_card">#14161A</color>
+    <color name="md_card_alt">#1D2026</color>
 
-    <color name="md_text">#F2F0EA</color>
-    <color name="md_text_dim">#A39E93</color>
+    <color name="md_text">#F2F4F8</color>
+    <color name="md_text_dim">#9BA1B0</color>
+    <color name="md_text_muted">#5E6474</color>
 
-    <!-- 鸭橙 trim 作唯一强调；状态色降饱和 -->
-    <color name="md_accent">#C9904A</color>
-    <color name="md_warn">#C7A052</color>
-    <color name="md_ok">#7A9E78</color>
-    <color name="md_bad">#C56E66</color>
+    <!-- 强调蓝 + 状态色，对齐 HTML primary / warn / ok / bad -->
+    <color name="md_accent">#4A8BFF</color>
+    <color name="md_on_accent">#FFFFFF</color>
+    <color name="md_warn">#FFB020</color>
+    <color name="md_ok">#34C759</color>
+    <color name="md_bad">#FF453A</color>
 
-    <color name="md_surface">#1E1C19</color>
-    <color name="md_surface_high">#282521</color>
-    <color name="md_surface_highest">#322F29</color>
-    <color name="md_outline">#3A3731</color>
-    <color name="md_outline_variant">#2C2A25</color>
-    <color name="md_accent_container">#2A2218</color>
+    <color name="md_surface">#14161A</color>
+    <color name="md_surface_high">#252830</color>
+    <color name="md_surface_highest">#2C313A</color>
+    <color name="md_outline">#3A404A</color>
+    <color name="md_outline_variant">#272B32</color>
+    <color name="md_accent_container">#101724</color>
+    <color name="md_term_bg">#0D1117</color>
 </resources>

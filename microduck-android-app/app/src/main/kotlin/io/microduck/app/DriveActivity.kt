@@ -196,9 +196,9 @@ class DriveActivity : AppCompatActivity() {
         rightTop = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         cells.subList(1, 6).forEach { v ->
             v.background = GradientDrawable().apply {
-                setColor(Color.argb(150, 0x1E, 0x1C, 0x19))
-                cornerRadius = dp(8).toFloat()
-                setStroke(dp(1), Color.argb(70, 0x3A, 0x37, 0x31))
+                setColor(Color.argb(166, 0x14, 0x16, 0x1A))
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), Color.argb(38, 255, 255, 255))
             }
             v.setPadding(dp(10), dp(6), dp(10), dp(6))
             rightTop.addView(v, LinearLayout.LayoutParams(WRAP, WRAP).also { it.topMargin = dp(4) })
@@ -540,7 +540,7 @@ class DriveActivity : AppCompatActivity() {
         setTextColor(c(R.color.md_warn))
         gravity = Gravity.CENTER
         setLineSpacing(0f, 1.4f)
-        background = roundedCard(Color.argb(238, 0x12, 0x11, 0x10), 12)
+        background = roundedCard(Color.argb(238, 0x09, 0x0A, 0x0C), 16)
         setPadding(dp(14), dp(10), dp(14), dp(10))
         contentDescription = "自动模式说明：仅监测，App不发送驾驶命令"
     }
@@ -720,7 +720,7 @@ class DriveActivity : AppCompatActivity() {
             armedPill.text = armedText
             armedPill.setTextColor(armedColor)
             armedPill.background = borderedCard(
-                Color.argb(70, 0x14, 0x13, 0x11), armedColor, 8)
+                Color.argb(70, 0x09, 0x0A, 0x0C), armedColor, 12)
         }
         armedPill.visibility = View.VISIBLE
 
@@ -752,7 +752,7 @@ class DriveActivity : AppCompatActivity() {
                 alertLine.text = alertText
                 alertLine.setTextColor(c(R.color.md_bad))
                 alertLine.background = borderedCard(
-                    Color.argb(70, 0x2A, 0x08, 0x08), c(R.color.md_bad), 8)
+                    Color.argb(38, 0xFF, 0x45, 0x3A), c(R.color.md_bad), 12)
             }
         } else {
             alertLine.visibility = View.GONE

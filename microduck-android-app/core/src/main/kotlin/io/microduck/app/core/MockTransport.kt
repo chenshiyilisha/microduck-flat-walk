@@ -177,6 +177,41 @@ class MockTransport(
             Method.SYSTEM_INFO -> ok(mapOf("name" to "duck-mock", "serial" to "MOCK0001"))
             Method.ROBOT_POLICIES -> ok(mapOf("policies" to listOf("walk", "p8head_2999")))
             Method.NET_STATUS -> ok(mapOf("mode" to "sta", "ssid" to "mock-net", "ipv4" to "192.168.1.42"))
+            // ── 固件 OTA 夹具（明确非实机）──
+            // check：默认报有可用更新；component 来自 params（deny_unknown_fields 只发 component）。
+            Method.UPDATE_CHECK -> ok(mapOf(
+                "state" to "available", "installed" to "0.15.1",
+                "candidate" to "0.15.2", "mandatory" to false, "changelog" to "mock 固件更新夹具",
+            ))
+            // status/log/listInstalled 的 result 是数组 —— 必须用 callRaw 收，call 会吞成 null。
+            Method.UPDATE_STATUS -> okArray(listOf(mapOf(
+                "component" to "daemon", "installed" to "0.15.1", "phase" to "idle",
+                "healthy" to true, "pinned" to null, "last_checked" to 1700000000L,
+            )))
+            Method.UPDATE_LIST_INSTALLED -> okArray(listOf(
+                mapOf("version" to "0.15.1", "active" to true, "golden" to true, "source_revision" to null),
+            ))
+            Method.UPDATE_LOG -> okArray(listOf(mapOf(
+                "at" to 1700000000L, "component" to "daemon", "from" to "0.15.0",
+                "to" to "0.15.1", "outcome" to mapOf("kind" to "success"),
+            )))
+            Method.UPDATE_SHOW -> ok(emptyMap<String, Any?>())
+            Method.UPDATE_APPLY -> {
+                // apply reply 前先推几帧进度（一手：apply 连接上先发 progress 再回 reply）。
+                Thread {
+                    listOf("downloading" to 40, "verifying" to 80, "health_gate" to null).forEach { (ph, pct) ->
+                        Thread.sleep(10)
+                        val params = mutableMapOf<String, Any?>("component" to "daemon", "phase" to ph, "detail" to null)
+                        if (pct != null) params["percent"] = pct
+                        pushFrame(gson.toJson(mapOf(
+                            "jsonrpc" to "2.0", "method" to Method.UPDATE_PROGRESS, "params" to params,
+                        )))
+                    }
+                }.start()
+                ok(mapOf("outcome" to "applied", "from" to "0.15.1", "to" to "0.15.2"))
+            }
+            Method.UPDATE_ROLLBACK, Method.UPDATE_SELECT ->
+                ok(mapOf("outcome" to "applied", "from" to "0.15.2", "to" to "0.15.1"))
             else -> ok(emptyMap<String, Any?>())
         }
         return Result.success(resp)
@@ -250,6 +285,15 @@ class MockTransport(
     }
 
     private fun ok(result: Map<String, Any?>): String {
+        val o = JsonObject().apply {
+            addProperty("jsonrpc", Wire.JSONRPC)
+            add("result", gson.toJsonTree(result))
+        }
+        return gson.toJson(o)
+    }
+
+    /** result 为数组（固件 update.status/log/listInstalled 的 Vec 形态）。 */
+    private fun okArray(result: List<*>): String {
         val o = JsonObject().apply {
             addProperty("jsonrpc", Wire.JSONRPC)
             add("result", gson.toJsonTree(result))

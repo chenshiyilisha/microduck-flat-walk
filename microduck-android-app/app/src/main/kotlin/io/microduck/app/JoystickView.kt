@@ -131,17 +131,17 @@ class JoystickView @JvmOverloads constructor(
     init { rebuildPaints() }
 
     /**
-     * 中性暖灰配色（安静仪表盘 2026-11-20）。
-     * 对齐 styles.md_card / md_text_dim；左右摇杆同色，颜色只留给警示。
+     * 中性冷灰配色（对齐 HTML 摇杆：surface 半透明 + 近白描边）。
+     * 左右摇杆同色，颜色只留给警示；按下为静态高亮，无呼吸动画。
      */
     private fun rebuildPaints() {
-        trackPaint.color = Color.argb(160, 0x1C, 0x1B, 0x19)
-        ringPaint.color = Color.argb(50, 0xE8, 0xE6, 0xDF)
-        dashPaint.color = Color.argb(28, 0xE8, 0xE6, 0xDF)
-        crossPaint.color = Color.argb(50, 0x9C, 0x97, 0x8C)
-        deadzonePaint.color = Color.argb(70, 0x9C, 0x97, 0x8C)
-        knobPaint.color = Color.rgb(0x30, 0x2E, 0x28)
-        labelPaint.color = Color.rgb(0x9C, 0x97, 0x8C)
+        trackPaint.color = Color.argb(153, 0x14, 0x16, 0x1A)
+        ringPaint.color = Color.argb(50, 0xF2, 0xF4, 0xF8)
+        dashPaint.color = Color.argb(28, 0xF2, 0xF4, 0xF8)
+        crossPaint.color = Color.argb(50, 0x9B, 0xA1, 0xB0)
+        deadzonePaint.color = Color.argb(70, 0x9B, 0xA1, 0xB0)
+        knobPaint.color = Color.rgb(0x2C, 0x31, 0x3A)
+        labelPaint.color = Color.rgb(0x9B, 0xA1, 0xB0)
         labelPaint.setShadowLayer(2f * density, 1f, 1f, Color.argb(180, 0, 0, 0))
     }
 
@@ -239,10 +239,10 @@ class JoystickView @JvmOverloads constructor(
         canvas.drawLine(cx - radius, cy, cx + radius, cy, crossPaint)
         canvas.drawLine(cx, cy - radius, cx, cy + radius, crossPaint)
         canvas.drawLine(cx, cy, knobX, knobY, crossPaint)
-        // knob：暖灰渐变（左上亮→右下暗），对齐安静仪表盘色板。
+        // knob：冷灰渐变（左上亮→右下暗），对齐 HTML #3A404D → #232730。
         val kr = radius * 0.24f
         knobPaint.shader = LinearGradient(knobX - kr, knobY - kr, knobX + kr, knobY + kr,
-            Color.rgb(0x3E, 0x3B, 0x34), Color.rgb(0x26, 0x24, 0x1F), Shader.TileMode.CLAMP)
+            Color.rgb(0x3A, 0x40, 0x4D), Color.rgb(0x23, 0x27, 0x30), Shader.TileMode.CLAMP)
         canvas.drawCircle(knobX, knobY, kr, knobPaint)
         canvas.drawCircle(knobX - radius * 0.07f, knobY - radius * 0.07f,
             radius * 0.09f, knobGlossPaint)
@@ -251,11 +251,11 @@ class JoystickView @JvmOverloads constructor(
         }
         // 握持高亮：中性微光环（无霓虹），明确「已激活」。
         if (engaged) {
-            glowPaint.color = Color.argb(70, 0xE8, 0xE6, 0xDF)
+            glowPaint.color = Color.argb(46, 0xF2, 0xF4, 0xF8)
             canvas.drawCircle(cx, cy, radius + 4f * density, glowPaint)
-            ringPaint.color = Color.argb(140, 0xE8, 0xE6, 0xDF)
+            ringPaint.color = Color.argb(178, 0xF2, 0xF4, 0xF8)
             canvas.drawCircle(cx, cy, radius, ringPaint)
-            ringPaint.color = Color.argb(50, 0xE8, 0xE6, 0xDF)
+            ringPaint.color = Color.argb(50, 0xF2, 0xF4, 0xF8)
         }
         if (label.isNotEmpty()) {
             canvas.drawText(label, cx, cy + radius + 18f * density, labelPaint)

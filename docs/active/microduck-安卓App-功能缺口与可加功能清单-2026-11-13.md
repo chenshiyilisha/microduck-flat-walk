@@ -166,10 +166,10 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 | ANR 修复 | ✅ 已落地（11-18，审计追加） | `MainViewModel.onConnect/onConnectWith` 建链从主线程移到 IO 协程、回调切主线程；地址栏 TCP 同步阻塞最坏 ~7s 的 ANR 源消除 | `tools/check_no_mainthread_blocking.py` **5/5 + 5 负对照** |
 | A3 | ✅ 已落地（11-18） | `DiagnosticsSnapshot` 纯 JVM 只读解析（缺字段 null / 空列表、不造假），`RobotRepository.refreshDiagnostics()` 后台拉取，健康页只读展示；Wire/RobotSession 只读白名单登记 | `tools/check_diagnostics_readonly.py` **6/6 + 负对照**；core 自检 |
 | A6 | ✅ 已落地（11-18，只读） | `robot.policies`/`robot.model` 纳入诊断快照只读展示（**不做启停**，AUTO 零驾驶帧防假启动） | core 自检 + 只读门禁 |
-| A7 | ✅ 已落地（11-18，只读） | `update.status`/`update.listInstalled`/`update.log` 纳入诊断快照（**不做 apply/rollback/select**，mutating 等整机） | core 自检 + 只读门禁 |
+| A7 | ✅ 已落地（11-18 只读；11-20 固件 OTA 全链路） | `update.status`/`listInstalled`/`log` 纳入诊断快照；11-20 新增固件 OTA：`FirmwareUpdate`（一手协议解析层）+ `RobotRepository` 写操作入口 + `FirmwarePanel`（设置页，二次确认/进度/回滚）；手机只触发+看进度，固件包由板子自身 WiFi/HTTPS 拉取并验签。**真机升级/health gate/lane 分道仍 UNVERIFIED** | core `testFirmwareUpdate` 45 项、全量门禁 15/15（新 `check_firmware_ota.py` 6/6 元负对照）、Debug 编译 PASS；详见 `microduck-安卓App-固件OTA落地上手说明-2026-11-20.md` |
 | A2 | ✅ 已落地（11-18，仅内测；11-18 晚真机打通配网链路） | `NetSnapshot`（net.status/net.scan 解析）+ `NetProvisioning`（net.connect/net.forget 请求构造，严格 deny_unknown_fields 键集，**psk 只进出站 JSON 不落日志**）；设置页配网卡片（Mock 隔离、明文风险常驻警示、连接二次确认）。11-18 晚修复 hello 握手死锁（见 §5.4）：仅「上游版本探测服务不可达」降级继续握手，net.connect 链路真机可用 | `tools/check_net_provisioning.py` **13/13（含 4 项新增负对照）**、`tools/check_ble_candidate_filter.py` **7/7**；core 自检 629/629；统一门禁 13 项 ALL_PASS；**真机端到端换 WiFi 成功**（Microduck-kissqy→DS1002 / IPv4 192.168.0.55 / 凭据已存 / 三观测面互证，§5.4）；**SSID 可点选 + BLE 候选过滤真机验证通过**（§5.5） |
 | A2.1 | ✅ 已落地（11-18 晚，hello 握手死锁修复） | 一手定位：hello→updaterd 而首启镜像故意关 updaterd ⇒ btd 回 `Updater is not answering`（INTERNAL_ERROR）；但 authorize/配网都走 configd，不经 updaterd。`isHelloDegradable` 仅该消息两段结构命中才降级继续 auth→READY，如实记录 `helloDegradedReason` + `Event.HelloDegraded`（不伪造 hello 成功），其余错误仍致命 | core `testHelloDegrade` 16 项（8 正向含 net.connect 能发出 + 7 负对照 + 判据）；统一门禁 ALL_PASS；Debug/Release 编译 PASS；**真机 UI 逐字抓到「已连接·hello 版本探测降级…READY」+ net.status/scan 实读** |
-| A2' | 🟡 能力预埋（11-18，**默认不接入配网路径**） | `ProvisioningCrypto` 纯 JVM 参考实现（X25519/HKDF-SHA256/AES-GCM）+ RFC7748/5869 权威向量 KAT + 低阶点负对照。不接入理由：固件端零加密实现、minSdk26 无稳定 X25519 API ⇒ 接入即假绿。规格见 `docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md` | core KAT 真跑通过；门禁约束「加密默认不接入」 |
+| A2' | 🟡 应用层参考实现保留 + 🔵 **BLE 链路层 Noise 已接入（11-20，未提交/未真机对拍）** | ① 原 `ProvisioningCrypto`（X25519/HKDF/AES-GCM）仍为参考实现、**不接入 net.connect**（理由不变）。② 新增按 kissqy v167 加密 btd 逐字对齐的 BLE 链路层 Noise：`NoiseNnPsk0Session`（`Noise_NNpsk0_25519_ChaChaPoly_SHA256`，prologue `microduck-ble-v1`）+ `NoiseBleFrameCodec` + `BlePairingStore`（配对二维码 `microduck://pair/v1`、PSK 存 Keystore）；`BleTransport` 连接强握手、无明文回退。**路线需用户拍板 A/B/C、跨仓落地加密固件、真机对拍后才可启用；INTEROP_UNVERIFIED 恒真** | core `testNoiseNnPsk0` + Snow 跨语言 KAT 真跑通过；门禁「默认配网仍走明文」约束保留；真机握手 UNVERIFIED。规格见 `microduck-配网加密-一手判决与固件对接规格-2026-11-17.md`、`microduck-固件更新-四项执行预案与硬前置-2026-11-19.md` §3 |
 | A8 | ⛔ 明确不做（用户 11-18 拍板） | 地址栏留空进 Mock 已是可用入口，`sourceRow` LIVE/DEMO 标签已齐，不另加显式按钮 | — |
 | A9 / B / C | 维持不做 / 等整机 | 见 §3、§4、§5.1、§5.2 | — |
 
@@ -184,7 +184,7 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 | drive | WebRTC 视频 + `robot.move` + `robot.subscribe` | 🟡 驾驶有；**真视频 WebRTC 未接**（B 类，依赖整机 + 需拍板重型依赖） |
 | moves | `robot.skills`/`robot.do`/`robot.policies`/`robot.loadPolicy` + `policy.check/search/fetch/install` | 🟡 `do`/`policies`/`loadPolicy` 有、只读模型有（A6）；**`robot.skills` + 原厂 Hub 策略流程未做**（C 类：自有训练模型优先，明确不做） |
 | wifi | `net.status`/`net.scan`/`net.connect`/`net.forget` | ✅ A2 四项全做（明文仅内测） |
-| update | `check`/`status`/`listInstalled`/`log` +（mutating）`apply`/`subscribe`/`rollback`/`select` | 🟡 只读四项齐（A7）；**apply/rollback/select 未做**（mutating，等整机） |
+| update | `check`/`status`/`listInstalled`/`log` +（mutating）`apply`/`subscribe`/`rollback`/`select` | ✅ 11-20 全做：`check/status/listInstalled/log/show` 只读 + `apply/rollback/select` 写操作（二次确认、不重放）+ `update.progress` 进度（apply 连接临时监听，不长期 subscribe 占连接）；**真机升级/health gate UNVERIFIED** |
 | logs | `system.logs` | ✅ A3 |
 | account | `account.login`/`status`/`logout` | ❌ 未做（无对应后端，C 类明确不做） |
 
@@ -252,7 +252,7 @@ Google 的 `org.webrtc:google-webrtc:1.0.32006` **已停止维护**，JCenter �
 | ② WebRTC 视频 | 新建 `docs/active/microduck-安卓App-WebRTC视频接入准备-2026-11-18.md`。一手查实：`google-webrtc:1.0.32006` 停维且 JCenter 关闭后无法解析 → `io.getstream:stream-webrtc-android`（Maven Central、Apache-2.0、**保留 `org.webrtc.*` 包名**、有 BOM 锁 ABI）；机器人侧 `mediad` 进程内自带信令（`ws://127.0.0.1:8443`、绑所有网卡、H.264 constrained-baseline、control+teleop 双 datachannel）；**🔴 信令端口零鉴权**（社区作者明写"a decision not an oversight"，LAN 靠共享 `000000` PIN、远程靠 bridge OAuth，端口转发直暴露无任何保护） | **只做准备，未引依赖/未改 gradle/未写代码**。接入闸门 = 先拍板安全边界（受控 LAN / 加 `system.authenticate` 门 / 走 OAuth bridge），三者未定前接视频=制造假安全。所有固件契约社区一手、非我方实测 ⇒ UNVERIFIED |
 | ③ 配网加密 | `docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md` 顶部加一手更新（**不改原判决正文**）：原厂 `btd@main` **已默认链路层加密 + setup-code PSK** —— `main.rs:123` `require_pairing = args.require_pairing \|\| !args.insecure_no_pairing`、`secure_psk_file`/`ble-psk` credential/`btd::secure::Config`、`NoInputNoOutput` agent；2026-11-08 真 Android 配对成功。但**仍 just-works 未认证、iPhone/Wi-Fi 配网/生产镜像全未测** | **跨版本翻案**：本 App 对接 fanhao(API40) 本地同源副本 `main.rs:123` 仍 `if !args.require_pairing {warn}`（默认不加密）⇒ 原判决对当前目标**继续有效**；fanhao 源码本轮不在本地（`/tmp/fanhao` 空）⇒ 它是否已吸收原厂改动 **UNVERIFIED**。原 §4 X25519 应用层方案**不再唯一最优**（原厂走了 §8.1 第一行 Fix the link layer），两路线取舍需用户拍板+真机对拍，本轮不替用户选 |
 
-⚠️ 三方向均**只改文档、未写功能代码**，未碰 xlsx/采购/契约状态/grable；`ship_verdict=NOT_SHIPPABLE`、`live_hardware_accessed=false` 不变。
+⚠️ 该节判定当时（11-18）三方向**只改文档、未写功能代码**。11-20 状态更新：② WebRTC 仍只做准备（未引依赖）；③ 配网加密已写 BLE 链路层 Noise 实现（见上 A2'，**未提交/未真机对拍**）；另新增固件 OTA 全链路（见 A7）。① 体检判据不变。均未碰 xlsx/采购/契约状态/gradle；`ship_verdict=NOT_SHIPPABLE`、`live_hardware_accessed=false` 不变。
 
 ---
 

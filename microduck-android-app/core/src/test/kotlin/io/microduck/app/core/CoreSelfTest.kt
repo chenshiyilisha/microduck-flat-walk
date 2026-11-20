@@ -623,12 +623,121 @@ object CoreSelfTest {
         }
     }
 
+    // ---- Noise NNpsk0: authenticated handshake, bidirectional transport, and rejection cases ----
+    private fun testNoiseNnPsk0() {
+        println("\n[Noise] NNpsk0 handshake and transport encryption")
+        val psk = ByteArray(32) { (it + 1).toByte() }
+        val client = NoiseNnPsk0Session(psk, NoiseNnPsk0Session.Role.INITIATOR)
+        val server = NoiseNnPsk0Session(psk, NoiseNnPsk0Session.Role.RESPONDER)
+        try {
+            val first = client.start()
+            val second = server.respond(first)
+            client.finish(second)
+            val clientToServer = """{"jsonrpc":"2.0","id":1}""".toByteArray()
+            val serverToClient = """{"jsonrpc":"2.0","method":"robot.state"}""".toByteArray()
+            check("handshake derives matching initiator-to-responder keys",
+                server.decrypt(client.encrypt(clientToServer)).contentEquals(clientToServer))
+            check("handshake derives matching responder-to-initiator keys",
+                client.decrypt(server.encrypt(serverToClient)).contentEquals(serverToClient))
+        } finally {
+            client.close()
+            server.close()
+        }
+
+        val badPsk = NoiseNnPsk0Session(ByteArray(32) { 0x7f }, NoiseNnPsk0Session.Role.RESPONDER)
+        val initiator = NoiseNnPsk0Session(psk, NoiseNnPsk0Session.Role.INITIATOR)
+        try {
+            val rejected = runCatching { badPsk.respond(initiator.start()) }.isFailure
+            check("wrong PSK rejects the handshake", rejected)
+        } finally {
+            badPsk.close()
+            initiator.close()
+        }
+
+        val tamperClient = NoiseNnPsk0Session(psk, NoiseNnPsk0Session.Role.INITIATOR)
+        val tamperServer = NoiseNnPsk0Session(psk, NoiseNnPsk0Session.Role.RESPONDER)
+        try {
+            val reply = tamperServer.respond(tamperClient.start())
+            tamperClient.finish(reply)
+            val ciphertext = tamperClient.encrypt(byteArrayOf(1, 2, 3))
+            ciphertext[ciphertext.lastIndex] = (ciphertext.last().toInt() xor 1).toByte()
+            val rejected = runCatching { tamperServer.decrypt(ciphertext) }.isFailure
+            check("tampered transport frame is rejected", rejected)
+        } finally {
+            tamperClient.close()
+            tamperServer.close()
+        }
+    }
+
+    private fun testNoiseSnowInteropVectors() {
+        println("\n[Noise] Kotlin matches Snow NNpsk0 wire vectors")
+        val psk = ByteArray(32) { 0x01 }
+        val client = NoiseNnPsk0Session(
+            psk,
+            NoiseNnPsk0Session.Role.INITIATOR,
+            NoiseNnPsk0Session.PROLOGUE,
+            ByteArray(32) { 0x11 },
+        )
+        val server = NoiseNnPsk0Session(
+            psk,
+            NoiseNnPsk0Session.Role.RESPONDER,
+            NoiseNnPsk0Session.PROLOGUE,
+            ByteArray(32) { 0x22 },
+        )
+        fun ByteArray.hex() = joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        try {
+            val first = client.start()
+            val envelope = NoiseBleFrameCodec.encode(NoiseBleFrameCodec.Type.INIT, first)
+            val envelopeJson = com.google.gson.JsonParser.parseString(envelope).asJsonObject
+            check(
+                "Rust-compatible versioned Noise envelope",
+                envelopeJson.get("_microduck_noise").asInt == 1 &&
+                    envelopeJson.get("type").asString == "init" &&
+                    envelopeJson.get("data").asString == java.util.Base64.getEncoder().encodeToString(first) &&
+                    NoiseBleFrameCodec.decode(envelope).payload.contentEquals(first),
+            )
+            check(
+                "Snow initiator handshake vector",
+                first.hex() ==
+                    "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13ead68785c17d1ec65e55f26bccc84a96",
+            )
+            val second = server.respond(first)
+            check(
+                "Snow responder handshake vector",
+                second.hex() ==
+                    "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f204ffe716e49cf38c20eeb7ddbc80ca873",
+            )
+            client.finish(second)
+
+            val request = "rpc request".toByteArray()
+            val requestCiphertext = client.encrypt(request)
+            check(
+                "Snow initiator transport vector",
+                requestCiphertext.hex() ==
+                    "5cd76c802015e5d4de4670e4a306dfa879c0293adff7c068744eb1",
+            )
+            check("Snow responder decrypts the request", server.decrypt(requestCiphertext).contentEquals(request))
+
+            val response = "rpc reply".toByteArray()
+            val responseCiphertext = server.encrypt(response)
+            check(
+                "Snow responder transport vector",
+                responseCiphertext.hex() ==
+                    "0c32938e574fbe66ad10ba7a33075a5a126265d5cf4197f297",
+            )
+            check("Snow initiator decrypts the response", client.decrypt(responseCiphertext).contentEquals(response))
+        } finally {
+            client.close()
+            server.close()
+        }
+    }
+
     // ---- 15. 阶段D:换 BleTransport 后端——会话层零改动 + 真 chunk I/O（FakeGattLink）----
     private fun testBleTransportSwap() {
         println("\n[15] 阶段D:换 BleTransport 后端(会话层零改动 + 真 chunk I/O)")
         // notifyChunkSize=7：逼客户端 for_replies 重组器跨多片拼行（20B 出站 + 7B 入站双向分片）。
         val link = FakeGattLink(notifyChunkSize = 7)
-        val t = BleTransport(link, requestTimeoutMs = 2_000)
+        val t = BleTransport(link, FakeGattLink.TEST_PSK, requestTimeoutMs = 2_000)
         val ses = RobotSession(t, backoffBaseMs = 10, backoffMaxMs = 20)
         try {
             val ok = ses.connect(ConnectTarget.Ble("FAKE0001"))
@@ -666,21 +775,21 @@ object CoreSelfTest {
 
         // 负对照:连接失败不得假绿
         val linkFail = FakeGattLink().apply { failConnect = true }
-        val s2 = RobotSession(BleTransport(linkFail), backoffBaseMs = 10, maxReconnectAttempts = 1)
+        val s2 = RobotSession(BleTransport(linkFail, FakeGattLink.TEST_PSK), backoffBaseMs = 10, maxReconnectAttempts = 1)
         val ok2 = s2.connect(ConnectTarget.Ble("FAKE0002"))
         check("负对照:GATT 连接失败不进 READY", !ok2 && s2.state == RobotSession.State.FAILED) { "ok=$ok2 state=${s2.state}" }
         s2.close(); linkFail.close()
 
         // 负对照:readApiVersion 失败（未促成配对）→ 连接失败
         val linkNoVer = FakeGattLink().apply { failReadApiVersion = true }
-        val s3 = RobotSession(BleTransport(linkNoVer), backoffBaseMs = 10, maxReconnectAttempts = 1)
+        val s3 = RobotSession(BleTransport(linkNoVer, FakeGattLink.TEST_PSK), backoffBaseMs = 10, maxReconnectAttempts = 1)
         val ok3 = s3.connect(ConnectTarget.Ble("FAKE0003"))
         check("负对照:read API_VERSION 失败不进 READY", !ok3 && s3.state == RobotSession.State.FAILED) { "ok=$ok3 state=${s3.state}" }
         s3.close(); linkNoVer.close()
 
         // 负对照:出站写失败 → request 失败并触发断连（不 hang、不假绿）
         val linkWriteFail = FakeGattLink()
-        val t4 = BleTransport(linkWriteFail, requestTimeoutMs = 500)
+        val t4 = BleTransport(linkWriteFail, FakeGattLink.TEST_PSK, requestTimeoutMs = 500)
         val ok4 = t4.connect(ConnectTarget.Ble("FAKE0004"))
         linkWriteFail.failWrite = true
         val r4 = t4.request(RpcRequest(1, Method.ROBOT_HEALTH).toJsonLine(com.google.gson.Gson()))
@@ -718,7 +827,7 @@ object CoreSelfTest {
         // ③ 负对照：AUTO 不能把 BLE 也跳过去（否则真机 PIN 认证会漏）
         val link = FakeGattLink()
         try {
-            val s3 = RobotSession(BleTransport(link), backoffBaseMs = 10)
+            val s3 = RobotSession(BleTransport(link, FakeGattLink.TEST_PSK), backoffBaseMs = 10)
             val ok3 = s3.connect(ConnectTarget.Ble("FAKE0016"))
             check("负对照:BLE/AUTO 仍走 PIN 认证", ok3 && link.countOf(Method.SYSTEM_AUTHENTICATE) == 1) { "ok=$ok3 log=${link.log()}" }
             s3.close()
@@ -1279,7 +1388,7 @@ object CoreSelfTest {
         println("\n[N+2] 板端 API_VERSION 可观测（上游 gatt.rs:34-39 契约）")
         // ① 正对照：真机读数 37 能被读回，且与 App 的 40 明确不同 ⇒ skew 可见
         val link = FakeGattLink().apply { setPeerApiVersion(37) }
-        val t = BleTransport(link, requestTimeoutMs = 1_000)
+        val t = BleTransport(link, FakeGattLink.TEST_PSK, requestTimeoutMs = 1_000)
         check("connect 前 peerApiVersion 为 null", t.peerApiVersion == null) { "${t.peerApiVersion}" }
         val s = RobotSession(t, backoffBaseMs = 10, maxReconnectAttempts = 1)
         val ok = s.connect(ConnectTarget.Ble("SKEW37"))
@@ -1290,14 +1399,14 @@ object CoreSelfTest {
 
         // ② 负对照：版本相同也必须如实读到 40，不能写死 37 制造「永远 skew」的假绿
         val link40 = FakeGattLink().apply { setPeerApiVersion(Wire.API_VERSION) }
-        val t40 = BleTransport(link40, requestTimeoutMs = 1_000)
+        val t40 = BleTransport(link40, FakeGattLink.TEST_PSK, requestTimeoutMs = 1_000)
         t40.connect(ConnectTarget.Ble("SAME40"))
         check("负对照:板端 40 时读到 40", t40.peerApiVersion == 40) { "got=${t40.peerApiVersion}" }
         t40.close(); link40.close()
 
         // ③ 负对照：connect 失败时不得留下陈旧版本值（跨会话污染）
         val linkFail = FakeGattLink().apply { failConnect = true }
-        val tFail = BleTransport(linkFail, requestTimeoutMs = 1_000)
+        val tFail = BleTransport(linkFail, FakeGattLink.TEST_PSK, requestTimeoutMs = 1_000)
         tFail.connect(ConnectTarget.Ble("FAIL"))
         check("负对照:连接失败后 peerApiVersion 保持 null", tFail.peerApiVersion == null)
         tFail.close(); linkFail.close()
@@ -1306,7 +1415,7 @@ object CoreSelfTest {
     private fun testConnectFailureReason() {
         println("\n[N+3] 建链失败原因透传（真机 11-14 抓到的可观测性缺陷）")
         val linkFail = FakeGattLink().apply { failConnect = true }
-        val t = BleTransport(linkFail, requestTimeoutMs = 1_000)
+        val t = BleTransport(linkFail, FakeGattLink.TEST_PSK, requestTimeoutMs = 1_000)
         val events = java.util.Collections.synchronizedList(mutableListOf<RobotSession.Event>())
         val s = RobotSession(t, backoffBaseMs = 10, maxReconnectAttempts = 1)
         s.onEvent { events.add(it) }
@@ -1323,7 +1432,7 @@ object CoreSelfTest {
 
         // 负对照：成功路径必须清掉上次失败原因，不把陈旧错误显示给用户
         val linkOk = FakeGattLink()
-        val s2 = RobotSession(BleTransport(linkOk, requestTimeoutMs = 1_000),
+        val s2 = RobotSession(BleTransport(linkOk, FakeGattLink.TEST_PSK, requestTimeoutMs = 1_000),
             backoffBaseMs = 10, maxReconnectAttempts = 1)
         check("成功连接 READY", s2.connect(ConnectTarget.Ble("OK")) &&
             s2.state == RobotSession.State.READY) { "state=${s2.state}" }
@@ -2062,6 +2171,8 @@ object CoreSelfTest {
         testTcpReconnectStormGuard()
         testSoTimeoutIsNotDisconnect()
         testBleFraming()
+        testNoiseNnPsk0()
+        testNoiseSnowInteropVectors()
         testBleTransportSwap()
         testAuthPolicyIsTransportSpecific()
         testNetpadWire()
@@ -2091,6 +2202,7 @@ object CoreSelfTest {
         testNetProvisioning()
         testProvisioningCrypto()
         testTofSnapshot()
+        testFirmwareUpdate()
         println("\n" + "=" * 60)
         println("RESULT: $passed passed, $failed failed")
         println("=" * 60)
@@ -2569,6 +2681,16 @@ object CoreSelfTest {
         check("负对照:缺 outcome 不伪造成功", !NetProvisioning.parseConnect(obj("""{"ssid":"Home"}""")).connected)
         check("负对照:未知 reason 归为未知不猜", NetProvisioning.parseConnect(obj("""{"outcome":"failed","reason":"mystery"}""")).failure == "mystery")
 
+        // 配网成功回填 IP（一次性事件真值）：只有 connected + 非空 ip4 才回填
+        check("配网回填:成功带 ip4 → 回填该 IP",
+            NetProvisioning.backfillIp(NetProvisioning.parseConnect(obj("""{"outcome":"connected","ssid":"Home","ip4":"10.0.0.7"}"""))) == "10.0.0.7")
+        check("负对照:成功但回执无 ip4 → 不回填（不猜 IP）",
+            NetProvisioning.backfillIp(NetProvisioning.parseConnect(obj("""{"outcome":"connected","ssid":"Home"}"""))) == null)
+        check("负对照:成功但 ip4 空串 → 不回填",
+            NetProvisioning.backfillIp(NetProvisioning.parseConnect(obj("""{"outcome":"connected","ssid":"Home","ip4":""}"""))) == null)
+        check("负对照:失败回执即使带 ip4 → 不回填",
+            NetProvisioning.backfillIp(NetProvisioning.parseConnect(obj("""{"outcome":"failed","reason":"bad_key","ip4":"10.0.0.7"}"""))) == null)
+
         // ForgetResult
         check("net.forget removed=true", NetProvisioning.parseForget(obj("""{"removed":true}""")).removed)
         check("负对照:removed 缺失视为 false（未读到）", !NetProvisioning.parseForget(obj("{}")).removed)
@@ -2722,6 +2844,100 @@ object CoreSelfTest {
         // 负对照：validCount 随状态变（不是恒真）——把一格 status 改 255，计数必须 -1
         val oneBad = obj("""{"rows":8,"cols":8,"distance_mm":[${Array(64) { "1234" }.joinToString(",")}],"status":[${Array(64) { "5" }.joinToString(",").replaceFirst("5", "255")}]}""")
         check("负对照:一格 status 255 → valid_count=63（计数随数据动）", Z.from(oneBad)?.validCount == 63)
+    }
+
+    // ---- 固件 OTA：纯 JVM 决策层 + callRaw 数组 result + 进度通知（正/负对照）----
+    private fun testFirmwareUpdate() {
+        println("\n[固件OTA] 一手协议解析 + 写操作参数 + 进度（含负对照）")
+        val F = FirmwareUpdate
+
+        // 1) check 三态
+        check("check:available 触发提示", F.shouldPrompt(F.parseCheck(F.obj(
+            """{"state":"available","installed":"0.15.1","candidate":"0.15.2","mandatory":false,"changelog":null}"""))))
+        val avail = F.parseCheck(F.obj("""{"state":"available","installed":"0.15.1","candidate":"0.15.2","mandatory":true}"""))
+        check("check:mandatory 逐字解析", avail is FirmwareUpdate.CheckState.Available && avail.mandatory && avail.candidate == "0.15.2")
+        val upToDate = F.parseCheck(F.obj("""{"state":"up_to_date","installed":"0.15.1"}"""))
+        check("check:up_to_date 不提示", upToDate is FirmwareUpdate.CheckState.UpToDate && !F.shouldPrompt(upToDate))
+        check("check:incompatible 不提示", !F.shouldPrompt(F.parseCheck(F.obj("""{"state":"incompatible","candidate":"0.15.2","reason":"hw rev"}"""))))
+        check("负对照:state 拼错 → Unknown 不提示", F.parseCheck(F.obj("""{"state":"avaiable"}""")) is FirmwareUpdate.CheckState.Unknown)
+        check("负对照:缺 state → Unknown", F.parseCheck(F.obj("""{"installed":"0.15.1"}""")) is FirmwareUpdate.CheckState.Unknown)
+        check("负对照:null → Unknown", F.parseCheck(null) is FirmwareUpdate.CheckState.Unknown)
+
+        // 2) status 数组 result（callRaw 主路径）
+        val statusArr = F.parseStatus(F.element("""[{"component":"daemon","installed":"0.15.1","phase":"idle","healthy":true,"pinned":null,"last_checked":1700000000,"last_attempt":{"outcome":"applied","from":"0.15.0","to":"0.15.1"}}]"""))
+        check("status:顶层数组解析 1 项", statusArr.size == 1 && statusArr[0].installed == "0.15.1")
+        check("status:phase=idle 不在进行中", !statusArr[0].inProgress)
+        check("status:last_attempt 解析为 applied", F.isApplied(statusArr[0].lastAttempt!!))
+        check("status:包装 {components:[...]} 也解析", F.parseStatus(F.obj("""{"components":[{"component":"daemon","phase":"downloading"}]}""")).size == 1)
+        val inProg = F.parseStatus(F.element("""[{"component":"daemon","phase":"downloading"}]"""))[0]
+        check("status:downloading 在进行中", inProg.inProgress)
+        check("负对照:phase 拼错 → unknownPhase 且不算进行中", run {
+            val s = F.parseStatus(F.element("""[{"component":"daemon","phase":"downlodning"}]"""))[0]
+            s.unknownPhase && !s.inProgress
+        })
+        check("负对照:非数组 result → 空", F.parseStatus(F.obj("""{"state":"weird"}""")).isEmpty())
+
+        // 3) apply 结果
+        check("apply:applied 算成功", F.isApplied(F.parseApply(F.obj("""{"outcome":"applied","from":"0.15.1","to":"0.15.2"}"""))))
+        check("apply:LogEntry success 收敛为 applied", F.isApplied(F.parseApply(F.obj("""{"at":1,"outcome":{"kind":"success"},"from":"0.15.0","to":"0.15.1"}"""))))
+        check("apply:dry_run 不算成功", !F.isApplied(F.parseApply(F.obj("""{"outcome":"dry_run_passed","candidate":"0.15.2"}"""))))
+        val rb = F.parseApply(F.obj("""{"outcome":"rolled_back","attempted":"0.15.2","reverted_to":"0.15.1","reason":"health failed"}"""))
+        check("apply:rolled_back 字段解析", rb is FirmwareUpdate.ApplyResult.RolledBack && rb.attempted == "0.15.2" && rb.revertedTo == "0.15.1")
+        check("负对照:未知 outcome → Unknown", F.parseApply(F.obj("""{"outcome":"banana"}""")) is FirmwareUpdate.ApplyResult.Unknown)
+
+        // 4) progress 通知
+        val pg = F.parseProgress(F.obj("""{"component":"daemon","phase":"downloading","percent":42,"detail":null}"""))!!
+        check("progress:percent 42 + 文案含百分比", pg.percent == 42 && F.progressLabel(pg).contains("42%"))
+        check("progress:health_gate 无百分比也有文案", F.parseProgress(F.obj("""{"component":"daemon","phase":"health_gate","percent":null}"""))!!.let { F.progressLabel(it) == "健康检查" })
+        check("负对照:percent 150 归一为 null", F.parseProgress(F.obj("""{"component":"daemon","phase":"downloading","percent":150}"""))!!.percent == null)
+        check("负对照:缺 phase → null", F.parseProgress(F.obj("""{"component":"daemon","percent":50}""")) == null)
+        check("负对照:未知 phase 标注", F.parseProgress(F.obj("""{"component":"daemon","phase":"weird"}"""))!!.unknownPhase)
+
+        // 5) log / listInstalled 数组
+        check("log:数组解析", F.parseLog(F.element("""[{"at":1,"component":"daemon","outcome":{"kind":"success"}}]""")).size == 1)
+        check("listInstalled:数组解析", F.parseInstalled(F.element("""[{"version":"0.15.1","active":true,"golden":true,"source_revision":null}]"""))[0].active)
+
+        // 6) 写操作参数（deny_unknown_fields：键名精确、可选键缺省）
+        val ap = F.applyParams("daemon", null, false)
+        check("applyParams:target=latest", ap["target"] == "latest" && ap["component"] == "daemon")
+        check("applyParams:无 from_dir 键", !ap.containsKey("from_dir") && !ap.containsKey("confirm"))
+        val apExact = F.applyParams("daemon", "0.15.2", true)
+        check("applyParams:exact + dry_run", (apExact["target"] as Map<*, *>)["exact"] == "0.15.2" &&
+            (apExact["options"] as Map<*, *>)["dry_run"] == true)
+        check("selectParams:component+version", F.selectParams("daemon", "0.15.1") == mapOf("component" to "daemon", "version" to "0.15.1"))
+        check("rollbackParams:只有 component", F.rollbackParams("daemon").size == 1)
+        check("负对照:logParams limit 收敛 <=200", F.logParams(9999)["limit"] == 200)
+        check("mutating 方法清单含 apply/rollback/select 且不含 check", F.MUTATING_METHODS.containsAll(listOf(Method.UPDATE_APPLY, Method.UPDATE_ROLLBACK, Method.UPDATE_SELECT)) && !F.MUTATING_METHODS.contains(Method.UPDATE_CHECK))
+
+        // 7) 错误码解读
+        check("错误码 5 = 网络（板子拉取）", F.describeError(5).contains("网络"))
+        check("错误码 9 = 健康检查失败", F.describeError(9).contains("健康检查"))
+        check("负对照:未知错误码原样带码", F.describeError(999).contains("999"))
+
+        // 8) 真跑 session：callRaw 能拿到数组 result（call 会吞成 null 的负对照）
+        val t = MockTransport(); val s = RobotSession(t, backoffBaseMs = 10)
+        check("OTA:握手进 READY", s.connect(ConnectTarget.Mock))
+        val raw = s.callRaw(Method.UPDATE_STATUS, F.componentParams("daemon"))
+        check("callRaw:拿到数组 result", raw.isSuccess && raw.getOrNull()?.isJsonArray == true)
+        val viaCall = s.call(Method.UPDATE_STATUS)
+        check("负对照:普通 call 对数组 result 得到空对象（证明 callRaw 必要）", viaCall.isSuccess && viaCall.getOrNull()?.entrySet()?.isEmpty() == true)
+        val statusFromRaw = F.parseStatus(raw.getOrNull())
+        check("callRaw→parseStatus 端到端", statusFromRaw.size == 1 && statusFromRaw[0].installed == "0.15.1")
+
+        // 9) 进度通知真跑：subscribe update.progress 收 ≥1 帧；apply 写操作不重放
+        val progressFrames = mutableListOf<FirmwareUpdate.Progress>()
+        val progSub = s.subscribe(Method.UPDATE_SUBSCRIBE, emptyMap(), streamMethod = Method.UPDATE_PROGRESS) { o ->
+            F.parseProgress(o)?.let { progressFrames.add(it) }
+        }
+        Thread.sleep(60)
+        val apply = s.call(Method.UPDATE_APPLY, F.applyParams("daemon", "0.15.2", false), replayable = false)
+        check("OTA:apply 请求成功", apply.isSuccess)
+        check("OTA:apply outcome=applied", F.isApplied(F.parseApply(apply.getOrNull())))
+        Thread.sleep(80)
+        check("OTA:进度通知收到 ≥1 帧", progressFrames.isNotEmpty()) { "frames=${progressFrames.size}" }
+        check("OTA:进度帧 phase 合法", progressFrames.all { it.phase in FirmwareUpdate.PHASES })
+        check("负对照:apply 不进重放队列（写操作）", !t.rawLog().any { it.contains("pendingReplay") })
+        progSub.dispose(); s.close()
     }
 
     private operator fun String.times(n: Int) = repeat(n)

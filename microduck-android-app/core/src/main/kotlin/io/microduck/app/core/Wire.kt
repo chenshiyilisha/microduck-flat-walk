@@ -90,6 +90,24 @@ object Method {
     const val UPDATE_LIST_INSTALLED = "update.listInstalled"
     /** 更新日志尾部。一手：lib.rs `UPDATE_LOG`；route.rs:99 标注 read-only 且 BLE 放行。只读。 */
     const val UPDATE_LOG = "update.log"
+    // ── 固件 OTA（写操作 + 进度流）──
+    // 一手：kissqy v167 `duck-ipc-proto/src/lib.rs` method 常量：
+    //  APPLY="update.apply" / ROLLBACK="update.rollback" / SELECT="update.select" /
+    //  SUBSCRIBE="update.subscribe" / PROGRESS="update.progress"（通知 method，无 id）/
+    //  SHOW="update.show"。BLE 白名单（btd/src/route.rs）放行 apply/rollback/select/
+    //  subscribe/check/status/log/show/listInstalled，但拒绝 update.pin / resetToGolden。
+    /** 触发安装（写操作，绝不自动重放）。params=ApplyParams{component,target,options}。 */
+    const val UPDATE_APPLY = "update.apply"
+    /** 回滚到上一 release（写操作）。params=ComponentParams{component}。 */
+    const val UPDATE_ROLLBACK = "update.rollback"
+    /** 指向某个已装版本，不下载（写操作）。params=SelectParams{component,version}。 */
+    const val UPDATE_SELECT = "update.select"
+    /** 进度订阅动作：独占整条连接，只推通知不回 reply。需在独立 Stream lane 使用。 */
+    const val UPDATE_SUBSCRIBE = "update.subscribe"
+    /** 进度通知 method（无 id）。params=Progress{component,phase,percent,detail}。 */
+    const val UPDATE_PROGRESS = "update.progress"
+    /** 单次更新完整 transcript。params={run:u64|null}。只读。 */
+    const val UPDATE_SHOW = "update.show"
 }
 
 /** JSON-RPC 错误码（lib.rs `pub mod code`）。会话层按这三类做不同处理。 */

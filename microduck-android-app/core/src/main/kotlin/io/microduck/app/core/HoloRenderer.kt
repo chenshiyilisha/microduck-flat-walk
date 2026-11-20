@@ -19,11 +19,13 @@ import kotlin.math.sqrt
  *
  * ── 管线（与 `tools/MeshPreview.java` 的 renderHolo 同一路线，改动需两侧同步）──
  *  ① 光栅化进超采样缓冲：z-buffer 精确遮挡 + 每像素部件 ID + 逐顶点 Fresnel；
- *  ② 图像空间提边：外轮廓 = 模型/背景交界，部件分界 = 部件 ID 变化交界
+ *  ② 图像空间提边：外轮廓 = 模型/背景交界，部件分界 = 部件 ID 变化交界，
+ *     几何折痕 = 相邻像素法线夹角过大（镜头环、头罩分缝、脚底板等同一部件内的外形棱）
  *     —— 只画「屏幕上真实可见的边界」，内部零件被外壳精确剔除，不靠几何猜；
  *  ③ 覆盖率抗锯齿：线强度 = 命中子样本数 / SS²（能量守恒的连续渐变）；
- *  ④ HDR 发射 + 三级 bloom 金字塔 + Reinhard 色调映射 → 「亮芯 + 柔晕」；
- *  ⑤ 合成：径向渐变背景 + 地面网格 + 暗角 + 半透明填充 + 加法发光。
+ *  ④ HDR 发射 + 三级 bloom 金字塔 + Reinhard 色调映射 → 「亮芯 + 柔晕」
+ *     （2026-11-20 收窄 bloom，避免细棱被柔晕糊掉）；
+ *  ⑤ 合成：径向渐变背景 + 地面网格 + 暗角 + 半透明填充（Lambert 明暗）+ 加法发光。
  *
  * 关键设计依据（离线工具已实测收敛）：几何提边路线（Markosian / 零交叉 / 阈值）在
  * 38 个嵌套零件上必然漏线或涂鸦；图像空间提边对网格密度不敏感，是游戏引擎 outline
@@ -62,6 +64,7 @@ object HoloRenderer {
         4 -> statusRgb(Severity.WARN)
         1 -> floatArrayOf(0.60f, 0.93f, 1.00f)
         2 -> floatArrayOf(0.34f, 0.72f, 0.84f)
+        5 -> floatArrayOf(0.48f, 0.86f, 0.96f) // 几何折痕：介于外轮廓与分界之间的青
         else -> ZERO_RGB
     }
 
@@ -74,6 +77,17 @@ object HoloRenderer {
     }
 
     private val ZERO_RGB = floatArrayOf(0f, 0f, 0f)
+
+    /**
+     * 图像空间几何折痕阈值：相邻像素法线点积绝对值低于此值（约 >78°）才提边。
+     * 用绝对值是为了兼容 STL 面绕序不统一（对翻面的光滑邻接，abs(dot)≈1，不会误提）。
+     * 0.50（约 60°）会把 QEM 壳体细分棱也画出来，看起来像乱线；收紧到硬边。
+     * 再加近邻深度连续约束：同一部件前后遮挡不当成折痕。
+     */
+    private const val CREASE_DOT = 0.20f
+    private const val CREASE_Z_FRAC = 0.03f
+    private const val FILL_AMBIENT = 0.42f
+    private val FILL_LIGHT = floatArrayOf(0.4472f, 0.7746f, 0.4472f)
 
     /**
      * 诊断用分阶段计时槽（null=关闭，生产路径零影响）。
@@ -144,6 +158,9 @@ object HoloRenderer {
         val zbuf = FloatArray(sw * sh) { -Float.MAX_VALUE }
         val idbuf = IntArray(sw * sh) { -1 }
         val rbuf = FloatArray(sw * sh)
+        val nxbuf = FloatArray(sw * sh)
+        val nybuf = FloatArray(sw * sh)
+        val nzbuf = FloatArray(sw * sh)
 
         val sx = FloatArray(nv); val sy = FloatArray(nv); val sd = FloatArray(nv)
         val wx = FloatArray(nv); val wy = FloatArray(nv); val wz = FloatArray(nv)
@@ -231,10 +248,18 @@ object HoloRenderer {
                 faceRim[j] = 1f - abs(dot) // 掠射边 → 1
             }
             if (degenerate) continue
+            val e1x = wx[b] - wx[a]; val e1y = wy[b] - wy[a]; val e1z = wz[b] - wz[a]
+            val e2x = wx[c] - wx[a]; val e2y = wy[c] - wy[a]; val e2z = wz[c] - wz[a]
+            var fnx = e1y * e2z - e1z * e2y
+            var fny = e1z * e2x - e1x * e2z
+            var fnz = e1x * e2y - e1y * e2x
+            val fnl = sqrt(fnx * fnx + fny * fny + fnz * fnz)
+            if (fnl < 1e-9f) continue
+            fnx /= fnl; fny /= fnl; fnz /= fnl
             rasterFace(
-                zbuf, idbuf, rbuf, sw, sh,
+                zbuf, idbuf, rbuf, nxbuf, nybuf, nzbuf, sw, sh,
                 sx[a], sy[a], sd[a], sx[b], sy[b], sd[b], sx[c], sy[c], sd[c],
-                part, faceRim,
+                part, faceRim, fnx, fny, fnz,
             )
         }
 
@@ -244,25 +269,7 @@ object HoloRenderer {
         boxBlurV(rbuf, sw, sh, 1)
 
         if (prof != null) { prof[2] += System.nanoTime() - tMark; tMark = System.nanoTime() }
-        // 边缘掩码：1=外轮廓 2=部件分界（超采样下 1 个子样本 ≈ 1/SS 输出像素宽）
-        val emask = ByteArray(sw * sh)
-        for (y in 0 until sh) {
-            val row = y * sw
-            for (x in 0 until sw) {
-                val i = row + x
-                val id = idbuf[i]
-                if (id < 0) continue
-                var outer = false
-                var bnd = false
-                if (x > 0) { val n = idbuf[i - 1]; if (n < 0) outer = true else if (n != id) bnd = true }
-                if (x < sw - 1) { val n = idbuf[i + 1]; if (n < 0) outer = true else if (n != id) bnd = true }
-                if (y > 0) { val n = idbuf[i - sw]; if (n < 0) outer = true else if (n != id) bnd = true }
-                if (y < sh - 1) { val n = idbuf[i + sw]; if (n < 0) outer = true else if (n != id) bnd = true }
-                emask[i] = if (outer) 1 else if (bnd) 2 else 0
-            }
-        }
-
-        // 深度归一化（可见像素）
+        // 深度范围先算：折痕要判断近邻是否同一层表面，不能把前后遮挡画成棱。
         var zmin = Float.MAX_VALUE
         var zmax = -Float.MAX_VALUE
         for (i in 0 until sw * sh) {
@@ -271,6 +278,63 @@ object HoloRenderer {
             }
         }
         val zSpan = max(zmax - zmin, 1e-6f)
+        val creaseZ = CREASE_Z_FRAC * zSpan
+
+        // 边缘掩码：1=外轮廓 2=部件分界（超采样下 1 个子样本 ≈ 1/SS 输出像素宽）
+        val emask = ByteArray(sw * sh)
+        fun isCrease(i: Int, j: Int): Boolean =
+            abs(zbuf[i] - zbuf[j]) <= creaseZ &&
+                abs(nxbuf[i] * nxbuf[j] + nybuf[i] * nybuf[j] + nzbuf[i] * nzbuf[j]) < CREASE_DOT
+        for (y in 0 until sh) {
+            val row = y * sw
+            for (x in 0 until sw) {
+                val i = row + x
+                val id = idbuf[i]
+                if (id < 0) continue
+                var outer = false
+                var bnd = false
+                var crease = false
+                if (x > 0) {
+                    val n = idbuf[i - 1]
+                    if (n < 0) outer = true
+                    else if (n != id) bnd = true
+                    else if (isCrease(i, i - 1)) crease = true
+                }
+                if (x < sw - 1) {
+                    val n = idbuf[i + 1]
+                    if (n < 0) outer = true
+                    else if (n != id) bnd = true
+                    else if (isCrease(i, i + 1)) crease = true
+                }
+                if (y > 0) {
+                    val n = idbuf[i - sw]
+                    if (n < 0) outer = true
+                    else if (n != id) bnd = true
+                    else if (isCrease(i, i - sw)) crease = true
+                }
+                if (y < sh - 1) {
+                    val n = idbuf[i + sw]
+                    if (n < 0) outer = true
+                    else if (n != id) bnd = true
+                    else if (isCrease(i, i + sw)) crease = true
+                }
+                emask[i] = if (outer) 1 else if (bnd) 2 else if (crease) 3 else 0
+            }
+        }
+        // 去掉孤立折痕像素，避免壳体细分留下的噪点和短划。
+        for (y in 0 until sh) {
+            val row = y * sw
+            for (x in 0 until sw) {
+                val i = row + x
+                if (emask[i] != 3.toByte()) continue
+                val hasAdj =
+                    (x > 0 && emask[i - 1] == 3.toByte()) ||
+                        (x < sw - 1 && emask[i + 1] == 3.toByte()) ||
+                        (y > 0 && emask[i - sw] == 3.toByte()) ||
+                        (y < sh - 1 && emask[i + sw] == 3.toByte())
+                if (!hasAdj) emask[i] = 0
+            }
+        }
 
         if (prof != null) { prof[3] += System.nanoTime() - tMark; tMark = System.nanoTime() }
         // ── ② 聚合到输出分辨率 + 覆盖率抗锯齿 ──
@@ -281,6 +345,7 @@ object HoloRenderer {
         val covBuf = FloatArray(w * h)
         val sevBuf = ByteArray(w * h)
         val pidBuf = IntArray(w * h) { -1 }
+        val shadeBuf = FloatArray(w * h)
         val samplesPerPx = (ss * ss).toFloat()
         for (y in 0 until h) {
             for (x in 0 until w) {
@@ -289,6 +354,9 @@ object HoloRenderer {
                 var edgePart = -1
                 var rimSum = 0f
                 var zSum = 0f
+                var nxSum = 0f
+                var nySum = 0f
+                var nzSum = 0f
                 var samples = 0
                 var edgeCount = 0
                 var edgeType = 0
@@ -297,12 +365,18 @@ object HoloRenderer {
                     for (dx in 0 until ss) {
                         val si = base + dx
                         val id = idbuf[si]
-                        if (id >= 0) { idAny = id; samples++; rimSum += rbuf[si]; zSum += zbuf[si] }
+                        if (id >= 0) {
+                            idAny = id; samples++
+                            rimSum += rbuf[si]; zSum += zbuf[si]
+                            nxSum += nxbuf[si]; nySum += nybuf[si]; nzSum += nzbuf[si]
+                        }
                         val em = emask[si].toInt()
                         if (em != 0) {
                             edgeCount++
                             edgePart = id
-                            if (em == 1) edgeType = 1 else if (edgeType == 0) edgeType = 2
+                            if (em == 1) edgeType = 1
+                            else if (em == 2 && edgeType != 1) edgeType = 2
+                            else if (em == 3 && edgeType == 0) edgeType = 3
                         }
                     }
                 }
@@ -311,16 +385,23 @@ object HoloRenderer {
                 znBuf[o] = if (samples > 0) (zSum / samples - zmin) / zSpan else 0f
                 covBuf[o] = samples / samplesPerPx
                 sevBuf[o] = if (idAny in 0..255) sevOfPart[idAny] else 0
+                val nlen = sqrt(nxSum * nxSum + nySum * nySum + nzSum * nzSum)
+                shadeBuf[o] = if (nlen < 1e-8f) FILL_AMBIENT
+                else FILL_AMBIENT + (1f - FILL_AMBIENT) * abs(
+                    (nxSum * FILL_LIGHT[0] + nySum * FILL_LIGHT[1] + nzSum * FILL_LIGHT[2]) / nlen,
+                )
                 if (edgeCount > 0) {
                     val es = if (edgePart in 0..255) sevOfPart[edgePart].toInt() else 0
                     coreKind[o] = when {
                         es >= 2 -> (if (es == 3) 3 else 4).toByte()
                         edgeType == 1 -> 1
+                        edgeType == 3 -> 5
                         else -> 2
                     }
                     val baseI = when (coreKind[o].toInt()) {
                         1 -> 4.6f // 外轮廓
                         2 -> 2.3f // 部件分界
+                        5 -> 3.1f // 几何折痕（外形棱）
                         else -> 3.6f // 状态线
                     }
                     val cov = edgeCount / samplesPerPx
@@ -341,20 +422,22 @@ object HoloRenderer {
             val rim = rimBuf[o]
             if (rim > 0.01f) {
                 val fc = fillRgb(sevBuf[o].toInt())
-                val glowI = rim * 0.32f * df
+                val glowI = rim * 0.22f * df
                 eR[o] += fc[0] * glowI; eG[o] += fc[1] * glowI; eB[o] += fc[2] * glowI
             }
         }
-        gaussBlur(eR, w, h, 0.6f)
-        gaussBlur(eG, w, h, 0.6f)
-        gaussBlur(eB, w, h, 0.6f)
+        // 轮廓线保持清晰：只把一份拷贝拿去模糊/光晕，避免细棱被抹掉
+        val sR = eR.copyOf(); val sG = eG.copyOf(); val sB = eB.copyOf()
+        gaussBlur(sR, w, h, 0.22f)
+        gaussBlur(sG, w, h, 0.22f)
+        gaussBlur(sB, w, h, 0.22f)
 
         if (prof != null) { prof[5] += System.nanoTime() - tMark; tMark = System.nanoTime() }
-        // ── ③ 多尺度 bloom：1/1、1/2、1/4 ──
+        // ── ③ 多尺度 bloom：1/1、1/2、1/4（只作用于柔光层）──
         val bR = FloatArray(w * h); val bG = FloatArray(w * h); val bB = FloatArray(w * h)
-        bloomLevel(eR, eG, eB, w, h, 1, 0.42f, bR, bG, bB)
-        bloomLevel(eR, eG, eB, w, h, 2, 0.30f, bR, bG, bB)
-        bloomLevel(eR, eG, eB, w, h, 4, 0.20f, bR, bG, bB)
+        bloomLevel(sR, sG, sB, w, h, 1, 0.16f, bR, bG, bB)
+        bloomLevel(sR, sG, sB, w, h, 2, 0.09f, bR, bG, bB)
+        bloomLevel(sR, sG, sB, w, h, 4, 0.05f, bR, bG, bB)
 
         if (prof != null) { prof[6] += System.nanoTime() - tMark; tMark = System.nanoTime() }
         // ── ④ 合成：背景(渐变+网格+暗角) → 半透明填充 → 加法发光 → Reinhard ──
@@ -373,16 +456,16 @@ object HoloRenderer {
                 covered++
                 val sev = sevBuf[o].toInt()
                 val fc = fillRgb(sev)
-                var fa = ((if (sev >= 2) 0.16f else 0.11f) + rimBuf[o] * 0.45f) *
+                var fa = ((if (sev >= 2) 0.16f else 0.11f) * shadeBuf[o] + rimBuf[o] * 0.45f) *
                     (0.62f + 0.38f * znBuf[o]) * covBuf[o]
                 fa = min(fa, 0.8f)
                 br = fc[0] * fa + br * (1 - fa)
                 bg2 = fc[1] * fa + bg2 * (1 - fa)
                 bb = fc[2] * fa + bb * (1 - fa)
             }
-            val er = eR[o] + bR[o] * 0.95f
-            val eg = eG[o] + bG[o] * 0.95f
-            val eb = eB[o] + bB[o] * 0.95f
+            val er = eR[o] + bR[o] * 0.58f
+            val eg = eG[o] + bG[o] * 0.58f
+            val eb = eB[o] + bB[o] * 0.58f
             out[o] = (0xFF shl 24) or
                 (toSrgb(br + er / (1f + er)) shl 16) or
                 (toSrgb(bg2 + eg / (1f + eg)) shl 8) or
@@ -490,11 +573,14 @@ object HoloRenderer {
     // 计时定位）。λa/λb/z/rim 都是 (x,y) 的仿射函数 ⇒ 沿扫描线增量累加即可，
     // 每像素降到 6 次加法 + 一次 z 比较。数学与旧版逐符号相同（λc=1-λa-λb）。
     private fun rasterFace(
-        zbuf: FloatArray, idbuf: IntArray, rbuf: FloatArray, sw: Int, sh: Int,
+        zbuf: FloatArray, idbuf: IntArray, rbuf: FloatArray,
+        nxbuf: FloatArray, nybuf: FloatArray, nzbuf: FloatArray,
+        sw: Int, sh: Int,
         ax: Float, ay: Float, az: Float,
         bx: Float, by: Float, bz: Float,
         cx: Float, cy: Float, cz: Float,
         part: Int, rim3: FloatArray,
+        fnx: Float, fny: Float, fnz: Float,
     ) {
         val minX = max(0, floor(min(ax, min(bx, cx))).toInt())
         val maxX = min(sw - 1, ceil(max(ax, max(bx, cx))).toInt())
@@ -541,6 +627,9 @@ object HoloRenderer {
                         zbuf[idx] = z
                         idbuf[idx] = part
                         rbuf[idx] = r
+                        nxbuf[idx] = fnx
+                        nybuf[idx] = fny
+                        nzbuf[idx] = fnz
                     }
                 }
                 la += A; lb += D; z += ZA; r += RA

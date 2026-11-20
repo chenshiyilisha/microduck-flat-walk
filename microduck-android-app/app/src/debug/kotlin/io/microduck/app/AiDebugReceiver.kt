@@ -17,6 +17,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import io.microduck.app.ble.AndroidBleGattLink
+import io.microduck.app.ble.BlePairingStore
 import io.microduck.app.ble.DuckBleService
 import io.microduck.app.core.AiDebugPolicy
 import io.microduck.app.core.BleForegroundPolicy
@@ -326,11 +327,24 @@ class AiDebugReceiver : BroadcastReceiver() {
         } catch (t: Throwable) {
             first.fail("GET_REMOTE_DEVICE_FAILED: ${clip(t.message, 160)}"); emit(first); return
         }
+        val pairing = try {
+            BlePairingStore.findByAdvertisementName(ctx, device.name.orEmpty())
+        } catch (_: Exception) {
+            first.fail("PRECONDITION_FAIL: BLE_PAIRING_NAME_AMBIGUOUS")
+            emit(first); return
+        } ?: run {
+            first.fail("PRECONDITION_FAIL: BLE_PAIRING_REQUIRED")
+            emit(first); return
+        }
 
         val raw = AndroidBleGattLink(ctx, device, AiDebugPolicy.CONNECT_GATT_TIMEOUT_MS)
         val link = SerialGattLink(raw)
         DuckBleService.attach(link)
-        val transport = BleTransport(link, requestTimeoutMs = 4_000)
+        val transport = try {
+            BleTransport(link, pairing.psk, expectedSerial = pairing.serial, requestTimeoutMs = 4_000)
+        } finally {
+            pairing.psk.fill(0)
+        }
 
         first.addProperty(AiDebugPolicy.Field.PHASE, "accepted")
         first.addProperty("address", addr)
@@ -338,7 +352,7 @@ class AiDebugReceiver : BroadcastReceiver() {
         emit(first)
 
         val done = CountDownLatch(1)
-        SessionHolder.connectWith(transport, ConnectTarget.Ble("AI-$addr")) { ok ->
+        SessionHolder.connectWith(transport, ConnectTarget.Ble(pairing.serial)) { ok ->
             val late = base(c)
             late.addProperty(AiDebugPolicy.Field.PHASE, "result")
             late.addProperty(AiDebugPolicy.Field.OK, ok)

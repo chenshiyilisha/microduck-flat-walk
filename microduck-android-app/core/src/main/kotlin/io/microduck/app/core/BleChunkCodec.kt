@@ -18,7 +18,7 @@ package io.microduck.app.core
  * ── 调用方向语义（最容易搞错、必须钉死，见 session.rs / bluez.rs / duckctl 一手调用点）──
  *  · client 出站（我们 App → robot）：`chunks(line, FLOOR_MTU)` 固定 20 —— duckctl/src/main.rs:1781
  *    注释原文 "20 bytes — the floor every BLE link guarantees — is the safe assumption"，不用协商 MTU。
- *  · client 入站（robot → 我们 App）：`Reassembler.forReplies()` 松边界 64KiB —— duckctl:1790。
+ *  · client 入站（robot → 我们 App）：`Reassembler.forReplies()` 松边界 96KiB —— encrypted envelope expands payloads.
  *  · robot 入站：`Reassembler()` 紧边界 8KiB（防 radio range 内任何人） —— session.rs:40。
  *  · robot 出站：`chunks(line, link.mtu())` + bluez 层 `notification_payload(req.mtu)` clamp 512
  *    —— session.rs:311 / bluez.rs:440。注意 [chunks] 与 [notificationPayload] 是**两个独立函数**，
@@ -26,10 +26,10 @@ package io.microduck.app.core
  */
 object BleChunkCodec {
     /** framing.rs:40 — 机器人重组「客户端请求」的上限：安全紧边界，防 radio 范围内任何人 pin 内存。 */
-    const val MAX_LINE: Int = 8 * 1024
+    const val MAX_LINE: Int = 16 * 1024
 
     /** framing.rs:54 — 客户端重组「机器人回复」的上限：信任已连接 robot，松边界，曾因共用 8KiB 卡死 system.logs。 */
-    const val MAX_REPLY_LINE: Int = 64 * 1024
+    const val MAX_REPLY_LINE: Int = 96 * 1024
 
     /** framing.rs:66 — 每条 BLE 链路必支持的最小 payload（ATT MTU 23 - 3）。 */
     const val FLOOR_MTU: Int = 20
@@ -82,15 +82,15 @@ object BleChunkCodec {
 
     /**
      * framing.rs:95 — 把入站 chunk 重组为整行。
-     * 方向由 [limit] 区分：[forRequests] 用 8KiB 紧边界、[forReplies] 用 64KiB 松边界。
+     * 方向由 [limit] 区分：[forRequests] 用 16KiB 紧边界、[forReplies] 用 96KiB 松边界。
      */
     class Reassembler private constructor(private val limit: Int) {
         private val buf = ByteArrayOutputStreamCompat()
 
         companion object {
-            /** 机器人侧重组客户端请求：8KiB 紧边界（framing.rs:118-121 Default）。 */
+            /** 机器人侧重组客户端加密帧：16KiB 紧边界。 */
             fun forRequests(): Reassembler = Reassembler(MAX_LINE)
-            /** 客户端侧重组机器人回复：64KiB 松边界（framing.rs:130-136 for_replies）。 */
+            /** 客户端侧重组机器人加密回复：96KiB 松边界。 */
             fun forReplies(): Reassembler = Reassembler(MAX_REPLY_LINE)
         }
 

@@ -60,6 +60,7 @@ import io.microduck.app.ssh.SshPanel
 import io.microduck.app.ssh.SshRepository
 import io.microduck.app.update.GithubReleaseClient
 import io.microduck.app.update.UpdateRepository
+import io.microduck.app.update.FirmwarePanel
 import io.microduck.app.update.UpdatePanel
 import kotlinx.coroutines.launch
 
@@ -167,6 +168,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var headDzLabel: TextView
     private lateinit var topScrim: View
     private lateinit var blePanel: BleConnectPanel
+    private lateinit var firmwarePanel: FirmwarePanel
     private lateinit var updateRepository: UpdateRepository
     private lateinit var updatePanel: UpdatePanel
     private lateinit var statePage: View
@@ -174,6 +176,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsPage: View
     private lateinit var sshPage: View
     private lateinit var sshPanel: SshPanel
+    /** 已回填到终端 IP 框的配网序号；只在固件回执产生新序号时才再次回填。 */
+    private var appliedProvisionedIpSeq: Long = 0L
     /** 阶段 3：SSH 会话单一真源，跨终端页重建存活（面板只订阅，不持有 session）。 */
     private val sshRepository = SshRepository()
     private val stateValues = mutableListOf<TextView>()
@@ -212,6 +216,14 @@ class MainActivity : AppCompatActivity() {
             ?: emptySet()
         updateRepository = UpdateRepository(this, overrideBase ?: GithubReleaseClient.API_BASE, extraHosts)
         updatePanel = UpdatePanel(this, updateRepository)
+        // 固件 OTA：回调转发到 ViewModel → RobotRepository（写操作二次确认在面板内）。
+        firmwarePanel = FirmwarePanel(
+            this,
+            onRefresh = { viewModel.onRefreshFirmware() },
+            onCheck = { viewModel.onCheckFirmware() },
+            onApply = { v, dry -> viewModel.onApplyFirmware(v, dry) },
+            onRollback = { viewModel.onRollbackFirmware() },
+        )
         val root = FrameLayout(this).apply { setBackgroundColor(c(R.color.md_bg)) }
         // 视觉节奏按 M1「Metrics & keylines」一手数值：8dp 基线网格、移动端左右 16dp
         // 边距、内容组之间 8dp。旧版 10dp 边距 / 6dp 组距不在网格上，截图显得散。
@@ -230,8 +242,8 @@ class MainActivity : AppCompatActivity() {
         // 只承载会话级状态，页面专属内容各自独立，避免三页顶部/底部同款卡片重复。
         chrome = PageChrome(
             titleText = TextView(this).apply {
-                // 安静仪表盘：标题 16sp，不做营销级 22sp hero（M3 Expressive：hero 留给主动作）。
-                textSize = 16f; setTextColor(c(R.color.md_text))
+                // 对齐 HTML .brand 18px；hero 仍留给主动作「进入遥控」。
+                textSize = 18f; setTextColor(c(R.color.md_text))
                 setTypeface(null, Typeface.BOLD); letterSpacing = 0.02f
                 setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
             },
@@ -270,7 +282,7 @@ class MainActivity : AppCompatActivity() {
         section(buildTabRow())
         root.addView(content, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        topScrim = View(this).apply { setBackgroundColor(Color.argb(190, 0x14, 0x13, 0x11)) }
+        topScrim = View(this).apply { setBackgroundColor(Color.argb(190, 0x09, 0x0A, 0x0C)) }
         root.addView(topScrim, FrameLayout.LayoutParams(MATCH, 0, Gravity.TOP))
         setContentView(root)
 
@@ -290,6 +302,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         showPage(0)
+        blePanel.handlePairingIntent(intent)
         connectFromUi()                    // 默认 Mock：触发连接，结果经 uiState 渲染
         // 阶段 2 UDF（官方 repeatOnLifecycle 模式）：订阅 uiState 渲染，状态驱动字段
         // 全部来自 ViewModel，不再各自读 SessionHolder。初始值立即发射，覆盖首次渲染。
@@ -387,12 +400,15 @@ class MainActivity : AppCompatActivity() {
             banner.visibility = View.VISIBLE
             banner.text = msg
             val level = if (connectError.isNotEmpty()) 2 else linkLevel
-            // 亮底配深字：MaterialButton 那个「只换背景不换字色」的坑不能在这里重演。
-            banner.setBackgroundColor(if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn))
-            banner.setTextColor(c(R.color.md_bg))
-            banner.background = roundedCard(
-                if (level >= 2) c(R.color.md_bad) else c(R.color.md_warn), CORNER_LARGE_DP,
-                stroked = false)   // 告警是纯状态色块，不再叠低对比描边（Color is purely functional）
+            // 对齐 HTML .banner：浅底 + 状态色文字/描边，避免实心色块。
+            val bad = level >= 2
+            banner.setTextColor(c(if (bad) R.color.md_bad else R.color.md_warn))
+            banner.background = GradientDrawable().apply {
+                setColor(if (bad) Color.argb(38, 0xFF, 0x45, 0x3A) else Color.argb(38, 0xFF, 0xB0, 0x20))
+                cornerRadius = dp(CORNER_LARGE_DP).toFloat()
+                setStroke(dp(STROKE_HAIRLINE_DP),
+                    if (bad) Color.argb(77, 0xFF, 0x45, 0x3A) else Color.argb(77, 0xFF, 0xB0, 0x20))
+            }
         }
     }
 
@@ -477,21 +493,21 @@ class MainActivity : AppCompatActivity() {
         addView(sectionTitle("控制"))
         val row = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = roundedCard(c(R.color.md_card_alt), CORNER_CELL_DP, stroked = false)
+            background = roundedCard(c(R.color.md_card_alt), CORNER_SM_DP, stroked = false)
             setPadding(dp(4), dp(4), dp(4), dp(4))
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(8) }
         }
         modeManual = MaterialButton(this@MainActivity, null,
             com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "手动模式"; textSize = 13f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_CELL_DP)
+            cornerRadius = dp(CORNER_NAV_DP)
             contentDescription = "手动模式"
             setOnClickListener { switchMode(ControlMode.MANUAL) }
         }
         modeAuto = MaterialButton(this@MainActivity, null,
             com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "自动模式"; textSize = 13f; minimumHeight = dp(48)
-            cornerRadius = dp(CORNER_CELL_DP)
+            cornerRadius = dp(CORNER_NAV_DP)
             contentDescription = "自动模式"
             setOnClickListener { switchMode(ControlMode.AUTO) }
         }
@@ -509,7 +525,7 @@ class MainActivity : AppCompatActivity() {
         launchButton = MaterialButton(this@MainActivity).apply {
             textSize = 15f; minimumHeight = dp(52)
             cornerRadius = dp(CORNER_LARGE_DP)
-            setTextColor(c(R.color.md_bg))
+            setTextColor(c(R.color.md_on_accent))
             contentDescription = "进入遥控界面"
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(14) }
             setOnClickListener { startActivity(Intent(this@MainActivity, DriveActivity::class.java)) }
@@ -688,17 +704,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun metricCell(label: String, value: String) = TextView(this).apply {
-        gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = dp(48)
-        setPadding(dp(2), dp(8), dp(6), dp(8))
+        gravity = Gravity.TOP
+        minimumHeight = dp(68)
+        setPadding(dp(16), dp(14), dp(16), dp(14))
         setLineSpacing(0f, 1.1f)
         maxLines = 2; ellipsize = TextUtils.TruncateAt.END
         fontFeatureSettings = TABULAR_FIGURES
+        background = roundedCard(c(R.color.md_card), CORNER_CELL_DP, stroked = true)
         setMetric(this, label, value)
     }
 
     /**
-     * label 安静 / value 才是主角（Oura / Linear 仪器面板：数字是 headline）。
+     * 标签保持克制，突出读数。
      * 空态「未读到」降字号降对比，避免整屏被占位字抢眼；文案本身门禁硬串不动。
      */
     private fun setMetric(v: TextView, label: String, value: String) {
@@ -707,16 +724,16 @@ class MainActivity : AppCompatActivity() {
         val cut = label.length + 1
         val flags = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         val empty = value.contains("未读到") || value == "—"
-        sp.setSpan(AbsoluteSizeSpan(dp(11)), 0, label.length, flags)
+        sp.setSpan(AbsoluteSizeSpan(dp(12)), 0, label.length, flags)
         sp.setSpan(ForegroundColorSpan(c(R.color.md_text_dim)), 0, label.length, flags)
-        sp.setSpan(AbsoluteSizeSpan(dp(if (empty) 14 else 18)), cut, full.length, flags)
+        sp.setSpan(AbsoluteSizeSpan(dp(if (empty) 14 else 16)), cut, full.length, flags)
         sp.setSpan(ForegroundColorSpan(
             c(if (empty) R.color.md_text_dim else R.color.md_text)), cut, full.length, flags)
         if (!empty) sp.setSpan(StyleSpan(Typeface.BOLD), cut, full.length, flags)
         v.text = sp
     }
 
-    /** HTML `.rows`：2 列圆角卡网格，gap 12dp；无竖线、无行分隔线（卡片自身描边即分组）。 */
+    /** HTML `.rows`：两列圆角卡片，行列间距均为 12dp，小屏保持两列。 */
     private fun metricGrid(cols: Int, labels: List<String>, sink: MutableList<TextView>) =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -734,8 +751,9 @@ class MainActivity : AppCompatActivity() {
                     row.addView(View(this@MainActivity),
                         LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(12) })
                 }
-                addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
-                addView(rule())
+                addView(row, LinearLayout.LayoutParams(MATCH, WRAP).also {
+                    if (rowIdx > 0) it.topMargin = dp(12)
+                })
             }
         }
 
@@ -772,14 +790,14 @@ class MainActivity : AppCompatActivity() {
         }
 
     /**
-     * 分段：选中 = 表面最高阶 + 近白字；未选中 = 透明 + dim（Linear 少色、靠 luminance）。
+     * 分段：选中 = 白底黑字（对齐 HTML .seg span.on）；未选中 = 透明 + dim。
      * 门禁「手动模式/自动模式」文案 / content-desc 不动。
      */
     private fun styleSegment(b: MaterialButton, selected: Boolean, accent: Int) {
         b.strokeWidth = 0
         b.backgroundTintList = ColorStateList.valueOf(
-            if (selected) c(R.color.md_surface_highest) else Color.TRANSPARENT)
-        b.setTextColor(if (selected) c(R.color.md_text) else c(R.color.md_text_dim))
+            if (selected) Color.WHITE else Color.TRANSPARENT)
+        b.setTextColor(if (selected) c(R.color.md_bg) else c(R.color.md_text_dim))
         b.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
     }
 
@@ -877,10 +895,10 @@ class MainActivity : AppCompatActivity() {
                 text = "近"; textSize = 10f; setTextColor(c(R.color.md_text_dim))
             }, LinearLayout.LayoutParams(WRAP, WRAP))
             addView(View(this@MainActivity).apply {
-                val near = Color.parseColor("#C56E66")
-                val mid = Color.parseColor("#C7A052")
-                val farBlue = Color.parseColor("#C9904A")
-                val dark = Color.parseColor("#2A2218")
+                val near = Color.parseColor("#FF453A")
+                val mid = Color.parseColor("#FFB020")
+                val farBlue = Color.parseColor("#4A8BFF")
+                val dark = Color.parseColor("#2E4A57")
                 background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                     intArrayOf(near, mid, farBlue, dark)).apply { cornerRadius = dp(4).toFloat() }
             }, LinearLayout.LayoutParams(0, dp(8), 1f).also {
@@ -1302,9 +1320,9 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f; setTextColor(c(R.color.md_bad))
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = GradientDrawable().apply {
-                setColor(Color.argb(38, 0xCE, 0x6A, 0x63))
-                cornerRadius = dp(CORNER_CELL_DP).toFloat()
-                setStroke(dp(1), Color.argb(90, 0xCE, 0x6A, 0x63))
+                setColor(Color.argb(38, 0xFF, 0x45, 0x3A))
+                cornerRadius = dp(CORNER_LARGE_DP).toFloat()
+                setStroke(dp(1), Color.argb(77, 0xFF, 0x45, 0x3A))
             }
             val bar = GradientDrawable().apply {
                 setColor(c(R.color.md_bad)); setSize(dp(3), dp(28))
@@ -1508,11 +1526,14 @@ class MainActivity : AppCompatActivity() {
             g.addView(buildNetPanel(), LinearLayout.LayoutParams(MATCH, WRAP))
         }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(10) })
 
-        // ── ④ 关于 ──
-        col.addView(settingsSectionHeader("关于", "版本与手动更新"))
+        // ── ④ 固件与 App 更新 ──
+        col.addView(settingsSectionHeader("更新", "固件由板子 WiFi 拉取 · App 走 GitHub"))
+        col.addView(settingsGroup().also { g ->
+            g.addView(firmwarePanel.view, LinearLayout.LayoutParams(MATCH, WRAP))
+        }, LinearLayout.LayoutParams(MATCH, WRAP))
         col.addView(settingsGroup().also { g ->
             g.addView(updatePanel.view, LinearLayout.LayoutParams(MATCH, WRAP))
-        }, LinearLayout.LayoutParams(MATCH, WRAP))
+        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(10) })
 
         addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
     }
@@ -1746,9 +1767,15 @@ class MainActivity : AppCompatActivity() {
             if (stroked) setStroke(dp(STROKE_HAIRLINE_DP), c(R.color.md_outline_variant))
         }
 
-    /** 3D 模型底座：暖近黑浅底 + 12dp 圆角（非 24dp 营销圆角）。 */
+    /** 3D 模型底座：对齐 HTML .model-container（24dp、深灰径向到底）。不改模型渲染器。 */
     private fun modelContainer(child: View, heightDp: Int) = FrameLayout(this).apply {
-        background = roundedCard(c(R.color.md_surface), CORNER_LARGE_DP, stroked = true)
+        background = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.parseColor("#1E2229"), c(R.color.md_surface)),
+        ).apply {
+            cornerRadius = dp(CORNER_XL_DP).toFloat()
+            setStroke(dp(STROKE_HAIRLINE_DP), c(R.color.md_outline_variant))
+        }
         addView(child, FrameLayout.LayoutParams(MATCH, MATCH).also {
             it.gravity = Gravity.CENTER
             it.setMargins(dp(4), dp(4), dp(4), dp(4))
@@ -2114,6 +2141,8 @@ class MainActivity : AppCompatActivity() {
         renderToF(state)   // 独立于 monitorReport：即使 health 未读，ToF 帧仍要如实渲染/显示未读到
         renderDiagnostics(state.diagnostics)
         renderNet(state.net, state.netBusy, state.netResultText)
+        if (::firmwarePanel.isInitialized) firmwarePanel.render(state.firmware)
+        applyProvisionedIp(state)
         refreshModeUi(state)
         // 单行状态串：完整信息在来源标签 / 状态卡里，不再让 appBar 折成两行。
         // 三个目的地各持一套状态串，统一刷新，保证任何页面下连接/模式/帧数都可见。
@@ -2131,6 +2160,19 @@ class MainActivity : AppCompatActivity() {
         // 会话级帧数信息统一由状态页遥测网格承载，任何页面都能从状态页读到。
     }
 
+    /**
+     * 配网成功后回填终端 IP 框（11-20 需求）。序号驱动的一次性事件：
+     * 只有固件回执产生**新序号**（provisionedIpSeq 自增）才回填，1s tick 重复渲染不再覆盖。
+     * 换链路时 core 把 ip 清空但保留序号，这里也不会把旧 IP 写回去。
+     * 真正的「是否覆盖用户输入」判断在 [SshPanel.applyProvisionedIp]。
+     */
+    private fun applyProvisionedIp(state: MainViewModel.UiState) {
+        if (state.provisionedIpSeq <= appliedProvisionedIpSeq) return
+        if (!::sshPanel.isInitialized) return   // 页面未建时不记录，创建后下次渲染补填
+        appliedProvisionedIpSeq = state.provisionedIpSeq
+        sshPanel.applyProvisionedIp(state.provisionedIp)
+    }
+
     private val tick = object : Runnable {
         override fun run() {
             // 时间驱动：遥测采样经 ViewModel.onTick 更新 uiState（渲染由 collect 负责），
@@ -2142,6 +2184,12 @@ class MainActivity : AppCompatActivity() {
             if (viewModel.uiState.value.autoRefreshHealth && currentPage == 1) viewModel.onRefreshHealth()
             ui.postDelayed(this, 1_000)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (::blePanel.isInitialized) blePanel.handlePairingIntent(intent)
     }
 
     override fun onResume() {
@@ -2173,14 +2221,14 @@ class MainActivity : AppCompatActivity() {
         // 🔴 不再把 20 / 1 / "tnum" 等字面量散落在十几个调用点：token 必须具名，
         //    改一处即可全局生效。XML 侧的 @dimen/m3_corner_large 与这里同源，
         //    数值改动须两处同步（见设计依据文档「token 单一真源」条目）。
-        // 2026-11-19 去卡片化：20dp 全屏圆润 → 12dp 主控件 / 8dp 单元格 / 6dp chip。
-        // 一手依据：skillcraft「Rounded-lg maximum ... 8px feels intentional」；
-        // standoutmcp「A card around everything → group with whitespace and 1px rules」。
-        // XML @dimen/m3_corner_large 与 CORNER_LARGE_DP 同源（均为 12），改动须两处同步。
-        const val CORNER_LARGE_DP = 12       // 主控件（主按钮 / 输入框）
-        const val CORNER_NAV_DP = 8          // 底部导航图标底
-        const val CORNER_CELL_DP = 8         // 数据单元格 / 次级按钮
-        const val CORNER_CHIP_DP = 6         // 状态 chip
+        // 2026-11-20 科技感稿：圆角对齐 HTML --radius-sm/md/lg = 12 / 16 / 24。
+        // XML @dimen/m3_corner_* 与这里同源，改动须两处同步。
+        const val CORNER_SM_DP = 12          // 次级控件 / 分段外框（--radius-sm）
+        const val CORNER_LARGE_DP = 16       // 主按钮 / 输入框 / 卡片（--radius-md）
+        const val CORNER_XL_DP = 24          // 大容器：3D 模型底座（--radius-lg）
+        const val CORNER_NAV_DP = 8          // 底部导航图标底 / 分段内项
+        const val CORNER_CELL_DP = 16        // 数据单元格 / 次级按钮（与 radius-md 对齐）
+        const val CORNER_CHIP_DP = 12        // 状态 chip
         const val STROKE_HAIRLINE_DP = 1      // 1px 分隔线 / 描边（Borders > Shadows）
         const val STROKE_SELECTED_DP = 2      // 选中态描边
         const val TABULAR_FIGURES = "tnum"    // OpenType tabular figures

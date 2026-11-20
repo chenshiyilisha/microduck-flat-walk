@@ -1,5 +1,6 @@
 package io.microduck.app.ble
 
+import android.app.AlertDialog
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
@@ -7,6 +8,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -99,7 +101,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     private fun dp(v: Int): Int = (v * activity.resources.displayMetrics.density).toInt()
 
     private fun card(fill: Int) = GradientDrawable().apply {
-        setColor(fill); cornerRadius = dp(10).toFloat()
+        setColor(fill); cornerRadius = dp(16).toFloat()
     }
 
     /**
@@ -125,7 +127,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         }
         addView(statusText)
         addView(TextView(activity).apply {
-            text = "只列 MicroDuck 候选 · 身份按 serial · 真 GATT 未上板联调（失败如实报）"
+            text = "先用手机相机扫描机器人配对码 · 密钥由 Android Keystore 加密保存"
             textSize = 11f; setTextColor(activity.getColor(R.color.md_text_dim))
             setPadding(0, 0, 0, dp(10))
         })
@@ -134,7 +136,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "扫描附近 BLE 设备"; textSize = 13f; minimumHeight = dp(48)
             contentDescription = "扫描附近 BLE 设备"
-            cornerRadius = dp(12)
+            cornerRadius = dp(16)
             strokeWidth = dp(1)
             strokeColor = android.content.res.ColorStateList.valueOf(activity.getColor(R.color.md_outline))
             setTextColor(activity.getColor(R.color.md_text))
@@ -152,6 +154,40 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     }
 
     private fun setStatus(s: String) { statusText?.text = s }
+
+    fun handlePairingIntent(intent: Intent?): Boolean {
+        val uri = intent?.data ?: return false
+        if (intent.action != Intent.ACTION_VIEW) return false
+        val pairing = try {
+            BlePairingStore.parsePairingUri(uri)
+        } catch (_: Exception) {
+            setStatus("⚠ 配对二维码无效。请在机器人重新生成配对码后再扫描")
+            AlertDialog.Builder(activity)
+                .setTitle("无法导入配对码")
+                .setMessage("二维码格式无效或密钥长度不正确。")
+                .setPositiveButton("知道了", null)
+                .show()
+            return true
+        }
+        val replacing = BlePairingStore.contains(activity, pairing.serial)
+        AlertDialog.Builder(activity)
+            .setTitle(if (replacing) "更换机器人配对密钥" else "保存机器人配对密钥")
+            .setMessage("${pairing.name}\n序列号：${pairing.serial}\n\n密钥将加密保存在此设备上。")
+            .setPositiveButton(if (replacing) "更换" else "保存") { _, _ ->
+                try {
+                    BlePairingStore.save(activity, pairing)
+                    setStatus("配对密钥已安全保存 · 连接时仅匹配广播名称")
+                } catch (_: Exception) {
+                    setStatus("⚠ 配对密钥保存失败。请检查设备存储空间后重试")
+                } finally {
+                    pairing.psk.fill(0)
+                }
+            }
+            .setNegativeButton("取消") { _, _ -> pairing.psk.fill(0) }
+            .setOnCancelListener { pairing.psk.fill(0) }
+            .show()
+        return true
+    }
 
     private fun onScanClicked() {
         if (!hasBleFeature()) {
@@ -185,7 +221,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         listCol?.addView(MaterialButton(activity).apply {
             text = "去授权"; textSize = 12f; minimumHeight = dp(48)
             contentDescription = "去授权 BLE 权限"
-            setTextColor(activity.getColor(R.color.md_bg))
+            setTextColor(activity.getColor(R.color.md_on_accent))
             setOnClickListener {
                 activity.requestPermissions(requiredPermissions(), REQ_CODE)
             }
@@ -383,17 +419,28 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             renderNeedPermission()
             return
         }
+        val pairing = try {
+            BlePairingStore.findByAdvertisementName(activity.applicationContext, c.name)
+        } catch (_: Exception) {
+            setStatus("⚠ 此广播名称对应多个配对记录。请先移除重名设备的旧配对码")
+            return
+        } ?: run {
+            setStatus("⚠ 此设备尚未配对。先用手机相机扫描该机器的配对码")
+            return
+        }
         setStatus("正在连接 ${c.name.ifEmpty { c.address }} …\n" +
-            "⚠ 真 GATT 未上板验收：若握手失败会显示具体原因，不会显示已连接")
+            "正在验证设备身份并建立加密会话；握手失败不会回退到明文")
         val rawLink = AndroidBleGattLink(activity.applicationContext, c.device)
         // P0 ⑤：用 core 的 SerialGattLink 包装，强制 GATT 操作串行（等前一条回调再发下一条）。
         val link = SerialGattLink(rawLink)
         // A1：先交给前台服务持引用，Activity 退后台后 GATT 不会被回收。
         DuckBleService.attach(link)
-        val transport = BleTransport(link)
-        // serial 用广播名（原厂 app-path-design.md §8.2：地址会变、serial 不变；当前固件
-        // 未在广播里给 serial，这里以名字作为身份候选并明确标注，绝不把 address 当身份）。
-        val serial = c.name.ifEmpty { "UNKNOWN-${c.address}" }
+        val transport = try {
+            BleTransport(link, pairing.psk, expectedSerial = pairing.serial)
+        } finally {
+            pairing.psk.fill(0)
+        }
+        val serial = pairing.serial
         SessionHolder.connectWith(transport, ConnectTarget.Ble(serial)) { ok ->
             ui.post {
                 if (ok) {

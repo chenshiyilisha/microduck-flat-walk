@@ -480,6 +480,37 @@ class RobotSession(
         JsonParser.parseString(line).asJsonObject.getAsJsonObject("result")
     } catch (_: Exception) { null }
 
+    /**
+     * 与 [call] 同语义，但 result 以 [com.google.gson.JsonElement] 返回——供 result 是**数组**
+     * 的方法用（固件 update.status / update.log / update.listInstalled 的 result 都是 Vec）。
+     * [call] 的 readResult 用 getAsJsonObject，数组会抛异常被吞成 null，那样会假「未读到」。
+     * 写操作请显式 replayable=false，别依赖白名单。
+     */
+    fun callRaw(
+        method: String,
+        params: Map<String, Any?> = emptyMap(),
+        replayable: Boolean = isReadOnly(method),
+    ): Result<com.google.gson.JsonElement> {
+        if (state != State.READY) return Result.failure(IllegalStateException("SESSION_NOT_READY: $state"))
+        if (method in unsupported) return Result.failure(IllegalStateException("CAPABILITY_UNSUPPORTED: $method"))
+        val line = newRequest(method, params)
+        val resp = transport.request(line).getOrElse {
+            if (replayable) synchronized(stateLock) { pendingReplay.add(PendingCall(line, method)) }
+            triggerReconnect("transport dropped on callRaw: $method")
+            return Result.failure(IOException("TRANSPORT_DROPPED: $method"))
+        }
+        val err = errorOf(resp)
+        if (err != null) {
+            handleError(method, err)
+            return Result.failure(IllegalStateException("RPC_ERROR: ${err.code} ${err.message}"))
+        }
+        val result = try {
+            JsonParser.parseString(resp).asJsonObject.get("result")
+        } catch (_: Exception) { null }
+        return if (result != null) Result.success(result)
+        else Result.failure(IllegalStateException("NO_RESULT: $method"))
+    }
+
     // Gson JsonObject 的 null-safe 取值（JsonObject 没有 org.json 的 opt* 方法）
     private fun str(o: JsonObject?, k: String): String? =
         o?.get(k)?.takeUnless { it.isJsonNull }?.takeIf { it.isJsonPrimitive }?.asString
@@ -497,6 +528,8 @@ class RobotSession(
         Method.ROBOT_REMOTE_SESSION_ACTIVE, Method.ROBOT_MODEL_API,
         // A3/A6/A7：新增只读展示方法，断链恢复后同样可安全重放。
         Method.SYSTEM_SERVICES, Method.UPDATE_LIST_INSTALLED, Method.UPDATE_LOG,
+        // 固件 OTA 只读：单跑 transcript（写操作 apply/rollback/select 刻意不在白名单，绝不重放）。
+        Method.UPDATE_SHOW,
     )
 
     fun close() {

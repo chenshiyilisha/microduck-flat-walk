@@ -94,6 +94,15 @@ class RobotRepository(
         val netBusy: Boolean,
         /** A2 配网最近一次写操作结果文本；null=无。含明文风险警示的展示由 UI 负责。 */
         val netResultText: String?,
+        /**
+         * 配网成功经 BLE 回执拿到的板子 IPv4（一次性回填事件）。
+         * 只承载**固件回执的真实 ip4**，缺/失败恒 null；不猜、不填默认。
+         * 序号只增不减：UI 据此判断「这是一次新的成功回填」，避免 1s tick 反复回填覆盖手工输入。
+         */
+        val provisionedIp: String?,
+        val provisionedIpSeq: Long,
+        /** 固件 OTA 状态/进度快照；空快照=未读。 */
+        val firmware: FirmwareSnapshot,
     )
 
     private val lock = Any()
@@ -143,6 +152,9 @@ class RobotRepository(
         net = net,
         netBusy = netBusy,
         netResultText = netResultText,
+        provisionedIp = provisionedIp,
+        provisionedIpSeq = provisionedIpSeq,
+        firmware = firmware,
     )
 
     /** 重建快照、存储、锁外回调监听者。 */
@@ -162,6 +174,8 @@ class RobotRepository(
         batteryText = "— 未读到", remoteSessionActive = null, modelApiText = "—",
         peerApiVersion = null, diagnostics = DiagnosticsSnapshot(),
         net = NetSnapshot(), netBusy = false, netResultText = null,
+        provisionedIp = null, provisionedIpSeq = 0L,
+        firmware = FirmwareSnapshot(),
     )
 
     // ── 会话与订阅（唯一持有者）──
@@ -194,6 +208,9 @@ class RobotRepository(
     @Volatile private var net: NetSnapshot = NetSnapshot()
     @Volatile private var netBusy = false
     @Volatile private var netResultText: String? = null
+    @Volatile private var provisionedIp: String? = null
+    @Volatile private var provisionedIpSeq: Long = 0L
+    @Volatile private var firmware: FirmwareSnapshot = FirmwareSnapshot()
 
     /** 由 `raw` 连接串解析并建链（Mock/TCP）；BLE/WebRTC 请用 [connectWith] 注入真实传输。 */
     fun connect(raw: String): Boolean {
@@ -246,6 +263,8 @@ class RobotRepository(
         batteryText = "— 未读到"
         diagnostics = DiagnosticsSnapshot()   // 换链路 = 换数据源：旧诊断读数一律作废
         net = NetSnapshot(); netBusy = false; netResultText = null   // 配网状态同理作废
+        provisionedIp = null   // 换链路作废上一次配网回填；序号保留单调，UI 不会误判为新事件
+        firmware = FirmwareSnapshot()   // 固件 OTA 读数同理作废：不沿用旧链路的版本/进度
 
         val s = RobotSession(transport)
         watchEvents(s)
@@ -523,6 +542,12 @@ class RobotRepository(
             }.getOrNull()
             val outcome = NetProvisioning.parseConnect(result)
             netResultText = outcome.userMessage
+            // 配网成功且固件回执带真实 ip4 → 发一次性回填事件（序号自增，供 UI 填入 IP 框）。
+            // 回执没带 ip4（固件允许省略）时不猜、不回填。真值判定见 NetProvisioning.backfillIp。
+            NetProvisioning.backfillIp(outcome)?.let { ip ->
+                provisionedIp = ip
+                provisionedIpSeq += 1
+            }
             netBusy = false
             publish()
             if (outcome.connected) refreshNet() // 连上后刷新状态
@@ -551,6 +576,141 @@ class RobotRepository(
         }.start()
     }
 
+    // ── 固件 OTA（update.* JSON-RPC）──
+    // 🔴 边界：手机只做「检查/触发/读进度/查询」，固件包由板子自身 WiFi/HTTPS 拉取并验签
+    //    （updater-design.md）。apply/rollback/select 是写操作，replayable=false 绝不重放，
+    //    UI 必须二次确认。真机升级落地/health gate/lane 分道恒 UNVERIFIED。
+    // 🔴 进度不长期订阅 update.subscribe：它独占整条连接（update-over-ble.md §lane），
+    //    会把 robot.state/health 通道挤掉。改用 apply 调用期间临时监听 Event.Notification
+    //    ——一手明确 apply 会在自己连接上先推 update.progress 再回 reply。
+
+    /** 只读刷新 update.status / listInstalled / log（数组 result 走 callRaw）。 */
+    fun refreshFirmware() {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            if (kind == "MOCK") firmware = firmware.copy(errorText = "演示模式：不查询真实固件更新")
+            publish(); return
+        }
+        Thread {
+            val statusRaw = runCatching { s.callRaw(Method.UPDATE_STATUS).getOrNull() }.getOrNull()
+            val installedRaw = runCatching { s.callRaw(Method.UPDATE_LIST_INSTALLED).getOrNull() }.getOrNull()
+            val logRaw = runCatching { s.callRaw(Method.UPDATE_LOG, FirmwareUpdate.logParams(20)).getOrNull() }.getOrNull()
+            val components = FirmwareUpdate.parseStatus(statusRaw)
+            val installed = FirmwareUpdate.parseInstalled(installedRaw)
+            val logs = FirmwareUpdate.parseLog(logRaw)
+            val anyRead = components.isNotEmpty() || installed.isNotEmpty() || logs.isNotEmpty()
+            firmware = firmware.copy(
+                components = components, installed = installed, logs = logs,
+                errorText = if (!anyRead) "update.status/listInstalled/log 未读到或不支持" else null,
+            )
+            publish()
+        }.start()
+    }
+
+    /** 只读检查新版本：解析 check 三态，驱动「发现新版本」提示。 */
+    fun checkFirmwareUpdate(component: String = FirmwareUpdate.COMPONENT_DAEMON) {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            firmware = firmware.copy(errorText = if (kind == "MOCK") "演示模式：不检查真实固件" else "未连接，无法检查更新")
+            publish(); return
+        }
+        if (firmware.checking || firmware.busy) return
+        firmware = firmware.copy(checking = true, errorText = null); publish()
+        Thread {
+            val r = runCatching { s.call(Method.UPDATE_CHECK, FirmwareUpdate.componentParams(component)).getOrNull() }.getOrNull()
+            val state = FirmwareUpdate.parseCheck(r)
+            val err = if (state is FirmwareUpdate.CheckState.Unknown)
+                "update.check 未读到/未知状态${state.raw?.let { "($it)" } ?: ""}" else null
+            firmware = firmware.copy(check = state, checking = false, errorText = err)
+            publish()
+        }.start()
+    }
+
+    /**
+     * 触发安装（写操作）。进度经 apply 连接上的 update.progress 通知实时更新（不独占连接）。
+     *
+     * 🔴 断连语义：固件在 apply reply 后约 5s 重启 btd，属成功路径。若 call 因断连失败，
+     *    但期间收到过 progress/applied，回显「已提交，板子正在安装并将重启；重连后刷新确认」，
+     *    绝不假装「已安装成功」。最终落地只能由重连后的 update.status.last_attempt 证实（COLLECTED）。
+     */
+    fun applyFirmware(component: String, version: String?, dryRun: Boolean) {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            firmware = firmware.copy(resultText = if (kind == "MOCK") "演示模式：不写真实固件" else "未连接，无法更新",
+                resultOk = false); publish(); return
+        }
+        if (firmware.busy) return
+        firmware = firmware.copy(busy = true, progress = null, resultText = null, resultOk = null, errorText = null)
+        publish()
+        Thread {
+            var sawProgress = false
+            val notificationSub = s.onEvent { e ->
+                if (e is RobotSession.Event.Notification && e.method == Method.UPDATE_PROGRESS) {
+                    FirmwareUpdate.parseProgress(e.params)?.let { p ->
+                        sawProgress = true
+                        firmware = firmware.copy(progress = p)
+                        publish()
+                    }
+                }
+            }
+            val call = runCatching {
+                s.call(Method.UPDATE_APPLY, FirmwareUpdate.applyParams(component, version, dryRun), replayable = false)
+            }.getOrNull()
+            notificationSub.dispose()
+            val result = call?.getOrNull()?.let { FirmwareUpdate.parseApply(it) }
+            when {
+                result is FirmwareUpdate.ApplyResult.Applied ->
+                    firmware = firmware.copy(resultText = if (dryRun)
+                        "预检通过（未真正安装）：候选 ${result.to ?: "?"}" else "已提交安装：${result.from ?: "?"} → ${result.to ?: "?"}。板子将重启断连；重连后点「刷新状态」确认。",
+                        resultOk = true, progress = null)
+                result is FirmwareUpdate.ApplyResult.RolledBack ->
+                    firmware = firmware.copy(resultText = "更新失败已自动回滚：${result.reason ?: "健康检查未通过"}（回到 ${result.revertedTo ?: "上一版本"}）",
+                        resultOk = false, progress = null)
+                result is FirmwareUpdate.ApplyResult.DryRunPassed ->
+                    firmware = firmware.copy(resultText = "预检通过：候选 ${result.candidate ?: "?"}（未真正安装）", resultOk = true, progress = null)
+                sawProgress || (call?.isFailure == true) ->
+                    firmware = firmware.copy(resultText = "安装已提交，板子正在下载/安装并将重启（BLE 断连属正常）。重连后点「刷新状态」读取最终结果；本机不谎报成功。",
+                        resultOk = null, progress = null)
+                else ->
+                    firmware = firmware.copy(resultText = "update.apply 未返回可判定结果${call?.exceptionOrNull()?.message?.let { "（$it）" } ?: ""}",
+                        resultOk = false, progress = null)
+            }
+            firmware = firmware.copy(busy = false)
+            publish()
+        }.start()
+    }
+
+    /** 回滚到上一 release（写操作，replayable=false）。 */
+    fun rollbackFirmware(component: String) = firmwareWrite(Method.UPDATE_ROLLBACK, FirmwareUpdate.rollbackParams(component), "回滚")
+
+    /** 指向某个已装版本（写操作，不下载）。 */
+    fun selectFirmware(component: String, version: String) =
+        firmwareWrite(Method.UPDATE_SELECT, FirmwareUpdate.selectParams(component, version), "切换版本")
+
+    /** apply 之外的写操作共用逻辑（无进度流场景）。 */
+    private fun firmwareWrite(method: String, params: Map<String, Any?>, label: String) {
+        val s = session
+        if (s == null || kind == "MOCK" || s.state != RobotSession.State.READY) {
+            firmware = firmware.copy(resultText = if (kind == "MOCK") "演示模式：不写真实固件" else "未连接，无法操作",
+                resultOk = false); publish(); return
+        }
+        if (firmware.busy) return
+        firmware = firmware.copy(busy = true, resultText = null, resultOk = null, errorText = null); publish()
+        Thread {
+            val call = runCatching { s.call(method, params, replayable = false) }.getOrNull()
+            val result = call?.getOrNull()?.let { FirmwareUpdate.parseApply(it) }
+            firmware = when (result) {
+                is FirmwareUpdate.ApplyResult.Applied -> firmware.copy(
+                    resultText = "$label 成功：→ ${result.to ?: "?"}（需确认健康状态）", resultOk = true)
+                is FirmwareUpdate.ApplyResult.RolledBack -> firmware.copy(
+                    resultText = "$label 失败已回滚：${result.reason ?: "未知原因"}", resultOk = false)
+                else -> firmware.copy(
+                    resultText = "$label 未返回可判定结果${call?.exceptionOrNull()?.message?.let { "（$it）" } ?: ""}", resultOk = false)
+            }.copy(busy = false)
+            publish()
+        }.start()
+    }
+
     /** 数据来源分层：没读到 health 一律 NONE（零告警），Mock 一律 MOCK_FIXTURE，其余 REAL_HEALTH。 */
     fun monitorSource(): MonitorSource = when {        lastHealth == null -> MonitorSource.NONE
         kind == "MOCK" -> MonitorSource.MOCK_FIXTURE
@@ -569,6 +729,7 @@ class RobotRepository(
         tof = null   // 换链路 = 换数据源：旧 ToF 帧作废（负对照抓到的回灌 bug）
         monitorReport = null; stateFrameCount = 0; stateHz = 0.0; lastStateMs = 0L
         batteryText = "— 未读到"; remoteSessionActive = null; modelApiText = "—"; peerApiVersion = null
+        firmware = FirmwareSnapshot()   // 断开 = 数据源消失，固件读数作废
         publish()
     }
 

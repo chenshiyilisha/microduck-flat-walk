@@ -2,6 +2,8 @@ package io.microduck.app.core
 
 import com.google.gson.JsonParser
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -21,8 +23,8 @@ import java.util.concurrent.atomic.AtomicLong
  *  · 逐 chunk 调 [GattLink.writeChunk]（实现方保证串行 + WithResponse 确认），一行写完即完整帧。
  *
  * ── 入站（robot → App）── 一手 duckctl/src/main.rs:1787-1790
- *  · `Reassembler.forReplies()`：客户端收的是机器人回复，用 64KiB 松边界（非 forRequests 紧边界）。
- *  · notification 每次回调一个 [ByteArray] chunk → push 重组出整行 → 按有无 id 分流：
+ *  · `Reassembler.forReplies()`：客户端收的是加密 envelope，用 96KiB 松边界。
+ *  · notification 每次回调一个 [ByteArray] chunk → push 重组出 envelope → 解密后按 id 分流：
  *      有 id = 某 request 的响应（唤醒 pending latch）；无 id 有 method = 通知流（分发给 subscribe）。
  *    这与 TcpTransport.dispatchLine 完全同构，只是数据源从 readLine 换成 notification chunk。
  *
@@ -31,16 +33,20 @@ import java.util.concurrent.atomic.AtomicLong
  *    API_VERSION），然后订阅通知。read 是契约的一部分：它需要已认证加密链路，正是它让 central
  *    在 write 前完成配对 —— 否则「先 subscribe 再 write」会让首次 write 被静默拒绝。
  *
+ * 每条 GATT 会话先完成 Noise_NNpsk0 握手；握手后只接受认证密文 envelope，绝不回退到明文。
  * ⚠️ 无整机/无 Android 真机：本类用 FakeGattLink 在 JVM 上真测协议编排；真实 GATT I/O
  *    （onCharacteristicWrite 串行、CCCD、bonding、MTU）由 app 模块实现，仅 Gradle 编译验证。
  */
 class BleTransport(
     private val link: GattLink,
+    psk: ByteArray,
+    private val expectedSerial: String? = null,
     private val requestTimeoutMs: Long = 5_000,
 ) : RobotTransport {
 
     override val kind: TransportKind = TransportKind.BLE
 
+    private val psk = psk.copyOf().also { require(it.size == 32) { "BLE_PSK_LENGTH" } }
     /**
      * 板端自报的 API_VERSION（GATT `read RPC_UUID` 首字节），connect() 成功后可读；
      * 未连接 / 非 BLE 通道为 null。
@@ -64,10 +70,19 @@ class BleTransport(
     private val lock = Any()
     @Volatile private var connected = false
     @Volatile private var closing = false
+    @Volatile private var secureReady = false
+    @Volatile private var handshakeFailure: String? = null
+    private val cryptoLock = Any()
+    private var secureSession: NoiseNnPsk0Session? = null
+    private var handshakeLatch: CountDownLatch? = null
+    private val handshakeTimeoutMs = 5_000L
 
     /** id → 响应行 + 一次性 latch（与 TcpTransport 同构）。 */
     private val responses = ConcurrentHashMap<Long, PendingResponse>()
-    private class PendingResponse(val latch: CountDownLatch) {
+    private class PendingResponse(
+        val latch: CountDownLatch,
+        val expectedSerial: String?,
+    ) {
         @Volatile var line: String? = null
     }
 
@@ -76,7 +91,7 @@ class BleTransport(
     private val writeLock = Any()
     private val generation = AtomicLong(0)
 
-    /** 客户端入站重组器：for_replies（64KiB 松边界），非 forRequests 紧边界。 */
+    /** 客户端入站重组器：for_replies（96KiB 松边界），非 forRequests 紧边界。 */
     private var inbound = BleChunkCodec.Reassembler.forReplies()
     @Volatile private var lastDisconnectReason: String = ""
 
@@ -86,7 +101,14 @@ class BleTransport(
             return Result.failure(IllegalArgumentException("BleTransport 只接受 ConnectTarget.Ble，收到 $target"))
         }
         closing = false
+        secureReady = false
+        handshakeFailure = null
         peerApiVersion = null
+        synchronized(cryptoLock) {
+            secureSession?.close()
+            secureSession = null
+        }
+        inbound = BleChunkCodec.Reassembler.forReplies()
         val linked = link.connect()
         if (linked.isFailure) return Result.failure(linked.exceptionOrNull() ?: IOException("BLE_LINK_CONNECT_FAILED"))
 
@@ -119,23 +141,74 @@ class BleTransport(
 
         link.onDisconnected { markDisconnected("gatt disconnected") }
         synchronized(lock) { connected = true }
+        val latch = CountDownLatch(1)
+        handshakeLatch = latch
+        val session = try {
+            NoiseNnPsk0Session(psk, NoiseNnPsk0Session.Role.INITIATOR)
+        } catch (e: Exception) {
+            link.close()
+            synchronized(lock) { connected = false }
+            return Result.failure(IOException("BLE_NOISE_INIT_FAILED", e))
+        }
+        synchronized(cryptoLock) { secureSession = session }
+        val firstMessage = try {
+            session.start()
+        } catch (e: Exception) {
+            failHandshake("Noise initiator failed: ${e.message}")
+            return Result.failure(IOException("BLE_NOISE_INIT_FAILED", e))
+        }
+        val sent = writeLine(NoiseBleFrameCodec.encode(NoiseBleFrameCodec.Type.INIT, firstMessage))
+        if (sent.isFailure) {
+            failHandshake("Noise handshake write failed")
+            return Result.failure(sent.exceptionOrNull() ?: IOException("BLE_NOISE_WRITE_FAILED"))
+        }
+        val handshakeCompleted = try {
+            latch.await(handshakeTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            failHandshake("Noise handshake interrupted")
+            return Result.failure(IOException("BLE_NOISE_HANDSHAKE_INTERRUPTED", e))
+        }
+        if (!handshakeCompleted) {
+            failHandshake("Noise handshake timed out")
+            return Result.failure(IOException("BLE_NOISE_HANDSHAKE_TIMEOUT"))
+        }
+        val failure = handshakeFailure
+        if (failure != null || !secureReady) {
+            failHandshake(failure ?: "Noise handshake did not complete")
+            return Result.failure(IOException("BLE_NOISE_HANDSHAKE_FAILED: ${failure ?: "incomplete"}"))
+        }
         return Result.success(Unit)
     }
 
     // ---- request：切 20B chunk 串行写，等 id 响应 ----
     override fun request(line: String): Result<String> {
-        if (!connected || !link.isConnected()) return Result.failure(IOException("BLE_NOT_CONNECTED"))
+        if (!connected || !secureReady || !link.isConnected()) {
+            return Result.failure(IOException("BLE_NOT_CONNECTED_OR_UNSECURED"))
+        }
         val id = parseId(line)
-        val pending = PendingResponse(CountDownLatch(1))
+        val plaintext = line.removeSuffix("\n").removeSuffix("\r")
+        if (plaintext.contains('\n') || plaintext.contains('\r')) {
+            return Result.failure(IllegalArgumentException("BLE_MULTILINE_REQUEST"))
+        }
+        val pending = PendingResponse(
+            CountDownLatch(1),
+            expectedSerial.takeIf { parseMethod(line) == "hello" },
+        )
         if (id != null) responses[id] = pending
 
         return try {
             synchronized(writeLock) {
-                if (!connected || !link.isConnected()) throw IOException("BLE_DROPPED_BEFORE_WRITE")
-                // 出站固定 FLOOR_MTU=20（duckctl 一手）；writeChunk 由 GattLink 保证串行 + WithResponse 确认。
-                for (chunk in BleChunkCodec.chunks(line, BleChunkCodec.FLOOR_MTU)) {
-                    val r = link.writeChunk(chunk)
-                    if (r.isFailure) throw IOException("BLE_WRITE_FAILED: ${r.exceptionOrNull()?.message}")
+                if (!connected || !secureReady || !link.isConnected()) {
+                    throw IOException("BLE_DROPPED_BEFORE_WRITE")
+                }
+                val ciphertext = synchronized(cryptoLock) {
+                    checkNotNull(secureSession).encrypt(plaintext.toByteArray(Charsets.UTF_8))
+                }
+                val frame = NoiseBleFrameCodec.encode(NoiseBleFrameCodec.Type.DATA, ciphertext)
+                val written = writeLine(frame)
+                if (written.isFailure) {
+                    throw IOException("BLE_WRITE_FAILED: ${written.exceptionOrNull()?.message}")
                 }
             }
             if (id == null) {
@@ -155,6 +228,10 @@ class BleTransport(
             Thread.currentThread().interrupt()
             if (id != null) responses.remove(id)
             Result.failure(IOException("BLE_WRITE_INTERRUPTED"))
+        } catch (e: Exception) {
+            if (id != null) responses.remove(id)
+            markDisconnected("secure BLE request failed: ${e.message}")
+            Result.failure(e)
         }
     }
 
@@ -168,7 +245,39 @@ class BleTransport(
             markDisconnected("framing failed: ${e.message}")
             return
         }
-        lines.forEach { dispatchLine(it) }
+        lines.forEach { line ->
+            try {
+                val frame = NoiseBleFrameCodec.decode(line)
+                when (frame.type) {
+                    NoiseBleFrameCodec.Type.REPLY -> {
+                        check(!secureReady) { "BLE_UNEXPECTED_HANDSHAKE_REPLY" }
+                        synchronized(cryptoLock) { checkNotNull(secureSession).finish(frame.payload) }
+                        secureReady = true
+                        handshakeFailure = null
+                        handshakeLatch?.countDown()
+                    }
+                    NoiseBleFrameCodec.Type.DATA -> {
+                        check(secureReady) { "BLE_DATA_BEFORE_HANDSHAKE" }
+                        val plaintext = synchronized(cryptoLock) {
+                            checkNotNull(secureSession).decrypt(frame.payload)
+                        }
+                        val decoded = Charsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)
+                            .decode(ByteBuffer.wrap(plaintext))
+                            .toString()
+                        check(!decoded.contains('\n') && !decoded.contains('\r')) {
+                            "BLE_MULTILINE_PLAINTEXT"
+                        }
+                        dispatchLine(decoded)
+                    }
+                    NoiseBleFrameCodec.Type.INIT -> error("BLE_UNEXPECTED_HANDSHAKE_INIT")
+                }
+            } catch (e: Exception) {
+                failHandshake("invalid Noise frame: ${e.message}")
+                return
+            }
+        }
     }
 
     /** 一行进来：有 id → 唤醒对应 request；无 id 有 method → 通知流。 */
@@ -177,7 +286,15 @@ class BleTransport(
         val id = parseId(line)
         if (id != null) {
             val p = responses.remove(id)
-            if (p != null) { p.line = line; p.latch.countDown() }
+            if (p != null) {
+                if (p.expectedSerial != null && responseSerial(line) != p.expectedSerial) {
+                    p.latch.countDown()
+                    markDisconnected("authenticated robot serial mismatch")
+                    return
+                }
+                p.line = line
+                p.latch.countDown()
+            }
             return    // 未知 id（如重连前旧请求迟到响应）直接丢弃
         }
         // 无 id：通知（如 robot.state）→ 分发给所有订阅者
@@ -205,6 +322,7 @@ class BleTransport(
             if (!connected) Snap(false, emptyList())
             else {
                 connected = false
+                secureReady = false
                 lastDisconnectReason = reason
                 responses.values.forEach { it.latch.countDown() }   // line=null ⇒ failure
                 responses.clear()
@@ -215,8 +333,29 @@ class BleTransport(
         val cbs = snap.cbs
         if (!fired) return
         generation.incrementAndGet()
+        handshakeFailure = reason
+        handshakeLatch?.countDown()
+        synchronized(cryptoLock) {
+            secureSession?.close()
+            secureSession = null
+        }
         cbs.forEach { safeInvoke { it() } }   // 锁外回调：会话层会重连 → 再调 connect()
         link.close()
+    }
+
+    private fun failHandshake(reason: String) {
+        handshakeFailure = reason
+        secureReady = false
+        handshakeLatch?.countDown()
+        if (connected) markDisconnected(reason) else link.close()
+    }
+
+    private fun writeLine(line: String): Result<Unit> {
+        for (chunk in BleChunkCodec.chunks(line, BleChunkCodec.FLOOR_MTU)) {
+            val result = link.writeChunk(chunk)
+            if (result.isFailure) return result
+        }
+        return Result.success(Unit)
     }
 
     override fun close() {
@@ -224,20 +363,36 @@ class BleTransport(
         generation.incrementAndGet()
         synchronized(lock) {
             connected = false
+            secureReady = false
             responses.values.forEach { it.latch.countDown() }
             responses.clear()
             frameSubs.clear(); disconnectCbs.clear()
         }
+        handshakeLatch?.countDown()
+        synchronized(cryptoLock) {
+            secureSession?.close()
+            secureSession = null
+        }
+        psk.fill(0)
         inbound = BleChunkCodec.Reassembler.forReplies()
         link.close()
     }
 
-    override fun isConnected(): Boolean = connected && link.isConnected()
+    override fun isConnected(): Boolean = connected && secureReady && link.isConnected()
 
     /** 从 NDJSON 行取 id（Gson 解析；与 TcpTransport 同样的 null-safe）。 */
     private fun parseId(line: String): Long? = try {
         val o = JsonParser.parseString(line).asJsonObject
         if (o.has("id") && !o.get("id").isJsonNull) o.get("id").asLong else null
+    } catch (_: Exception) { null }
+
+    private fun parseMethod(line: String): String? = try {
+        JsonParser.parseString(line).asJsonObject.get("method")?.asString
+    } catch (_: Exception) { null }
+
+    private fun responseSerial(line: String): String? = try {
+        JsonParser.parseString(line).asJsonObject
+            .getAsJsonObject("result")?.get("serial")?.asString
     } catch (_: Exception) { null }
 
     private fun safeInvoke(fn: () -> Unit) { try { fn() } catch (_: Throwable) { /* 回调异常不影响其他订阅者 */ } }
