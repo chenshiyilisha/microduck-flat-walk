@@ -236,7 +236,7 @@ class AiDebugReceiver : BroadcastReceiver() {
                 results.forEach { record(it) }
             }
             override fun onScanFailed(errorCode: Int) {
-                scanError.set("code=$errorCode")
+                scanError.set(io.microduck.app.ble.BleScanCoordinator.explain(errorCode))
                 stop.countDown()
             }
 
@@ -267,6 +267,7 @@ class AiDebugReceiver : BroadcastReceiver() {
         }
 
         try {
+            io.microduck.app.ble.BleScanCoordinator.begin(adapter, cb)
             scanner.startScan(null,
                 ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
         } catch (t: Throwable) {
@@ -274,7 +275,7 @@ class AiDebugReceiver : BroadcastReceiver() {
             emit(o); return
         }
         stop.await(AiDebugPolicy.SCAN_WINDOW_MS, TimeUnit.MILLISECONDS)
-        try { scanner.stopScan(cb) } catch (_: Throwable) { }
+        io.microduck.app.ble.BleScanCoordinator.end(cb)
 
         val snapshot = synchronized(found) { found.values.toList() }
         val candidates = snapshot.count { it.get("matched_by")?.asString != "附近设备" }

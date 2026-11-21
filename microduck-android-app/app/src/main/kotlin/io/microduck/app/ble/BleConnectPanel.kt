@@ -2,6 +2,7 @@ package io.microduck.app.ble
 
 import android.app.AlertDialog
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
@@ -83,6 +84,8 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     private var statusText: TextView? = null
     private var listCol: LinearLayout? = null
     private var scanButton: MaterialButton? = null
+    private var bleAdapter: BluetoothAdapter? = null
+    private var retried = false
 
     /**
      * 权限集合**不在这里另写一份**，统一走 core 的 [BleForegroundPolicy]，
@@ -230,9 +233,11 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     }
 
     @SuppressLint("MissingPermission")
-    private fun startScan() {
+    private fun startScan(isRetry: Boolean = false) {
         val mgr = activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter = mgr?.adapter
+        bleAdapter = adapter
+        retried = isRetry
         if (adapter == null || !adapter.isEnabled) {
             setStatus("⚠ 蓝牙未开启。请先在系统设置打开蓝牙，再回来点「扫描附近 BLE 设备」")
             return
@@ -253,6 +258,8 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
         try {
+            // 与 AI 调试扫描共用进程级互斥闸：stop 旧 callback 后再 start，避免 code=1。
+            BleScanCoordinator.begin(adapter, scanCallback)
             scanner.startScan(null, settings, scanCallback)
         } catch (e: SecurityException) {
             scanning = false
@@ -297,8 +304,16 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         }
 
         override fun onScanFailed(errorCode: Int) {
+            // code=1 只有一次有界重试：等系统侧 stop 收敛后重启；再失败就如实报码。
+            if (errorCode == BleScanCoordinator.SCAN_FAILED_ALREADY_STARTED && !retried) {
+                retried = true
+                bleAdapter?.let { BleScanCoordinator.begin(it, this) }
+                ui.postDelayed({ if (scanning) startScan(isRetry = true) }, 300L)
+                return
+            }
             scanning = false
-            setStatus("⚠ 扫描失败 code=$errorCode。请确认蓝牙/定位开关已开，或改用 TCP relay")
+            BleScanCoordinator.end(this)
+            setStatus("⚠ ${BleScanCoordinator.explain(errorCode)}")
         }
     }
 
@@ -405,10 +420,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     @SuppressLint("MissingPermission")
     private fun stopScan() {
         scanning = false
-        try {
-            (activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)
-                ?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
-        } catch (_: Exception) { /* 权限被撤/扫描器已关，忽略 */ }
+        BleScanCoordinator.end(scanCallback)
         renderCandidates()
     }
 

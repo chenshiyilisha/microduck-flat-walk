@@ -37,7 +37,17 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 TOOLS = BASE / "tools"
 SELFTEST_SH = TOOLS / "selftest.sh"
-PY = sys.executable
+# 🔴 2026-11-21：runner 用系统 Python 启动时，build_duck_mesh / check_provisioning_crypto
+# 会因缺 mujoco/cryptography 误报 NOT_PASS（「装不上」≠「没有」——项目自带 venv 就有）。
+# 子工具统一优先用项目现成的 .venv-mjlab；只在本机确实存在时才切，绝不假装缺依赖=跳过。
+def _preferred_python() -> str:
+    root = BASE.parent / "microduck-software" / ".venv-mjlab"
+    for candidate in (root / "Scripts" / "python.exe", root / "bin" / "python"):
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
+
+PY = _preferred_python()
 SELF = Path(__file__).name
 
 # 结论行形态（各工具自己打印，runner 只解析不参与生成）
