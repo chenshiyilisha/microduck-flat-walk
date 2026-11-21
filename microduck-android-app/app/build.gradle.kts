@@ -111,4 +111,18 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.activity:activity-ktx:1.8.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // ── 配对码扫码（2026-11-21）──
+    // 一手依据：developer.android.com/media/camera/camerax/mlkitanalyzer 推荐
+    // CameraController + MlKitAnalyzer + BarcodeScanner；developers.google.com/ml-kit/
+    // vision/barcode-scanning/android 的 bundled 模型在构建时静态链接、无需 Google Play
+    // services（国内机型可用），代价是包体 +约 2.4 MB。四源 HEAD 实测阿里云 google 镜像
+    // camera-* 1.4.2 / barcode-scanning 17.3.0 均 200；dl.google.com 在本机超时，故沿用镜像。
+    val cameraxVersion = "1.4.2"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
+    implementation("androidx.camera:camera-mlkit-vision:$cameraxVersion")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 }

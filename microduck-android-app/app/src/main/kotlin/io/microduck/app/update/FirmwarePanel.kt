@@ -1,6 +1,5 @@
 package io.microduck.app.update
 
-import android.app.AlertDialog
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -13,6 +12,7 @@ import com.google.android.material.button.MaterialButton
 import io.microduck.app.R
 import io.microduck.app.core.FirmwareSnapshot
 import io.microduck.app.core.FirmwareUpdate
+import io.microduck.app.ui.AppDialogs
 
 /**
  * 设置页「固件更新」面板（纯代码构建，与 UpdatePanel 同风格；11-20 落地）。
@@ -133,18 +133,25 @@ class FirmwarePanel(
             append("更新期间请勿断电。安装结果需在重连后点「刷新状态」确认；健康检查失败会自动回滚。")
             if (available?.mandatory == true) append("\n\n⚠ 这是一个强制更新（mandatory）。")
         }
-        AlertDialog.Builder(activity).setTitle(title).setMessage(msg)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认更新") { _, _ -> onApply(version, false) }
-            .show()
+        AppDialogs.confirm(
+            context = activity,
+            title = title,
+            message = msg,
+            positiveLabel = "确认更新",
+            tone = AppDialogs.Tone.WARN,
+            onPositive = { onApply(version, false) },
+        )
     }
 
     private fun confirmRollback() {
-        AlertDialog.Builder(activity).setTitle("回滚到上一版本？")
-            .setMessage("只重指向已安装的上一个 release，不下载。回滚后需确认机器人健康状态。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认回滚") { _, _ -> onRollback() }
-            .show()
+        AppDialogs.confirm(
+            context = activity,
+            title = "回滚到上一版本？",
+            message = "只重指向已安装的上一个 release，不下载。回滚后需确认机器人健康状态。",
+            positiveLabel = "确认回滚",
+            tone = AppDialogs.Tone.WARN,
+            onPositive = { onRollback() },
+        )
     }
 
     /** 由 MainActivity 的 uiState 收集循环调用（主线程）。 */

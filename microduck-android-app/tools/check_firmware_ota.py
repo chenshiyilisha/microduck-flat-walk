@@ -86,7 +86,7 @@ def check(s: dict[str, str]) -> list[str]:
     fwu = code_only(s["fwu"])
     vm = code_only(s["vm"])
     act = code_only(s["activity"])
-    panel = s["panel"]         # AlertDialog 文案是判据
+    panel = s["panel"]         # 二次确认文案/AppDialogs 调用是判据
     st = s["selftest"]
 
     # 1) 一手方法名常量逐字（正向断言：const NAME = "value"）
@@ -118,13 +118,19 @@ def check(s: dict[str, str]) -> list[str]:
     if "UPDATE_SHOW" not in session or "Method.UPDATE_SHOW" not in session:
         errs.append("UPDATE_SHOW 未进只读白名单（只读却不可重放）")
 
-    # 5) UI 二次确认：FirmwarePanel 对 apply/rollback 用 AlertDialog + 确认按钮
-    if "AlertDialog.Builder" not in panel:
-        errs.append("FirmwarePanel 缺二次确认 AlertDialog")
+    # 5) UI 二次确认：FirmwarePanel 对 apply/rollback 走全 App 唯一 M3 对话框入口
+    #    🔴 判据锁语义不用裸子串：必须同时有 AppDialogs.confirm、两个确认方法、
+    #    以及具体正向按钮标签；退回平台默认 AlertDialog.Builder 必须判红。
+    if "AppDialogs.confirm" not in panel:
+        errs.append("FirmwarePanel 缺 Material 3 二次确认入口 AppDialogs.confirm")
+    if "AlertDialog.Builder" in panel:
+        errs.append("FirmwarePanel 仍在用平台默认 AlertDialog.Builder（UI 回退）")
     if "confirmApply" not in panel or "confirmRollback" not in panel:
         errs.append("FirmwarePanel 缺 apply/rollback 各自的确认方法")
-    if "setPositiveButton" not in panel:
-        errs.append("FirmwarePanel 确认对话框缺正向确认按钮")
+    if not re.search(r'positiveLabel\s*=\s*"确认更新"', panel):
+        errs.append("FirmwarePanel 安装确认缺「确认更新」正向按钮")
+    if not re.search(r'positiveLabel\s*=\s*"确认回滚"', panel):
+        errs.append("FirmwarePanel 回滚确认缺「确认回滚」正向按钮")
 
     # 6) 进度不长期订阅 update.subscribe（会独占 BLE 连接）——正面确认用 onEvent，反面确认没订阅
     if "Event.Notification" not in repo or "UPDATE_PROGRESS" not in repo:
@@ -162,6 +168,7 @@ def meta_negative_control() -> list[str]:
         "改坏:删 callRaw": {"session": "fun callRawX(" },
         "改坏:apply 允许重放": {"repo": "call(Method.UPDATE_APPLY, replayable = true)"},
         "改坏:删二次确认": {"panel": "no dialog here"},
+        "改坏:退回平台默认弹窗": {"panel": "@replace:AppDialogs.confirm=LegacyDialogBuilder"},
         "改坏:长期订阅独占连接": {"repo": "subscribe( Method.UPDATE_SUBSCRIBE"},
         "改坏:缺方法常量": {"wire": "const UPDATE_APPLY_OLD = \"update.apply\""},
     }
@@ -173,7 +180,11 @@ def meta_negative_control() -> list[str]:
     for label, patch in trials.items():
         srcs = {k: v for k, v in load().items()}
         for key, replacement in patch.items():
-            srcs[key] = replacement  # 整文件替换成不含判据的片段
+            if replacement.startswith("@replace:"):
+                old, new = replacement.removeprefix("@replace:").split("=", 1)
+                srcs[key] = srcs[key].replace(old, new)
+            else:
+                srcs[key] = replacement  # 整文件替换成不含判据的片段
         errs_found = check(srcs)
         if not errs_found:
             errs.append(f"元负对照失效：{label} 后门禁仍 OK（假绿）")
@@ -187,7 +198,7 @@ def main() -> int:
 
     if args.selftest:
         errs = meta_negative_control()
-        n = 6  # 正常源码 1 + 5 个改坏试验
+        n = 7  # 正常源码 1 + 6 个改坏试验
         ok = n - len(errs)
         print(f"SELFTEST: {ok}/{n} passed")
         for e in errs:

@@ -2,7 +2,6 @@ package io.microduck.app
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -45,6 +44,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -70,6 +70,7 @@ import io.microduck.app.update.GithubReleaseClient
 import io.microduck.app.update.UpdateRepository
 import io.microduck.app.update.FirmwarePanel
 import io.microduck.app.update.UpdatePanel
+import io.microduck.app.ui.AppDialogs
 import kotlinx.coroutines.launch
 
 /**
@@ -368,18 +369,36 @@ class MainActivity : AppCompatActivity() {
      */
     private fun buildAppBar(chrome: PageChrome) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(4), dp(8), dp(4), dp(10))
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, dp(4), 0, 0)
+        // M3 small top app bar：官方 MaterialToolbar 容器 + 自定义两段标题。
+        // 品牌行常驻且安静，页面标题/连接状态随目的地变化；右侧只放一个来源 pill。
+        addView(MaterialToolbar(this@MainActivity).apply {
+            minimumHeight = dp(72)
+            setBackgroundColor(c(R.color.md_surface))
+            setPadding(dp(8), dp(8), dp(12), dp(8))
+            contentDescription = "MicroDuck 控制台"
             addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(chrome.titleText)
-                addView(chrome.statusText.apply { setPadding(0, dp(2), 0, 0) })
-            }, LinearLayout.LayoutParams(0, WRAP, 1f))
-            addView(chrome.sourceChip)
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(this@MainActivity).apply {
+                        text = "MICRODUCK"
+                        textSize = 10f
+                        setTextColor(c(R.color.md_accent))
+                        setTypeface(null, Typeface.BOLD)
+                        letterSpacing = 0.18f
+                    })
+                    addView(chrome.titleText.apply {
+                        textSize = 20f
+                        setPadding(0, dp(2), 0, 0)
+                    })
+                    addView(chrome.statusText.apply { setPadding(0, dp(2), 0, 0) })
+                }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                addView(chrome.sourceChip)
+            }, androidx.appcompat.widget.Toolbar.LayoutParams(MATCH, WRAP, Gravity.CENTER_VERTICAL))
         }, LinearLayout.LayoutParams(MATCH, WRAP))
-        addView(rule(top = 10))
+        addView(rule(top = 8))
     }
 
     /**
@@ -585,13 +604,15 @@ class MainActivity : AppCompatActivity() {
             viewModel.onRest()
             return
         }
-        AlertDialog.Builder(this)
-            .setTitle("一键休息（写操作）")
-            .setMessage("将向板端发送 robot.rest（无参）：\n坐下 → 缓入休息姿态 → 卸力 + 舵机重启省电。\n\n" +
-                "⚠ BLE 通道下该方法不在放行白名单，会被拒绝（PERMISSION_DENIED=14），失败将如实回显。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认休息") { _, _ -> viewModel.onRest() }
-            .show()
+        AppDialogs.confirm(
+            context = this,
+            title = "一键休息",
+            message = "将向板端发送 robot.rest（无参）：坐下、缓入休息姿态、卸力省电。" +
+                "\nBLE 通道下该方法不在白名单，会被拒绝并如实回显。",
+            positiveLabel = "确认休息",
+            tone = AppDialogs.Tone.WARN,
+            onPositive = { viewModel.onRest() },
+        )
     }
 
     /** 恢复站立：robot.init（rest 的逆操作：上电 + 回 home），同样二次确认。 */
@@ -600,12 +621,13 @@ class MainActivity : AppCompatActivity() {
             viewModel.onWake()
             return
         }
-        AlertDialog.Builder(this)
-            .setTitle("恢复站立（写操作）")
-            .setMessage("将向板端发送 robot.init（无参）：\n重新上电 + 回到 home 站立姿态，结束休息。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认恢复") { _, _ -> viewModel.onWake() }
-            .show()
+        AppDialogs.confirm(
+            context = this,
+            title = "恢复站立",
+            message = "将向板端发送 robot.init（无参）：重新上电并回到 home 站立姿态，结束休息。",
+            positiveLabel = "确认恢复",
+            onPositive = { viewModel.onWake() },
+        )
     }
 
     /**
@@ -1438,22 +1460,25 @@ class MainActivity : AppCompatActivity() {
         }
         // 读密码到局部变量，确认回调后立即用；不写任何字段/日志。
         val psk = netPskEdit.text.toString().ifEmpty { null }
-        AlertDialog.Builder(this)
-            .setTitle("连接 Wi-Fi（写操作）")
-            .setMessage("目标网络：$ssid\n密码只在 Noise 会话中发送。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认连接") { _, _ -> viewModel.onConnectWifi(ssid, psk) }
-            .show()
+        AppDialogs.confirm(
+            context = this,
+            title = "连接 Wi-Fi",
+            message = "目标网络：$ssid\n密码只在 Noise 会话中发送。",
+            positiveLabel = "确认连接",
+            onPositive = { viewModel.onConnectWifi(ssid, psk) },
+        )
     }
 
     /** 忘记网络二次确认（写操作）。 */
     private fun confirmForgetWifi(ssid: String) {
-        AlertDialog.Builder(this)
-            .setTitle("忘记网络（写操作）")
-            .setMessage("将删除板端已存网络「$ssid」。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认忘记") { _, _ -> viewModel.onForgetWifi(ssid) }
-            .show()
+        AppDialogs.confirm(
+            context = this,
+            title = "忘记网络",
+            message = "将删除板端已存网络「$ssid」。",
+            positiveLabel = "确认忘记",
+            tone = AppDialogs.Tone.WARN,
+            onPositive = { viewModel.onForgetWifi(ssid) },
+        )
     }
 
     /**
@@ -2141,18 +2166,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSsidPermissionRationale() {
-        AlertDialog.Builder(this)
-            .setTitle("读取手机当前 Wi-Fi")
-            .setMessage("Android 要求定位权限才能读取已连接的 Wi-Fi 名称（App 不采集位置）。" +
-                "授权后会自动填入配网输入框；也可以手动填写。")
-            .setNegativeButton("手动填写", null)
-            .setPositiveButton("去授权") { _, _ ->
+        AppDialogs.confirm(
+            context = this,
+            title = "读取手机当前 Wi-Fi",
+            message = "Android 要求定位权限才能读取已连接的 Wi-Fi 名称（App 不采集位置）。" +
+                "授权后会自动填入配网输入框；也可以手动填写。",
+            positiveLabel = "去授权",
+            negativeLabel = "手动填写",
+            onPositive = {
                 requestPermissions(
                     arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
                     REQ_CODE_WIFI_SSID,
                 )
-            }
-            .show()
+            },
+        )
     }
 
     /** 权限回调后立刻刷新本机网络行，不等 1s tick。 */

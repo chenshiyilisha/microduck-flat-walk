@@ -1,6 +1,5 @@
 package io.microduck.app.ssh
 
-import android.app.AlertDialog
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -18,6 +17,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import io.microduck.app.R
 import io.microduck.app.core.Disposable
+import io.microduck.app.ui.AppDialogs
 
 /**
  * SSH 远程控制界面（主板命令行）。
@@ -402,17 +402,19 @@ class SshPanel(
 
     /** 写操作二次确认：把命令全文与一手依据摊开给用户看，绝不静默执行。 */
     private fun confirmStartUpdaterd() {
-        AlertDialog.Builder(context)
-            .setTitle("启动 updaterd（写操作）")
-            .setMessage("$UPDATERD_NOTE\n\n将执行：\n$START_UPDATERD_CMD")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认启动") { _, _ ->
+        AppDialogs.confirm(
+            context = context,
+            title = "启动 updaterd",
+            message = "$UPDATERD_NOTE\n将执行：$START_UPDATERD_CMD",
+            positiveLabel = "确认启动",
+            tone = AppDialogs.Tone.WARN,
+            onPositive = {
                 // 🔴 凭据只在进程内存里取一次，直接交给后台线程的 stdin；
                 // 不写日志、不落盘、不回显、不拼进命令字符串。
                 val sudoPassword = passEdit.text?.toString().orEmpty()
                 runCommand(START_UPDATERD_CMD, stdin = sudoPassword)
-            }
-            .show()
+            },
+        )
     }
 
     private fun runCommand(command: String, stdin: String? = null) {

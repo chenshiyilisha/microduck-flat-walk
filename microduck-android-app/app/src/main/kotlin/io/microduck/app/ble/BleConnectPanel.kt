@@ -1,7 +1,7 @@
 package io.microduck.app.ble
 
-import android.app.AlertDialog
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
@@ -11,6 +11,8 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -21,6 +23,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toUri
 import com.google.android.material.button.MaterialButton
 import io.microduck.app.ControlMode
 import io.microduck.app.R
@@ -30,6 +33,7 @@ import io.microduck.app.core.BleTransport
 import io.microduck.app.core.ConnectTarget
 import io.microduck.app.core.SerialGattLink
 import io.microduck.app.core.Wire
+import io.microduck.app.ui.AppDialogs
 import java.util.Locale
 
 /**
@@ -86,6 +90,14 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     private var scanButton: MaterialButton? = null
     private var bleAdapter: BluetoothAdapter? = null
     private var retried = false
+
+    /** 配对码扫码只回传 QR 原始字符串；解析/保存仍由 [handlePairingIntent] 独占。 */
+    private val pairLauncher: ActivityResultLauncher<Intent> =
+        activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
+            val raw = result.data?.getStringExtra(PairScanActivity.EXTRA_SCAN_VALUE)
+            if (!raw.isNullOrBlank()) importPairingText(raw)
+        }
 
     /**
      * 权限集合**不在这里另写一份**，统一走 core 的 [BleForegroundPolicy]，
@@ -146,6 +158,33 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         addView(scanButton, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
+        // 2026-11-21：用户指出「提示扫码，没有扫码功能」。这里给出真实入口 + 手动兜底。
+        // 两个都是次级操作，不抢「扫描附近 BLE 设备」的主操作层级。
+        addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).also { it.topMargin = dp(8) }
+            fun pairButton(label: String, desc: String, onClick: () -> Unit) =
+                MaterialButton(activity, null,
+                    com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    text = label; textSize = 12f; minimumHeight = dp(44)
+                    cornerRadius = dp(16); strokeWidth = dp(1)
+                    strokeColor = android.content.res.ColorStateList.valueOf(
+                        activity.getColor(R.color.md_outline))
+                    setTextColor(activity.getColor(R.color.md_text))
+                    contentDescription = desc
+                    setOnClickListener { onClick() }
+                }
+            addView(pairButton("扫码导入配对码", "扫码导入配对码", {
+                pairLauncher.launch(Intent(activity, PairScanActivity::class.java))
+            }), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(pairButton("手动输入", "手动输入配对码", ::showManualPairInput),
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .also { it.marginStart = dp(8) })
+        })
+
         listCol = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(8), 0, 0)
@@ -162,19 +201,16 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         val pairing = try {
             BlePairingStore.parsePairingUri(uri)
         } catch (_: Exception) {
-            setStatus("⚠ 配对二维码无效。请在机器人重新生成配对码后再扫描")
-            AlertDialog.Builder(activity)
-                .setTitle("无法导入配对码")
-                .setMessage("二维码格式无效或密钥长度不正确。")
-                .setPositiveButton("知道了", null)
-                .show()
+            showPairingInvalid()
             return true
         }
         val replacing = BlePairingStore.contains(activity, pairing.serial)
-        AlertDialog.Builder(activity)
-            .setTitle(if (replacing) "更换机器人配对密钥" else "保存机器人配对密钥")
-            .setMessage("${pairing.name}\n序列号：${pairing.serial}\n\n密钥将加密保存在此设备上。")
-            .setPositiveButton(if (replacing) "更换" else "保存") { _, _ ->
+        AppDialogs.confirm(
+            context = activity,
+            title = if (replacing) "更换机器人配对密钥" else "保存机器人配对密钥",
+            message = "${pairing.name}\n序列号：${pairing.serial}\n密钥将加密保存在此设备上。",
+            positiveLabel = if (replacing) "更换" else "保存",
+            onPositive = {
                 try {
                     BlePairingStore.save(activity, pairing)
                     setStatus("配对密钥已安全保存 · 连接时仅匹配广播名称")
@@ -183,11 +219,41 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
                 } finally {
                     pairing.psk.fill(0)
                 }
-            }
-            .setNegativeButton("取消") { _, _ -> pairing.psk.fill(0) }
-            .setOnCancelListener { pairing.psk.fill(0) }
-            .show()
+            },
+            onDismiss = { pairing.psk.fill(0) },
+        )
         return true
+    }
+
+    /** QR 与手动输入共用同一解析/保存链，避免两处对 pairing URI 的判据漂移。 */
+    private fun importPairingText(raw: String) {
+        val uri = runCatching { raw.trim().toUri() }.getOrNull()
+        if (uri == null || !handlePairingIntent(Intent(Intent.ACTION_VIEW, uri))) {
+            showPairingInvalid()
+        }
+    }
+
+    private fun showManualPairInput() {
+        AppDialogs.input(
+            context = activity,
+            title = "手动输入配对码",
+            message = "粘贴机器人生成的 microduck://pair/v1 链接。密钥只保存在本机加密存储。",
+            hint = "microduck://pair/v1?...",
+            positiveLabel = "导入",
+            onInput = { raw -> if (raw.isNotBlank()) importPairingText(raw) },
+        )
+    }
+
+    private fun showPairingInvalid() {
+        setStatus("⚠ 配对码无效，请重新生成后再试")
+        AppDialogs.confirm(
+            context = activity,
+            title = "无法导入配对码",
+            message = "二维码格式无效或密钥长度不正确。请在机器人上重新生成配对码。",
+            positiveLabel = "知道了",
+            negativeLabel = null,
+            tone = AppDialogs.Tone.WARN,
+        )
     }
 
     private fun onScanClicked() {
@@ -432,7 +498,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             setStatus("⚠ 配对记录重名，请删除旧记录")
             return
         } ?: run {
-            setStatus("⚠ 未配对，请扫描配对码")
+            setStatus("⚠ 未配对，请扫码导入配对码")
             return
         }
         setStatus("连接中…")

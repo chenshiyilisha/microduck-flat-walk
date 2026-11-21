@@ -40,6 +40,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 摇杆触觉反馈（engaged / 满幅短震）；普通权限，安装即授权，无需运行时请求。 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!--
+      配对码扫码：只在用户主动点「扫码导入配对码」后打开相机预览，本地识别 QR 字符串，
+      不拍照、不录音、不落盘、不上传。官方 CameraX + ML Kit bundled 模型不需要 GMS。
+      required=false：BLE/TCP 仍能使用，没相机的设备走手动粘贴兜底。
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <!--
       A1：BLE 链路前台服务（2026-11-13 补）。一手依据 Google Android 平台文档
@@ -82,6 +88,7 @@
 
     <!-- BLE 只是四个后端之一（Mock/TCP 也能用）⇒ 不是硬性设备要求，运行时判 hasSystemFeature。 -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!--
       🔴 只有遥控页锁横屏、主页锁竖屏，App **整体并不要求**某一种方向。
       官方 <uses-feature> 文档：只要任一 activity 声明了 screenOrientation，
@@ -125,6 +132,16 @@
                     android:path="/v1" />
             </intent-filter>
         </activity>
+
+        <!--
+          配对码扫码：由设置页 BLE 面板显式启动，只回传 QR 原始字符串。
+          exported=false：不接受外部 App 调起，避免把相机变成通用扫码器。
+        -->
+        <activity
+            android:name=".ble.PairScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/AppTheme" />
 
         <!--
           横屏全屏遥控 / 监督视图。
