@@ -125,25 +125,22 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             setTextColor(activity.getColor(R.color.md_text))
         })
         statusText = TextView(activity).apply {
-            text = "未扫描 · 需要先授予「附近的设备」权限"
+            text = "未扫描"
             textSize = 12f; setTextColor(activity.getColor(R.color.md_text_dim))
-            setPadding(0, dp(4), 0, dp(2))
+            setPadding(0, dp(6), 0, dp(8))
         }
         addView(statusText)
-        addView(TextView(activity).apply {
-            text = "先用手机相机扫描机器人配对码 · 密钥由 Android Keystore 加密保存"
-            textSize = 11f; setTextColor(activity.getColor(R.color.md_text_dim))
-            setPadding(0, 0, 0, dp(10))
-        })
 
+        // M3：每屏一个主操作用 filled button，避免「所有按钮都是描边」的视觉噪音。
         scanButton = MaterialButton(activity, null,
             com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = "扫描附近 BLE 设备"; textSize = 13f; minimumHeight = dp(48)
             contentDescription = "扫描附近 BLE 设备"
             cornerRadius = dp(16)
-            strokeWidth = dp(1)
-            strokeColor = android.content.res.ColorStateList.valueOf(activity.getColor(R.color.md_outline))
-            setTextColor(activity.getColor(R.color.md_text))
+            strokeWidth = 0
+            backgroundTintList = android.content.res.ColorStateList.valueOf(activity.getColor(R.color.md_accent))
+            setTextColor(activity.getColor(R.color.md_on_accent))
+            setTypeface(null, Typeface.BOLD)
             setOnClickListener { onScanClicked() }
         }
         addView(scanButton, LinearLayout.LayoutParams(
@@ -215,8 +212,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             setStatus("权限已授予 · 开始扫描")
             startScan()
         } else {
-            setStatus("⚠ 权限被拒绝，BLE 不可用。可到「系统设置 → 应用 → MicroDuck → 权限」打开；" +
-                "或改用 TCP relay（地址栏填 host:port）")
+            setStatus("⚠ 权限被拒绝，请在系统设置开启")
         }
     }
 
@@ -239,18 +235,18 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         bleAdapter = adapter
         retried = isRetry
         if (adapter == null || !adapter.isEnabled) {
-            setStatus("⚠ 蓝牙未开启。请先在系统设置打开蓝牙，再回来点「扫描附近 BLE 设备」")
+            setStatus("⚠ 蓝牙未开启")
             return
         }
         val scanner = adapter.bluetoothLeScanner
         if (scanner == null) {
-            setStatus("⚠ 拿不到 BLE 扫描器。请确认蓝牙已开启，或改用 TCP relay")
+            setStatus("⚠ 无法获取扫描器")
             return
         }
         found.clear(); broadcasts = 0
         listCol?.removeAllViews()
         scanning = true
-        setStatus("扫描中 · 全量接收（无 UUID 硬件过滤）…")
+        setStatus("扫描中…")
 
         // 🔴 传 null filters：Pollen 原厂 `app-path-design.md` §3.3 与 DuckLink 实测都证明 service filter 会漏掉
         // 以空 service list 广播的已绑定设备。判别放到下面的 discriminate()。
@@ -263,11 +259,11 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             scanner.startScan(null, settings, scanCallback)
         } catch (e: SecurityException) {
             scanning = false
-            setStatus("⚠ 扫描被系统拒绝（权限可能已被撤销）。请重新点「去授权」或用 TCP relay")
+            setStatus("⚠ 权限被撤销，请重新授权")
             return
         } catch (e: Exception) {
             scanning = false
-            setStatus("⚠ 扫描启动失败：${e.message}。请重开蓝牙后重试，或改用 TCP relay")
+            setStatus("⚠ 扫描启动失败：${e.message}")
             return
         }
 
@@ -282,7 +278,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         ui.postDelayed({
             if (!scanning) return@postDelayed
             stopScan()
-            setStatus((statusText?.text?.toString() ?: "") + "\n扫描结束（12 秒窗口）")
+            setStatus((statusText?.text?.toString() ?: "") + "\n扫描结束")
         }, SCAN_MS)
     }
 
@@ -358,15 +354,13 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             .sortedWith(compareByDescending<Candidate> { it.rssi })
         val hidden = found.size - candidates.size
         val tail = if (candidates.size > 8) " · 仅列前 8 台" else ""
-        setStatus("收到 $broadcasts 条广播 · 附近 ${found.size} 台 · " +
-            "MicroDuck 候选 ${candidates.size} 台$tail · 非目标 $hidden 台已隐藏" +
-            if (scanning) "\n扫描中（每 0.5s 刷新，不做一次性快照）" else "")
+        setStatus("候选 ${candidates.size} 台$tail · 非目标 $hidden 台已隐藏" +
+            if (scanning) " · 扫描中" else "")
         col.removeAllViews()
         if (candidates.isEmpty()) {
             col.addView(TextView(activity).apply {
-                text = "未发现 MicroDuck 候选 · " +
-                    (if (found.isEmpty()) "确认板子已通电并靠近后重扫"
-                     else "$hidden 台非目标已隐藏")
+                text = if (hidden > 0) "未发现候选 · $hidden 台非目标已隐藏"
+                       else "未发现候选"
                 textSize = 12f
                 setTextColor(activity.getColor(R.color.md_text_dim))
                 setPadding(dp(4), dp(10), dp(4), dp(10))
@@ -379,7 +373,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             val shownName = c.name.ifEmpty { "(未广播名称)" }
             col.addView(deviceRow(
                 headline = shownName,
-                supporting = "${c.rssi} dBm · ${c.matchedBy} · 地址仅缓存",
+                supporting = "${c.rssi} dBm · ${c.matchedBy}",
                 first = i == 0,
             ).also { row ->
                 row.setOnClickListener { connect(c) }
@@ -428,21 +422,20 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     @SuppressLint("MissingPermission")
     private fun connect(c: Candidate) {
         if (!granted()) {
-            setStatus("⚠ 连接前权限已失效。请重新点「去授权」，或改用 TCP relay")
+            setStatus("⚠ 权限失效，请重新授权")
             renderNeedPermission()
             return
         }
         val pairing = try {
             BlePairingStore.findByAdvertisementName(activity.applicationContext, c.name)
         } catch (_: Exception) {
-            setStatus("⚠ 此广播名称对应多个配对记录。请先移除重名设备的旧配对码")
+            setStatus("⚠ 配对记录重名，请删除旧记录")
             return
         } ?: run {
-            setStatus("⚠ 此设备尚未配对。先用手机相机扫描该机器的配对码")
+            setStatus("⚠ 未配对，请扫描配对码")
             return
         }
-        setStatus("正在连接 ${c.name.ifEmpty { c.address }} …\n" +
-            "正在验证设备身份并建立加密会话；握手失败不会回退到明文")
+        setStatus("连接中…")
         val rawLink = AndroidBleGattLink(activity.applicationContext, c.device)
         // P0 ⑤：用 core 的 SerialGattLink 包装，强制 GATT 操作串行（等前一条回调再发下一条）。
         val link = SerialGattLink(rawLink)
@@ -457,13 +450,13 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         SessionHolder.connectWith(transport, ConnectTarget.Ble(serial)) { ok ->
             ui.post {
                 if (ok) {
-                    var fgsNote = " · 后台保活已启用"
+                    var fgsNote = " · 后台保活"
                     // 🔴 必须在 Activity 可见时启动 FGS（API31+ 后台起会抛
                     // ForegroundServiceStartNotAllowedException）。回调在主线程、页面在前台。
                     try {
                         DuckBleService.start(activity, serial)
                     } catch (e: Throwable) {
-                        fgsNote = " · ⚠ 保活服务启动失败(${e.javaClass.simpleName})，切后台可能断链"
+                        fgsNote = " · 保活失败"
                     }
                     // 通知权限单独按需请求：失败不影响 BLE 链路，只在通知栏看不到常驻通知。
                     val notif = BleForegroundPolicy.notificationPermission(Build.VERSION.SDK_INT)
@@ -471,12 +464,11 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
                         PackageManager.PERMISSION_GRANTED) {
                         activity.requestPermissions(arrayOf(notif), REQ_CODE_NOTIF)
                     }
-                    setStatus("已连接 BLE · $serial（会话 READY$fgsNote）")
+                    setStatus("已连接 · $serial$fgsNote")
                 } else {
                     DuckBleService.detach(link)
                     link.close()
-                    setStatus("⚠ BLE 握手失败 · ${SessionHolder.note}。请确认设备是 MicroDuck 固件，" +
-                        "或改用 TCP relay；真 GATT 上板验收仍 UNVERIFIED")
+                    setStatus("⚠ 连接失败 · ${SessionHolder.note}")
                 }
                 SessionHolder.selectMode(ControlMode.MANUAL)
             }

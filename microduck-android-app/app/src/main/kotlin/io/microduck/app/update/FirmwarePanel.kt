@@ -62,7 +62,7 @@ class FirmwarePanel(
             letterSpacing = 0.05f
         })
         view.addView(TextView(activity).apply {
-            text = "板子自身 WiFi 拉取并验签 · BLE 仅触发/看进度"
+            text = "板端拉取验签"
             textSize = 10f; setTextColor(color(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
         })

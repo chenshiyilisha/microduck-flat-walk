@@ -152,7 +152,7 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
         ("负对照:状态行删掉隐藏数量回显必红",
          variant(panel=panel
                  .replace(" · 非目标 $hidden 台已隐藏", "")
-                 .replace('"$hidden 台非目标已隐藏"', '"确认板子已通电并靠近后重扫"'))),
+                 .replace('"未发现候选 · $hidden 台非目标已隐藏"', '"未发现候选"'))),
         ("负对照:候选删掉点击连接监听必红",
          variant(panel=panel.replace("setOnClickListener { connect(c) }", ""))),
     ]

@@ -803,6 +803,25 @@ class MainActivity : AppCompatActivity() {
         }
 
     /**
+     * M3 filled button：每屏只给一个主操作（连接/扫描/确认），其余保持描边或文字按钮。
+     * 依据 M3 Buttons「Filled buttons have the highest emphasis」与 Android Settings
+     * 「primary action only」：一屏多个同权重描边按钮正是「看起来杂乱」的主因。
+     */
+    private fun primaryButton(label: String, desc: String, onClick: () -> Unit) =
+        MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = label
+            textSize = 13f
+            minimumHeight = dp(48)
+            cornerRadius = dp(CORNER_CELL_DP)
+            contentDescription = desc
+            strokeWidth = 0
+            backgroundTintList = ColorStateList.valueOf(c(R.color.md_accent))
+            setTextColor(c(R.color.md_on_accent))
+            setTypeface(null, Typeface.BOLD)
+            setOnClickListener { onClick() }
+        }
+
+    /**
      * 分段：选中 = 白底黑字（对齐 HTML .seg span.on）；未选中 = 透明 + dim。
      * 门禁「手动模式/自动模式」文案 / content-desc 不动。
      */
@@ -842,7 +861,7 @@ class MainActivity : AppCompatActivity() {
         }
         col.addView(healthSourceText)
         col.addView(TextView(this@MainActivity).apply {
-            text = "robot.health 真字段：缺失显示「未读到」，绝不渲染成 0"
+            text = "robot.health 真字段：缺失=未读到"
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
             setPadding(0, 0, 0, dp(6))
@@ -863,7 +882,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
         col.addView(TextView(this@MainActivity).apply {
-            text = "真实外观网格 · 15 舵机状态点 · 非运动学解算 · 左右拖动旋转"
+            text = "拖动旋转模型"
             textSize = 10f; setTextColor(c(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(2), 0, dp(2))
@@ -894,7 +913,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(tofSourceText)
         col.addView(buildTofGrid(), LinearLayout.LayoutParams(MATCH, WRAP))
         col.addView(TextView(this@MainActivity).apply {
-            text = "色阶：近(暖)→远(冷) · 空空间=暗格 · 测量失败=告警格(带码) · <10cm 不可信 · 原始斜距非重投影"
+            text = "近暖远冷 · <10cm 不可信"
             textSize = 10f; setTextColor(c(R.color.md_text_dim))
             maxLines = 2; setLineSpacing(0f, 1.15f)
             setPadding(0, dp(4), 0, dp(2))
@@ -950,12 +969,12 @@ class MainActivity : AppCompatActivity() {
         // 放在健康页视口下方：顶部两行门禁断言文本（healthSourceText 等）不受影响；
         // 需主动点「刷新系统信息」才查（真 TCP/BLE 同步 I/O，ViewModel 已切后台线程）。
         col.addView(TextView(this@MainActivity).apply {
-            text = "系统诊断（只读 · 点刷新才查 · 缺字段显示「未读到」）"
+            text = "系统诊断 · 只读"
             textSize = 11f; setTextColor(c(R.color.md_accent))
             setPadding(0, dp(10), 0, dp(2))
         }, LinearLayout.LayoutParams(MATCH, WRAP))
         diagnosticsText = TextView(this@MainActivity).apply {
-            text = "尚未查询 · 点下方按钮拉取 system.info / 服务 / 日志 / 策略 / 更新状态"
+            text = "尚未查询"
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
             setTypeface(Typeface.MONOSPACE)
             setPadding(0, dp(4), 0, dp(4)); maxLines = 40
@@ -1167,7 +1186,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, 0)
         }
         col.addView(TextView(this@MainActivity).apply {
-            text = "15 舵机状态（ID · 缺失=红 / 在线=绿 / 未读到=灰）"
+            text = "15 舵机状态"
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
             setPadding(0, 0, 0, dp(6))
         })
@@ -1313,22 +1332,9 @@ class MainActivity : AppCompatActivity() {
      */
     private fun buildNetPanel() = LinearLayout(this@MainActivity).apply {
         orientation = LinearLayout.VERTICAL
-        addView(TextView(this@MainActivity).apply {
-            text = "Wi-Fi 配网"
-            textSize = 14f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
-            setPadding(0, 0, 0, dp(4))
-        })
-        // Android Settings：primary + secondary 状态，先于长说明。
-        netStatusText = TextView(this@MainActivity).apply {
-            text = "当前连接 · 尚未查询 · 点「刷新网络」"
-            textSize = 12f; setTextColor(c(R.color.md_text_dim))
-            setLineSpacing(0f, 1.15f)
-        }
-        addView(netStatusText, LinearLayout.LayoutParams(MATCH, WRAP).also {
-            it.bottomMargin = dp(8)
-        })
-        // Noise 会话传输说明（非告警）：板载固件已刷加密 btd；门禁校验常量仍在 UI 展示。
-        addView(TextView(this@MainActivity).apply {
+        // M3 设置模式：标题 + 状态常驻；长说明按需展开，不占首屏。
+        var noticeExpanded = false
+        val noticeView = TextView(this@MainActivity).apply {
             text = "ⓘ " + NetProvisioning.SECURE_TRANSPORT_NOTICE
             textSize = 11f; setTextColor(c(R.color.md_text_dim))
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -1337,16 +1343,36 @@ class MainActivity : AppCompatActivity() {
                 cornerRadius = dp(CORNER_LARGE_DP).toFloat()
                 setStroke(dp(1), Color.argb(70, 0x4A, 0x8B, 0xFF))
             }
-            val bar = GradientDrawable().apply {
-                setColor(c(R.color.md_accent)); setSize(dp(3), dp(28))
-            }
-            setCompoundDrawablesWithIntrinsicBounds(bar, null, null, null)
-            compoundDrawablePadding = dp(10)
-        }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.bottomMargin = dp(8) })
+            visibility = View.GONE
+        }
+        var noticeBtn: MaterialButton? = null
+        val noticeButton = outlineButton("传输说明", "查看传输说明") {
+            noticeExpanded = !noticeExpanded
+            noticeView.visibility = if (noticeExpanded) View.VISIBLE else View.GONE
+            noticeBtn?.text = if (noticeExpanded) "收起" else "传输说明"
+        }
+        noticeBtn = noticeButton
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Wi-Fi 配网"
+                textSize = 14f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(noticeButton)
+        })
+        addView(noticeView, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+        netStatusText = TextView(this@MainActivity).apply {
+            text = "尚未查询"
+            textSize = 12f; setTextColor(c(R.color.md_text_dim))
+        }
+        addView(netStatusText, LinearLayout.LayoutParams(MATCH, WRAP).also {
+            it.topMargin = dp(6); it.bottomMargin = dp(8)
+        })
 
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(outlineButton("刷新网络（只读）", "刷新网络状态") {
+            addView(outlineButton("刷新", "刷新网络状态") {
                 viewModel.onRefreshNet()
             }, LinearLayout.LayoutParams(0, WRAP, 1f))
             addView(outlineButton("取手机网络", "读取手机当前 Wi-Fi 名称") {
@@ -1360,11 +1386,6 @@ class MainActivity : AppCompatActivity() {
             textSize = 12f; setTextColor(c(R.color.md_text)); setTypeface(null, Typeface.BOLD)
             setPadding(0, dp(14), 0, dp(2))
         }, LinearLayout.LayoutParams(MATCH, WRAP))
-        addView(TextView(this@MainActivity).apply {
-            text = "点选填入 SSID · 已存仍需密码 · 802.1X 不支持"
-            textSize = 11f; setTextColor(c(R.color.md_text_dim))
-            setPadding(0, 0, 0, dp(6))
-        }, LinearLayout.LayoutParams(MATCH, WRAP))
         netScanList = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -1373,7 +1394,7 @@ class MainActivity : AppCompatActivity() {
         // M3 Outlined Dense 输入（与驾驶通道下拉同族）。
         val ssidField = LayoutInflater.from(this@MainActivity)
             .inflate(R.layout.widget_outlined_field, this, false) as TextInputLayout
-        ssidField.hint = "网络名称（SSID）"
+        ssidField.hint = "SSID"
         netSsidEdit = ssidField.findViewById(R.id.field_input)
         netSsidEdit.inputType = InputType.TYPE_CLASS_TEXT
         netSsidEdit.contentDescription = "网络名称输入"
@@ -1381,7 +1402,7 @@ class MainActivity : AppCompatActivity() {
 
         val pskField = LayoutInflater.from(this@MainActivity)
             .inflate(R.layout.widget_outlined_field, this, false) as TextInputLayout
-        pskField.hint = "密码（开放网络留空）"
+        pskField.hint = "密码（可空）"
         netPskEdit = pskField.findViewById(R.id.field_input)
         netPskEdit.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         netPskEdit.contentDescription = "Wi-Fi 密码输入"
@@ -1389,7 +1410,7 @@ class MainActivity : AppCompatActivity() {
 
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(outlineButton("连接网络", "连接 Wi-Fi", ::confirmConnectWifi),
+            addView(primaryButton("连接网络", "连接 Wi-Fi", ::confirmConnectWifi),
                 LinearLayout.LayoutParams(0, WRAP, 1f))
             addView(outlineButton("忘记网络", "忘记 Wi-Fi 网络") {
                 val ssid = netSsidEdit.text.toString().trim()
@@ -1419,8 +1440,7 @@ class MainActivity : AppCompatActivity() {
         val psk = netPskEdit.text.toString().ifEmpty { null }
         AlertDialog.Builder(this)
             .setTitle("连接 Wi-Fi（写操作）")
-            .setMessage(NetProvisioning.SECURE_TRANSPORT_NOTICE +
-                "\n\n目标网络：$ssid")
+            .setMessage("目标网络：$ssid\n密码只在 Noise 会话中发送。")
             .setNegativeButton("取消", null)
             .setPositiveButton("确认连接") { _, _ -> viewModel.onConnectWifi(ssid, psk) }
             .show()
@@ -1430,8 +1450,7 @@ class MainActivity : AppCompatActivity() {
     private fun confirmForgetWifi(ssid: String) {
         AlertDialog.Builder(this)
             .setTitle("忘记网络（写操作）")
-            .setMessage("将向板端发送 net.forget，删除已存网络「$ssid」。\n\n" +
-                NetProvisioning.SECURE_TRANSPORT_NOTICE)
+            .setMessage("将删除板端已存网络「$ssid」。")
             .setNegativeButton("取消", null)
             .setPositiveButton("确认忘记") { _, _ -> viewModel.onForgetWifi(ssid) }
             .show()
@@ -1455,7 +1474,7 @@ class MainActivity : AppCompatActivity() {
         // 🔴 supporting 含门禁硬串「已本地持久化」，不可改写。
         col.addView(settingsSectionHeader(
             "遥控参数",
-            "已本地持久化（进入横屏遥控页生效）",
+            "已本地持久化",
             first = true,
         ))
         val driveGroup = settingsGroup()
@@ -1485,15 +1504,10 @@ class MainActivity : AppCompatActivity() {
         driveGroup.addView(invertBox, LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.topMargin = dp(6)
         })
-        driveGroup.addView(TextView(this@MainActivity).apply {
-            text = "真机 R17 映射决定 · 客户端不硬编码"
-            textSize = 11f; setTextColor(c(R.color.md_text_dim))
-            setPadding(dp(48), 0, 0, 0)
-        })
         col.addView(driveGroup, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // ── ② 速度与死区（首屏须含「方向摇杆死区」）──
-        col.addView(settingsSectionHeader("速度与死区", "占位默认 · 待整机标定"))
+        col.addView(settingsSectionHeader("速度与死区"))
         vxLabel = TextView(this@MainActivity)
         yawLabel = TextView(this@MainActivity)
         driveDzLabel = TextView(this@MainActivity)
@@ -1539,7 +1553,7 @@ class MainActivity : AppCompatActivity() {
         updateSettingLabels()
 
         // ── ③ 连接（子面板自带「BLE 连接 / Wi-Fi 配网」，外层只写分组名）──
-        col.addView(settingsSectionHeader("连接", "先 BLE 连板，再配 Wi-Fi"))
+        col.addView(settingsSectionHeader("连接", "BLE → Wi-Fi"))
         col.addView(settingsGroup().also { g ->
             g.addView(blePanel.buildView(), LinearLayout.LayoutParams(MATCH, WRAP))
         }, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -1548,7 +1562,7 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(10) })
 
         // ── ④ 固件与 App 更新 ──
-        col.addView(settingsSectionHeader("更新", "固件由板子 WiFi 拉取 · App 走 GitHub"))
+        col.addView(settingsSectionHeader("更新", "检查更新"))
         col.addView(settingsGroup().also { g ->
             g.addView(firmwarePanel.view, LinearLayout.LayoutParams(MATCH, WRAP))
         }, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -1980,15 +1994,13 @@ class MainActivity : AppCompatActivity() {
     private fun renderNet(n: NetSnapshot, busy: Boolean, result: String?) {
         if (!::netStatusText.isInitialized || !::netScanList.isInitialized) return
         val text = when {
-            n.isEmpty && n.statusError == null ->
-                "当前连接 · 尚未查询 · 点「刷新网络」"
+            n.isEmpty && n.statusError == null -> "尚未查询"
             else -> buildString {
                 append("当前连接 · ").append(n.state ?: "未读到")
                 append(" · ").append(n.ssid ?: "未读到")
                 append("\n")
                 append(n.signal?.let { "信号 $it/100" } ?: "信号 未读到")
                 append(" · ").append(n.ip4 ?: "IPv4 未读到")
-                n.mac?.let { append(" · MAC ").append(it) }
                 n.statusError?.let { append("\n（").append(it).append("）") }
             }
         }
@@ -2259,20 +2271,15 @@ class MainActivity : AppCompatActivity() {
         if (::firmwarePanel.isInitialized) firmwarePanel.render(state.firmware)
         applyProvisionedIp(state)
         refreshModeUi(state)
-        // 单行状态串：完整信息在来源标签 / 状态卡里，不再让 appBar 折成两行。
-        // 三个目的地各持一套状态串，统一刷新，保证任何页面下连接/模式/帧数都可见。
+        // M3 Settings / Status 文案准则：顶栏只放**当前状态**，不放描述性 note 与帧计数。
+        // 连接详情在链路横幅，帧计数在状态页遥测网格；顶栏保持两三项可扫读的状态。
         val statusText = if (state.connectError.isNotEmpty())
-            "地址无效 · 会话=${state.sessionState}"
+            "连接异常 · ${state.sessionState}"
         else buildString {
-            if (state.note.isNotEmpty() && state.note != "地址无效")
-                append(state.note).append(" · ")
             append(if (state.mode == ControlMode.MANUAL) "手动" else "自动")
             append(" · ").append(state.sessionState)
-            append(" · ").append(state.stateFrameCount).append(" 帧")
         }
         chrome.statusText.text = statusText
-        // 底部「通道=…」状态条已移除（与状态页「App 本地遥测」重复，用户 2026-11-15 反馈）。
-        // 会话级帧数信息统一由状态页遥测网格承载，任何页面都能从状态页读到。
     }
 
     /**

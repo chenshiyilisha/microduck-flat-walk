@@ -53,14 +53,12 @@ object BleScanCoordinator {
 
     /** 失败码 → 可恢复动作文案；未知码保留原码，不假装知道原因。 */
     fun explain(errorCode: Int): String = when (errorCode) {
-        SCAN_FAILED_ALREADY_STARTED ->
-            "扫描已被本 App 的另一次扫描占用（code=1 = ALREADY_STARTED），已自动停旧扫描；" +
-                "请重试一次。若反复出现，关掉 AI 调试扫描后再试"
-        2 -> "扫描注册失败（code=2）。请重启蓝牙或重装 App"
-        3 -> "蓝牙内部错误（code=3）。请开关一次蓝牙后重试"
-        4 -> "不支持该扫描模式（code=4）。请升级系统或改用 TCP relay"
-        5 -> "硬件资源不足（code=5，Android 13+）。请关闭其他占用 BLE 的 App 后重试"
-        6 -> "扫描过于频繁（code=6，Android 13+）。请稍等几秒再试"
-        else -> "扫描失败 code=$errorCode。请确认蓝牙/定位开关已开，或改用 TCP relay"
+        SCAN_FAILED_ALREADY_STARTED -> "重复扫描（code=1 · ALREADY_STARTED），已停旧扫描；请重试"
+        2 -> "扫描注册失败（code=2），请重启蓝牙"
+        3 -> "蓝牙内部错误（code=3），请开关蓝牙重试"
+        4 -> "扫描模式不支持（code=4）"
+        5 -> "BLE 资源不足（code=5），请关闭其他占用设备"
+        6 -> "扫描过于频繁（code=6），请稍后再试"
+        else -> "扫描失败 code=$errorCode"
     }
 }

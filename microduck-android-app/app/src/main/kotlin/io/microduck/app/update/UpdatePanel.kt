@@ -67,7 +67,7 @@ class UpdatePanel(
             letterSpacing = 0.05f
         })
         view.addView(TextView(activity).apply {
-            text = "GitHub Releases · 手动检查，不做后台轮询"
+            text = "手动检查"
             textSize = 10f; setTextColor(color(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
         })

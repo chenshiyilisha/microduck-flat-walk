@@ -158,7 +158,7 @@ class SshPanel(
             setTextColor(context.getColor(R.color.md_text))
         })
         root.addView(TextView(context).apply {
-            text = "凭据默认不保存 · 主机指纹需肉眼核对 · 只读快捷命令"
+            text = "指纹需核对 · 快捷命令只读"
             textSize = 10.5f; setTextColor(context.getColor(R.color.md_text_dim))
             setSingleLine(true); ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(2), 0, dp(8))
@@ -254,7 +254,7 @@ class SshPanel(
             it.topMargin = dp(6)
         })
         root.addView(TextView(context).apply {
-            text = "默认关闭 · 需确认 · start 只本次生效，不改开机自启"
+            text = "仅本次生效，不改自启"
             textSize = 9.5f; setTextColor(context.getColor(R.color.md_text_dim))
             setPadding(0, dp(2), 0, 0)
         })
