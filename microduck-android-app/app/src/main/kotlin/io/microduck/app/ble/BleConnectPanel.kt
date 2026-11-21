@@ -41,7 +41,8 @@ import java.util.Locale
  *
  * ── 一手依据 ──
  *  1. Google Android 平台文档 Bluetooth permissions：API31+ 的 SCAN/CONNECT 是运行时权限；
- *     不用扫描结果推位置可加 neverForLocation 并把 FINE_LOCATION 限到 maxSdkVersion=30。
+ *     本 App 不用扫描结果推位置可加 neverForLocation，BLE 运行时权限集合不含位置权限。
+ *     （`ACCESS_FINE_LOCATION` 仍全版本声明，但只用于设置页读手机当前 Wi-Fi 名称。）
  *  2. **Pollen 原厂** `docs/design/app-path-design.md` §3.3（经 BoBo 本地副本核对）：**不要用 service UUID 硬件过滤**——
  *     bonded peripheral 常以空 service list 广播，过滤后「not reported at all」；
  *     应「scan unfiltered and discriminate your own candidates」，且「poll until a candidate

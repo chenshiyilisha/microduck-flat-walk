@@ -491,9 +491,9 @@ class RobotRepository(
 
     // ── A2 Wi-Fi 配网（net.status / net.scan 只读 + net.connect / net.forget 写）──
     // 🔴 安全边界：Mock 不写真网络；psk 只进出站 JSON、不进日志/快照/UI 回显；
-    //    明文传输风险由 UI 的 PLAINTEXT_TRANSPORT_WARNING 强制展示，本层不软化。
-    //    固件端当前明文传密码（route.rs:139-155 / 原厂 §8.1 blocker），见
-    //    docs/active/microduck-配网加密-一手判决与固件对接规格-2026-11-17.md。
+    //    传输说明由 UI 的 SECURE_TRANSPORT_NOTICE 展示，真机 Noise 握手仍以链路回执为准。
+    //    板载 btd 已于 2026-11-21 换成 Noise 会话版，原 §8.1 阻塞由固件端关闭；
+    //    App 侧 ProvisioningCrypto 仍是 INTEROP_UNVERIFIED，不接入本路径。
 
     /** 拉取 net.status + net.scan（只读，可重放）。Mock/未连接 → 清空为未读。 */
     fun refreshNet() {

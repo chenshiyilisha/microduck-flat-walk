@@ -787,6 +787,21 @@ object CoreSelfTest {
         check("负对照:read API_VERSION 失败不进 READY", !ok3 && s3.state == RobotSession.State.FAILED) { "ok=$ok3 state=${s3.state}" }
         s3.close(); linkNoVer.close()
 
+        // 🔴 2026-11-21 真机根因回归：配对码 serial ≠ hello 响应（一手 HelloResult 无 serial 字段）。
+        // 旧实现在此硬拒（"authenticated robot serial mismatch"）→ BLE_REQUEST_DROPPED id=1 →
+        // 刷加密 btd 后真机必连不上。现在 serial 只是 PSK 归属标签、身份由 Noise 持钥证明，
+        // 必须能连到 READY。负对照：若有人把 serial 硬校验加回，这条立刻红。
+        val linkSerialMismatch = FakeGattLink()
+        val tSerial = BleTransport(linkSerialMismatch, FakeGattLink.TEST_PSK,
+            expectedSerial = "duck-6a07", requestTimeoutMs = 2_000)
+        val sSerial = RobotSession(tSerial, backoffBaseMs = 10, backoffMaxMs = 20)
+        val okSerial = sSerial.connect(ConnectTarget.Ble("duck-6a07"))
+        check("负对照:配对serial≠hello响应(无serial字段)仍能连到READY",
+            okSerial && sSerial.state == RobotSession.State.READY) { "ok=$okSerial state=${sSerial.state}" }
+        check("负对照:该连接未因serial mismatch断链",
+            !tSerial.lastDisconnectReason().contains("serial")) { "reason=${tSerial.lastDisconnectReason()}" }
+        sSerial.close(); linkSerialMismatch.close()
+
         // 负对照:出站写失败 → request 失败并触发断连（不 hang、不假绿）
         val linkWriteFail = FakeGattLink()
         val t4 = BleTransport(linkWriteFail, FakeGattLink.TEST_PSK, requestTimeoutMs = 500)
@@ -2695,10 +2710,12 @@ object CoreSelfTest {
         check("net.forget removed=true", NetProvisioning.parseForget(obj("""{"removed":true}""")).removed)
         check("负对照:removed 缺失视为 false（未读到）", !NetProvisioning.parseForget(obj("{}")).removed)
 
-        // 安全交付：明文警示常量必须存在且点名 §8.1 阻塞（门禁据此核对 UI 不得省略）
-        check("明文传输警示含 pre-shipping blocker 语义",
-            NetProvisioning.PLAINTEXT_TRANSPORT_WARNING.contains("明文") &&
-            NetProvisioning.PLAINTEXT_TRANSPORT_WARNING.contains("8.1"))
+        // 安全交付：Noise 会话说明必须点名 §8.1 历史阻塞，且不得退回旧告警文案
+        check("Noise 传输说明含 §8.1 与会话语义",
+            NetProvisioning.SECURE_TRANSPORT_NOTICE.contains("Noise") &&
+                NetProvisioning.SECURE_TRANSPORT_NOTICE.contains("8.1"))
+        check("负对照:说明不含已关闭的旧风险文案",
+            !NetProvisioning.SECURE_TRANSPORT_NOTICE.contains("明文"))
     }
 
     private fun testProvisioningCrypto() {
@@ -2790,9 +2807,9 @@ object CoreSelfTest {
 
         // 交付边界：INTEROP_UNVERIFIED 恒真（防止谁误改成 PASS）
         check("INTEROP_UNVERIFIED 恒为 true（未与真固件对拍）", C.INTEROP_UNVERIFIED)
-        check("默认配网仍走明文（加密未接入 NetProvisioning）",
-            NetProvisioning.connectParams("x", "pw").containsKey("psk") &&
-            !NetProvisioning.PLAINTEXT_TRANSPORT_WARNING.contains("已加密"))
+        check("默认配网参数仍只带 psk（由 Noise 会话承载，应用层零加密）",
+            NetProvisioning.connectParams("x", "pw").keys == setOf("ssid", "psk") &&
+                !NetProvisioning.SECURE_TRANSPORT_NOTICE.contains("已验证"))
         // 临时密钥对每会话新鲜（两次生成不同）
         val e1 = C.generateEphemeral(); val e2 = C.generateEphemeral()
         check("临时密钥对每次新鲜（前向保密）", !e1.first.contentEquals(e2.first))

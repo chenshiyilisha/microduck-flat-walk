@@ -1,12 +1,20 @@
 package io.microduck.app
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.ConnectivityManager
+import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -134,6 +142,11 @@ class MainActivity : AppCompatActivity() {
     /** 上次渲染的扫描签名：renderAll 每 1s tick 都调 renderNet，内容没变不重建 View。 */
     private var netScanSignature: String? = null
     private lateinit var netSsidEdit: EditText
+    /** 手机当前连接的 Wi-Fi 名称（本机读取，不是板端 net.status 的读数）。 */
+    private var phoneSsid: String? = null
+    private var phoneSsidNote = "尚未读取"
+    /** 上次自动填入的值：只在输入框空或等于该值时更新，绝不覆盖用户手输。 */
+    private var autoFilledPhoneSsid: String? = null
     private lateinit var netPskEdit: EditText
     private lateinit var netResultText: TextView
     private lateinit var autoRefreshBox: CheckBox
@@ -1290,13 +1303,13 @@ class MainActivity : AppCompatActivity() {
     /**
      * A2 Wi-Fi 配网卡片（设置页）。
      *
-     * 🔴 原厂 §8.1 pre-shipping blocker：目标固件明文传 Wi-Fi 密码（一手
-     *    btd/src/route.rs:139-155），故警示**常驻**且连接前**二次确认**，绝不软化成
-     *    「安全配网」。Mock 会话不写真网络（Repository 隔离）。
+     * 2026-11-21：板载 btd 已刷 Noise 会话版，原 §8.1 阻塞由固件端关闭；
+     * 传输说明改为 [NetProvisioning.SECURE_TRANSPORT_NOTICE]，连接仍是写操作、仍二次确认，
+     * 但不再把已关闭的历史风险显示成当前告警。Mock 会话不写真网络（Repository 隔离）。
      *
      * 2026-11-20 IA（docs/active/…连接配网UI设计依据）：
      * 标题 → 紧凑状态 → Banner → 刷新 → 两行网络列表 → Outlined 输入 → 写操作。
-     * PLAINTEXT 常量 / 「Wi-Fi 配网」标题零改字。
+     * PLAINTEXT 常量已随 11-21 刷板替换为 SECURE_TRANSPORT_NOTICE；「Wi-Fi 配网」标题零改字。
      */
     private fun buildNetPanel() = LinearLayout(this@MainActivity).apply {
         orientation = LinearLayout.VERTICAL
@@ -1314,25 +1327,31 @@ class MainActivity : AppCompatActivity() {
         addView(netStatusText, LinearLayout.LayoutParams(MATCH, WRAP).also {
             it.bottomMargin = dp(8)
         })
-        // 明文风险 Banner：PLAINTEXT 常量逐字保留（门禁硬串）。
+        // Noise 会话传输说明（非告警）：板载固件已刷加密 btd；门禁校验常量仍在 UI 展示。
         addView(TextView(this@MainActivity).apply {
-            text = "⚠ " + NetProvisioning.PLAINTEXT_TRANSPORT_WARNING
-            textSize = 11f; setTextColor(c(R.color.md_bad))
+            text = "ⓘ " + NetProvisioning.SECURE_TRANSPORT_NOTICE
+            textSize = 11f; setTextColor(c(R.color.md_text_dim))
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = GradientDrawable().apply {
-                setColor(Color.argb(38, 0xFF, 0x45, 0x3A))
+                setColor(Color.argb(30, 0x4A, 0x8B, 0xFF))
                 cornerRadius = dp(CORNER_LARGE_DP).toFloat()
-                setStroke(dp(1), Color.argb(77, 0xFF, 0x45, 0x3A))
+                setStroke(dp(1), Color.argb(70, 0x4A, 0x8B, 0xFF))
             }
             val bar = GradientDrawable().apply {
-                setColor(c(R.color.md_bad)); setSize(dp(3), dp(28))
+                setColor(c(R.color.md_accent)); setSize(dp(3), dp(28))
             }
             setCompoundDrawablesWithIntrinsicBounds(bar, null, null, null)
             compoundDrawablePadding = dp(10)
         }, LinearLayout.LayoutParams(MATCH, WRAP).also { it.bottomMargin = dp(8) })
 
-        addView(outlineButton("刷新网络（只读）", "刷新网络状态") {
-            viewModel.onRefreshNet()
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(outlineButton("刷新网络（只读）", "刷新网络状态") {
+                viewModel.onRefreshNet()
+            }, LinearLayout.LayoutParams(0, WRAP, 1f))
+            addView(outlineButton("取手机网络", "读取手机当前 Wi-Fi 名称") {
+                loadPhoneSsid(requestIfNeeded = true)
+            }, LinearLayout.LayoutParams(0, WRAP, 1f).also { it.marginStart = dp(8) })
         }, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // net.scan → 可点选列表（configd nm.rs:567：从扫描结果选比手录更稳）。
@@ -1370,7 +1389,7 @@ class MainActivity : AppCompatActivity() {
 
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(outlineButton("连接 · 明文", "连接 Wi-Fi", ::confirmConnectWifi),
+            addView(outlineButton("连接网络", "连接 Wi-Fi", ::confirmConnectWifi),
                 LinearLayout.LayoutParams(0, WRAP, 1f))
             addView(outlineButton("忘记网络", "忘记 Wi-Fi 网络") {
                 val ssid = netSsidEdit.text.toString().trim()
@@ -1385,9 +1404,11 @@ class MainActivity : AppCompatActivity() {
             contentDescription = "配网操作结果"
         }
         addView(netResultText, LinearLayout.LayoutParams(MATCH, WRAP).also { it.topMargin = dp(6) })
+        // 自动取手机当前网络：只填 SSID，手动输入永不覆盖；权限不足时弹一次说明。
+        post { loadPhoneSsid(requestIfNeeded = true) }
     }
 
-    /** 连接 Wi-Fi 前的二次确认：必须逐字展示明文警示，用户确认后才发请求。 */
+    /** 连接 Wi-Fi 前的二次确认：展示 Noise 传输说明，用户确认后才发写请求。 */
     private fun confirmConnectWifi() {
         val ssid = netSsidEdit.text.toString().trim()
         if (ssid.isEmpty()) {
@@ -1397,11 +1418,11 @@ class MainActivity : AppCompatActivity() {
         // 读密码到局部变量，确认回调后立即用；不写任何字段/日志。
         val psk = netPskEdit.text.toString().ifEmpty { null }
         AlertDialog.Builder(this)
-            .setTitle("连接 Wi-Fi（写操作 · 明文）")
-            .setMessage(NetProvisioning.PLAINTEXT_TRANSPORT_WARNING +
+            .setTitle("连接 Wi-Fi（写操作）")
+            .setMessage(NetProvisioning.SECURE_TRANSPORT_NOTICE +
                 "\n\n目标网络：$ssid")
             .setNegativeButton("取消", null)
-            .setPositiveButton("仍要连接") { _, _ -> viewModel.onConnectWifi(ssid, psk) }
+            .setPositiveButton("确认连接") { _, _ -> viewModel.onConnectWifi(ssid, psk) }
             .show()
     }
 
@@ -1410,7 +1431,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("忘记网络（写操作）")
             .setMessage("将向板端发送 net.forget，删除已存网络「$ssid」。\n\n" +
-                NetProvisioning.PLAINTEXT_TRANSPORT_WARNING)
+                NetProvisioning.SECURE_TRANSPORT_NOTICE)
             .setNegativeButton("取消", null)
             .setPositiveButton("确认忘记") { _, _ -> viewModel.onForgetWifi(ssid) }
             .show()
@@ -1971,7 +1992,9 @@ class MainActivity : AppCompatActivity() {
                 n.statusError?.let { append("\n（").append(it).append("）") }
             }
         }
-        netStatusText.setTextIfChanged(text)
+        // 板端 net.status 与本机 Wi-Fi 分源呈现：本机行只是读取结果，不冒充板子已连该网络。
+        val localLine = "手机当前网络 · " + (phoneSsid ?: phoneSsidNote)
+        netStatusText.setTextIfChanged("$text\n$localLine")
         // 1s tick 节流：扫描内容没变就不重建 View（否则持续发 AccessibilityEvent、列表抖动）。
         val sig = n.networks.take(10).joinToString("|") {
             "${it.ssid}/${it.signal}/${it.security}/${it.saved}"
@@ -2045,6 +2068,88 @@ class MainActivity : AppCompatActivity() {
         netSsidEdit.setSelection(ssid.length)
     }
 
+    /**
+     * 自动读取**手机当前连接**的 Wi-Fi 名称并填入配网输入框。
+     *
+     * 一手依据（developer.android.com，2026-11-21）：
+     *  · Android 10 隐私变更把 `WifiManager.getConnectionInfo()` 列入必须持有
+     *    `ACCESS_FINE_LOCATION` 的方法；Android 9 还要求系统定位开关打开，否则只能拿到
+     *    `UNKNOWN_SSID`。Android 13 的 `NEARBY_WIFI_DEVICES` 不覆盖 SSID 读取。
+     *  · API31+ 官方把 WifiInfo 移到 `ConnectivityManager.getNetworkCapabilities(network)
+     *    .transportInfo`；`getConnectionInfo()` 仍可用但 deprecated，故两条路都取，先新后旧。
+     * 只读本机网络名，不采集位置、不上传；权限不足/定位关闭时如实回显且保留手输兜底。
+     */
+    private fun loadPhoneSsid(requestIfNeeded: Boolean) {
+        if (!::netSsidEdit.isInitialized) return
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            phoneSsid = null
+            phoneSsidNote = "未授权 · 点「取手机网络」或手填"
+            refreshNetStatusOnly()
+            if (requestIfNeeded) showSsidPermissionRationale()
+            return
+        }
+        val raw = try {
+            readConnectedSsid()
+        } catch (_: SecurityException) {
+            phoneSsid = null
+            phoneSsidNote = "权限被系统拒绝 · 可手填"
+            refreshNetStatusOnly()
+            return
+        }
+        val normalized = raw?.trim()?.trim('"')
+        if (normalized.isNullOrBlank() || normalized == WifiManager.UNKNOWN_SSID) {
+            phoneSsid = null
+            phoneSsidNote = "未读到 · 开定位/连 Wi-Fi 或手填"
+        } else {
+            phoneSsid = normalized
+            val current = netSsidEdit.text?.toString()?.trim().orEmpty()
+            val autoFill = current.isEmpty() || current == autoFilledPhoneSsid
+            if (autoFill) {
+                netSsidEdit.setText(normalized)
+                netSsidEdit.setSelection(normalized.length)
+                autoFilledPhoneSsid = normalized
+            }
+            phoneSsidNote = if (autoFill) "已自动填入" else "已读到 · 保留手输"
+        }
+        refreshNetStatusOnly()
+    }
+
+    /** 先读 API31+ 官方 NetworkCapabilities.transportInfo，失败再回退 deprecated 的 WifiManager。 */
+    @SuppressLint("MissingPermission")
+    private fun readConnectedSsid(): String? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val cm = getSystemService(ConnectivityManager::class.java)
+            val transport = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it)?.transportInfo }
+            (transport as? WifiInfo)?.ssid?.let { return it }
+        }
+        @Suppress("DEPRECATION")
+        return getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
+    }
+
+    private fun showSsidPermissionRationale() {
+        AlertDialog.Builder(this)
+            .setTitle("读取手机当前 Wi-Fi")
+            .setMessage("Android 要求定位权限才能读取已连接的 Wi-Fi 名称（App 不采集位置）。" +
+                "授权后会自动填入配网输入框；也可以手动填写。")
+            .setNegativeButton("手动填写", null)
+            .setPositiveButton("去授权") { _, _ ->
+                requestPermissions(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+                    REQ_CODE_WIFI_SSID,
+                )
+            }
+            .show()
+    }
+
+    /** 权限回调后立刻刷新本机网络行，不等 1s tick。 */
+    private fun refreshNetStatusOnly() {
+        if (!::netStatusText.isInitialized) return
+        val s = viewModel.uiState.value
+        renderNet(s.net, s.netBusy, s.netResultText)
+    }
+
     /** 只有内容真变了才写，避免 1s tick 持续发 AccessibilityEvent。 */
     private fun TextView.setTextIfChanged(s: CharSequence) {
         if (text.toString() != s.toString()) text = s
@@ -2061,6 +2166,16 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == BleConnectPanel.REQ_CODE) blePanel.onPermissionResult(grantResults)
+        if (requestCode == REQ_CODE_WIFI_SSID) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                phoneSsidNote = "权限已授予 · 读取中"
+                loadPhoneSsid(requestIfNeeded = false)
+            } else {
+                phoneSsid = null
+                phoneSsidNote = "权限未授予 · 可手填 SSID"
+                refreshNetStatusOnly()
+            }
+        }
     }
 
     /** 阶段 2：健康刷新交给 ViewModel，结果经 uiState 反映，渲染由 collect 统一负责。 */
@@ -2211,6 +2326,8 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         /** 仅 debug 端到端验证用：adb shell am start -e update_api_base http://127.0.0.1:PORT */
         const val EXTRA_UPDATE_API_BASE = "update_api_base"
+        /** 读取手机当前 Wi-Fi 名称（不同于 BLE 的授权，避免误触发扫描回调）。 */
+        const val REQ_CODE_WIFI_SSID = 4713
         const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
         const val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 

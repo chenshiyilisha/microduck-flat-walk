@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A2 配网 / A2' 加密门禁：锁住「明文风险显性化 + psk 脱敏 + Mock 隔离 + deny_unknown_fields
-+ 加密不接入真实配网」这组结构性质，防止被无声回退成「看着像安全配网」的假绿（stdlib-only）。
+A2 配网 / A2' 加密门禁：锁住「Noise 传输说明显性化 + psk 脱敏 + Mock 隔离 + deny_unknown_fields
++ 应用层加密不接入真实配网」这组结构性质，防止被无声回退成「看着像安全配网」的假绿（stdlib-only）。
 
-为什么需要它：本功能继承原厂 §8.1 的 pre-shipping blocker——目标固件明文传 Wi-Fi 密码、
-固件端零加密实现。功能测试全绿也证明不了「安全交付」，最容易被后人「顺手」破坏的是：
-  ① 把明文警示删掉/软化（用户以为安全）；② psk 落日志/快照（凭据泄漏）；
+为什么需要它：历史上原厂 §8.1 把 Wi-Fi 密码跨 BLE 明文列为 pre-shipping blocker；2026-11-21
+板载 btd 已换成 Noise 会话版，阻塞由**固件端**关闭。功能测试全绿仍证明不了真机握手，
+最容易被后人「顺手」破坏的是：
+  ① 把 Noise 说明删掉/改回旧告警，或反过来宣传成「已验证安全」（用户被误导）；
+  ② psk 落日志/快照（凭据泄漏）；
   ③ Mock 下写真网络（伪造实机行为）；④ net.connect 参数多带键（deny_unknown_fields=-32602）；
-  ⑤ 把加密原语接进真实配网（固件解不开 = 假绿）。
+  ⑤ 把未互通的 ProvisioningCrypto 接进真实配网（固件解不开 = 假绿）。
 
-判据绑一手 fanhao 副本 API40：route.rs:139-155（明文）、lib.rs:2957（NetConnectParams）、
-app-path-design.md §8.1（blocker/三候选）。判据独立于被测值：只锁结构签名，不锁数量文案。
+判据绑一手 fanhao 副本 API40：lib.rs:2957（NetConnectParams）、app-path-design.md §8.1
+（历史 blocker / 三候选）；11-21 刷板回读 sha256=db8ec7c4… + btd journal 明写 Noise 加密 RPC。
+判据独立于被测值：只锁结构签名，不锁数量文案。
 verdict: OK / NOT_PASS / UNVERIFIED_ARTIFACTS_ABSENT；末尾打印 RESULT: N errors。
 
 用法：
@@ -39,6 +42,7 @@ FILES = {
     "crypto": CORE / "ProvisioningCrypto.kt",
     "vm": APP / "MainViewModel.kt",
     "activity": APP / "MainActivity.kt",
+    "manifest": BASE / "app/src/main/AndroidManifest.xml",
 }
 
 
@@ -124,11 +128,19 @@ def evaluate(src: dict[str, str], quiet: bool = False) -> tuple[str, list[str]]:
     need(cp_keys == {"ssid", "psk"},
          f"net.connect 参数键集不符（应 ssid/psk，实际 {cp_keys}；deny_unknown_fields 会 -32602）")
 
-    # ④ 明文风险警示常驻且点名 §8.1（UI 与 core 都要有；不得软化成「安全」）
-    need("PLAINTEXT_TRANSPORT_WARNING" in prov, "NetProvisioning 缺明文风险警示常量")
-    need("8.1" in src["prov"], "明文警示未点名原厂 §8.1 blocker")
-    need("PLAINTEXT_TRANSPORT_WARNING" in act,
-         "MainActivity UI 未展示明文风险警示（用户会被误导为安全配网）")
+    # ④ 板载固件已刷 Noise 会话版：UI 展示 SECURE_TRANSPORT_NOTICE，既不删也不退回旧告警
+    need("SECURE_TRANSPORT_NOTICE" in prov, "NetProvisioning 缺 Noise 传输说明常量")
+    notice_m = re.search(
+        r'const val SECURE_TRANSPORT_NOTICE\s*=\s*((?:\s*"[^"]*"\s*\+?\s*)+)', prov)
+    notice = notice_m.group(1) if notice_m else ""
+    need(bool(notice), "SECURE_TRANSPORT_NOTICE 非字符串常量拼接（无法语义核对）")
+    need("Noise" in notice and "8.1" in notice,
+         "传输说明常量未同时点名 Noise 会话与原厂 §8.1 历史阻塞")
+    need("明文" not in notice and "已验证" not in notice,
+         "传输说明常量退回旧告警或谎称真机握手已验证")
+    need("SECURE_TRANSPORT_NOTICE" in act,
+         "MainActivity UI 未展示 Noise 传输说明（用户会被旧告警/静默配网误导）")
+    need("明文" not in act, "MainActivity 仍在展示已关闭的旧明文告警文案")
     need("confirmConnectWifi" in act, "连接 Wi-Fi 无二次确认（写操作不可静默执行）")
 
     # ⑤ psk 不落日志/快照：Repository 的 Snapshot 不含 psk 字段，connectWifi 只把 psk 传给 connectParams
@@ -192,6 +204,26 @@ def evaluate(src: dict[str, str], quiet: bool = False) -> tuple[str, list[str]]:
          "netSsidEdit 未声明为 EditText 类型（手输兜底类型不保）")
     need("netScanSignature" in act, "扫描列表缺 tick 节流签名（1s tick 会持续重建 View/发事件）")
 
+    # ⑪ 手机当前 Wi-Fi SSID 自动填入（本机读取，不冒充板端 net.status）
+    manifest = src["manifest"]
+    need(re.search(r'<uses-permission\s+android:name="android.permission.ACCESS_FINE_LOCATION"\s*/>',
+                   manifest) is not None,
+         "Manifest 缺全版本 ACCESS_FINE_LOCATION（Android 10+ 读 SSID 必需）")
+    need(re.search(r'<uses-permission\s+android:name="android.permission.ACCESS_WIFI_STATE"\s*/>',
+                   manifest) is not None,
+         "Manifest 缺 ACCESS_WIFI_STATE（读连接信息必需）")
+    need("post { loadPhoneSsid(requestIfNeeded = true) }" in act,
+         "设置页未自动触发手机当前 SSID 读取")
+    need("readConnectedSsid" in act and "getNetworkCapabilities" in act and "WifiManager" in act,
+         "SSID 读取未同时覆盖 API31+ NetworkCapabilities 与 WifiManager 回退")
+    need("Manifest.permission.ACCESS_FINE_LOCATION" in act,
+         "读取 SSID 前未检查/请求 Android 必需的位置权限")
+    need("WifiManager.UNKNOWN_SSID" in act, "未把 UNKNOWN_SSID 当未读到（会填假 SSID）")
+    ssid_body = body_of(act, "fun loadPhoneSsid")
+    need("netSsidEdit.setText" in ssid_body and "autoFill" in ssid_body,
+         "SSID 读取后未自动填入，或会覆盖用户手输")
+    need("手机当前网络" in act, "状态行未分源标注手机当前网络（会冒充板端连接状态）")
+
     verdict = "NOT_PASS" if errs else "OK"
     if not quiet:
         print(f"VERDICT = {verdict}")
@@ -224,6 +256,7 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
     prov = src.get("prov", "")
     crypto = src.get("crypto", "")
     act = src.get("activity", "")
+    manifest = src.get("manifest", "")
 
     cases: list[tuple[str, dict[str, str]]] = [
         ("负对照:Wire 删 net.connect 常量必红",
@@ -233,8 +266,12 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
         ("负对照:net.connect 参数多带非法键必红",
          variant(prov=prov.replace('val m = linkedMapOf<String, Any?>("ssid" to ssid)',
                                    'val m = linkedMapOf<String, Any?>("ssid" to ssid, "token" to 1)'))),
-        ("负对照:UI 删明文警示展示必红",
-         variant(activity=act.replace("PLAINTEXT_TRANSPORT_WARNING", "PLAINTEXT_PLACEHOLDER"))),
+        ("负对照:UI 删 Noise 传输说明展示必红",
+         variant(activity=act.replace("SECURE_TRANSPORT_NOTICE", "TRANSPORT_NOTICE_PLACEHOLDER"))),
+        ("负对照:UI 复活旧明文告警必红",
+         variant(activity=act + '\nval staleWarning = "当前固件明文传输 Wi-Fi 密码"')),
+        ("负对照:常量去掉 Noise 会话语义必红",
+         variant(prov=prov.replace("Noise 加密会话", "普通会话"))),
         ("负对照:connectWifi 放开 Mock 必红",
          variant(repo=break_mock_guard(repo, "connectWifi"))),
         ("负对照:写类去掉 replayable=false 必红",
@@ -253,6 +290,14 @@ def selftest(src: dict[str, str]) -> list[tuple[str, bool]]:
          variant(activity=act.replace("netScanSignature", "netScanSigUnused"))),
         ("负对照:删掉手输 EditText 必红",
          variant(activity=break_ssid_fallback(act))),
+        ("负对照:设置页删掉自动读取 SSID 必红",
+         variant(activity=act.replace("post { loadPhoneSsid(requestIfNeeded = true) }", ""))),
+        ("负对照:Manifest 删掉 SSID 所需权限必红",
+         variant(manifest=manifest.replace(
+             '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />', ""))),
+        ("负对照:SSID 读取去掉权限检查必红",
+         variant(activity=act.replace("Manifest.permission.ACCESS_FINE_LOCATION",
+                                      "Manifest.permission.ACCESS_COARSE_LOCATION"))),
     ]
 
     out: list[tuple[str, bool]] = []

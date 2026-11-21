@@ -126,7 +126,11 @@ class FakeGattLink(
         val method = o.get("method")?.asString ?: return
         methods.add(method)
         val result = when (method) {
-            Method.HELLO -> mapOf("api_version" to Wire.API_VERSION, "revision" to "fake-gatt", "serial" to "FAKE0001")
+            // 🔴 与一手固件逐字一致：kissqy v167 / DuckBuddy / ft1910 的 `HelloResult`
+            // 只有 api_version/daemon_version/revision，**没有 serial**。旧夹具曾塞
+            // `"serial" to "FAKE0001"` 配合自造的 expectedSerial 硬校验，掩盖了真机断链 bug
+            // （2026-11-21 翻案）。夹具不得比真固件"更配合"，否则又是假绿。
+            Method.HELLO -> mapOf("api_version" to Wire.API_VERSION, "revision" to "fake-gatt")
             Method.SYSTEM_AUTHENTICATE -> {
                 val pin = o.getAsJsonObject("params")?.get("pin")?.asString ?: ""
                 mapOf("authenticated" to (pin == Wire.BLE_DEFAULT_PIN), "attempts_remaining" to 3)

@@ -263,8 +263,8 @@ class MainViewModel(
     }
 
     /**
-     * 连接 Wi-Fi（net.connect，写操作，明文传输）。
-     * 🔴 调用前 UI 必须先展示 [NetProvisioning.PLAINTEXT_TRANSPORT_WARNING] 并取得用户确认；
+     * 连接 Wi-Fi（net.connect，写操作，psk 走 BLE Noise 会话）。
+     * 🔴 调用前 UI 必须先展示 [NetProvisioning.SECURE_TRANSPORT_NOTICE] 并取得用户确认；
      *    本层不重复弹窗，只负责转发。psk 不进 UiState、不进日志。
      */
     fun onConnectWifi(ssid: String, psk: String?) {

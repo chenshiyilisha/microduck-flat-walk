@@ -6,17 +6,33 @@
       `developer.android.com/guide/topics/connectivity/bluetooth/permissions` 逐条核对（2026-11-13）：
        · API31+ 的 BLUETOOTH_SCAN / BLUETOOTH_CONNECT 是 **runtime permissions**，
          必须在 Activity 里显式请求（旧代码只声明、零 requestPermissions ⇒ 一接 BLE 就 SecurityException）。
-       · 本 App 不用扫描结果推导物理位置 ⇒ 官方允许（且建议）给 SCAN 加
-         `usesPermissionFlags="neverForLocation"`，并把 ACCESS_FINE_LOCATION 限制在 maxSdkVersion=30。
-       · minSdk=26，Android 11 及以下做 BLE 扫描仍需位置权限与 legacy BLUETOOTH/ADMIN，
-         按官方片段用 maxSdkVersion=30 保留兼容，不让 API31+ 多要一个不该要的权限。
+       · 本 App **BLE 扫描**不用结果推导物理位置 ⇒ 官方允许（且建议）给 SCAN 加
+         `usesPermissionFlags="neverForLocation"`；BLE 的运行时权限集合不含位置权限。
+       · `ACCESS_FINE_LOCATION` 现为全版本声明，但只用于「读手机当前 Wi-Fi 名称」
+         （Android 10+ 系统要求，见下方 11-21 说明），不用于 BLE 扫描。
        · 不做广播 ⇒ 不声明 BLUETOOTH_ADVERTISE。
       社区独立佐证：`Ley-WL/ducklink` README「Android 12+ 允许附近设备权限；
       Android 8–11 按系统要求允许定位权限并开启定位开关，App 不读取位置」。
     -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <!--
+      API31+ 的 BLE 扫描仍走 neverForLocation 的 BLUETOOTH_SCAN/CONNECT，不靠位置。
+      2026-11-21 新增：读取**手机当前已连接 Wi-Fi 名称**填 SSID —— Android 10+ 的
+      WifiManager.getConnectionInfo()/SSID 仍需 FINE_LOCATION，Android 13 的
+      NEARBY_WIFI_DEVICES 不覆盖该读法，故本权限不能再限 maxSdkVersion=30。
+      App 只在用户授权后取网络名，不采集/上传位置。
+      一手：developer.android.com/about/versions/10/privacy/changes +
+            developer.android.com/develop/connectivity/wifi/wifi-permissions。
+    -->
+    <!--
+      lint CoarseFineLocation：Android 12+ 只要 FINE 就必须同时声明 COARSE（用户可只给 COARSE）。
+      功能上读 SSID 仍需 FINE（COARSE 不足，代码权限检查只认 FINE，不足时如实提示手填），
+      COARSE 仅为满足成对声明，不扩大实际采集面。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />

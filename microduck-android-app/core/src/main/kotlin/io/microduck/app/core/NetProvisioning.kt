@@ -5,17 +5,17 @@ import com.google.gson.JsonObject
 /**
  * Wi-Fi 配网写路径（A2：`net.connect` / `net.forget`）的请求构造与回执解析。
  *
- * ── 🔴 安全交付判定（一手，不改写成可交付）──
- * 目标固件 fanhao fork 的 `btd/src/route.rs:139-155` 逐字写明：Wi-Fi passphrase **明文跨 BLE**，
- * `--require-pairing` 默认 off，bond 是 just-works 无认证，「passphrase crosses in clear …
- * a known, accepted, pre-shipping cost … §8.1 is the blocker that has to close before a robot
- * goes to anyone」。原厂 `app-path-design.md` §8.1 把加密列为 pre-shipping blocker，三候选皆需
- * **固件端**改动（修链路层 / 应用层封密 / 会话封密）——固件端当前零应用层加解密实现，
- * App 单侧加密无法互操作。⇒ 本模块：
- *   1. 功能上完整实现配网调用（内部/台架自测可用）；
- *   2. `PLAINTEXT_TRANSPORT_WARNING` 是必须随请求展示的警示常量，UI 强制显性化；
+ * ── 安全交付判定（一手，2026-11-21 更新）──
+ * 板载 btd 已换成 Noise 会话版（sha256 db8ec7c4…，unit 加 `LoadCredentialEncrypted=ble-psk`，
+ * 刷后 journal 明写 Noise 对所有 RPC 加密认证）。`net.connect` 的 psk 仍在 params 里，
+ * 但只在 [BleTransport] 完成 Noise_NnPsk0 握手后经加密 DATA 帧发出；握手失败不发 RPC。
+ * 原厂 app-path-design.md §8.1 的历史阻塞由**固件端**关闭，App 侧不引入第二层加密
+ * （`ProvisioningCrypto.INTEROP_UNVERIFIED` 仍恒真，不能拿它冒充已互通）。
+ * ⇒ 本模块：
+ *   1. 保持完整配网调用（请求键仍严格 ssid + 可选 psk，deny_unknown_fields）；
+ *   2. `SECURE_TRANSPORT_NOTICE` 随请求展示，说明传输路径但不声称真机握手已验证；
  *   3. `psk` 永不进日志、不进数据类 toString / Debug，只在出站 JSON 里出现一次。
- * 不可把明文配网包装成「安全可交付功能」；整机落地前 ship_verdict=NOT_SHIPPABLE。
+ * ship_verdict 仍由整机活体决定，不因文案更新翻绿。
  *
  * ── 一手契约（fanhao 副本 API40，lib.rs）──
  * · `NetConnectParams{ssid, psk?}` deny_unknown_fields；psk=None 时**不写该键**（开放网络）
@@ -27,10 +27,13 @@ import com.google.gson.JsonObject
  * 纯 JVM、零 Android 依赖 ⇒ 自检真跑请求构造/解析/脱敏/负对照。
  */
 object NetProvisioning {
-    /** 必须随配网请求展示的原厂风险警示（UI 逐字显示，不可省略或软化）。 */
-    const val PLAINTEXT_TRANSPORT_WARNING =
-        "注意：当前固件经 BLE 明文传输 Wi-Fi 密码（原厂 §8.1 列为交付前阻塞项）。" +
-            "本功能仅供内部/台架自测，整机对外交付前必须完成固件端加密，切勿在公开场合输入真实密码。"
+    /**
+     * 必须随配网请求展示的传输说明（UI 逐字显示、连接前二次确认）。
+     * 只陈述板载固件已具备 Noise 会话与"握手失败不发 RPC"路径，不声称真机握手已验证。
+     */
+    const val SECURE_TRANSPORT_NOTICE =
+        "Wi-Fi 密码在本机与板子已建立的 Noise 加密会话内传输（原厂 §8.1 历史阻塞项已由固件端关闭）。" +
+            "握手成功前不会发送密码；配对码只给自己的机器人，切勿转发。"
 
     /** 连接结果：解析成不可变值，缺字段保持 null，不猜 IP。 */
     data class ConnectOutcome(

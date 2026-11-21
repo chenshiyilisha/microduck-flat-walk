@@ -40,6 +40,18 @@ import java.util.concurrent.atomic.AtomicLong
 class BleTransport(
     private val link: GattLink,
     psk: ByteArray,
+    /**
+     * 配对码里的 serial：**PSK 归属标签**，仅作诊断/日志，绝不作为 wire 上的身份校验。
+     *
+     * 🔴 2026-11-21 真机翻案（一手，别再加回硬校验）：`fc0382b` 曾在此加「hello 响应必须
+     * 回 `result.serial == expectedSerial`，否则 [markDisconnected]」——这是**自造协议**，
+     * 与固件不互操作，刷加密 btd 后 100% 断链，真机症状 `hello: BLE_REQUEST_DROPPED id=1`。
+     * 一手三份固件（kissqy v167 / DuckBuddy-main / ft1910 的 `duck-ipc-proto`）`HelloResult`
+     * **只有 api_version/daemon_version/revision，没有 serial 字段**；官方 duckctl 也从不校验
+     * hello serial。身份由 Noise NNpsk0 的 **PSK 持钥证明**承担（`secure.rs:Config::load(&path, id)`
+     * 的 id = SoC serial 派生的 first name ⇒ 每机一把 PSK，握上手即证明对端是那台机器人）。
+     * 保留此参数只为调用方兼容与诊断artifact，[dispatchLine] 不得据它拒连。
+     */
     private val expectedSerial: String? = null,
     private val requestTimeoutMs: Long = 5_000,
 ) : RobotTransport {
@@ -81,7 +93,6 @@ class BleTransport(
     private val responses = ConcurrentHashMap<Long, PendingResponse>()
     private class PendingResponse(
         val latch: CountDownLatch,
-        val expectedSerial: String?,
     ) {
         @Volatile var line: String? = null
     }
@@ -191,10 +202,7 @@ class BleTransport(
         if (plaintext.contains('\n') || plaintext.contains('\r')) {
             return Result.failure(IllegalArgumentException("BLE_MULTILINE_REQUEST"))
         }
-        val pending = PendingResponse(
-            CountDownLatch(1),
-            expectedSerial.takeIf { parseMethod(line) == "hello" },
-        )
+        val pending = PendingResponse(CountDownLatch(1))
         if (id != null) responses[id] = pending
 
         return try {
@@ -287,11 +295,8 @@ class BleTransport(
         if (id != null) {
             val p = responses.remove(id)
             if (p != null) {
-                if (p.expectedSerial != null && responseSerial(line) != p.expectedSerial) {
-                    p.latch.countDown()
-                    markDisconnected("authenticated robot serial mismatch")
-                    return
-                }
+                // 🔴 不做 hello serial 硬校验：一手 HelloResult 无 serial 字段（见构造参数注释）。
+                // 身份 = Noise PSK 持钥证明；握手完成即已认证，这里只按 id 分流。
                 p.line = line
                 p.latch.countDown()
             }
@@ -384,15 +389,6 @@ class BleTransport(
     private fun parseId(line: String): Long? = try {
         val o = JsonParser.parseString(line).asJsonObject
         if (o.has("id") && !o.get("id").isJsonNull) o.get("id").asLong else null
-    } catch (_: Exception) { null }
-
-    private fun parseMethod(line: String): String? = try {
-        JsonParser.parseString(line).asJsonObject.get("method")?.asString
-    } catch (_: Exception) { null }
-
-    private fun responseSerial(line: String): String? = try {
-        JsonParser.parseString(line).asJsonObject
-            .getAsJsonObject("result")?.get("serial")?.asString
     } catch (_: Exception) { null }
 
     private fun safeInvoke(fn: () -> Unit) { try { fn() } catch (_: Throwable) { /* 回调异常不影响其他订阅者 */ } }
