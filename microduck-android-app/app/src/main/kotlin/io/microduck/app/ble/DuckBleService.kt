@@ -52,6 +52,9 @@ class DuckBleService : Service() {
             if (heldLink === link) heldLink = null
         }
 
+        /** 只读：当前持有 link 的诊断轨迹（debug AI 通道 gatttrace/rootcause 用）；无 link 返回空。 */
+        fun heldLinkDiagnostics(): String = heldLink?.diagnostics() ?: ""
+
         /** 必须在 Activity 可见时调用（见类注释的 FGS 启动限制）。 */
         fun start(ctx: Context, deviceLabel: String) {
             val i = Intent(ctx, DuckBleService::class.java).putExtra(

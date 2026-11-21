@@ -304,7 +304,7 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             if (errorCode == BleScanCoordinator.SCAN_FAILED_ALREADY_STARTED && !retried) {
                 retried = true
                 bleAdapter?.let { BleScanCoordinator.begin(it, this) }
-                ui.postDelayed({ if (scanning) startScan(isRetry = true) }, 300L)
+                ui.postDelayed({ if (scanning) startScan(isRetry = true) }, 500L)
                 return
             }
             scanning = false

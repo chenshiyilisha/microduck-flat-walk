@@ -66,7 +66,16 @@ object AiDebugPolicy {
         "help", "status", "scan", "connect", "mock", "rpc", "disconnect",
         // 2026-11-15：只读硬件监控报告（温度/电量/通信/异常部位），不发 RPC、不改状态。
         "monitor",
+        // 2026-11-21 调试能力补齐（全部只读，不产出 PASS）：
+        //  gatttrace   = GATT 环形轨迹 + 最近建链失败原因（定位掉线/连不上）
+        //  rootcause   = 连接失败聚合诊断（会话/lastError/GATT 轨迹/板端 logs 提示）
+        //  wifidiag    = 本机 Wi-Fi SSID/定位开关/权限诊断（定位"取手机网络"读不到）
+        //  snapshot    = 会话+监控+网络+更新聚合快照，一次拿全少往返
+        "gatttrace", "rootcause", "wifidiag", "snapshot",
     )
+
+    /** `scan` 命令允许的最大扫描窗口（ms）；AI 可传 --es arg <ms> 加长以抓间歇广播。 */
+    const val SCAN_WINDOW_MAX_MS = 20_000L
 
     /**
      * `rpc` 命令允许调用的 JSON-RPC 方法：**只读白名单**。

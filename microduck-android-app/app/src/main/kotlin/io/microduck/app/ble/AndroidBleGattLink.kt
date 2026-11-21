@@ -103,6 +103,9 @@ class AndroidBleGattLink(
 
     // 🔴 诊断：GATT 操作/回调时间戳环形缓冲，定位「hello 写 BUSY」时哪个 op 仍 outstanding。
     private val gattTrace = ArrayDeque<String>()
+    /** 最近一次建链失败原因（TIMEOUT/STATUS=n/NO_CHAR），成功清空。debug 通道可读。 */
+    @Volatile private var lastConnectFailure: String = ""
+
     private fun trace(s: String) {
         val t = (System.currentTimeMillis() % 100000) / 1000.0f
         synchronized(gattTrace) {
@@ -110,6 +113,35 @@ class AndroidBleGattLink(
             while (gattTrace.size > 48) gattTrace.removeFirst()
         }
         Log.i("DuckGatt", s)
+    }
+
+    /**
+     * 建链失败收尾：先记录轨迹，再 close 当前 client 并置空（官方 close() 语义），
+     * 同时清掉在飞 latch 状态，保证下次 connect() 从干净状态开始。
+     */
+    private fun abortConnect(g: BluetoothGatt) {
+        trace("ABORT_CONNECT lastFailure=$lastConnectFailure")
+        synchronized(opLock) {
+            opLatch?.countDown()
+            opLatch = null
+            opKind = null
+        }
+        runCatching { g.close() }
+        if (this.gatt === g) this.gatt = null
+        rpcChar = null
+        connected = false
+    }
+
+    /** 只读诊断：GATT 轨迹 + 最近失败原因 + 当前状态，供 debug-only AI 通道导出。 */
+    override fun diagnostics(): String = synchronized(gattTrace) {
+        buildString {
+            append("lastConnectFailure=$lastConnectFailure")
+            append("; connected=$connected")
+            append("; negotiatedMtu=$negotiatedMtu")
+            append("; gattAlive=").append(gatt != null)
+            append("; opKind=").append(opKind ?: "none")
+            gattTrace.forEach { append("\n").append(it) }
+        }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -206,11 +238,29 @@ class AndroidBleGattLink(
         }
         gatt = g
         // 等链路建立 + 服务发现 + MTU 协商完成（以 rpcChar 就位为准，失败会置 opStatus）
-        if (!awaitConnectReady()) return Result.failure(IOException("BLE_GATT_CONNECT_TIMEOUT"))
+        // 🔴 2026-11-21 真机根因修复：以下任一失败分支都**必须 close()** 再返回 failure。
+        // 官方 BluetoothGatt.close()：「Application should call this method as early as possible
+        // after it is done with this GATT client」。原实现只 return failure 不 close，栈内旧
+        // client 仍占着该 device；会话层随即按指数退避重连又 connectGatt() 新建 client，
+        // 多个 client 叠加 → 后续连接全部失败（真机 logcat 十几次重复 connect、掉线连不上）。
+        // 断链回调路径（onConnectionStateChange→DISCONNECTED）本就有 g.close()，唯独建链失败
+        // 路径漏了，这里补齐；gatt 置 null 保证下次 connect 干净建链。
+        if (!awaitConnectReady()) {
+            lastConnectFailure = "TIMEOUT"
+            abortConnect(g)
+            return Result.failure(IOException("BLE_GATT_CONNECT_TIMEOUT"))
+        }
         if (opStatus != BluetoothGatt.GATT_SUCCESS || rpcChar == null) {
+            lastConnectFailure = "STATUS=$opStatus"
+            abortConnect(g)
             return Result.failure(IOException("BLE_GATT_CONNECT_STATUS=$opStatus"))
         }
-        if (rpcChar == null) return Result.failure(IOException("BLE_GATT_RPC_CHAR_MISSING"))
+        if (rpcChar == null) {
+            lastConnectFailure = "NO_CHAR"
+            abortConnect(g)
+            return Result.failure(IOException("BLE_GATT_RPC_CHAR_MISSING"))
+        }
+        lastConnectFailure = ""
         connected = true
         Result.success(negotiatedMtu)
     } catch (e: SecurityException) {

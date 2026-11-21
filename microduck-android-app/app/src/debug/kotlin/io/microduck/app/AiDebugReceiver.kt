@@ -9,6 +9,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.Manifest
+import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Log
 import com.google.gson.Gson
@@ -115,12 +120,16 @@ class AiDebugReceiver : BroadcastReceiver() {
         when (c.cmd) {
             "help" -> doHelp(o)
             "status" -> doStatus(o)
-            "scan" -> doScan(ctx, o)
+            "scan" -> doScan(ctx, o, c.arg)
             "connect" -> doConnect(ctx, c, c.arg)
             "mock" -> doMock(c)
             "rpc" -> doRpc(c, c.method, c.paramsJson)
             "disconnect" -> doDisconnect(o)
             "monitor" -> doMonitor(o)
+            "gatttrace" -> doGattTrace(o)
+            "rootcause" -> doRootCause(o)
+            "wifidiag" -> doWifiDiag(ctx, o)
+            "snapshot" -> doSnapshot(ctx, c)
             else -> { o.fail("UNREACHABLE_BRANCH"); emit(o) }
         }
     }
@@ -133,9 +142,11 @@ class AiDebugReceiver : BroadcastReceiver() {
         o.add("forbidden_methods", gson.toJsonTree(AiDebugPolicy.FORBIDDEN_METHODS.toList()))
         o.addProperty("component", AiDebugPolicy.COMPONENT)
         o.addProperty("tag", AiDebugPolicy.TAG)
-        o.addProperty("usage", "adb shell am broadcast -f 32 -n ${AiDebugPolicy.COMPONENT} " +
-            "--es rid <id> --es cmd <cmd> [--es arg <MAC>] [--es method <method>]")
-        o.addProperty("note", "release 不含本组件；本通道只回观测值，不写 PASS")
+        o.addProperty("usage", "adb shell am broadcast -n ${AiDebugPolicy.COMPONENT} " +
+            "--es rid <id> --es cmd <cmd> [--es arg <MAC|窗口ms>] [--es method <method>] " +
+            "[--es params_json <JSON>]")
+        o.addProperty("scan_window_tip", "scan 可传 --es arg <ms>（≤${AiDebugPolicy.SCAN_WINDOW_MAX_MS}）加长抓间歇广播")
+        o.addProperty("note", "release 不含本组件；本通道只回观测值，不写 PASS；App 前台时广播最稳")
         emit(o)
     }
 
@@ -192,6 +203,147 @@ class AiDebugReceiver : BroadcastReceiver() {
     }
 
     /**
+     * GATT 环形轨迹（只读）。直读当前持有 link 的 diagnostics()，无需发 RPC、不改状态。
+     * 定位「连不上/掉线」：看 lastConnectFailure（TIMEOUT/STATUS=n/NO_CHAR）与 RELEASE/STRAY 时间线。
+     */
+    private fun doGattTrace(o: JsonObject) {
+        val diag = io.microduck.app.ble.DuckBleService.heldLinkDiagnostics()
+        if (diag.isEmpty()) {
+            o.addProperty("gatt_trace", "")
+            o.addProperty("note", "当前无持有中的 GATT link；先跑 connect，或链路已 close")
+        } else {
+            o.addProperty("gatt_trace", clip(diag, AiDebugPolicy.MAX_RESULT_CHARS - 400))
+        }
+        o.addProperty("session_state", SessionHolder.sessionState())
+        o.addProperty("link_status", clip(SessionHolder.linkStatus, 200))
+        o.addProperty("next", "轨迹是观测时间线，不产出 PASS；判据仍走 board_acceptance 链")
+        emit(o)
+    }
+
+    /**
+     * 连接失败聚合诊断（只读）：把会话态、lastConnectError、GATT 轨迹、板端可读日志入口
+     * 一次摆齐。AI 不用再横跳多条命令猜「是 GATT 超时、握手失败、还是权限」。
+     */
+    private fun doRootCause(o: JsonObject) {
+        val s = SessionHolder.session
+        o.addProperty("session_state", SessionHolder.sessionState())
+        o.addProperty("transport_kind", SessionHolder.kind)
+        o.addProperty("note", clip(SessionHolder.note, 240))
+        o.addProperty("link_status", clip(SessionHolder.linkStatus, 240))
+        o.addProperty("connect_error", clip(SessionHolder.connectError, 200))
+        o.addProperty("last_connect_error", clip(s?.lastConnectError, 240))
+        o.putNullable("peer_api_version", SessionHolder.peerApiVersion)
+        o.addProperty("app_api_version", Wire.API_VERSION)
+        o.addProperty("gatt_trace", clip(
+            io.microduck.app.ble.DuckBleService.heldLinkDiagnostics(),
+            AiDebugPolicy.MAX_RESULT_CHARS - 700))
+        o.addProperty("board_logs_hint",
+            "板侧连接/握手日志：rpc --method system.logs --params_json {\"unit\":\"btd.service\",\"lines\":80}" +
+            "（只读；需先连真板。unit 仅接受固定白名单）")
+        o.addProperty("verdict", when {
+            SessionHolder.sessionState() == "READY" -> "LINK_READY"
+            SessionHolder.connectError.isNotEmpty() -> "CONNECT_ERROR_OBSERVED"
+            s?.lastConnectError?.isNotEmpty() == true -> "LAST_ERROR_OBSERVED"
+            SessionHolder.sessionState() == "NONE" -> "NO_SESSION"
+            else -> "INCONCLUSIVE_OBSERVED"
+        })
+        o.addProperty("next", "rootcause 只汇聚观测值；真机 PASS 走 board_acceptance 证据链")
+        emit(o)
+    }
+
+    /**
+     * 本机 Wi-Fi SSID/定位/权限诊断（只读）。复刻设置页 loadPhoneSsid 的两条读取路径，
+     * 但 AI 可直接调用、不依赖 UI 坐标。定位「取手机网络读不到」：
+     * Android 10+ getConnectionInfo 需 FINE_LOCATION；Android 9+ 还需定位开关打开。
+     */
+    @SuppressLint("MissingPermission")
+    private fun doWifiDiag(ctx: Context, o: JsonObject) {
+        val fine = Manifest.permission.ACCESS_FINE_LOCATION
+        val coarse = Manifest.permission.ACCESS_COARSE_LOCATION
+        val fineGranted = ctx.checkSelfPermission(fine) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ctx.checkSelfPermission(coarse) == PackageManager.PERMISSION_GRANTED
+        val locMgr = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        // isLocationEnabled 是 API 28+；低版本该字段未知（不影响 SSID 读取本身，如实回 null）。
+        val locEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try { locMgr?.isLocationEnabled } catch (_: Throwable) { null }
+        } else null
+        val ssid = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val cm = ctx.getSystemService(ConnectivityManager::class.java)
+                val t = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it)?.transportInfo }
+                (t as? WifiInfo)?.ssid
+            } else null
+        } catch (_: Throwable) { null }
+            ?: try {
+                @Suppress("DEPRECATION")
+                ctx.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
+            } catch (_: SecurityException) { null }
+            catch (_: Throwable) { null }
+        o.addProperty("fine_location_granted", fineGranted)
+        o.addProperty("coarse_location_granted", coarseGranted)
+        o.putNullable("location_service_enabled", locEnabled)
+        o.putNullable("connected_ssid", ssid?.trim()?.trim('"')?.ifEmpty { null })
+        o.addProperty("verdict", when {
+            ssid.isNullOrBlank() && !fineGranted -> "PERMISSION_MISSING"
+            ssid.isNullOrBlank() && locEnabled == false -> "LOCATION_OFF"
+            ssid.isNullOrBlank() -> "UNKNOWN_SSID_OBSERVED"
+            else -> "SSID_OBSERVED"
+        })
+        o.addProperty("note", "只读本机网络名，不采集位置、不上传；MOCK 无关本机读取")
+        emit(o)
+    }
+
+    /**
+     * 聚合快照（只读）：session + monitor + 网络/更新只读 RPC 结果一次拿全，减少 AI 往返。
+     * 单次 goAsync 预算有限，RPC 逐条有界（各 6 s），失败逐条记录不中断整体。
+     */
+    private fun doSnapshot(ctx: Context, c: Command) {
+        val o = base(c)
+        // session 段（与 doStatus 同源字段，取子集避免超长）
+        val s = SessionHolder.session
+        val sess = JsonObject()
+        sess.addProperty("state", SessionHolder.sessionState())
+        sess.addProperty("kind", SessionHolder.kind)
+        sess.addProperty("note", clip(SessionHolder.note, 160))
+        sess.addProperty("last_connect_error", clip(s?.lastConnectError, 200))
+        sess.putNullable("peer_api_version", SessionHolder.peerApiVersion)
+        sess.addProperty("state_frame_count", SessionHolder.stateFrameCount)
+        o.add("session", sess)
+        // monitor 段
+        val mr = SessionHolder.monitorReport()
+        o.add("monitor", mr.toJson())
+        // 本机 Wi-Fi 段（复用 doWifiDiag 的观测，但内联取关键字段）
+        val fineGranted = ctx.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        o.addProperty("wifi_fine_granted", fineGranted)
+        // 只读 RPC 段：仅板端可达时有意义；MOCK 下会拿到夹具值，明确标注来源。
+        val rpcResults = JsonObject()
+        val s2 = SessionHolder.session
+        if (s2 != null) {
+            for (m in listOf("system.info", "robot.health", "net.status", "update.status")) {
+                if (!AiDebugPolicy.isRpcAllowed(m)) continue
+                val task = FutureTask { s2.call(m, emptyMap()) }
+                Thread(task, "microduck-snap-${m.replace('.', '-')}").apply { isDaemon = true }.start()
+                val text = try {
+                    val r = task.get(6, TimeUnit.SECONDS)
+                    if (r.isSuccess) clip(r.getOrNull()?.toString(), 500) else "ERR:" + clip(r.exceptionOrNull()?.message, 120)
+                } catch (_: TimeoutException) {
+                    task.cancel(true); "TIMEOUT"
+                } catch (t: Throwable) {
+                    "EXC:" + t.javaClass.simpleName
+                }
+                rpcResults.addProperty(m, text)
+            }
+        } else {
+            rpcResults.addProperty("note", "无 session；先跑 mock 或 connect")
+        }
+        o.add("board_rpc", rpcResults)
+        o.addProperty("source", if (SessionHolder.kind.equals("MOCK", true)) "MOCK_NOT_HARDWARE" else "SESSION")
+        o.addProperty("next", "聚合快照只回报观测值；任一字段都不能单独当 PASS")
+        emit(o)
+    }
+
+    /**
      * 有界 BLE 扫描。沿用设置页的**无硬件 UUID 过滤 + 软件判别**（Pollen 原厂
      * `app-path-design.md` §3.3：bonded peripheral 常以空 service list 广播，硬件过滤会漏）。
      *
@@ -200,7 +352,17 @@ class AiDebugReceiver : BroadcastReceiver() {
      * 「接收方听不听得懂 / 蓝牙开没开 / 权限有没有 / 扫描器拿没拿到」，再谈设备。
      */
     @SuppressLint("MissingPermission")
-    private fun doScan(ctx: Context, o: JsonObject) {
+    private fun doScan(ctx: Context, o: JsonObject, arg: String?) {
+        // 可选：--es arg <窗口ms> 加长扫描以抓间歇广播；有界 ≤ SCAN_WINDOW_MAX_MS，不无限等。
+        val windowMs = if (arg.isNullOrBlank()) AiDebugPolicy.SCAN_WINDOW_MS else {
+            val parsed = arg.toLongOrNull()
+            if (parsed == null || parsed <= 0 || parsed > AiDebugPolicy.SCAN_WINDOW_MAX_MS) {
+                o.fail("INVALID_ARGUMENT",
+                    "arg 留空用默认 ${AiDebugPolicy.SCAN_WINDOW_MS}ms，或传 1..${AiDebugPolicy.SCAN_WINDOW_MAX_MS} 的窗口毫秒")
+                emit(o); return
+            }
+            parsed
+        }
         if (!ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
             o.fail("PRECONDITION_FAIL: NO_BLE_FEATURE", "本机无 BLE 硬件"); emit(o); return
         }
@@ -274,12 +436,12 @@ class AiDebugReceiver : BroadcastReceiver() {
             o.fail("SCAN_START_FAILED: ${t.javaClass.simpleName}: ${clip(t.message, 160)}")
             emit(o); return
         }
-        stop.await(AiDebugPolicy.SCAN_WINDOW_MS, TimeUnit.MILLISECONDS)
+        stop.await(windowMs, TimeUnit.MILLISECONDS)
         io.microduck.app.ble.BleScanCoordinator.end(cb)
 
         val snapshot = synchronized(found) { found.values.toList() }
         val candidates = snapshot.count { it.get("matched_by")?.asString != "附近设备" }
-        o.addProperty("window_ms", AiDebugPolicy.SCAN_WINDOW_MS)
+        o.addProperty("window_ms", windowMs)
         o.addProperty("broadcasts", broadcasts.get())
         o.addProperty("devices_seen", snapshot.size)
         o.addProperty("candidates", candidates)

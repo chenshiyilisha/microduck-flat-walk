@@ -1468,8 +1468,10 @@ object CoreSelfTest {
         check("负对照:运动方法名冒充命令被拒", !p.isCommandAllowed(Method.ROBOT_MOVE))
         // 不写死「N 个」：登记清单是权威，新增命令必须同步进这张清单，否则判红。
         // 2026-11-15 新增只读 monitor（硬件监控报告），旧断言写死 7 个曾误报。
+        // 2026-11-21 新增四个只读调试命令（诊断/Wi-Fi/聚合），同步登记于此。
         val expectedCommands = setOf(
             "help", "status", "scan", "connect", "mock", "rpc", "disconnect", "monitor",
+            "gatttrace", "rootcause", "wifidiag", "snapshot",
         )
         check("命令集与登记清单完全一致（新增命令须同步登记）",
             p.COMMANDS == expectedCommands) { p.COMMANDS.toString() }

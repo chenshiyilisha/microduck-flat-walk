@@ -185,6 +185,11 @@ def evaluate(src: dict) -> list[str]:
     calls = qualified_calls(r, "AiDebugPolicy")
     need("isCommandAllowed" in calls, "Receiver 没有真的调用 AiDebugPolicy.isCommandAllowed")
     need("isRpcAllowed" in calls, "Receiver 没有真的调用 AiDebugPolicy.isRpcAllowed")
+    # 🔴 2026-11-21：doRpc 是写操作/只读判定的核心防线，必须**在函数体内**校验。
+    # 新增 doSnapshot 也调用 isRpcAllowed 后，"全文件含 isRpcAllowed" 会掩盖 doRpc 被改坏的假绿。
+    rpc_fn = re.search(r"private fun doRpc\([^)]*\)\s*\{(.*?)\n    \}", r, re.S)
+    need(bool(rpc_fn) and "AiDebugPolicy.isRpcAllowed" in rpc_fn.group(1),
+         "doRpc 函数体内缺 isRpcAllowed（只读方法白名单校验被绕过）")
     need(bool(re.findall(r'Log\.i\(\s*AiDebugPolicy\.TAG', r)),
          "Receiver 没有往固定 TAG 写单行 JSON 结果")
     need(bool(re.findall(r'\bgoAsync\s*\(', r)), "Receiver 未用 goAsync，阻塞式命令会卡主线程")
@@ -256,9 +261,12 @@ def selftest(src: dict) -> list[tuple[str, bool]]:
         ("main manifest 混入调试组件必红",
          lambda s: {**s, "main_manifest": s["main_manifest"].replace(
              '<application', '<receiver android:name=".AiDebugReceiver" android:exported="true" />\n    <application')}),
-        ("Receiver 去掉 isRpcAllowed 必红",
+        ("Receiver 去掉所有 isRpcAllowed 必红",
+         lambda s: {**s, "receiver": re.sub(
+             r"AiDebugPolicy\.isRpcAllowed\([^)]*\)", "true", s["receiver"])}),
+        ("单独改坏 doRpc 内的 isRpcAllowed 必红",
          lambda s: {**s, "receiver": s["receiver"].replace(
-             "AiDebugPolicy.isRpcAllowed(method)", "true")}),
+             "if (!AiDebugPolicy.isRpcAllowed(method))", "if (false)", 1)}),
         ("Receiver 去掉 pending.finish 必红",
          lambda s: {**s, "receiver": s["receiver"].replace("pending.finish()", "/* removed */")}),
         ("白名单混入 robot.move 必红",

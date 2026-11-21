@@ -18,6 +18,14 @@ import android.bluetooth.le.ScanCallback
  *   · 调用方在收到 code=1 时做一次有界重试（等系统侧异步收敛）；
  *   · 不把 code=1 误报成硬件/权限故障。
  *
+ * 一手/社区实证的 stopScan 语义（决定本实现不能用「同一 callback 就跳过 stop」）：
+ *   · stopScan 是**异步**的，挂起的扫描结果会继续投递一段时间（需 flush/等待收敛），
+ *     因此 stop 之后立刻 start 仍可能拿到 code=1；重试前留 500ms 收敛间隔。
+ *   · 必须用**同一个 ScanCallback 实例**做 stop/start：传不同 instance 不会移除旧 callback
+ *     的注册，反而导致旧回调继续收到结果。设置页用单例 scanCallback 正是为此。
+ *   · Android 7.0+ 限制「每 30 秒最多 5 次 start/stop」，反复重试会触发 code=6
+ *     (SCAN_FAILED_SCANNING_TOO_FREQUENTLY)，所以重试必须**有界一次**，不可循环。
+ *
  * 这是 App 内协调，不声称能接管系统其他进程的扫描；那种情况由失败码文案如实提示。
  */
 object BleScanCoordinator {
@@ -32,7 +40,10 @@ object BleScanCoordinator {
     @Synchronized
     fun begin(adapter: BluetoothAdapter, cb: ScanCallback) {
         val prev = current
-        if (prev === cb) return
+        // 🔴 真机复现（2026-11-21）：设置页用的是单例 scanCallback，code=1 重试/连点时，
+        // 系统侧旧扫描正是这个 cb 在跑。若因 prev === cb 提前 return，本次 start 前就
+        // 一次 stopScan 都没做 → 再 start 同一个 cb 必然再次 code=1（重试永远失败）。
+        // 所以即使同一 callback，也必须先真正 stop，让系统侧释放后再 start。
         if (prev != null) {
             runCatching { adapter.bluetoothLeScanner?.stopScan(prev) }
             current = null

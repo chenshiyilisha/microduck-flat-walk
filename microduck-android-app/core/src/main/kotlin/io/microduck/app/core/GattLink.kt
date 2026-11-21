@@ -72,4 +72,11 @@ interface GattLink {
 
     /** 当前是否连着。 */
     fun isConnected(): Boolean
+
+    /**
+     * 诊断轨迹（可选，默认空）：实现方可返回最近 N 条 GATT 操作/回调时间线，供 debug-only
+     * AI 调试通道 `gatttrace` 读取。放默认实现是为了不破坏 FakeGattLink/SerialGattLink/测试探针；
+     * 只有真机 [AndroidBleGattLink] 覆盖它。**只读观测，不产出 PASS**。
+     */
+    fun diagnostics(): String = ""
 }

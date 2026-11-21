@@ -57,6 +57,10 @@ def check(srcs: dict[str, str]) -> list[str]:
     # ② 协调器必须能停旧扫描 + 解释失败码
     if "stopScan(prev)" not in coord or "current = cb" not in coord:
         errs.append("协调器 begin() 未真正持有/停止旧 callback")
+    # 🔴 真机回归：begin() 不得因 prev===cb 提前 return。设置页用单例 scanCallback，
+    # 若同一 callback 跳过 stop，则 code=1 重试/连点时系统侧旧扫描没停 → 必然再次 code=1。
+    if re.search(r"if\s*\(\s*prev\s*===\s*cb\s*\)\s*return", coord):
+        errs.append("协调器 begin() 因 prev===cb 提前 return：单例 callback 重试将永不再 stop，必然 code=1")
     if "fun explain(errorCode: Int)" not in coord or "ALREADY_STARTED" not in coord:
         errs.append("协调器缺失败码解释（code=1 不得再误导成蓝牙/定位开关）")
 
@@ -92,6 +96,8 @@ def meta_negative_control() -> list[str]:
         ("改坏:常量改成2", {"coord": base["coord"].replace(
             "SCAN_FAILED_ALREADY_STARTED: Int = 1", "SCAN_FAILED_ALREADY_STARTED: Int = 2")}),
         ("改坏:协调器不停旧扫描", {"coord": base["coord"].replace("stopScan(prev)", "stopScan(bogus)")}),
+        ("改坏:同一callback跳过stop(真机code=1根因)", {"coord": base["coord"].replace(
+            "        val prev = current\n", "        val prev = current\n        if (prev === cb) return\n", 1)}),
         ("改坏:设置页绕过互斥", {"panel": base["panel"].replace(
             "BleScanCoordinator.begin(adapter, scanCallback)", "")}),
         ("改坏:设置页去掉重试", {"panel": base["panel"].replace(
@@ -115,7 +121,7 @@ def main() -> int:
     for e in errs:
         print("ERROR:", e)
     if a.selftest:
-        trials = 5
+        trials = 6
         print(f"SELFTEST: {trials - len(errs)}/{trials} passed")
     print(f"RESULT: {len(errs)} errors")
     return 1 if errs else 0
