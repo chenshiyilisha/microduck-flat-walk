@@ -245,20 +245,33 @@ class AndroidBleGattLink(
         // 多个 client 叠加 → 后续连接全部失败（真机 logcat 十几次重复 connect、掉线连不上）。
         // 断链回调路径（onConnectionStateChange→DISCONNECTED）本就有 g.close()，唯独建链失败
         // 路径漏了，这里补齐；gatt 置 null 保证下次 connect 干净建链。
+        // 🔴 失败原因必须**基于 opStatus 精确分类**，三个标签都要可达（gatttrace/rootcause 靠它定位）：
+        //  awaitConnectReady() 只在 rpcChar 就位时返回 true；否则无论「缺 characteristic / GATT 状态错误 /
+        //  真超时」都返回 false。旧实现把 false 一律记成 "TIMEOUT"，于是：
+        //   · onServicesDiscovered 找不到 RPC char 明明置了 GATT_LOCAL_NO_CHARACTERISTIC(-1001)，
+        //     却被报成 TIMEOUT，排查者看不出是「找不到 characteristic」；
+        //   · 真正的 GATT 状态错误（如 status=133）同样被报成 TIMEOUT。
+        //  三大类现在按 opStatus 分流，close 语义不变（每条失败都 abortConnect）。
         if (!awaitConnectReady()) {
-            lastConnectFailure = "TIMEOUT"
-            abortConnect(g)
-            return Result.failure(IOException("BLE_GATT_CONNECT_TIMEOUT"))
-        }
-        if (opStatus != BluetoothGatt.GATT_SUCCESS || rpcChar == null) {
-            lastConnectFailure = "STATUS=$opStatus"
-            abortConnect(g)
-            return Result.failure(IOException("BLE_GATT_CONNECT_STATUS=$opStatus"))
-        }
-        if (rpcChar == null) {
-            lastConnectFailure = "NO_CHAR"
-            abortConnect(g)
-            return Result.failure(IOException("BLE_GATT_RPC_CHAR_MISSING"))
+            when (opStatus) {
+                GATT_LOCAL_NO_CHARACTERISTIC -> {
+                    lastConnectFailure = "NO_CHAR"
+                    abortConnect(g)
+                    return Result.failure(IOException("BLE_GATT_RPC_CHAR_MISSING"))
+                }
+                BluetoothGatt.GATT_SUCCESS -> {
+                    // opStatus 仍是 SUCCESS 却没就绪 = 真超时（回调一直没来）。
+                    lastConnectFailure = "TIMEOUT"
+                    abortConnect(g)
+                    return Result.failure(IOException("BLE_GATT_CONNECT_TIMEOUT"))
+                }
+                else -> {
+                    // 其它非零 GATT 状态（如 133）单独标记，不与超时混淆。
+                    lastConnectFailure = "STATUS=$opStatus"
+                    abortConnect(g)
+                    return Result.failure(IOException("BLE_GATT_CONNECT_STATUS=$opStatus"))
+                }
+            }
         }
         lastConnectFailure = ""
         connected = true

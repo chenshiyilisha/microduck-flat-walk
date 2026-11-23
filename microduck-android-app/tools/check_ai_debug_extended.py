@@ -124,16 +124,47 @@ def check(srcs: dict[str, str]) -> list[str]:
     else:
         errs.append("FORBIDDEN/READ_ONLY 方法集提取失败")
 
+    # ⑦ snapshot 方法子集：单一权威在 policy，元素必须是 Method 常量（不是裸字符串），
+    #    且 ⊆ READ_ONLY_METHODS、∩ FORBIDDEN_METHODS=∅。防止 snapshot 用写方法/已放开方法。
+    sm = re.search(r"val SNAPSHOT_METHODS\s*:\s*List<String>\s*=\s*listOf\((.*?)\)", policy, re.S)
+    if not sm:
+        errs.append("AiDebugPolicy 缺 SNAPSHOT_METHODS 单一权威（snapshot 方法名散落会漂移）")
+    else:
+        snap_block = sm.group(1)
+        snap = set(re.findall(r"Method\.(\w+)", snap_block))
+        bare = re.findall(r'"([a-z.]+\.[a-z.]+)"', snap_block)
+        if bare:
+            errs.append(f"SNAPSHOT_METHODS 含裸字符串方法名（应走 Method 常量）：{bare}")
+        if not snap:
+            errs.append("SNAPSHOT_METHODS 提取不到任何 Method 常量")
+        if fm and rm:
+            if snap & forbidden:
+                errs.append(f"SNAPSHOT_METHODS 混入禁止方法：{sorted(snap & forbidden)}")
+            if not snap <= allowed:
+                errs.append(f"SNAPSHOT_METHODS 不在只读白名单内：{sorted(snap - allowed)}")
+    # Receiver 的 snapshot 实现必须消费该权威，不得自己写死方法名列表。
+    dm2 = re.search(r"private fun doSnapshot\([^)]*\)\s*\{(.*?)\n    \}", receiver, re.S)
+    snap_body = dm2.group(1) if dm2 else ""
+    if "AiDebugPolicy.SNAPSHOT_METHODS" not in snap_body:
+        errs.append("doSnapshot 未用 AiDebugPolicy.SNAPSHOT_METHODS（硬编码方法名会漂移）")
+    if re.search(r'listOf\("system\.info"', snap_body):
+        errs.append("doSnapshot 仍有硬编码方法名字符串列表")
+
+    # ⑧ rootcause 不得臆造「unit 白名单」约束（一手 LogsParams 只约束键名 deny_unknown_fields）。
+    #    在 doRootCause 函数体内检查，不扫全文注释。
+    dm3 = re.search(r"private fun doRootCause\([^)]*\)\s*\{(.*?)\n    \}", receiver, re.S)
+    rc_body = dm3.group(1) if dm3 else ""
+    if "unit 仅接受固定白名单" in rc_body:
+        errs.append("doRootCause 仍输出无一手依据的「unit 固定白名单」提示（误导 AI）")
+    if "board_logs_hint" not in rc_body or "system.services" not in rc_body:
+        errs.append("doRootCause 缺 board_logs_hint 或 unit 来源指引（system.services）")
+
     return errs
 
 
-def meta_negative_control() -> list[str]:
-    base = load()
-    errs: list[str] = []
-    if check(base):
-        errs.append("元验证前置失败：正常源码下门禁就不 OK")
-        return errs
-    trials = [
+def _trial_patches(base: dict[str, str]) -> list[tuple[str, dict[str, str]]]:
+    """负对照单一权威：每项只改坏一条判据，必须让 check() 变红。"""
+    return [
         ("改坏:白名单去掉 snapshot", {"policy": base["policy"].replace(
             '"gatttrace", "rootcause", "wifidiag", "snapshot",',
             '"gatttrace", "rootcause", "wifidiag",')}),
@@ -153,8 +184,31 @@ def meta_negative_control() -> list[str]:
             "parsed > AiDebugPolicy.SCAN_WINDOW_MAX_MS", "parsed > 20000", 1)}),
         ("改坏:只读白名单混入写方法", {"policy": base["policy"].replace(
             "Method.SYSTEM_INFO,", "Method.SYSTEM_INFO,\n        Method.ROBOT_MOVE,", 1)}),
+        ("改坏:snapshot 子集混入写方法", {"policy": base["policy"].replace(
+            "Method.SYSTEM_INFO,\n        Method.ROBOT_HEALTH,",
+            "Method.ROBOT_MOVE,\n        Method.ROBOT_HEALTH,", 1)}),
+        ("改坏:snapshot 子集用裸字符串", {"policy": base["policy"].replace(
+            "Method.SYSTEM_INFO,\n        Method.ROBOT_HEALTH,",
+            '"system.info",\n        Method.ROBOT_HEALTH,', 1)}),
+        ("改坏:doSnapshot 硬编码方法名", {"receiver": base["receiver"].replace(
+            "for (m in AiDebugPolicy.SNAPSHOT_METHODS)",
+            'for (m in listOf("system.info", "robot.health"))', 1)}),
+        ("改坏:rootcause 恢复臆造 unit 白名单", {"receiver": base["receiver"].replace(
+            "unit 填 system.services 回报的真实 systemd 单元名，无白名单",
+            "unit 仅接受固定白名单")}),
     ]
-    for label, patch in trials:
+
+
+TRIALS = _trial_patches
+
+
+def meta_negative_control() -> list[str]:
+    base = load()
+    errs: list[str] = []
+    if check(base):
+        errs.append("元验证前置失败：正常源码下门禁就不 OK")
+        return errs
+    for label, patch in _trial_patches(base):
         srcs = dict(base)
         srcs.update(patch)
         if not check(srcs):
@@ -170,7 +224,7 @@ def main() -> int:
     for e in errs:
         print("ERROR:", e)
     if a.selftest:
-        trials = 9
+        trials = len(TRIALS(load()))
         print(f"SELFTEST: {trials - len(errs)}/{trials} passed")
     print(f"RESULT: {len(errs)} errors")
     return 1 if errs else 0

@@ -88,7 +88,6 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     private var statusText: TextView? = null
     private var listCol: LinearLayout? = null
     private var scanButton: MaterialButton? = null
-    private var bleAdapter: BluetoothAdapter? = null
     private var retried = false
 
     /** 配对码扫码只回传 QR 原始字符串；解析/保存仍由 [handlePairingIntent] 独占。 */
@@ -298,7 +297,6 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
     private fun startScan(isRetry: Boolean = false) {
         val mgr = activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter = mgr?.adapter
-        bleAdapter = adapter
         retried = isRetry
         if (adapter == null || !adapter.isEnabled) {
             setStatus("⚠ 蓝牙未开启")
@@ -324,10 +322,14 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
             BleScanCoordinator.begin(adapter, scanCallback)
             scanner.startScan(null, settings, scanCallback)
         } catch (e: SecurityException) {
+            // begin 已把本 callback 登记为 active；start 失败必须归还，否则残留 current
+            // 会让下次 begin stop 一个僵尸扫描、并占用进程唯一闸位。
+            BleScanCoordinator.end(scanCallback)
             scanning = false
             setStatus("⚠ 权限被撤销，请重新授权")
             return
         } catch (e: Exception) {
+            BleScanCoordinator.end(scanCallback)
             scanning = false
             setStatus("⚠ 扫描启动失败：${e.message}")
             return
@@ -366,10 +368,15 @@ class BleConnectPanel(private val activity: AppCompatActivity) {
         }
 
         override fun onScanFailed(errorCode: Int) {
-            // code=1 只有一次有界重试：等系统侧 stop 收敛后重启；再失败就如实报码。
+            // code=1 只有一次有界重试。🔴 真机时序修正（2026-11-23）：
+            // 旧写法重试前调 begin(it, this) —— 它 stop 旧扫描后又把 current 设回自己；
+            // 500ms 后的 startScan 里**再 begin 一次**，紧贴 start 又 stop 了一遍，
+            // 把系统侧异步收敛间隔吃掉 → 再次 code=1；同时 30s 内多次 start/stop 撞 code=6。
+            // 现在重试路径只 `stop`（停+归还闸位，不重新登记），让 500ms 空窗真正用于收敛；
+            // startScan 里的 begin 见到 current=null 就只登记、不再 stop。
             if (errorCode == BleScanCoordinator.SCAN_FAILED_ALREADY_STARTED && !retried) {
                 retried = true
-                bleAdapter?.let { BleScanCoordinator.begin(it, this) }
+                BleScanCoordinator.stop(this)
                 ui.postDelayed({ if (scanning) startScan(isRetry = true) }, 500L)
                 return
             }

@@ -35,6 +35,13 @@ object BleScanCoordinator {
 
     @Volatile
     private var current: ScanCallback? = null
+    /**
+     * begin 时实际使用的 adapter。🔴 end() 必须用它，不能用 [BluetoothAdapter.getDefaultAdapter()]：
+     * 多卡/双 SIM 设备上默认卡未必是 begin 的那张，stop 错 adapter 会让旧扫描残留 → 下次必然 code=1。
+     * 单一权威：一次扫描的 start/stop 必须落在同一个 adapter 实例上。
+     */
+    @Volatile
+    private var activeAdapter: BluetoothAdapter? = null
 
     @SuppressLint("MissingPermission")
     @Synchronized
@@ -49,17 +56,30 @@ object BleScanCoordinator {
             current = null
         }
         // 不在这里自动重试：调用方必须亲自收到 onScanFailed(code=1) 才能确认收敛完成。
+        activeAdapter = adapter
         current = cb
+    }
+
+    /**
+     * 只停当前扫描、**不立即重启**。供 code=1 重试路径用：先 stop，等系统侧异步收敛
+     * （500ms），再由调用方 startScan。与 [begin] 分开是为了不在 start 前夹第二次 stop
+     * —— 那会吃掉收敛间隔，且 30s 内多次 start/stop 会撞 SCAN_FAILED_SCANNING_TOO_FREQUENTLY(6)。
+     */
+    @SuppressLint("MissingPermission")
+    @Synchronized
+    fun stop(cb: ScanCallback) {
+        if (current !== cb) return
+        runCatching { activeAdapter?.bluetoothLeScanner?.stopScan(cb) }
+        current = null
     }
 
     @SuppressLint("MissingPermission")
     @Synchronized
     fun end(cb: ScanCallback) {
         if (current !== cb) return
-        runCatching {
-            BluetoothAdapter.getDefaultAdapter()?.bluetoothLeScanner?.stopScan(cb)
-        }
+        runCatching { activeAdapter?.bluetoothLeScanner?.stopScan(cb) }
         current = null
+        activeAdapter = null
     }
 
     /** 失败码 → 可恢复动作文案；未知码保留原码，不假装知道原因。 */

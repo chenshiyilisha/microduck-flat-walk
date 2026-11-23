@@ -237,9 +237,13 @@ class AiDebugReceiver : BroadcastReceiver() {
         o.addProperty("gatt_trace", clip(
             io.microduck.app.ble.DuckBleService.heldLinkDiagnostics(),
             AiDebugPolicy.MAX_RESULT_CHARS - 700))
+        // unit 是 systemd 单元名（上游真实存在 btd.service / robotd.service），但一手
+        // LogsParams{unit,lines,boot} 只约束**键名**（deny_unknown_fields），没有「unit 固定
+        // 白名单」这种约束 —— 旧提示是臆造的，会误导 AI 以为只能传那两个值。如实给出可用 unit
+        // 来源（system.services 回报的真实单元名），不编造限制。
         o.addProperty("board_logs_hint",
             "板侧连接/握手日志：rpc --method system.logs --params_json {\"unit\":\"btd.service\",\"lines\":80}" +
-            "（只读；需先连真板。unit 仅接受固定白名单）")
+            "（只读；需先连真板。unit 填 system.services 回报的真实 systemd 单元名，无白名单）")
         o.addProperty("verdict", when {
             SessionHolder.sessionState() == "READY" -> "LINK_READY"
             SessionHolder.connectError.isNotEmpty() -> "CONNECT_ERROR_OBSERVED"
@@ -317,10 +321,15 @@ class AiDebugReceiver : BroadcastReceiver() {
             PackageManager.PERMISSION_GRANTED
         o.addProperty("wifi_fine_granted", fineGranted)
         // 只读 RPC 段：仅板端可达时有意义；MOCK 下会拿到夹具值，明确标注来源。
+        // 🔴 方法名从 AiDebugPolicy.SNAPSHOT_METHODS 单一权威派生（元素已是 Method 常量），
+        // 不再手写字符串列表 —— 否则白名单改名/增删时 snapshot 会 drifting。
+        // 刻意用**子集**而非 READ_ONLY_METHODS 全集：后者有 9 个，逐个 6s 有界 RPC 会撑爆
+        // goAsync ~10s 预算；门禁锁 SNAPSHOT_METHODS ⊆ READ_ONLY_METHODS 保证不放宽权限。
         val rpcResults = JsonObject()
         val s2 = SessionHolder.session
         if (s2 != null) {
-            for (m in listOf("system.info", "robot.health", "net.status", "update.status")) {
+            for (m in AiDebugPolicy.SNAPSHOT_METHODS) {
+                // 双保险：即便权威集合被改坏混入非只读方法，这里也再挡一次（判据独立于被测值）。
                 if (!AiDebugPolicy.isRpcAllowed(m)) continue
                 val task = FutureTask { s2.call(m, emptyMap()) }
                 Thread(task, "microduck-snap-${m.replace('.', '-')}").apply { isDaemon = true }.start()
@@ -433,6 +442,9 @@ class AiDebugReceiver : BroadcastReceiver() {
             scanner.startScan(null,
                 ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
         } catch (t: Throwable) {
+            // begin 已登记本 callback；start 抛异常必须归还闸位，否则残留 current
+            // 会卡住设置页下一次扫描（进程唯一闸），这是「连不上」的一类隐性根因。
+            io.microduck.app.ble.BleScanCoordinator.end(cb)
             o.fail("SCAN_START_FAILED: ${t.javaClass.simpleName}: ${clip(t.message, 160)}")
             emit(o); return
         }

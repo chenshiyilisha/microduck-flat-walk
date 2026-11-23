@@ -97,6 +97,21 @@ object AiDebugPolicy {
     )
 
     /**
+     * `snapshot` 聚合快照实际读取的只读方法**子集**。
+     *
+     * 🔴 为什么不是直接用 [READ_ONLY_METHODS] 全集：广播 goAsync 硬预算约 10 s，
+     * snapshot 对每个方法做一次 6 s 有界 RPC；全集 9 个方法在慢链路上会撑爆预算触发 ANR。
+     * 这里冻结 4 个最关键诊断面（系统信息/健康/网络/更新状态），逐项仍经 isRpcAllowed 复核。
+     * 不变式（门禁锁死）：SNAPSHOT_METHODS ⊆ READ_ONLY_METHODS，也不得含任何 FORBIDDEN_METHODS。
+     */
+    val SNAPSHOT_METHODS: List<String> = listOf(
+        Method.SYSTEM_INFO,
+        Method.ROBOT_HEALTH,
+        Method.NET_STATUS,
+        Method.UPDATE_STATUS,
+    )
+
+    /**
      * 明确禁止的高风险方法。**不参与放行判定**（放行只看 [READ_ONLY_METHODS]），
      * 它是负对照锚：core 自检与静态检查器都断言「禁止集合 ∩ 放行集合 == ∅」，
      * 一旦有人把 `robot.move` 加进白名单，检查必须变红。
