@@ -10,6 +10,8 @@
   4. BLE 面板必须真的有「扫码导入配对码」和「手动输入」两个入口；
      两者都汇入 BlePairingStore.parsePairingUri 单一权威。
   5. 主壳必须仍然保留四个顶层目的地与门禁硬串（重构不能把可测性弄丢）。
+  6. 设置页滑块必须有基准稿要求的「危险阈值分段轨道」：单一权威切点 0.7f、
+     按 bounds 比例两段着色、胶囊裁剪、接入 SeekBar 背景层、警示色低透明。
 
 --selftest 用真实源码注入负对照：改坏任一支必须变红；只跑绿断言不算自检。
 """
@@ -27,6 +29,7 @@ APP = BASE / "app" / "src" / "main"
 FILES = {
     "app_dialogs": APP / "kotlin/io/microduck/app/ui/AppDialogs.kt",
     "main": APP / "kotlin/io/microduck/app/MainActivity.kt",
+    "threshold": APP / "kotlin/io/microduck/app/ui/ThresholdTrackDrawable.kt",
     "ble": APP / "kotlin/io/microduck/app/ble/BleConnectPanel.kt",
     "scan": APP / "kotlin/io/microduck/app/ble/PairScanActivity.kt",
     "firmware": APP / "kotlin/io/microduck/app/update/FirmwarePanel.kt",
@@ -113,26 +116,52 @@ def check(s: dict[str, str]) -> list[str]:
     if "MaterialToolbar" not in main:
         errs.append("MainActivity 未使用 MaterialToolbar（不是 M3 顶栏）")
 
+    # 5) 设置页滑块危险阈值可视化（基准稿设置页 note：轨道右侧 70% 变红）。
+    #    正向断言绑「分段 Drawable + 单一权威切点 + 被进度层引用」，不靠截图观感。
+    th = d["threshold"]
+    if not re.search(r"class\s+ThresholdTrackDrawable", th):
+        errs.append("缺 ThresholdTrackDrawable 分段轨道类（基准稿阈值可视化未落地）")
+    if "DANGER_FROM" not in th or not re.search(r"DANGER_FROM\s*=\s*0\.7f", th):
+        errs.append("缺 DANGER_FROM=0.7f 单一权威切点（与基准稿 70% 不一致）")
+    # 必须真的按 bounds 比例画两段（切点用 dangerFrom 参与计算），不能只是个空壳类。
+    if "w * dangerFrom" not in th and "width * dangerFrom" not in th:
+        errs.append("ThresholdTrackDrawable 未按比例计算切点（两段着色是假实现）")
+    if "clipPath" not in th:
+        errs.append("ThresholdTrackDrawable 缺胶囊裁剪（两段圆角接缝会凹陷）")
+    # MainActivity 必须把分段轨道接到 SeekBar 的背景层，且用低透明警示色。
+    if "ThresholdTrackDrawable(" not in main:
+        errs.append("MainActivity 未把阈值分段轨道接到设置滑块")
+    if not re.search(r"ThresholdTrackDrawable\.dangerTint\(", main):
+        errs.append("警示色未走 dangerTint 低透明封装（会盖过进度 fill）")
+
     return errs
+
+
+# 负对照试验单一权威：meta_negative_control 跑它，main 计数也读它，避免写死数量。
+TRIALS: tuple[tuple[str, str, str, str], ...] = (
+    ("弹窗退回平台默认", "main", "AppDialogs.confirm", "AlertDialog.Builder"),
+    ("删扫码入口按钮", "ble", "扫码导入配对码", "配对码"),
+    ("删手动兜底", "ble", "AppDialogs.input", "AppDialogs.manualMissing"),
+    ("扫码改成全格式", "scan", "Barcode.FORMAT_QR_CODE", "Barcode.FORMAT_ALL_FORMATS"),
+    ("删相机权限", "manifest", "android.permission.CAMERA", "android.permission.CAMERA_REMOVED"),
+    ("删 MLKit Analyzer", "gradle", "androidx.camera:camera-mlkit-vision", "androidx.camera:camera-unused"),
+    ("顶栏退回普通 View", "main", "MaterialToolbar", "PlainToolbar"),
+    ("阈值切点改成 0.9", "threshold", "DANGER_FROM = 0.7f", "DANGER_FROM = 0.9f"),
+    ("阈值轨道不改比例", "threshold", "w * dangerFrom", "w * 0.5f"),
+    ("阈值轨道不接进滑块", "main", "ThresholdTrackDrawable(", "SingleColorTrackDrawable("),
+    ("警示色不走低透明封装", "main", "ThresholdTrackDrawable.dangerTint(", "ThresholdTrackDrawable.solidTint("),
+    ("阈值轨道去掉胶囊裁剪", "threshold", "canvas.clipPath(capsule)", "canvas.clipRect(b)"),
+)
 
 
 def meta_negative_control() -> list[str]:
     """每个改坏试验都必须让 check() 变红，否则这个门禁是假绿。"""
-    trials: list[tuple[str, str, str, str]] = [
-        ("弹窗退回平台默认", "main", "AppDialogs.confirm", "AlertDialog.Builder"),
-        ("删扫码入口按钮", "ble", "扫码导入配对码", "配对码"),
-        ("删手动兜底", "ble", "AppDialogs.input", "AppDialogs.manualMissing"),
-        ("扫码改成全格式", "scan", "Barcode.FORMAT_QR_CODE", "Barcode.FORMAT_ALL_FORMATS"),
-        ("删相机权限", "manifest", "android.permission.CAMERA", "android.permission.CAMERA_REMOVED"),
-        ("删 MLKit Analyzer", "gradle", "androidx.camera:camera-mlkit-vision", "androidx.camera:camera-unused"),
-        ("顶栏退回普通 View", "main", "MaterialToolbar", "PlainToolbar"),
-    ]
     errs: list[str] = []
     base = load()
     if check(base):
         errs.append("前置失败：正常源码下门禁就不绿")
         return errs
-    for label, key, old, new in trials:
+    for label, key, old, new in TRIALS:
         patched = dict(base)
         patched[key] = patched[key].replace(old, new)
         if not check(patched):
@@ -146,7 +175,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.selftest:
         errs = meta_negative_control()
-        n = 1 + 7
+        n = 1 + len(TRIALS)
         ok = n - len(errs)
         print(f"SELFTEST: {ok}/{n} passed")
         for e in errs:

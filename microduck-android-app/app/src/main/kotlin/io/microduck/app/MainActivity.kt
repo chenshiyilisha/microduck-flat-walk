@@ -1773,15 +1773,22 @@ class MainActivity : AppCompatActivity() {
         setVal(headDzLabel, SessionHolder.headDeadzone)
     }
 
-    /** 细轨道 + primary 进度（高度约 4dp），拇指另设，避免「粗条无把手」发糊。 */
+    /**
+     * 细轨道 + primary 进度（高度约 4dp），拇指另设，避免「粗条无把手」发糊。
+     *
+     * 轨道底色用 [ThresholdTrackDrawable] 做「危险阈值分段」：前 70% 中性、后 30% 警示红。
+     * 一手依据 = 最后一版 HTML 基准稿设置页 note「滑块右侧超过 70% 的区域底色变红」
+     * （CSS `linear-gradient(90deg, primary 70%, bad 70%)`）。⚠️ 非 M3 官方组件，
+     * 是本项目基于 M3 色板的自定义视觉扩展；数值安全上限仍由 SettingsStore clamp 负责。
+     * 见 [ThresholdTrackDrawable] 类注释与 docs/active 设计依据文档。
+     */
     private fun accentSeekDrawable(): android.graphics.drawable.LayerDrawable {
         val h = dp(4)
-        val track = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(c(R.color.md_outline_variant))
-            cornerRadius = (h / 2f)
-            setSize(-1, h)
-        }
+        // 安全段沿用原中性轨道色；警示段用低透明 md_bad，进度 fill 盖在其上仍清晰。
+        val track = io.microduck.app.ui.ThresholdTrackDrawable(
+            c(R.color.md_outline_variant),
+            io.microduck.app.ui.ThresholdTrackDrawable.dangerTint(c(R.color.md_bad)),
+        )
         val fill = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(c(R.color.md_accent))
